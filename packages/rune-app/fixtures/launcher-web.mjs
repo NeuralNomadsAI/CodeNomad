@@ -51,7 +51,7 @@ export async function launchWeb({
   const args=webAndroid
     ?[uiOrigin,profile,project,ui,String(serverPid),String(process.pid)]
     :webSse7Tabs
-      ?['--url',`${uiOrigin}/`,'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+      ?['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
       :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
@@ -88,17 +88,12 @@ export async function launchWeb({
   }
   const safeClientEnv=stripFixtureServerSecrets(env)
   const attestationEnv=fixtureAttestationEnv(process.env,{includeServerRoots:true})
-  const jobEnv={
-    ...(process.env.CODENOMAD_FIXTURE_JOB_EXE?{CODENOMAD_FIXTURE_JOB_EXE:process.env.CODENOMAD_FIXTURE_JOB_EXE}:{}),
-    ...(process.env.CARGO_TARGET_DIR?{CARGO_TARGET_DIR:process.env.CARGO_TARGET_DIR}:{}),
-  }
   const useIpc=webMobile||webKeyboard||webSse7Tabs
   const launch=useIpc?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...safeClientEnv,...androidEnv,...attestationEnv,...jobEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...safeClientEnv,...androidEnv,...attestationEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(useIpc?['ipc']:[])]})
   state.client=client
   state.clientUseIpc=useIpc
   state.clientStartedBy=new Date()
-  state.browserPids=new Set()
   state.clientClosed=new Promise(resolve=>{
     client.once('close',code=>resolve(code??1))
     client.on('error',()=>{if(!client.pid)resolve(1)})
@@ -112,14 +107,6 @@ export async function launchWeb({
   if(webSse7Tabs)client.on('message',action=>{
     state.mobileAction=(async()=>{
       try{
-        if(action?.type==='browser-pid'){
-          if(Number.isInteger(action.pid)&&action.pid>0)state.browserPids.add(action.pid)
-          return {value:true}
-        }
-        if(action?.type==='browser-closed'){
-          if(Number.isInteger(action.pid))state.browserPids.delete(action.pid)
-          return {value:true}
-        }
         if(action?.type==='emit-multiplex-sse')return {value:emitMultiplexSse(action.targets)}
         if(action?.type==='append-history')return {value:appendHistory(action)}
         if(action?.type==='server-workspaces'){

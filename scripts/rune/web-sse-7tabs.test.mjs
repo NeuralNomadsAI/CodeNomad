@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   allowBenchOwnedRoute,
+  assertExactInjectedMultiset,
   assertSingleMultiplexedSse,
   evaluateConcurrentBatch,
   summarizeLatencies,
@@ -143,4 +144,32 @@ test('allowBenchOwnedRoute restricts routes strictly to ses_tab_1..ses_tab_7', (
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session-history/outlinePreview', body: {sessionID: 'ses_tab_1'}, native: false}), true)
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session-history/window', body: {sessionID: 'ses_other'}, native: false}), false)
   assert.equal(allowBenchOwnedRoute({method: 'POST', path: 'session/ses_tab_1/prompt', native: true}), false)
+})
+
+test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injected SSE deltas', () => {
+  const expected = [
+    {assistantMessageID: 'sse-live-1', workspaceId: 'ws-1', sessionID: 'ses_tab_1', text: 'Tab 1'},
+    {assistantMessageID: 'sse-live-1', workspaceId: 'ws-2', sessionID: 'ses_tab_1', text: 'Tab 1'},
+  ]
+  const exactFrames = expected.map(e => ({
+    requestId: 'sse-1',
+    nativeType: 'session.text.delta',
+    assistantMessageID: e.assistantMessageID,
+    instanceId: e.workspaceId,
+    sessionID: e.sessionID,
+    delta: e.text,
+  }))
+  assert.equal(assertExactInjectedMultiset(exactFrames, 'sse-1', expected), 2)
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-wrong', sessionID: 'ses_tab_1', delta: 'Tab 1'},
+  ], 'sse-1', expected))
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-1', sessionID: 'ses_tab_2', delta: 'Tab 1'},
+  ], 'sse-1', expected))
+  assert.throws(() => assertExactInjectedMultiset([
+    {...exactFrames[0], requestId: 'sse-2'},
+    exactFrames[1],
+  ], 'sse-1', expected))
 })

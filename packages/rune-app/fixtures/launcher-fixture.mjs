@@ -5,6 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
+import {renameSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -547,13 +548,6 @@ const stopClientOnce=child=>{
         }
       }catch(error){
         clientStopError=String(error?.message??error)
-      }finally{
-        if(process.platform!=='win32'&&webState.browserPids?.size){
-          for(const pid of webState.browserPids){
-            try{process.kill(-pid,'SIGKILL')}catch(error){if(error.code!=='ESRCH')clientStopError??=String(error.message)}
-          }
-          webState.browserPids.clear()
-        }
       }
     })()
   }
@@ -713,7 +707,7 @@ try{
     control?.close()
     for(const gate of gates.values())gate.reject()
     client??=webState.client
-    if(client&&(client.exitCode===null&&client.signalCode===null||webState.browserPids?.size)){
+    if(client&&client.exitCode===null&&client.signalCode===null){
       await stopClientOnce(client)
     }
     if(webState.deviceLease){
@@ -727,11 +721,19 @@ try{
     await http?.dispose()
     await stopServer()
     for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-    if(interruptedSignal)result=1
-    const proofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
-    await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:proofResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
+    await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
     if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
     if(web)await writeFile(path.join(profile,'browser-run.log'),webState.diagnostic)
+    const buildProof=finalResult=>JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interruptedSignal??null,clientStopError,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2)
+    const proofTmp=path.join(profile,'proof.json.tmp')
+    const proofFile=path.join(profile,'proof.json')
+    const initialProofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
+    await writeFile(proofTmp,buildProof(initialProofResult))
+    const finalProofResult=androidCleanup?.length||clientStopError||interruptedSignal?1:result
+    if(finalProofResult!==initialProofResult){
+      writeFileSync(proofTmp,buildProof(finalProofResult))
+    }
+    renameSync(proofTmp,proofFile)
     if(interruptedSignal)result=1
     if(result===0){
       assert(!clientStopError,`Owned client cleanup failed: ${clientStopError}`)

@@ -1,14 +1,13 @@
 // 7-tab HTTPS HTTP/1.1 SSE multiplexing bench for the real Rune WASM bundle (B1 proof).
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {renameSync, unlinkSync} from 'node:fs'
-import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
+import {readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {chromium} from 'playwright'
-import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
-import {bundleAssetPaths, fulfillWorkspaceCreation, privateWebFixture, workspacePolicy} from './web-workspace-policy.mjs'
+import {createAttestedFetch, verifyLoopbackListenerOwner, verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
+import {launchOwnedChromium} from './web-chromium.mjs'
+import {bundleAssetPaths, createPrivateOutputDir, privateChromiumEnv, privateWebFixture, workspacePolicy} from './web-workspace-policy.mjs'
 
 const TAB_COUNT = 7
 const TAB_SESSION_RE = /^ses_tab_[1-7]$/
@@ -102,6 +101,31 @@ export function evaluateConcurrentBatch(results, {expectedCount, wallMs, maxWall
   }
 }
 
+export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntries) {
+  assert(Array.isArray(expectedEntries) && expectedEntries.length > 0, 'Expected non-empty injected SSE entries')
+  const injectedIds = new Set(expectedEntries.map(entry => entry.assistantMessageID))
+  assert(injectedIds.size > 0 && ![...injectedIds].some(id => typeof id !== 'string' || !id.length), 'Expected non-empty assistantMessageIDs')
+  const actualFrames = frames.filter(f =>
+    f.nativeType === 'session.text.delta'
+    && injectedIds.has(f.assistantMessageID),
+  )
+  for (const frame of actualFrames) {
+    assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
+  }
+  const key = ({assistantMessageID, workspaceId, sessionID, text}) =>
+    `${assistantMessageID}\0${workspaceId}\0${sessionID}\0${text}`
+  const expectedKeys = expectedEntries.map(key).sort()
+  const actualKeys = actualFrames
+    .map(f => key({assistantMessageID: f.assistantMessageID, workspaceId: f.instanceId, sessionID: f.sessionID, text: f.delta}))
+    .sort()
+  assert.deepEqual(
+    actualKeys,
+    expectedKeys,
+    `Injected SSE multiset mismatch (expected ${expectedKeys.length}, got ${actualKeys.length})`,
+  )
+  return actualFrames.length
+}
+
 export function allowBenchOwnedRoute({method, path: subPath, body, native}) {
   if (native && method === 'GET') {
     return /^(command|model|session)$/.test(subPath)
@@ -167,14 +191,20 @@ async function runBench() {
       url: {type: 'string'},
       project: {type: 'string'},
       'storage-state': {type: 'string'},
+      'target-pid': {type: 'string'},
+      'launcher-pid': {type: 'string'},
       out: {type: 'string'},
       executable: {type: 'string'},
     },
   })
   assert(values.url && values.project && values['storage-state'] && values.out, 'Pass --url --project --storage-state --out')
+  const targetPid = Number(values['target-pid'])
+  assert(Number.isSafeInteger(targetPid) && targetPid > 0, '7-tab SSE bench requires --target-pid <owned server PID>')
+  const launcherPid = Number(values['launcher-pid'])
+  assert(Number.isSafeInteger(launcherPid) && launcherPid > 0, '7-tab SSE bench requires --launcher-pid <private launcher PID>')
   const url = new URL(values.url)
   assert.equal(url.protocol, 'https:', '7-tab SSE bench requires HTTPS HTTP/1.1')
-  assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && !url.username && !url.password && url.pathname === '/' && !url.hash, 'Explicit isolated loopback HTTPS root required')
+  assert(url.hostname === '127.0.0.1' && !url.username && !url.password && url.pathname === '/' && !url.hash, 'Explicit isolated 127.0.0.1 HTTPS root required')
   url.search = '?locale=fr'
 
   const out = path.resolve(values.out)
@@ -185,84 +215,42 @@ async function runBench() {
     out,
     origin: url.origin,
   })
-  await mkdir(out, {recursive: true})
+  await verifyLoopbackListenerOwner(Number(url.port), targetPid)
+  const targetStartId = (await verifyPrivateFixtureServer({targetPid, launcherPid, profile, root})).targetStartId
+  await createPrivateOutputDir(out, profile)
   assert(inside(profile, await realpath(out)), 'Output path escapes fixture profile')
 
+  const rawStorage = JSON.parse(await readFile(storage, 'utf8'))
+  const realCookieHeader = (rawStorage?.cookies ?? []).map(c => `${c.name}=${c.value}`).join('; ')
+  assert(realCookieHeader.length > 0, 'Authenticated storage state cookie required')
+  const caCert = await readFile(path.join(profile, 'identity.data/tls/ca-cert.pem')).catch(() => undefined)
   const m = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues/fr.json'), 'utf8'))
   const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
 
-  let browserProc = null
+  let ownedBrowser = null
   let browser = null
-  let browserCdp = null
   let context = null
-  let browserPid = null
-  let browserExited = Promise.resolve(true)
+  let attestedFetch = null
   let stoppingSignal = null
-  let abortStartup = null
   let stopPromise = null
   const withTimeout = (promise, ms) => Promise.race([
     Promise.resolve(promise).catch(() => {}),
     new Promise(resolve => setTimeout(resolve, ms)),
   ])
-  const isProcExited = () => Boolean(!browserProc || browserProc.exitCode !== null || browserProc.signalCode !== null)
-  const isPosixGroupEmpty = () => {
-    if (process.platform === 'win32' || !Number.isInteger(browserPid) || browserPid <= 0) return true
-    try {
-      process.kill(-browserPid, 0)
-      return false
-    } catch (error) {
-      return error.code === 'ESRCH'
-    }
-  }
-  const signalBrowserGroup = signal => {
-    if (process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0) {
-      try { process.kill(-browserPid, signal) } catch {}
-    } else if (browserProc) {
-      try { browserProc.kill(signal) } catch {}
-    }
-  }
-  const stopBrowserBounded = () => {
+  const stopOwnedBrowser = () => {
     if (!stopPromise) {
       stopPromise = (async () => {
-        if (context) await withTimeout(context.close(), 1000)
-        if (browserCdp) await withTimeout(browserCdp.send('Browser.close'), 1500)
-        if (browser) await withTimeout(browser.close(), 1000)
-        if (browserProc) {
-          if (process.platform === 'win32') {
-            if (!isProcExited()) await withTimeout(browserExited, 2500)
-            // codenomad-fixture-job exits 0 only when the Chromium browser process exited 0 and
-            // child.family_is_empty() confirmed zero surviving descendants in the Job Object.
-            const exitedCleanly = browserProc.exitCode === 0 && browserProc.signalCode === null
-            if (!exitedCleanly) {
-              // Forced runner-side Job Object kill is cleanup only, never proof of a clean pass.
-              await stopFixtureChild(browserProc, browserExited, 1000, 1500).catch(() => {})
-            }
-            return exitedCleanly
+        if (context) await withTimeout(context.close(), 1500)
+        let cleanExit = true
+        if (ownedBrowser) {
+          try {
+            cleanExit = Boolean(await ownedBrowser.close())
+          } catch {
+            cleanExit = false
           }
-          if (!isProcExited() || !isPosixGroupEmpty()) {
-            const deadline = Date.now() + 2000
-            while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
-              await new Promise(resolve => setTimeout(resolve, 25))
-            }
-          }
-          const cleanExit = browserProc.exitCode === 0 && browserProc.signalCode === null && isPosixGroupEmpty()
-          if (!cleanExit) {
-            signalBrowserGroup('SIGTERM')
-            const deadline = Date.now() + 1500
-            while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < deadline) {
-              await new Promise(resolve => setTimeout(resolve, 25))
-            }
-            if (!isProcExited() || !isPosixGroupEmpty()) {
-              signalBrowserGroup('SIGKILL')
-              const killDeadline = Date.now() + 1500
-              while ((!isProcExited() || !isPosixGroupEmpty()) && Date.now() < killDeadline) {
-                await new Promise(resolve => setTimeout(resolve, 25))
-              }
-            }
-          }
-          return cleanExit
         }
-        return true
+        if (attestedFetch) await withTimeout(attestedFetch.close?.(), 1000)
+        return cleanExit
       })()
     }
     return stopPromise
@@ -271,8 +259,7 @@ async function runBench() {
     if (stoppingSignal) return
     stoppingSignal = signal
     process.exitCode = 143
-    abortStartup?.(signal)
-    if (browserProc) void stopBrowserBounded()
+    if (ownedBrowser) void stopOwnedBrowser()
   }
   const onIpcShutdown = msg => {
     if (msg?.type === 'shutdown') onStopSignal('SIGTERM')
@@ -294,72 +281,23 @@ async function runBench() {
   let pendingProof = null
 
   try {
-    if (stoppingSignal) throw Error(`Interrupted before Chromium launch (${stoppingSignal})`)
-    const chromiumPath = values.executable || chromium.executablePath()
-    const chromiumProfile = path.join(out, 'chromium-profile')
-    await mkdir(chromiumProfile, {recursive: true})
+    const chromiumEnv = await privateChromiumEnv(profile)
     if (stoppingSignal) throw Error(`Interrupted before Chromium launch (${stoppingSignal})`)
     assert(process.connected, 'Fixture IPC disconnected before Chromium launch')
-    const launchChromium = process.platform === 'win32' ? spawnFixtureChild : spawn
-    browserProc = launchChromium(chromiumPath, [
-      '--headless=new',
-      '--remote-debugging-port=0',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-dev-shm-usage',
-      '--disable-features=BackForwardCache',
-      '--enable-unsafe-webgpu',
-      '--use-angle=swiftshader',
-      `--user-data-dir=${chromiumProfile}`,
-    ], {
-      ...(process.platform !== 'win32' ? {detached: true} : {}),
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+    attestedFetch = createAttestedFetch(url.origin, Number(url.port), targetPid, {
+      ...(caCert ? {ca: caCert} : {allowSelfSigned: true}),
+      targetStartId,
     })
-    browserPid = browserProc.pid ?? null
-    browserProc.stdout?.resume()
-    browserExited = new Promise(resolve => {
-      if (browserProc.exitCode !== null || browserProc.signalCode !== null) return resolve(true)
-      browserProc.once('exit', () => resolve(true))
-      browserProc.once('close', () => {
-        if (browserProc.exitCode !== null || browserProc.signalCode !== null) resolve(true)
-      })
+    ownedBrowser = await launchOwnedChromium({
+      executablePath: values.executable,
+      profile,
+      env: chromiumEnv,
+      origin: url.origin,
+      targetPid,
+      targetStartId,
     })
-    // Register the Chromium process group immediately upon spawn and observe both promises together.
-    const devToolsReady = new Promise((resolve, reject) => {
-      let stderrBuf = ''
-      let timer
-      const finish = (err, wsUrl) => {
-        clearTimeout(timer)
-        abortStartup = null
-        browserProc.stderr?.off('data', onData)
-        browserProc.stderr?.resume()
-        browserProc.off('exit', onExit)
-        browserProc.off('error', onError)
-        if (err) reject(err)
-        else resolve(wsUrl)
-      }
-      const onData = chunk => {
-        stderrBuf = (stderrBuf + chunk).slice(-32768)
-        const match = /DevTools listening on (ws:\/\/\S+)/.exec(stderrBuf)
-        if (match) finish(null, match[1])
-      }
-      const onExit = (code, signal) => finish(Error(`Chromium exited before DevTools ready (code=${code}, signal=${signal}): ${stderrBuf.slice(-400)}`))
-      const onError = err => finish(err)
-      abortStartup = signal => finish(Error(`Interrupted while starting Chromium (${signal})`))
-      timer = setTimeout(() => finish(Error(`Timed out waiting for Chromium DevTools endpoint: ${stderrBuf.slice(-400)}`)), 30000)
-      browserProc.stderr?.on('data', onData)
-      browserProc.once('exit', onExit)
-      browserProc.once('error', onError)
-    })
-    const registerPid = process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0
-      ? ipc({type: 'browser-pid', pid: browserPid})
-      : Promise.resolve()
-    const [, wsEndpoint] = await Promise.all([registerPid, devToolsReady])
-    if (stoppingSignal) throw Error(`Interrupted before CDP connect (${stoppingSignal})`)
-    browser = await chromium.connectOverCDP(wsEndpoint)
-    browserCdp = await browser.newBrowserCDPSession()
+    browser = ownedBrowser.browser
+    if (stoppingSignal) throw Error(`Interrupted after Chromium launch (${stoppingSignal})`)
     const policy = workspacePolicy({
       origin: url.origin,
       project: values.project,
@@ -540,9 +478,36 @@ async function runBench() {
         instanceId: parsed?.instanceId ?? null,
         nativeType: parsed?.event?.type ?? null,
         sessionID: parsed?.event?.data?.sessionID ?? null,
+        assistantMessageID: parsed?.event?.data?.assistantMessageID ?? null,
         delta: parsed?.event?.data?.delta ?? null,
       })
     })
+
+    const fulfillWorkspaceCreationAttested = async route => {
+      const req = route.request()
+      const headers = {...(await req.allHeaders())}
+      delete headers['host']
+      delete headers['content-length']
+      const res = await attestedFetch(req.url(), {
+        method: req.method(),
+        headers,
+        body: req.postDataBuffer() ?? undefined,
+        signal: AbortSignal.timeout(30000),
+      })
+      const bytes = Buffer.from(await res.arrayBuffer())
+      assert(bytes.length <= 1048576, 'Workspace response exceeds fixture admission bound')
+      let workspaceId = null
+      if (res.ok) {
+        const body = JSON.parse(bytes.toString('utf8'))
+        policy.admit(req.postDataJSON(), body, req.url())
+        workspaceId = typeof body?.id === 'string' ? body.id : null
+      }
+      const outHeaders = Object.fromEntries(res.headers.entries())
+      const rawSetCookies = res.headers.getSetCookie?.() ?? (outHeaders['set-cookie'] ? [outHeaders['set-cookie']] : [])
+      if (rawSetCookies.length) outHeaders['set-cookie'] = rawSetCookies.join('\n')
+      await route.fulfill({status: res.status, headers: outHeaders, body: bytes})
+      return {status: res.status, workspaceId}
+    }
 
     await context.route('**/*', async route => {
       const req = route.request()
@@ -553,7 +518,7 @@ async function runBench() {
         return route.abort('blockedbyclient')
       }
       if (req.method() === 'POST' && requested.pathname === '/api/workspaces') {
-        const created = await fulfillWorkspaceCreation(route, policy)
+        const created = await fulfillWorkspaceCreationAttested(route)
         if (created?.workspaceId) openedWorkspaces.push(created.workspaceId)
         return
       }
@@ -646,11 +611,18 @@ async function runBench() {
     const sseAtSevenTabs = await readSseState(1)
     const sseStreamInfo = [...cdpStreams.values()][0]
     assert(sseStreamInfo.clientId && sseStreamInfo.connectionId, `Missing SSE identity: ${JSON.stringify(sseStreamInfo)}`)
-    const pongBeforeClose = await context.request.post(`${url.origin}/api/client-connections/pong`, {
-      headers: {origin: url.origin},
-      data: {clientId: sseStreamInfo.clientId, connectionId: sseStreamInfo.connectionId},
+    const sendAttestedPong = async () => attestedFetch(`${url.origin}/api/client-connections/pong`, {
+      method: 'POST',
+      headers: {
+        origin: url.origin,
+        'content-type': 'application/json',
+        cookie: realCookieHeader,
+      },
+      body: JSON.stringify({clientId: sseStreamInfo.clientId, connectionId: sseStreamInfo.connectionId}),
+      signal: AbortSignal.timeout(10000),
     })
-    assert.equal(pongBeforeClose.status(), 204, `Expected server pong 204 while EventSource is active, got ${pongBeforeClose.status()}`)
+    const pongBeforeClose = await sendAttestedPong()
+    assert.equal(pongBeforeClose.status, 204, `Expected server pong 204 while EventSource is active, got ${pongBeforeClose.status}`)
 
     // Fire 14 concurrent HTTPS HTTP/1.1 requests (2 per open tab/workspace) while the 1 EventSource stays open.
     const batchTargets = openedWorkspaces.map((workspaceId, index) => ({
@@ -755,54 +727,49 @@ async function runBench() {
     }
     await page.waitForFunction(() => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes('Multiplex live Tab 7'))
 
-    const countMatchingTriples = triples => cdpSseFrames.filter(f =>
-      f.requestId === sseRequestId
-      && f.nativeType === 'session.text.delta'
-      && triples.some(t =>
-        t.workspaceId === f.instanceId && t.sessionID === f.sessionID && t.text === f.delta,
-      ),
-    ).length
-    const initialExpectedTriples = openedWorkspaces.flatMap(workspaceId =>
-      initialTargets.map(({sessionID, text}) => ({workspaceId, sessionID, text})),
+    const initialExpectedEntries = openedWorkspaces.flatMap(workspaceId =>
+      initialTargets.map(({sessionID, text}) => ({
+        assistantMessageID: initialMessageIds.get(sessionID),
+        workspaceId,
+        sessionID,
+        text,
+      })),
     )
 
     const waitMultiplexFrames = async (targets, workspaces) => {
       const deadline = Date.now() + 10000
       while (Date.now() < deadline) {
-        const matchedTriples = initialExpectedTriples.filter(triple => cdpSseFrames.some(f =>
+        const matchedEntries = initialExpectedEntries.filter(entry => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
           && f.nativeType === 'session.text.delta'
-          && f.instanceId === triple.workspaceId
-          && f.sessionID === triple.sessionID
-          && f.delta === triple.text,
+          && f.assistantMessageID === entry.assistantMessageID
+          && f.instanceId === entry.workspaceId
+          && f.sessionID === entry.sessionID
+          && f.delta === entry.text,
         ))
-        if (matchedTriples.length === initialExpectedTriples.length) {
-          const observedCount = countMatchingTriples(initialExpectedTriples)
-          assert.equal(
-            observedCount,
-            initialExpectedTriples.length,
-            `Expected exactly ${initialExpectedTriples.length} multiplexed SSE frames without duplicates, got ${observedCount}`,
-          )
+        if (matchedEntries.length === initialExpectedEntries.length) {
+          const observedCount = assertExactInjectedMultiset(cdpSseFrames, sseRequestId, initialExpectedEntries)
           return {
             frameCount: observedCount,
-            matchedTripleCount: matchedTriples.length,
-            expectedTripleCount: initialExpectedTriples.length,
+            matchedTripleCount: matchedEntries.length,
+            expectedTripleCount: initialExpectedEntries.length,
             matchedPairs: targets.map(({workspaceId, sessionID, text}) => ({workspaceId, sessionID, text})),
             workspaceCount: workspaces.length,
           }
         }
         await page.waitForTimeout(25)
       }
-      throw Error(`Timed out waiting for all ${initialExpectedTriples.length} multiplexed SSE (workspaceId, sessionID, delta) triples on ${sseRequestId}`)
+      throw Error(`Timed out waiting for all ${initialExpectedEntries.length} multiplexed SSE (assistantMessageID, workspaceId, sessionID, delta) entries on ${sseRequestId}`)
     }
     const multiplexedFrames = await waitMultiplexFrames(initialTargets, openedWorkspaces)
 
-    const waitExactFrame = async ({workspaceId, sessionID, text}) => {
+    const waitExactFrame = async ({assistantMessageID, workspaceId, sessionID, text}) => {
       const deadline = Date.now() + 10000
       while (Date.now() < deadline) {
         const hit = cdpSseFrames.find(f =>
           f.requestId === sseRequestId
           && f.nativeType === 'session.text.delta'
+          && f.assistantMessageID === assistantMessageID
           && f.instanceId === workspaceId
           && f.sessionID === sessionID
           && f.delta === text,
@@ -810,7 +777,7 @@ async function runBench() {
         if (hit) return hit
         await page.waitForTimeout(25)
       }
-      throw Error(`Timed out waiting for exact SSE frame (${workspaceId}, ${sessionID}, ${text}) on ${sseRequestId}`)
+      throw Error(`Timed out waiting for exact SSE frame (${assistantMessageID}, ${workspaceId}, ${sessionID}, ${text}) on ${sseRequestId}`)
     }
 
     // Inactive tabs intentionally suspend live transcript readers (`chat::suspend` -> `stop_content()`)
@@ -851,7 +818,7 @@ async function runBench() {
         activeEmitted[0]?.assistantMessageID && activeEmitted[0].assistantMessageID !== historyAppended.messageID,
         `Active SSE messageID (${activeEmitted[0]?.assistantMessageID}) must differ from history messageID (${historyAppended.messageID})`,
       )
-      await waitExactFrame({workspaceId, sessionID, text: activeText})
+      await waitExactFrame({assistantMessageID: activeEmitted[0].assistantMessageID, workspaceId, sessionID, text: activeText})
       await page.waitForFunction(
         expected => (document.querySelector('[data-rune-a11y]')?.textContent ?? '').includes(expected),
         activeText,
@@ -939,11 +906,8 @@ async function runBench() {
     let pongAfterCloseStatus = 0
     let remainingWorkspaces = []
     while (Date.now() < closeDeadline) {
-      const pongRes = await context.request.post(`${url.origin}/api/client-connections/pong`, {
-        headers: {origin: url.origin},
-        data: {clientId: sseStreamInfo.clientId, connectionId: sseStreamInfo.connectionId},
-      })
-      pongAfterCloseStatus = pongRes.status()
+      const pongRes = await sendAttestedPong()
+      pongAfterCloseStatus = pongRes.status
       remainingWorkspaces = await ipc({type: 'server-workspaces'})
       if (pongAfterCloseStatus === 404 && remainingWorkspaces.length === 0) break
       await new Promise(resolve => setTimeout(resolve, 50))
@@ -954,16 +918,23 @@ async function runBench() {
     assert.equal(cdpEventSourceRedirected, false, 'Expected zero redirects on /api/events throughout full lifecycle')
     assert.equal(cdpStreams.size, 1, `Expected only 1 EventSource throughout full lifecycle, got ${cdpStreams.size}`)
     assert.equal(cdpSseFramesOverflowed, false, 'CDP SSE frame collector overflowed; duplicate audit incomplete')
-    const finalInitialTripleFrames = countMatchingTriples(initialExpectedTriples)
-    assert.equal(
-      finalInitialTripleFrames,
-      initialExpectedTriples.length,
-      `Expected exact ${initialExpectedTriples.length} initial multiplexed SSE frames at stream close, got ${finalInitialTripleFrames}`,
-    )
-    for (const activeCheck of [tab1Active, tab4Active]) {
-      const activeCount = countMatchingTriples([{workspaceId: activeCheck.workspaceId, sessionID: activeCheck.sessionID, text: activeCheck.text}])
-      assert.equal(activeCount, 1, `Expected 1 active SSE frame for (${activeCheck.workspaceId}, ${activeCheck.sessionID}), got ${activeCount}`)
-    }
+    const allExpectedInjectedEntries = [
+      ...initialExpectedEntries,
+      ...openedWorkspaces.map(workspaceId => ({
+        assistantMessageID: tab1Active.activeSseMessageId,
+        workspaceId,
+        sessionID: tab1Active.sessionID,
+        text: tab1Active.text,
+      })),
+      ...openedWorkspaces.map(workspaceId => ({
+        assistantMessageID: tab4Active.activeSseMessageId,
+        workspaceId,
+        sessionID: tab4Active.sessionID,
+        text: tab4Active.text,
+      })),
+    ]
+    const totalInjectedDeltaFrames = assertExactInjectedMultiset(cdpSseFrames, sseRequestId, allExpectedInjectedEntries)
+    multiplexedFrames.totalInjectedDeltaFrames = totalInjectedDeltaFrames
     assert.equal(remainingWorkspaces.length, 0, `Expected 0 leaked workspaces after pagehide, got ${remainingWorkspaces.length}`)
     assert.deepEqual(errors, [], `Unexpected page errors: ${JSON.stringify(errors)}`)
     assert.deepEqual(forbidden, [], `Unexpected forbidden requests: ${JSON.stringify(forbidden)}`)
@@ -983,7 +954,7 @@ async function runBench() {
       teardown: {
         cdpEventSourceCount: cdpStreams.size,
         workspacesAfterClosingSixTabs: workspacesAfterClosingSixTabs.map(w => w.id),
-        serverPongBeforeCloseStatus: pongBeforeClose.status(),
+        serverPongBeforeCloseStatus: pongBeforeClose.status,
         serverPongAfterCloseStatus: pongAfterCloseStatus,
         cdpStreamClosed: Boolean(finalStream?.closed),
         cdpCloseReason: finalStream?.closeReason ?? null,
@@ -1004,16 +975,10 @@ async function runBench() {
     throw error
   } finally {
     try {
-      const cleanChromiumExit = await stopBrowserBounded()
-      const groupCleared = process.platform === 'win32'
-        ? isProcExited()
-        : (isProcExited() && isPosixGroupEmpty())
-      if (groupCleared && process.platform !== 'win32' && Number.isInteger(browserPid) && browserPid > 0 && process.connected) {
-        await ipc({type: 'browser-closed', pid: browserPid}).catch(() => {})
-      }
+      const cleanChromiumExit = await stopOwnedBrowser()
       if (pendingProof && !stoppingSignal) {
         assert(process.connected, 'Fixture IPC disconnected before publishing proof')
-        assert(cleanChromiumExit, `Chromium wrapper/process ${browserPid} did not exit cleanly with code 0`)
+        assert(cleanChromiumExit, 'Owned Chromium did not exit cleanly with code 0')
         pendingProof.teardown.chromiumExited = true
         const tmpProof = path.join(out, 'sse-7tabs-proof.json.tmp')
         const finalProof = path.join(out, 'sse-7tabs-proof.json')
