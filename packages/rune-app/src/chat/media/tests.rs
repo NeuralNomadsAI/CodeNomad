@@ -154,6 +154,7 @@ fn web_fallback_is_a_link_and_opens_only_the_qualified_image_url() {
     let key = source_key(
         "remote",
         state.transcript_display.pictures.generation,
+        0,
         &source,
         "image/png",
     );
@@ -302,6 +303,13 @@ fn owned_deferred_image_fetches_passive_bytes_and_refuses_other_sessions() {
         let wrong_mime = tokio::spawn(async move { src.bytes(Some(&backend), "image/png").await });
         let req = http.accept().await;
         assert!(req.header.starts_with(&format!("GET {path} ")));
+        assert!(
+            req.header
+                .to_ascii_lowercase()
+                .contains("cache-control: no-store"),
+            "deferred media fetch must bypass HTTP/Fetch caches: {}",
+            req.header
+        );
         req.send(
             &format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -734,6 +742,11 @@ fn child_task_deferred_tool_image_uses_verified_child_session() {
         photos.poll(&reads, &wake);
         let req = http.accept().await;
         assert!(req.header.starts_with(&format!("GET {child_path} ")));
+        assert!(
+            req.header
+                .to_ascii_lowercase()
+                .contains("cache-control: no-store")
+        );
         req.send(
             &format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -754,6 +767,35 @@ fn child_task_deferred_tool_image_uses_verified_child_session() {
                 .as_ref()
                 .is_some_and(|img| img.is_ready() && img.error().is_none())
         );
+
+        // Revoking the child session clears its cached images and bumps its child generation
+        // while keeping unrelated parent/sibling entries intact.
+        let key_before = source_key(
+            "child_card",
+            photos.generation,
+            photos
+                .child_generations
+                .get("child_ses")
+                .copied()
+                .unwrap_or(0),
+            &source,
+            "image/png",
+        );
+        assert!(photos.clear_child_sessions(&["child_ses".into()]));
+        assert!(!photos.images.contains_key("child_scope"));
+        assert!(photos.images.contains_key("parent_scope"));
+        let key_after = source_key(
+            "child_card",
+            photos.generation,
+            photos
+                .child_generations
+                .get("child_ses")
+                .copied()
+                .unwrap_or(0),
+            &source,
+            "image/png",
+        );
+        assert_ne!(key_before, key_after);
         http.quiet().await;
     });
 }

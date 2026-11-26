@@ -131,12 +131,13 @@ impl DeferredPicture {
             .next()
             .filter(|digest| crate::content::attachment_digest(digest))
             .ok_or("invalid deferred image reference")?;
-        let response = backend
+        let request = backend
             .client
             .get(format!("{}{}", backend.base, &self.0[1..]))
-            .send()
-            .await?
-            .error_for_status()?;
+            .header(reqwest::header::CACHE_CONTROL, "no-store");
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_cache_no_store();
+        let response = request.send().await?.error_for_status()?;
         if response.status() != reqwest::StatusCode::OK
             || response
                 .content_length()

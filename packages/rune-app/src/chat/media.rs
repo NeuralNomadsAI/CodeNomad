@@ -29,6 +29,7 @@ pub(crate) struct Pictures {
     preview: Option<(String, String, Image)>,
     hover: Option<(String, String)>,
     generation: u64,
+    child_generations: HashMap<String, u64>,
 }
 
 struct Entry {
@@ -65,11 +66,56 @@ impl Pictures {
 
     pub(crate) fn clear(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.child_generations.clear();
         self.images.clear();
         self.waiting.clear();
         self.cache = None;
         self.preview = None;
         self.hover = None;
+    }
+
+    pub(crate) fn clear_child_sessions(&mut self, sessions: &[String]) -> bool {
+        if sessions.is_empty() {
+            return false;
+        }
+        let mut affected = Vec::new();
+        let removed: Vec<String> = self
+            .images
+            .iter()
+            .filter_map(|(key, entry)| {
+                let owner = entry.owner_session.as_deref()?;
+                if sessions.iter().any(|revoked| revoked == owner) {
+                    if !affected.iter().any(|seen: &String| seen == owner) {
+                        affected.push(owner.to_owned());
+                    }
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if removed.is_empty() {
+            return false;
+        }
+        for owner in affected {
+            let entry = self.child_generations.entry(owner).or_default();
+            *entry = entry.wrapping_add(1);
+        }
+        for key in &removed {
+            self.images.remove(key);
+            self.waiting.retain(|queued| queued != key);
+            if self
+                .preview
+                .as_ref()
+                .is_some_and(|(anchor, _, _)| anchor == key || anchor == &format!("{key}-enlarge"))
+            {
+                self.preview = None;
+            }
+            if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
+                self.hover = None;
+            }
+        }
+        true
     }
 
     pub(crate) fn retry_interrupted(&mut self) {
@@ -274,9 +320,15 @@ pub(super) fn view(
     )
 }
 
-fn source_key(key: &str, generation: u64, source: &PictureSource, mime: &str) -> String {
+fn source_key(
+    key: &str,
+    generation: u64,
+    child_generation: u64,
+    source: &PictureSource,
+    mime: &str,
+) -> String {
     let mut stamp = DefaultHasher::new();
-    (generation, source, mime).hash(&mut stamp);
+    (generation, child_generation, source, mime).hash(&mut stamp);
     format!("{key}-{:x}", stamp.finish())
 }
 
@@ -291,7 +343,17 @@ fn view_on_platform(
     owner_session: Option<&str>,
     web: bool,
 ) -> El {
-    let key = source_key(&key, s.transcript_display.pictures.generation, source, mime);
+    let child_generation = owner_session
+        .and_then(|owner| s.transcript_display.pictures.child_generations.get(owner))
+        .copied()
+        .unwrap_or(0);
+    let key = source_key(
+        &key,
+        s.transcript_display.pictures.generation,
+        child_generation,
+        source,
+        mime,
+    );
     let entry = s
         .transcript_display
         .pictures

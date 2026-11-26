@@ -26,8 +26,9 @@ const web = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   if (url.pathname === `/api/workspaces/owned/session-media/session/result/0/4/${pngDigest}`) {
     if (req.headers.cookie !== 'image_fixture=owned') return res.writeHead(401).end()
+    assert.equal(req.headers['cache-control'], 'no-store')
     deferred++
-    return res.writeHead(200, {'Content-Type':'image/png'}).end(png)
+    return res.writeHead(200, {'Content-Type':'image/png','Cache-Control':'private, max-age=31536000, immutable'}).end(png)
   }
   const asset = url.pathname === '/' ? '/index.html' : url.pathname
   if (!assets.has(asset)) return res.writeHead(404).end()

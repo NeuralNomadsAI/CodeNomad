@@ -220,12 +220,18 @@ impl Children {
     }
 
     pub(crate) fn poll_and_promote(s: &mut State) -> bool {
-        let changed = s.transcript_display.children.poll();
+        let (mut changed, revoked) = s.transcript_display.children.poll_with_revocations();
+        changed |= s.transcript_display.pictures.clear_child_sessions(&revoked);
         Self::promote_waiting(s);
         changed
     }
 
+    #[cfg(test)]
     pub(crate) fn poll(&mut self) -> bool {
+        self.poll_with_revocations().0
+    }
+
+    fn poll_with_revocations(&mut self) -> (bool, Vec<String>) {
         let mut changed = self.prune();
         let mut to_requeue: Vec<(ChildKey, String, Weak<()>)> = Vec::new();
         let mut mark_unavailable: Vec<ChildKey> = Vec::new();
@@ -428,7 +434,7 @@ impl Children {
             }
             changed = true;
         }
-        changed
+        (changed, revoked_children)
     }
 
     pub(super) fn evict_unwatched_cache(&mut self, removed_children: &[String]) {
