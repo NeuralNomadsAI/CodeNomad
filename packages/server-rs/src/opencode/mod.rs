@@ -82,6 +82,15 @@ impl Native {
         Self { client, inner }
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_test_endpoint(&self, address: std::net::SocketAddr) {
+        let url = Url::parse(&format!("http://{address}")).unwrap();
+        *self.inner.endpoint.write().unwrap() =
+            Some(Arc::new(Endpoint { url, password: "synthetic".into(), version: String::new(), pid: 0 }));
+        *self.inner.validated.lock().unwrap() = Some(Instant::now());
+        self.inner.retired.notify_waiters();
+    }
+
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.
     pub fn connect(binary: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::builder()

@@ -506,13 +506,21 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
         // `MissingGit` (`directoryOnly`) is never a strict absence verdict (TS `worktree-directory.ts:233`).
         crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
-        // `NonGit`: in strict mode, confirm absence directly on disk so an incomplete/broken `.git`
-        // stays an unverifiable `Err(())` (TS `worktree-directory.ts:236`).
+        // `NonGit`: Git is installed and the workspace root is not a repository, so subfolders
+        // inside the workspace root are owned (`native-worktrees.ts:66`, `worktree-directory.ts:230`).
+        // In strict mode, confirm absence directly on disk so an incomplete/broken `.git`
+        // stays an unverifiable `Err(())` (`worktree-directory.ts:236`).
         crate::worktrees::linked::HttpSnapshot::NonGit => {
-            if strict && matches!(strict_common_directory(root).await, Ok(None)) {
-                return Ok(None);
+            if strict && !matches!(strict_common_directory(root).await, Ok(None)) {
+                return Err(());
             }
-            return Err(());
+            let Ok(real_root) = dunce::canonicalize(root) else {
+                return Ok(None);
+            };
+            if (!strict || target.is_some()) && within(&real_root, &resolved) {
+                return Ok(Some(Owned { directory: resolved.to_string_lossy().into_owned(), checkout: root.clone() }));
+            }
+            return Ok(None);
         }
     };
     let (owner, root_live) = {
@@ -554,10 +562,19 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
             crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
             crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
             crate::worktrees::linked::HttpSnapshot::NonGit => {
-                if strict && matches!(strict_common_directory(root).await, Ok(None)) {
-                    return Ok(None);
+                if strict && !matches!(strict_common_directory(root).await, Ok(None)) {
+                    return Err(());
                 }
-                return Err(());
+                let Ok(real_root) = dunce::canonicalize(root) else {
+                    return Ok(None);
+                };
+                if (!strict || target.is_some()) && within(&real_root, &resolved) {
+                    return Ok(Some(Owned {
+                        directory: resolved.to_string_lossy().into_owned(),
+                        checkout: root.clone(),
+                    }));
+                }
+                return Ok(None);
             }
         };
         let res_owned = resolved.clone();

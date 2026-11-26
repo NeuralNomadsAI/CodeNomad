@@ -240,8 +240,17 @@ impl Prepared {
         Ok(())
     }
 
-    pub(crate) fn commit(mut self) -> R<()> {
-        self.verify()?;
+    pub(crate) fn commit(self) -> R<()> {
+        self.commit_checked(|e| e, || Ok(()))
+    }
+
+    pub(crate) fn commit_checked<E>(
+        mut self,
+        map: impl Fn(DocError) -> E,
+        before_rename: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.verify().map_err(&map)?;
+        before_rename()?;
         match std::fs::rename(&self.temporary, &self.source.write) {
             Ok(()) => {
                 self.temporary.clear();
@@ -256,9 +265,9 @@ impl Prepared {
                         | ErrorKind::DirectoryNotEmpty
                 ) =>
             {
-                Err(DocError::Conflict("OpenCode configuration changed during the update"))
+                Err(map(DocError::Conflict("OpenCode configuration changed during the update")))
             }
-            Err(_) => Err(DocError::Filesystem("Unable to atomically replace OpenCode configuration")),
+            Err(_) => Err(map(DocError::Filesystem("Unable to atomically replace OpenCode configuration"))),
         }
     }
 }
@@ -279,8 +288,14 @@ pub(crate) fn prepare(d: &Document, updated: &[u16]) -> R<Prepared> {
             return Err(failed.clone());
         }
     }
-    let mut file =
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|_| failed.clone())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(d.mode & 0o777);
+    }
+    let mut file = options.open(&temporary).map_err(|_| failed.clone())?;
     prepared.temporary = temporary.clone();
     use std::io::Write;
     file.write_all(crate::subagent_depth::jsonc::string(updated).as_bytes()).map_err(|_| failed.clone())?;

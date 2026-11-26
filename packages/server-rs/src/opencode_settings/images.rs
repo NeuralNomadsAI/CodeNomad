@@ -393,8 +393,11 @@ async fn update(
         Some(ctx.endpoint.clone()),
         principal.clone(),
         move |document| {
+            if document.requested != project_requested {
+                return Err(fail(Status::CONFLICT, "OpenCode configuration changed; refresh before saving"));
+            }
             let has_experimental = doc::read(document, &["experimental"]).map_err(mapped)?.is_some();
-            if document.requested != project_requested || !has_experimental {
+            if !has_experimental {
                 return Err(fail(Status::CONFLICT, "OpenCode configuration changed; refresh before saving"));
             }
             doc::edit_setting(document, &MEDIA_STORAGE_KEYS, Some(J::Bool(media_storage))).map_err(mapped)

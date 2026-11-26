@@ -148,10 +148,36 @@ pub(super) async fn read_json_body(
     body: Body,
     invalid_message: &'static str,
 ) -> Result<Value, Box<Response>> {
-    if let Some(len) = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok())
-        && let Ok(parsed) = len.trim().parse::<u64>()
-        && parsed > BODY_LIMIT as u64
-    {
+    let media_error = || {
+        Box::new(close_response(
+            fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type")
+                .into_response(),
+        ))
+    };
+
+    // Fastify selects the content-type parser before checking body size or draining the stream.
+    let declared_len =
+        headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok());
+    let has_transfer_encoding = headers.contains_key(header::TRANSFER_ENCODING);
+
+    match headers.get(header::CONTENT_TYPE) {
+        None => {
+            if has_transfer_encoding || declared_len.is_some_and(|n| n > 0) {
+                return Err(media_error());
+            }
+            if declared_len == Some(0) {
+                return Err(Box::new(bad_request(invalid_message)));
+            }
+        }
+        Some(kind) => {
+            let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+            if !matches!(essence.as_str(), "application/json" | "text/plain") {
+                return Err(media_error());
+            }
+        }
+    }
+
+    if declared_len.is_some_and(|n| n > BODY_LIMIT as u64) {
         return Err(Box::new(body_too_large()));
     }
 
@@ -159,20 +185,16 @@ pub(super) async fn read_json_body(
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
         let Ok(chunk) = chunk else {
-            return Err(Box::new(close_response(bad_request(invalid_message))));
+            // Transport truncation / premature EOF: 400 without route schema error or 413.
+            return Err(Box::new(close_response(Status::BAD_REQUEST.into_response())));
         };
+        if headers.get(header::CONTENT_TYPE).is_none() && !chunk.is_empty() {
+            return Err(media_error());
+        }
         if bytes.len().saturating_add(chunk.len()) > BODY_LIMIT {
             return Err(Box::new(body_too_large()));
         }
         bytes.extend_from_slice(&chunk);
-    }
-
-    // Fastify rejects missing Content-Type with Transfer-Encoding (e.g. empty chunked body) as 415.
-    if headers.get(header::CONTENT_TYPE).is_none() && headers.contains_key(header::TRANSFER_ENCODING) {
-        return Err(Box::new(
-            fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type")
-                .into_response(),
-        ));
     }
 
     match fastify::body(headers, &bytes) {
@@ -411,12 +433,14 @@ where
         assert_current(&app_commit, &endpoint, &workspace, principal.as_ref())?;
         let updated = edit(&document)?;
         let prepared = fs::prepare(&document, &updated).map_err(mapped)?;
-        // `beforeCommit`: re-check connection, workspace, and caller authority under the file lock.
-        if let Some(ref pinned) = pinned_endpoint {
-            assert_current(&app_commit, pinned, &workspace, principal.as_ref())?;
-        }
-        assert_current(&app_commit, &endpoint, &workspace, principal.as_ref())?;
-        prepared.commit().map_err(mapped)
+        // `beforeCommit`: re-check connection, workspace, and caller authority after `verify()`
+        // and immediately before `std::fs::rename` under the file lock.
+        prepared.commit_checked(mapped, || {
+            if let Some(ref pinned) = pinned_endpoint {
+                assert_current(&app_commit, pinned, &workspace, principal.as_ref())?;
+            }
+            assert_current(&app_commit, &endpoint, &workspace, principal.as_ref())
+        })
     })
     .await
     .map_err(|_| Fail::Generic)?

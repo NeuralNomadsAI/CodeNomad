@@ -20,13 +20,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{images, websearch};
-use crate::{
-    App, Shared, Workspace, auth, files,
-    opencode::{Endpoint, Native},
-    settings,
-    subagent_depth::jsonc,
-    worktrees::fence,
-};
+use crate::{App, Shared, Workspace, auth, files, opencode::Native, settings, subagent_depth::jsonc, worktrees::fence};
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -175,6 +169,7 @@ struct Harness {
     workspace_id: String,
     app: Shared,
     mock: Arc<Mutex<NativeMock>>,
+    native_addr: SocketAddr,
     server_addr: SocketAddr,
     base: String,
     client: reqwest::Client,
@@ -299,6 +294,7 @@ impl Harness {
             workspace_id,
             app,
             mock,
+            native_addr,
             server_addr,
             base: format!("http://{server_addr}"),
             client,
@@ -565,6 +561,30 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     assert_eq!(empty_json.status(), Status::BAD_REQUEST);
     assert_eq!(empty_json.json::<Value>().await.unwrap()["code"], "FST_ERR_CTP_EMPTY_JSON_BODY");
 
+    // Subfolder inside a non-Git workspace root is owned when Git is installed (TS native-worktrees.ts:66).
+    let sub_dir = h.project_dir.join("sub");
+    fs::create_dir_all(&sub_dir).unwrap();
+    let sub_str = sub_dir.to_string_lossy().into_owned();
+    let sub_get = h
+        .client
+        .get(format!("{}?directory={}", h.url("/websearch-settings"), encode_q(&sub_str)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sub_get.status(), Status::OK);
+    let sub_put = h
+        .client
+        .put(h.url("/websearch-settings"))
+        .json(&json!({ "location": { "directory": sub_str }, "scope": "project", "provider": "exa" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sub_put.status(), Status::NO_CONTENT);
+    assert_eq!(
+        parse_jsonc_file(&sub_dir.join(".opencode").join("opencode.jsonc")).unwrap()["websearch"],
+        json!({ "provider": "exa" })
+    );
+
     let bad_ct = h
         .client
         .put(h.url("/websearch-settings"))
@@ -575,10 +595,25 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
         .unwrap();
     assert_eq!(bad_ct.status(), Status::UNSUPPORTED_MEDIA_TYPE);
 
+    // Unsupported Content-Type with Content-Length > 1 MiB must return 415 immediately (not 413).
+    let bad_ct_large = send_raw_http(
+        h.server_addr,
+        &format!(
+            "PUT {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            h.path("/websearch-settings"),
+            h.server_addr,
+            1024 * 1024 + 16
+        ),
+        false,
+    )
+    .await;
+    assert!(bad_ct_large.starts_with("HTTP/1.1 415 "), "got: {bad_ct_large}");
+
+    // Chunked PUT without Content-Type must return 415 immediately without waiting for the terminal chunk.
     let chunked_no_ct = send_raw_http(
         h.server_addr,
         &format!(
-            "PUT {} HTTP/1.1\r\nHost: {}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n",
+            "PUT {} HTTP/1.1\r\nHost: {}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
             h.path("/websearch-settings"),
             h.server_addr
         ),
@@ -586,6 +621,20 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     )
     .await;
     assert!(chunked_no_ct.starts_with("HTTP/1.1 415 "), "got: {chunked_no_ct}");
+
+    // Truncated body stream (premature EOF) returns transport 400 without route schema error or 413.
+    let truncated = send_raw_http(
+        h.server_addr,
+        &format!(
+            "PUT {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{{\"a\":",
+            h.path("/websearch-settings"),
+            h.server_addr
+        ),
+        true,
+    )
+    .await;
+    assert!(truncated.starts_with("HTTP/1.1 400 "), "got: {truncated}");
+    assert!(!truncated.contains("Invalid web search settings request"), "got: {truncated}");
 
     let oversized = send_raw_http(
         h.server_addr,
@@ -833,33 +882,61 @@ async fn image_settings_edits_jsonc_handles_overrides_masking_retarget_and_catal
         assert_eq!(r.json::<Value>().await.unwrap(), json!({ "error": "Invalid image settings request" }));
     }
 
-    // 11. Stale pinned endpoint fails closed before any file write (`beforeCommit` / `assert_current`).
-    let stale_ep = Arc::new(Endpoint {
-        url: reqwest::Url::parse("http://127.0.0.1:9/").unwrap(),
-        password: "stale".into(),
-        version: String::new(),
-        pid: 0,
-    });
-    let stale_err = super::edit_config_document(
-        &h.app,
-        &h.workspace_id,
-        &project,
-        super::Scope::Global,
-        Some(stale_ep),
-        None,
-        |_doc| Ok(jsonc::utf16("{}")),
-    )
-    .await;
-    assert!(stale_err.is_err());
+    // 11. Project target retargeted to a file with duplicate `experimental` keys must return 409 (not 422).
+    fs::write(&h.global_file, "{ \"experimental\": { \"subagent_depth\": 2 } }").unwrap();
+    let project_json = h.project_dir.join("opencode.json");
+    fs::remove_file(&h.project_file).unwrap();
+    fs::write(&project_json, "{ \"experimental\": { \"subagent_depth\": 1 } }").unwrap();
+    {
+        let mut g = h.mock.lock().unwrap();
+        g.project_file = project_json.clone();
+        g.config_reads = 0;
+        let project_jsonc = h.project_file.clone();
+        // 1st config read = context(), 2nd = Global edit, 3rd = Project edit.
+        g.on_config = Some((
+            3,
+            Box::new(move || {
+                fs::write(&project_jsonc, "{ \"experimental\": {}, \"experimental\": {} }").unwrap();
+            }),
+        ));
+    }
+    let project_retarget = h
+        .client
+        .put(&put_url)
+        .json(&json!({ "location": { "directory": project }, "mediaStorage": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        project_retarget.status(),
+        Status::CONFLICT,
+        "retargeted project file must return 409 before reading keys"
+    );
+    let _ = fs::remove_file(&project_json);
+    fs::write(&h.project_file, "{}").unwrap();
+    h.mock.lock().unwrap().project_file = h.project_file.clone();
 
-    // 12. Workspace retired while model catalog fails still fences the entire read with 503.
+    // 12. Endpoint replaced right before commit fails closed in `commit_checked` and leaves the file intact.
+    let before_replace = fs::read_to_string(&h.global_file).unwrap();
+    let app_replace = h.app.clone();
+    let native_addr = h.native_addr;
+    let commit_err =
+        super::edit_config_document(&h.app, &h.workspace_id, &project, super::Scope::Global, None, None, move |_doc| {
+            app_replace.native.replace_test_endpoint(native_addr);
+            Ok(jsonc::utf16("{\"replaced\":true}\n"))
+        })
+        .await;
+    assert!(commit_err.is_err(), "endpoint replacement before commit must abort atomic rename");
+    assert_eq!(fs::read_to_string(&h.global_file).unwrap(), before_replace);
+
+    // 13. Endpoint replaced while model catalog fails still fences the entire read with 503.
     {
         let app_clone = h.app.clone();
-        let ws_id = h.workspace_id.clone();
+        let addr = h.native_addr;
         let mut g = h.mock.lock().unwrap();
         g.model_status = Status::SERVICE_UNAVAILABLE;
         g.on_model = Some(Box::new(move || {
-            app_clone.inner.lock().unwrap().workspaces.retain(|w| w.id.to_string() != ws_id);
+            app_clone.native.replace_test_endpoint(addr);
         }));
     }
     let fenced_read = h.client.get(&get_url).send().await.unwrap();
