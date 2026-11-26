@@ -50,13 +50,13 @@ pub(super) fn take_auth_sink(sink: &AuthSink) -> (Vec<Backend>, u64) {
 }
 pub(super) fn has_auth_since(sink: &AuthSink, since_epoch: u64, b: &Backend) -> bool {
     let Ok(state) = sink.lock() else {
-        return false;
+        return true;
     };
     if state.epoch == since_epoch {
         return false;
     }
     let delta = state.epoch.wrapping_sub(since_epoch);
-    if delta as usize > state.log.len() {
+    if delta > state.log.len() as u64 {
         return true;
     }
     state.log.iter().any(|(ep, bk)| {

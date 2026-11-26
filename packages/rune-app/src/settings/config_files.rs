@@ -56,6 +56,19 @@ impl Editor {
         self.requested_id = None;
     }
 
+    fn requested_other_file(&self) -> bool {
+        let Some(id) = self.requested_id.as_deref() else {
+            return false;
+        };
+        let Some(files) = &self.files else {
+            return false;
+        };
+        files
+            .iter()
+            .position(|file| file.id == id)
+            .is_some_and(|index| self.active != Some(index))
+    }
+
     fn apply_requested(&mut self) -> bool {
         if self.busy()
             || self.read.is_some()
@@ -373,7 +386,7 @@ impl Editor {
             }));
             if key == "settings.configFiles.errors.loadList"
                 || self.active.is_none()
-                || (key == "settings.configFiles.errors.loadContent" && self.requested_id.is_some())
+                || (key == "settings.configFiles.errors.loadContent" && self.requested_other_file())
             {
                 view = view.child(layout::button(
                     t("sessionList.loadError.retry"),
@@ -381,7 +394,7 @@ impl Editor {
                     move |s| {
                         let editor = edit(s);
                         editor.notice = None;
-                        if !editor.apply_requested() {
+                        if !editor.apply_requested() && editor.active.is_none() {
                             editor.goal = editor
                                 .files
                                 .as_ref()
@@ -492,9 +505,18 @@ mod tests {
         editor.confirm = None;
         editor.notice = Some("settings.configFiles.errors.loadContent");
         editor.draft = TextEdit::new("{/* edited again */}");
+        assert!(editor.requested_other_file());
         editor.notice = None;
         assert!(editor.apply_requested());
         assert_eq!(editor.confirm, Some(1));
+        assert_eq!(editor.goal, None);
+
+        // Requesting the already-active file A must not offer a fallback Retry that overwrites A.
+        editor.confirm = None;
+        editor.requested_id = Some("a".into());
+        assert!(!editor.requested_other_file());
+        assert!(!editor.apply_requested());
+        assert_eq!(editor.requested_id, None);
         assert_eq!(editor.goal, None);
     }
 }

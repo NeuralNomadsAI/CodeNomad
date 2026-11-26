@@ -1446,42 +1446,31 @@ fn late_sibling_401_between_collect_and_apply_blocks_activation_play() {
         assert!(super::has_auth_since(&sink, ep0, &h.panel.backend));
 
         // Retiring a workspace while a control is in flight must still wake and deliver 401 once.
-        let mut h2 = H::new().await;
-        let (s2, c2) = h2.panel.schedule_parts();
-        s2.show(true);
-        s2.refresh(c2);
-        h2.http
-            .accept()
-            .await
-            .reply(200, list(vec![s_b.clone()], None))
-            .await;
-        h2.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 1)
-            .await;
-        assert!(h2.act(G::Select("msn_b".into())));
-        h2.reply_lc(vec![s_b.clone()], true).await;
-        h2.pump(|p, _| {
-            !p.schedules.loading()
-                && p.schedules.is_fresh("msn_b")
-                && p.schedules.capability == Some(Cap::Available)
-        })
-        .await;
-        assert!(h2.act(G::Action(A::Pause)));
-        h2.http.accept().await.reply(200, rdoc(s_b.clone())).await;
+        let h2 = H::new().await;
+        let mut holds2 = ScheduleHolds::default();
+        let (ctrl_tx, ctrl_rx) = bounded::<()>(4);
+        let ctrl_wake: Wake = Arc::new(move || {
+            let _ = ctrl_tx.try_send(());
+        });
+        let doc_b = UnifiedSchedule::from_value(&s_b).unwrap();
         let kb2 = h2.key("msn_b");
-        h2.pump(|_, hs| matches!(hs.get(&kb2), Some((P::Control(_, false), true))))
-            .await;
+        let req_b =
+            codenomad_client::missions::ScheduleControlRequest::new(A::Pause, 3, None).unwrap();
+        let mut ctx2 = h2.panel.schedule_ctx();
+        ctx2.wake = &ctrl_wake;
+        assert!(holds2.dispatch_control(kb2.clone(), "occ-1".into(), 0, req_b, doc_b, ctx2));
         let ctrl_ret = h2.http.accept().await;
-        while h2.done.try_recv().is_ok() {}
-        h2.holds.retire_workspace(&h2.panel.backend);
-        assert!(h2.holds.get(&kb2).is_none());
+        assert!(ctrl_rx.try_recv().is_err());
+        holds2.retire_workspace(&h2.panel.backend);
+        assert!(holds2.get(&kb2).is_none());
         ctrl_ret.reply(401, json!({"error": "unauthorized"})).await;
         assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), h2.done.recv())
+            tokio::time::timeout(std::time::Duration::from_secs(2), ctrl_rx.recv())
                 .await
                 .is_ok(),
             "401 after hold retirement must still wake UI"
         );
-        assert_eq!(h2.holds.drain_auth_expired().len(), 1);
-        assert!(h2.holds.drain_auth_expired().is_empty());
+        assert_eq!(holds2.drain_auth_expired().len(), 1);
+        assert!(holds2.drain_auth_expired().is_empty());
     });
 }
