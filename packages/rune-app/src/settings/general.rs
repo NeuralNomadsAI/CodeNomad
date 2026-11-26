@@ -47,6 +47,12 @@ enum SavedTarget {
         key: String,
         default_colors: ColorSchemeColors,
     },
+    Select {
+        key: String,
+        name: String,
+        dark: bool,
+        colors: Box<ColorSchemeColors>,
+    },
     Delete,
 }
 
@@ -284,6 +290,17 @@ impl Controls {
                         draft.editing_key = key;
                         draft.colors = default_colors;
                     }
+                    SavedTarget::Select {
+                        key,
+                        name,
+                        dark,
+                        colors,
+                    } => {
+                        draft.editing_key = key;
+                        draft.source_name = name;
+                        draft.dark = dark;
+                        draft.colors = *colors;
+                    }
                     SavedTarget::BuiltInOrCustom | SavedTarget::Delete => {}
                 }
             }
@@ -328,6 +345,22 @@ impl Controls {
     }
 
     fn apply_option_selection(&self, prefs: &mut Preferences, option: &PaletteOption) {
+        if !prefs.select_palette_option(option) {
+            return;
+        }
+        if prefs.palette_saving() {
+            let mut draft = self.draft.borrow_mut();
+            draft.binding_epoch = prefs.binding_epoch();
+            draft.local_error = false;
+            draft.awaiting_save = Some(SavedTarget::Select {
+                key: option.key.clone(),
+                name: option.name.clone(),
+                dark: option.dark,
+                colors: Box::new(option.colors.clone()),
+            });
+            wake_all(prefs);
+            return;
+        }
         let mut draft = self.draft.borrow_mut();
         draft.editing_key = option.key.clone();
         draft.source_name = option.name.clone();
@@ -341,9 +374,7 @@ impl Controls {
         draft.awaiting_save = None;
         prefs.set_palette_preview(None);
         prefs.clear_palette_save_failed();
-        if prefs.select_palette_option(option) {
-            wake_all(prefs);
-        }
+        wake_all(prefs);
     }
 
     fn sync_preview(&self, prefs: &mut Preferences, option: Option<&PaletteOption>) {
@@ -932,7 +963,6 @@ impl Controls {
                             let Some(option) = options.iter().find(|o| &o.key == key) else {
                                 return;
                             };
-                            controls.discard_draft(&mut prefs);
                             controls.apply_option_selection(&mut prefs, option);
                         }
                     }
