@@ -128,7 +128,10 @@ struct MockNative {
     sessions: HashMap<String, SessionMock>,
     metadata_writes: Vec<(String, Value)>,
     update_fail: bool,
+    patch_status: Option<Status>,
+    raw_session: bool,
     hide_project_doc: bool,
+    on_config_read: Option<Arc<dyn Fn() + Send + Sync>>,
     on_rpc: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
     hang_rpc: Option<(String, Arc<Notify>, Arc<Notify>)>,
 }
@@ -140,6 +143,10 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
     let body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
 
     if method == Method::GET && path == "/api/config" {
+        let on_cfg = state.lock().unwrap().on_config_read.clone();
+        if let Some(cb) = on_cfg {
+            cb();
+        }
         let g = state.lock().unwrap();
         let mut docs = vec![json!({ "type": "directory", "path": g.global_dir })];
         if let Ok(text) = fs::read_to_string(&g.global_file)
@@ -174,7 +181,10 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
     if method == Method::GET
         && let Some(sid) = path.strip_prefix("/api/session/")
     {
-        let sess = state.lock().unwrap().sessions.get(sid).cloned();
+        let (sess, raw_session) = {
+            let g = state.lock().unwrap();
+            (g.sessions.get(sid).cloned(), g.raw_session)
+        };
         let Some(sess) = sess else {
             return (Status::NOT_FOUND, Json(json!({ "_tag": "SessionNotFoundError", "sessionID": sid })))
                 .into_response();
@@ -187,14 +197,12 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
         if let Some(ws) = sess.workspace_id {
             loc["workspaceID"] = Value::String(ws);
         }
-        return Json(json!({
-            "data": {
-                "id": sess.id,
-                "location": loc,
-                "metadata": sess.metadata,
-            }
-        }))
-        .into_response();
+        let inner = json!({
+            "id": sess.id,
+            "location": loc,
+            "metadata": sess.metadata,
+        });
+        return Json(if raw_session { inner } else { json!({ "data": inner }) }).into_response();
     }
     if method == Method::PATCH
         && let Some(sid) = path.strip_prefix("/api/session/")
@@ -208,7 +216,7 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
         if let Some(s) = g.sessions.get_mut(sid) {
             s.metadata = meta;
         }
-        return Status::NO_CONTENT.into_response();
+        return g.patch_status.unwrap_or(Status::NO_CONTENT).into_response();
     }
     if method == Method::POST
         && let Some(rest) = path.strip_prefix("/api/rpc/")
@@ -312,7 +320,10 @@ impl Harness {
             sessions,
             metadata_writes: Vec::new(),
             update_fail: false,
+            patch_status: None,
+            raw_session: false,
             hide_project_doc: false,
+            on_config_read: None,
             on_rpc: None,
             hang_rpc: None,
         }));
@@ -763,6 +774,104 @@ async fn post_install_enforces_catalog_scope_duplicates_validation_and_post_writ
         .unwrap();
     assert_eq!(f403.status(), Status::FORBIDDEN);
     assert_eq!(f403.json::<Value>().await.unwrap()["code"], "forbidden");
+
+    // 8. Uncoded write conflict (e.g. worktree deletion fence) maps to `409 stale`, not `duplicate`.
+    let h_stale = Harness::new().await;
+    let dir_stale = h_stale.dir();
+    h_stale
+        .app
+        .integration_catalog
+        .seed_for_test(IntegrationCatalog { integrations: vec![entry("mail", "api")] })
+        .await;
+    let _fence =
+        crate::worktrees::fence::block(&[crate::worktrees::fence::identity(&h_stale.project_dir)]).await.unwrap();
+    let stale_resp = h_stale
+        .client
+        .post(h_stale.url("/mail/install"))
+        .query(&[("directory", &dir_stale)])
+        .json(&json!({ "scope": "project" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_resp.status(), Status::CONFLICT);
+    assert_eq!(stale_resp.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(stale_resp.json::<Value>().await.unwrap()["code"], "stale");
+
+    // 9. Post-write authority loss (principal revoked or directory replaced) maps to `503 uncertain`.
+    let h_uncertain = Harness::new().await;
+    let dir_uncertain = h_uncertain.dir();
+    h_uncertain
+        .app
+        .integration_catalog
+        .seed_for_test(IntegrationCatalog { integrations: vec![entry("mail", "api")] })
+        .await;
+    let principal = tokio_util::sync::CancellationToken::new();
+    let revoke = principal.clone();
+    let uncertain_err = super::install::install_with_after_write(
+        &h_uncertain.app,
+        &h_uncertain.ws_id.to_string(),
+        "mail",
+        &dir_uncertain,
+        crate::opencode_settings::Scope::Global,
+        Some(principal),
+        Box::new(move || revoke.cancel()),
+    )
+    .await
+    .err();
+    assert_eq!(uncertain_err, Some(super::install::InstallError::Uncertain));
+    assert!(
+        fs::read_to_string(&h_uncertain.global_file).unwrap().contains("@neuralnomads/opencode-mail@^0.1"),
+        "write occurred before post-write refusal"
+    );
+
+    // Post-write directory identity swap (directory replaced on disk after commit) -> `503 uncertain`.
+    let h_swap = Harness::new().await;
+    let dir_swap = h_swap.dir();
+    h_swap.app.integration_catalog.seed_for_test(IntegrationCatalog { integrations: vec![entry("mail", "api")] }).await;
+    let swapped_dir = h_swap.project_dir.clone();
+    let moved_dir = h_swap.root.join("project-moved");
+    let swap_err = super::install::install_with_after_write(
+        &h_swap.app,
+        &h_swap.ws_id.to_string(),
+        "mail",
+        &dir_swap,
+        crate::opencode_settings::Scope::Global,
+        None,
+        Box::new(move || {
+            fs::rename(&swapped_dir, &moved_dir).unwrap();
+            fs::create_dir_all(&swapped_dir).unwrap();
+        }),
+    )
+    .await
+    .err();
+    assert_eq!(swap_err, Some(super::install::InstallError::Uncertain));
+
+    // Pre-write directory identity swap during `sources::add_pinned` -> `403 forbidden`, nothing written!
+    let h_pre = Harness::new().await;
+    let dir_pre = h_pre.dir();
+    h_pre.app.integration_catalog.seed_for_test(IntegrationCatalog { integrations: vec![entry("mail", "api")] }).await;
+    let cfg_reads = Arc::new(AtomicUsize::new(0));
+    let cfg_reads_cb = cfg_reads.clone();
+    let pre_dir = h_pre.project_dir.clone();
+    let pre_moved = h_pre.root.join("project-pre-moved");
+    h_pre.mock.lock().unwrap().on_config_read = Some(Arc::new(move || {
+        // 1st config read is initial `install::read_bound`; 2nd is inside `sources::add_pinned`.
+        if cfg_reads_cb.fetch_add(1, Ordering::SeqCst) == 1 {
+            fs::rename(&pre_dir, &pre_moved).unwrap();
+            fs::create_dir_all(&pre_dir).unwrap();
+        }
+    }));
+    let pre_resp = h_pre
+        .client
+        .post(h_pre.url("/mail/install"))
+        .query(&[("directory", &dir_pre)])
+        .json(&json!({ "scope": "global" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pre_resp.status(), Status::FORBIDDEN);
+    assert_eq!(pre_resp.json::<Value>().await.unwrap()["code"], "forbidden");
+    assert!(!h_pre.global_file.exists(), "swapped location must not be written before commit");
 }
 
 #[tokio::test]
@@ -1160,12 +1269,13 @@ async fn remote_control_admits_all_seven_integration_routes_for_direct_and_ingre
         assert_eq!(paired.status(), Status::OK);
         let cookie = paired.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned();
 
-        // Unpaired request -> 401.
+        // Unpaired request -> 401 with Cache-Control: no-store.
         let unpaired =
             h.client.get(&base).query(&[("directory", dir.as_str())]).header(header::HOST, host).send().await.unwrap();
         assert_eq!(unpaired.status(), Status::UNAUTHORIZED);
+        assert_eq!(unpaired.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
 
-        // Cross-origin POST -> 403.
+        // Cross-origin POST -> 403 with Cache-Control: no-store.
         let cross = h
             .client
             .post(format!("{base}/fixture/detach"))
@@ -1178,6 +1288,23 @@ async fn remote_control_admits_all_seven_integration_routes_for_direct_and_ingre
             .await
             .unwrap();
         assert_eq!(cross.status(), Status::FORBIDDEN);
+        assert_eq!(cross.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+        // Unmatched remote integration subpath -> 404 with Cache-Control: no-store.
+        let unmatched_remote = h
+            .client
+            .get(format!("{base}/fixture/unknown"))
+            .query(&[("directory", dir.as_str())])
+            .header(header::HOST, host)
+            .header(header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unmatched_remote.status(), Status::NOT_FOUND);
+        assert_eq!(
+            unmatched_remote.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
 
         // Paired browser device accesses all 7 routes.
         let mut headers = HeaderMap::new();
@@ -1318,4 +1445,260 @@ async fn recognition_handles_alias_git_and_timeout_status() {
     let rec = recognize_integrations(&IntegrationCatalog { integrations: vec![entry("fixture", "native")] }, &snap);
     assert_eq!(rec.len(), 1);
     assert_eq!(rec[0].scopes, vec![ConfigScope::Global]);
+}
+
+#[tokio::test]
+async fn fastify_parsing_strict_native_contracts_unmatched_404_and_revoked_status_queue() {
+    let h = Harness::new().await;
+    h.seed_loaded_fixture().await;
+    let dir = h.dir();
+
+    // 1. Fastify/Zod parity: `text/plain` -> 400 invalid (not 415); empty/malformed JSON -> FST_ERR_CTP_*.
+    let text_install = h
+        .client
+        .post(h.url("/mail/install"))
+        .query(&[("directory", &dir)])
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(r#"{"scope":"global"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(text_install.status(), Status::BAD_REQUEST);
+    assert_eq!(text_install.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(text_install.json::<Value>().await.unwrap()["code"], "invalid");
+
+    let empty_json = h
+        .client
+        .post(h.url("/mail/install"))
+        .query(&[("directory", &dir)])
+        .header(header::CONTENT_TYPE, "application/json")
+        .body("")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty_json.status(), Status::BAD_REQUEST);
+    assert_eq!(empty_json.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(empty_json.json::<Value>().await.unwrap()["code"], "FST_ERR_CTP_EMPTY_JSON_BODY");
+
+    let bad_json = h
+        .client
+        .post(h.url("/fixture/attach"))
+        .query(&[("directory", &dir)])
+        .header(header::CONTENT_TYPE, "application/json")
+        .body("{not-json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_json.status(), Status::BAD_REQUEST);
+    assert_eq!(bad_json.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(bad_json.json::<Value>().await.unwrap()["code"], "FST_ERR_CTP_INVALID_JSON_BODY");
+
+    // GET `hosts` and `binding` ignore request bodies like Fastify.
+    let get_hosts_with_body = h
+        .client
+        .get(h.url("/fixture/hosts"))
+        .query(&[("directory", &dir)])
+        .body("ignored-get-body")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get_hosts_with_body.status(), Status::OK);
+
+    let get_binding_with_body = h
+        .client
+        .get(h.url("/fixture/binding"))
+        .query(&[("directory", dir.as_str()), ("sessionID", "ses_1")])
+        .body("ignored-get-body")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get_binding_with_body.status(), Status::OK);
+
+    // 2. Unmatched integration subpaths return 404 with `Cache-Control: no-store`.
+    for (method, suffix) in [
+        (Method::GET, "/"),
+        (Method::GET, "/fixture"),
+        (Method::GET, "/fixture/unknown"),
+        (Method::POST, "/fixture/install/extra"),
+    ] {
+        let resp = h.client.request(method, h.url(suffix)).send().await.unwrap();
+        assert_eq!(resp.status(), Status::NOT_FOUND, "{suffix}");
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store", "{suffix}");
+    }
+
+    // 3. Strict native response contracts:
+    // (a) Session response without `{ "data": ... }` envelope is refused (`503 unavailable`).
+    h.mock.lock().unwrap().raw_session = true;
+    h.mock.lock().unwrap().rpc_calls.clear();
+    let bare_attach = h
+        .client
+        .post(h.url("/fixture/attach"))
+        .query(&[("directory", &dir)])
+        .json(&json!({ "offerID": "offer_fixture", "sessionID": "ses_1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bare_attach.status(), Status::SERVICE_UNAVAILABLE);
+    assert!(h.mock.lock().unwrap().rpc_calls.is_empty(), "bare session object must not authorize RPCs");
+    h.mock.lock().unwrap().raw_session = false;
+
+    // (b) `201 Created` on `bindingRead` RPC degrades to `{ "state": "unknown" }`, and `201` on `status` -> `unknown`.
+    h.mock.lock().unwrap().rpc_outputs.insert(
+        ("neuralnomads.fixture".into(), "bindingRead".into()),
+        (
+            Status::CREATED,
+            json!({
+                "output": {
+                    "state": "attached",
+                    "authority": binding_authority(),
+                    "binding": { "offerID": "offer_fixture", "label": "Blender window" }
+                }
+            }),
+        ),
+    );
+    let b201 = h
+        .client
+        .get(h.url("/fixture/binding"))
+        .query(&[("directory", dir.as_str()), ("sessionID", "ses_1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(b201.status(), Status::OK);
+    assert_eq!(b201.json::<Value>().await.unwrap(), json!({ "state": "unknown" }));
+    h.mock.lock().unwrap().rpc_outputs.remove(&("neuralnomads.fixture".into(), "bindingRead".into()));
+
+    h.mock.lock().unwrap().rpc_outputs.insert(
+        ("neuralnomads.fixture".into(), "status".into()),
+        (Status::CREATED, json!({ "output": ok_status("fixture", "native") })),
+    );
+    let s201 = h.client.get(h.url("")).query(&[("directory", &dir)]).send().await.unwrap();
+    assert_eq!(s201.status(), Status::OK);
+    let s201_body: Value = s201.json().await.unwrap();
+    assert_eq!(s201_body["integrations"][0]["state"], "unknown");
+    h.mock.lock().unwrap().rpc_outputs.remove(&("neuralnomads.fixture".into(), "status".into()));
+
+    // (c) `200 OK` (instead of `204 No Content`) on `PATCH /api/session/:id` fails with `503 unavailable`.
+    h.mock.lock().unwrap().patch_status = Some(Status::OK);
+    let p200 = h
+        .client
+        .post(h.url("/fixture/attach"))
+        .query(&[("directory", &dir)])
+        .json(&json!({ "offerID": "offer_fixture", "sessionID": "ses_1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(p200.status(), Status::SERVICE_UNAVAILABLE);
+    h.mock.lock().unwrap().patch_status = None;
+
+    // 4. Queued status RPCs in `reader::read` do not dispatch after principal revocation.
+    let h_rev = Harness::new().await;
+    let dir_rev = h_rev.dir();
+    let mut entries = Vec::new();
+    let mut plugins = Vec::new();
+    let mut rt = Vec::new();
+    for idx in 1..=6 {
+        let id = format!("int{idx}");
+        let mut e = entry(&id, "api");
+        e.rpc = format!("neuralnomads.{id}");
+        e.plugin = format!("neuralnomads.{id}");
+        e.package = format!("@neuralnomads/opencode-{id}");
+        plugins.push(format!("{}@0.1.0", e.package));
+        rt.push(json!({
+            "id": e.plugin,
+            "features": { "rpc": true },
+            "source": { "type": "package", "target": format!("{}@0.1.0", e.package), "version": "0.1.0" },
+            "state": { "status": "active" }
+        }));
+        entries.push(e);
+    }
+    h_rev.app.integration_catalog.seed_for_test(IntegrationCatalog { integrations: entries }).await;
+    fs::write(&h_rev.global_file, serde_json::to_string(&json!({ "plugins": plugins })).unwrap()).unwrap();
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    {
+        let mut m = h_rev.mock.lock().unwrap();
+        m.runtime = rt;
+        m.hang_rpc = Some(("status".into(), entered.clone(), release.clone()));
+    }
+    let principal = tokio_util::sync::CancellationToken::new();
+    let principal_clone = principal.clone();
+    let app_rev = h_rev.app.clone();
+    let ws_rev = h_rev.ws_id.to_string();
+    let read_task = tokio::spawn(async move {
+        reader::read_with_timeout(
+            &app_rev,
+            &ws_rev,
+            &ControlLocation::new(dir_rev, None),
+            Some(&principal_clone),
+            Duration::from_secs(4),
+        )
+        .await
+    });
+    // Wait until the 4 concurrency slots are occupied, then revoke the principal and release.
+    loop {
+        let notified = entered.notified();
+        if h_rev.mock.lock().unwrap().rpc_calls.len() >= 4 {
+            break;
+        }
+        tokio::time::timeout(Duration::from_secs(2), notified).await.unwrap();
+    }
+    assert_eq!(h_rev.mock.lock().unwrap().rpc_calls.len(), 4);
+    principal.cancel();
+    release.notify_waiters();
+    let err = read_task.await.unwrap().err();
+    assert!(matches!(err, Some(crate::subagent_depth::Fail::Status(Status::UNAUTHORIZED, _))));
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(
+        h_rev.mock.lock().unwrap().rpc_calls.len(),
+        4,
+        "queued status RPCs must not dispatch after principal revocation"
+    );
+
+    // 5. Local `auth::admit` 401 refusal on integrations path also carries `Cache-Control: no-store`.
+    let local_auth_dir = TempDir(crate::shared::test_dir("int-local-auth"));
+    let local_auth = auth::Auth::new(auth::Settings {
+        username: auth::DEFAULT_USERNAME.into(),
+        password: Some("local-pass".into()),
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        managed_local: false,
+        skip: false,
+        idle: Duration::from_secs(3600),
+        absolute: Duration::from_secs(7200),
+    })
+    .unwrap();
+    let local_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_port = local_listener.local_addr().unwrap().port();
+    let local_settings =
+        settings::Settings::new(settings::document::Location::resolve(&local_auth_dir.0.to_string_lossy()));
+    let (wtx, _wrx) = tokio::sync::mpsc::channel(4);
+    let local_app = Arc::new(App::new(
+        local_auth,
+        local_port,
+        local_auth_dir.0.clone(),
+        local_auth_dir.0.clone(),
+        false,
+        local_settings,
+        json!({}),
+        Native::test_connection(local_listener.local_addr().unwrap()),
+        PathBuf::new(),
+        None,
+        files::watch::Watches::new(wtx),
+        None,
+    ));
+    let local_router = super::routes()
+        .layer(axum::middleware::from_fn_with_state(local_app.clone(), auth::admit))
+        .with_state(local_app);
+    let local_task = tokio::spawn(async move { axum::serve(local_listener, local_router).await.unwrap() });
+    let unauth = h
+        .client
+        .get(format!("http://127.0.0.1:{local_port}/api/workspaces/{}/integrations", h.ws_id))
+        .query(&[("directory", dir.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), Status::UNAUTHORIZED);
+    assert_eq!(unauth.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+    local_task.abort();
 }

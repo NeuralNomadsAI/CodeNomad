@@ -22,7 +22,7 @@ use crate::{
     subagent_depth::Fail,
 };
 
-use super::{capture_root_handle, owns_location, recognition::recognize_integrations};
+use super::{LocationPin, capture_location_pin, owns_location, recognition::recognize_integrations};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallError {
@@ -79,6 +79,31 @@ pub(crate) async fn install(
     scope: Scope,
     principal: Option<CancellationToken>,
 ) -> Result<SourceMutationResponse, InstallError> {
+    install_inner(app, workspace_id, integration_id, directory, scope, principal, None).await
+}
+
+#[cfg(test)]
+pub(crate) async fn install_with_after_write(
+    app: &Shared,
+    workspace_id: &str,
+    integration_id: &str,
+    directory: &str,
+    scope: Scope,
+    principal: Option<CancellationToken>,
+    after_write: Box<dyn FnOnce() + Send>,
+) -> Result<SourceMutationResponse, InstallError> {
+    install_inner(app, workspace_id, integration_id, directory, scope, principal, Some(after_write)).await
+}
+
+async fn install_inner(
+    app: &Shared,
+    workspace_id: &str,
+    integration_id: &str,
+    directory: &str,
+    scope: Scope,
+    principal: Option<CancellationToken>,
+    after_write: Option<Box<dyn FnOnce() + Send>>,
+) -> Result<SourceMutationResponse, InstallError> {
     if !valid_integration_id(integration_id) || directory.is_empty() {
         return Err(InstallError::Invalid);
     }
@@ -118,25 +143,29 @@ pub(crate) async fn install(
     }
 
     let owned = snapshot.location;
-    let root_handle = capture_root_handle(&workspace).await;
-    authorize(app, &workspace, &endpoint, &owned.directory, root_handle.as_deref(), principal.as_ref()).await?;
+    let pin = capture_location_pin(&workspace, &owned.directory).await;
+    authorize(app, &workspace, &endpoint, &owned.directory, &pin, principal.as_ref()).await?;
 
     let spec = format!("{}@{}", entry.package, entry.range);
+    let pinned_location =
+        engine::PinnedLocation { directory: owned.directory.clone(), identity: pin.target_identity.clone() };
     let result = sources::add_pinned(
         app,
         workspace_id,
         SourceAddRequest { location: owned.clone(), scope, spec },
         principal.clone(),
         Some(endpoint.clone()),
+        Some(pinned_location),
     )
     .await
     .map_err(map_source_error)?;
 
+    if let Some(hook) = after_write {
+        hook();
+    }
+
     // The write happened: a refusal now is an uncertain outcome, never a "nothing written" code.
-    if authorize(app, &workspace, &endpoint, &owned.directory, root_handle.as_deref(), principal.as_ref())
-        .await
-        .is_err()
-    {
+    if authorize(app, &workspace, &endpoint, &owned.directory, &pin, principal.as_ref()).await.is_err() {
         return Err(InstallError::Uncertain);
     }
 
@@ -148,11 +177,11 @@ async fn authorize(
     workspace: &Workspace,
     endpoint: &Arc<Endpoint>,
     directory: &str,
-    root_handle: Option<&str>,
+    pin: &LocationPin,
     principal: Option<&CancellationToken>,
 ) -> Result<(), InstallError> {
     assert_current(app, endpoint, workspace, principal).map_err(map_auth_fail)?;
-    if !owns_location(app, workspace, directory, root_handle).await {
+    if !owns_location(app, workspace, directory, pin).await {
         return Err(InstallError::Forbidden);
     }
     assert_current(app, endpoint, workspace, principal).map_err(map_auth_fail)?;
@@ -186,7 +215,7 @@ fn map_source_error(err: SourceError) -> InstallError {
         SourceError::Refused { status: Status::UNAUTHORIZED, .. } => InstallError::Unauthorized,
         SourceError::Refused { status: Status::FORBIDDEN, .. } => InstallError::Forbidden,
         SourceError::Refused { status: Status::NOT_FOUND, .. } => InstallError::NotFound,
-        SourceError::Refused { status: Status::CONFLICT, .. } => InstallError::Duplicate,
+        SourceError::Refused { status: Status::CONFLICT, .. } => InstallError::Stale,
         SourceError::Refused { status: Status::UNPROCESSABLE_ENTITY, .. } => InstallError::Refused,
         _ => InstallError::Unavailable,
     }

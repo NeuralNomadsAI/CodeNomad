@@ -203,8 +203,9 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let raw_path = req.uri().path().to_owned();
     let sensitive_path = crate::auth::remote::is_no_store_account_path(&raw_path);
+    let integrations = crate::integrations::is_integrations_path(&raw_path);
     let path = if sensitive_path { "<account-route>".to_owned() } else { sanitize_trace_path(&raw_path) };
-    let keys = if sensitive_path {
+    let keys = if sensitive_path || integrations {
         Vec::new()
     } else {
         req.uri()
@@ -216,6 +217,14 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
     let status = response.status();
     if status.as_u16() < 400 || status.as_u16() == 404 && path.ends_with("/session-favorites") {
+        return response;
+    }
+    if integrations {
+        route_trace(format_args!(
+            "refusal {} {method} {path} at {started} took {}ms",
+            status.as_u16(),
+            chrono::Utc::now().timestamp_millis() - started
+        ));
         return response;
     }
     let no_store = sensitive_path
@@ -252,13 +261,17 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
 }
 
 fn sanitize_trace_path(path: &str) -> String {
-    let Some(rest) = path.strip_prefix("/api/workspaces/") else {
+    if !crate::integrations::is_integrations_path(path) {
         return path.to_owned();
+    }
+    let Some(rest) = path.strip_prefix("/api/workspaces/") else {
+        return "<unmatched>".to_owned();
     };
     let mut parts = rest.split('/');
-    let Some(_ws) = parts.next() else { return path.to_owned() };
-    if parts.next() != Some("integrations") {
-        return path.to_owned();
+    let _ws = parts.next();
+    let Some(seg) = parts.next() else { return "<unmatched>".to_owned() };
+    if seg != "integrations" {
+        return "<unmatched>".to_owned();
     }
     match (parts.next(), parts.next(), parts.next()) {
         (None, None, None) => "/api/workspaces/:id/integrations".to_owned(),
@@ -266,5 +279,22 @@ fn sanitize_trace_path(path: &str) -> String {
             format!("/api/workspaces/:id/integrations/:integrationId/{action}")
         }
         _ => "<unmatched>".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::sanitize_trace_path;
+
+    #[test]
+    fn integrations_trace_paths_redact_ids_and_encoded_segments() {
+        assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/integrations"), "/api/workspaces/:id/integrations");
+        assert_eq!(
+            sanitize_trace_path("/api/workspaces/ws-secret/integrations/blender/attach"),
+            "/api/workspaces/:id/integrations/:integrationId/attach"
+        );
+        assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/%69ntegrations/blender/attach"), "<unmatched>");
+        assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/integrations/blender/other"), "<unmatched>");
+        assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/files"), "/api/workspaces/ws-secret/files");
     }
 }

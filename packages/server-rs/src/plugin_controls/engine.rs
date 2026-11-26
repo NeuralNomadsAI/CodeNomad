@@ -858,12 +858,37 @@ pub(super) async fn mutate(
     Ok(ActivationMutationResponse { snapshot, rule, target: out_target, changed: true, reload_pending: true })
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PinnedLocation {
+    pub(crate) directory: String,
+    pub(crate) identity: Option<String>,
+}
+
+fn check_pinned_location_sync(pinned: Option<&PinnedLocation>) -> Result<(), Fail> {
+    let Some(pin) = pinned else {
+        return Ok(());
+    };
+    let foreign = || fail(Status::FORBIDDEN, "Location is not owned by this workspace");
+    if let Some(ref expected_id) = pin.identity {
+        let Ok(canon) = dunce::canonicalize(&pin.directory) else {
+            return Err(foreign());
+        };
+        if canon != Path::new(&pin.directory)
+            || crate::files::directory_identity(&canon).ok().as_deref() != Some(expected_id.as_str())
+        {
+            return Err(foreign());
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct EditTarget<'a> {
     pub(super) workspace_id: &'a str,
     pub(super) location: &'a ControlLocation,
     pub(super) scope: Scope,
     pub(super) principal: Option<CancellationToken>,
     pub(super) pinned_endpoint: Option<Arc<Endpoint>>,
+    pub(super) pinned_location: Option<PinnedLocation>,
 }
 
 /// Shared commit-admission state for `POST /plugin-sources` deadline arbitration:
@@ -889,7 +914,7 @@ where
     E: Send + 'static,
     F: FnOnce(&Document, &[PluginConfigEntry]) -> Result<jsonc::Text, E> + Send + 'static,
 {
-    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint, pinned_location } = target_req;
     let queue_key = match scope {
         Scope::Global => format!("{workspace_id}\nglobal"),
         Scope::Project => fence::project_key(workspace_id, &location.directory),
@@ -903,6 +928,9 @@ where
     if let Some(ref pinned) = pinned_endpoint {
         assert_current(app, pinned, &ctx.workspace, principal.as_ref()).map_err(map_fail)?;
     }
+    if pinned_location.as_ref().is_some_and(|p| p.directory != ctx.location.directory) {
+        return Err(map_fail(fail(Status::FORBIDDEN, "Location is not owned by this workspace")));
+    }
     let target =
         ctx.targets.into_iter().find(|t| t.scope == scope).ok_or_else(|| {
             map_fail(fail(Status::SERVICE_UNAVAILABLE, "OpenCode configuration scope is unavailable"))
@@ -911,6 +939,9 @@ where
     let owner = ownership::resolve(app, &ctx.workspace, &ctx.location.directory)
         .await
         .ok_or_else(|| map_fail(fail(Status::FORBIDDEN, "Location is not owned by an active worktree")))?;
+    if pinned_location.as_ref().is_some_and(|p| p.directory != owner.directory) {
+        return Err(map_fail(fail(Status::FORBIDDEN, "Location is not owned by this workspace")));
+    }
     let admitted = fence::enter(&[fence::identity(&owner.checkout)])
         .ok_or_else(|| map_fail(fail(Status::CONFLICT, "Worktree deletion is in progress")))?;
 
@@ -922,6 +953,7 @@ where
         if cancel.is_cancelled() || Instant::now() >= deadline {
             return Err(timeout_err());
         }
+        check_pinned_location_sync(pinned_location.as_ref()).map_err(map_fail)?;
         let doc = fs::load(&target.io_path).map_err(|e| map_fail(mapped(e)))?;
         let plugins = document_plugins(&doc).map_err(|e| map_fail(mapped(e)))?;
         if let Some(ref pinned) = pinned_endpoint {
@@ -933,6 +965,7 @@ where
         prepared.commit_in_place(
             |e| map_fail(mapped(e)),
             || {
+                check_pinned_location_sync(pinned_location.as_ref()).map_err(map_fail)?;
                 guard_current(&app_commit, &endpoint, pinned_endpoint.as_ref(), &workspace, principal.as_ref())
                     .map_err(map_fail)
             },
@@ -973,7 +1006,7 @@ where
     E: Send + 'static,
     F: FnOnce(&PluginDocumentsView<'_>) -> Result<Vec<(Scope, jsonc::Text)>, E>,
 {
-    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint: _ } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint: _, pinned_location: _ } = target_req;
     // Global and Project queues are always held in that fixed order.
     let global_guard = fence::serialize(format!("{workspace_id}\nglobal")).await;
     let project_guard = fence::serialize(fence::project_key(workspace_id, &location.directory)).await;

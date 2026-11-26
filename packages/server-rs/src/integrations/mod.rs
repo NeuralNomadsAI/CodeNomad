@@ -19,7 +19,7 @@ use axum::{
     extract::{Path, RawQuery, State, rejection::PathRejection},
     http::{HeaderMap, HeaderValue, StatusCode as Status, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{any, get, post},
 };
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -47,6 +47,8 @@ const INVALID_ATTACHMENT: &str = "Invalid integration attachment request";
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/workspaces/{id}/integrations", get(get_integrations).fallback(not_found))
+        .route("/api/workspaces/{id}/integrations/", any(not_found))
+        .route("/api/workspaces/{id}/integrations/{integrationId}", any(not_found))
         .route("/api/workspaces/{id}/integrations/{integrationId}/install", post(post_install).fallback(not_found))
         .route("/api/workspaces/{id}/integrations/{integrationId}/hosts", get(get_hosts).fallback(not_found))
         .route("/api/workspaces/{id}/integrations/{integrationId}/binding", get(get_binding).fallback(not_found))
@@ -56,6 +58,25 @@ pub fn routes() -> Router<Shared> {
         )
         .route("/api/workspaces/{id}/integrations/{integrationId}/attach", post(post_attach).fallback(not_found))
         .route("/api/workspaces/{id}/integrations/{integrationId}/detach", post(post_detach).fallback(not_found))
+        .route("/api/workspaces/{id}/integrations/{integrationId}/{action}", any(not_found))
+        .route("/api/workspaces/{id}/integrations/{integrationId}/{action}/{*rest}", any(not_found))
+}
+
+/// True for any path under `/api/workspaces/:id/integrations` (including percent-encoded segments
+/// and unmatched subpaths), used to enforce `Cache-Control: no-store` on admission refusals and
+/// trace redaction.
+pub(crate) fn is_integrations_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/workspaces/") else {
+        return false;
+    };
+    let mut parts = rest.split('/');
+    let Some(ws) = parts.next() else { return false };
+    let Some(seg) = parts.next() else { return false };
+    if ws.is_empty() {
+        return false;
+    }
+    seg == "integrations"
+        || percent_encoding::percent_decode_str(seg).decode_utf8().is_ok_and(|decoded| decoded == "integrations")
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -191,7 +212,7 @@ async fn read_post_json(headers: &HeaderMap, body: Body, invalid: fn() -> Respon
             let mut stream = body.into_data_stream();
             while let Some(chunk) = stream.next().await {
                 let Ok(chunk) = chunk else {
-                    return Err(Box::new(no_store(close_response(invalid()))));
+                    return Err(Box::new(no_store(close_response(Status::BAD_REQUEST.into_response()))));
                 };
                 if !chunk.is_empty() {
                     return Err(media_error());
@@ -201,7 +222,7 @@ async fn read_post_json(headers: &HeaderMap, body: Body, invalid: fn() -> Respon
         }
         Some(kind) => {
             let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-            if essence != "application/json" {
+            if !matches!(essence.as_str(), "application/json" | "text/plain") {
                 return Err(media_error());
             }
         }
@@ -215,30 +236,22 @@ async fn read_post_json(headers: &HeaderMap, body: Body, invalid: fn() -> Respon
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
         let Ok(chunk) = chunk else {
-            return Err(Box::new(no_store(close_response(invalid()))));
+            return Err(Box::new(no_store(close_response(Status::BAD_REQUEST.into_response()))));
         };
         if bytes.len().saturating_add(chunk.len()) > BODY_LIMIT {
             return Err(too_large());
         }
         bytes.extend_from_slice(&chunk);
     }
-    if bytes.is_empty() {
-        return Err(Box::new(invalid()));
-    }
-    serde_json::from_slice(&bytes).map_err(|_| Box::new(invalid()))
-}
-
-async fn ensure_empty_get_body(body: Body) -> Result<(), Response> {
-    let mut stream = body.into_data_stream();
-    while let Some(chunk) = stream.next().await {
-        let Ok(chunk) = chunk else {
-            return Err(no_store(close_response(invalid_attachment())));
-        };
-        if !chunk.is_empty() {
-            return Err(invalid_attachment());
+    match fastify::body(headers, &bytes) {
+        Ok(Some(fastify::Body::Json(value))) => Ok(value),
+        Ok(_) => Err(Box::new(invalid())),
+        Err(err) => {
+            let close = err.0 == Status::BAD_REQUEST;
+            let resp = no_store(err.into_response());
+            Err(Box::new(if close { close_response(resp) } else { resp }))
         }
     }
-    Ok(())
 }
 
 async fn get_integrations(
@@ -310,11 +323,7 @@ async fn get_hosts(
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     principal: Option<Extension<Principal>>,
-    body: Body,
 ) -> Response {
-    if let Err(resp) = ensure_empty_get_body(body).await {
-        return resp;
-    }
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
@@ -335,11 +344,7 @@ async fn get_binding(
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     principal: Option<Extension<Principal>>,
-    body: Body,
 ) -> Response {
-    if let Err(resp) = ensure_empty_get_body(body).await {
-        return resp;
-    }
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
@@ -483,11 +488,28 @@ fn parse_detach_body(value: &Value) -> Option<&str> {
     obj.get("sessionID")?.as_str().filter(|s| valid_native_session_id(s))
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LocationPin {
+    pub(crate) root_identity: Option<String>,
+    pub(crate) target_identity: Option<String>,
+}
+
+pub(crate) async fn capture_location_pin(workspace: &crate::Workspace, directory: &str) -> LocationPin {
+    let root = workspace.path.clone();
+    let dir = directory.to_owned();
+    tokio::task::spawn_blocking(move || LocationPin {
+        root_identity: crate::files::directory_identity(&root).ok(),
+        target_identity: crate::files::directory_identity(std::path::Path::new(&dir)).ok(),
+    })
+    .await
+    .unwrap_or(LocationPin { root_identity: None, target_identity: None })
+}
+
 pub(crate) async fn owns_location(
     app: &crate::App,
     workspace: &crate::Workspace,
     directory: &str,
-    root_identity: Option<&str>,
+    pin: &LocationPin,
 ) -> bool {
     if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
         return false;
@@ -495,32 +517,41 @@ pub(crate) async fn owns_location(
     let dir = directory.to_owned();
     let root = workspace.path.clone();
     let scope = app.scope.clone();
-    let expected = root_identity.map(str::to_owned);
-    let fast_root = tokio::task::spawn_blocking(move || {
-        let expected = expected.as_deref()?;
-        let target = dunce::canonicalize(&dir).ok()?;
-        if !target.starts_with(&scope) {
+    let pin_clone = pin.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let root_live = dunce::canonicalize(&root).ok().as_ref() == Some(&root)
+            && pin_clone
+                .root_identity
+                .as_deref()
+                .is_none_or(|rid| crate::files::directory_identity(&root).ok().as_deref() == Some(rid));
+        if !root_live {
             return Some(false);
         }
-        if target == root {
-            let live_root = dunce::canonicalize(&root).ok().as_ref() == Some(&root)
-                && crate::files::directory_identity(&root).ok().as_deref() == Some(expected);
-            return Some(live_root);
+        if let Some(ref tid) = pin_clone.target_identity {
+            let Ok(target) = dunce::canonicalize(&dir) else {
+                return Some(false);
+            };
+            if !target.starts_with(&scope)
+                || target != std::path::Path::new(&dir)
+                || crate::files::directory_identity(&target).ok().as_deref() != Some(tid.as_str())
+            {
+                return Some(false);
+            }
+            if target == root {
+                return Some(true);
+            }
         }
         None
     })
     .await
     .ok()
     .flatten();
-    match fast_root {
+    match checked {
         Some(owned) => owned,
-        None => crate::worktrees::ownership::resolve(app, workspace, directory).await.is_some(),
+        None => crate::worktrees::ownership::resolve(app, workspace, directory)
+            .await
+            .is_some_and(|owned| owned.directory == directory),
     }
-}
-
-pub(crate) async fn capture_root_handle(workspace: &crate::Workspace) -> Option<String> {
-    let root = workspace.path.clone();
-    tokio::task::spawn_blocking(move || crate::files::directory_identity(&root).ok()).await.ok().flatten()
 }
 
 #[cfg(test)]

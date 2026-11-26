@@ -99,6 +99,7 @@ pub(super) async fn add(
         req,
         principal,
         None,
+        None,
         PLUGIN_SOURCE_ADD_TIMEOUT,
         PLUGIN_SOURCE_ABORT_GRACE,
     )
@@ -111,6 +112,7 @@ pub(crate) async fn add_pinned(
     req: SourceAddRequest,
     principal: Option<CancellationToken>,
     pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
 ) -> Result<SourceMutationResponse, SourceError> {
     add_with_timeouts_pinned(
         app,
@@ -118,6 +120,7 @@ pub(crate) async fn add_pinned(
         req,
         principal,
         pinned_endpoint,
+        pinned_location,
         PLUGIN_SOURCE_ADD_TIMEOUT,
         PLUGIN_SOURCE_ABORT_GRACE,
     )
@@ -133,15 +136,17 @@ pub(super) async fn add_with_timeouts(
     add_timeout: Duration,
     abort_grace: Duration,
 ) -> Result<SourceMutationResponse, SourceError> {
-    add_with_timeouts_pinned(app, workspace_id, req, principal, None, add_timeout, abort_grace).await
+    add_with_timeouts_pinned(app, workspace_id, req, principal, None, None, add_timeout, abort_grace).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn add_with_timeouts_pinned(
     app: &Shared,
     workspace_id: &str,
     req: SourceAddRequest,
     principal: Option<CancellationToken>,
     pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
     add_timeout: Duration,
     abort_grace: Duration,
 ) -> Result<SourceMutationResponse, SourceError> {
@@ -168,6 +173,7 @@ async fn add_with_timeouts_pinned(
         &req,
         principal,
         pinned_endpoint,
+        pinned_location,
         cancel.clone(),
         deadline,
         commit_state.clone(),
@@ -199,12 +205,14 @@ async fn add_with_timeouts_pinned(
     outcome
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn add_serialized(
     app: &Shared,
     workspace_id: &str,
     req: &SourceAddRequest,
     principal: Option<CancellationToken>,
     pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
     cancel: CancellationToken,
     deadline: tokio::time::Instant,
     commit_state: Arc<AtomicU8>,
@@ -232,6 +240,9 @@ async fn add_serialized(
     )?;
     if cancel.is_cancelled() {
         return Err(timeout_err());
+    }
+    if pinned_location.as_ref().is_some_and(|p| p.directory != snapshot.location.directory) {
+        return Err(SourceError::Refused { status: Status::FORBIDDEN, code: None });
     }
 
     // Integration catalog rules (`plugin-sources.ts:89-101`):
@@ -271,7 +282,14 @@ async fn add_serialized(
     let cancel_edit = cancel.clone();
     engine::edit_config_document_cancellable(
         app,
-        engine::EditTarget { workspace_id, location: &req.location, scope: req.scope, principal, pinned_endpoint },
+        engine::EditTarget {
+            workspace_id,
+            location: &req.location,
+            scope: req.scope,
+            principal,
+            pinned_endpoint,
+            pinned_location,
+        },
         cancel,
         deadline,
         commit_state,
@@ -311,7 +329,14 @@ pub(super) async fn remove(
 
     let result = engine::edit_plugin_documents(
         app,
-        engine::EditTarget { workspace_id, location: &req.location, scope, principal, pinned_endpoint: None },
+        engine::EditTarget {
+            workspace_id,
+            location: &req.location,
+            scope,
+            principal,
+            pinned_endpoint: None,
+            pinned_location: None,
+        },
         &req.expected_revision,
         SourceError::from_fail,
         |view| {

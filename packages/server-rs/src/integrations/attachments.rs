@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    capture_root_handle,
+    LocationPin, capture_location_pin,
     contract::{
         BindingReadOutput, INTEGRATION_ATTACHMENT_METADATA_KEY, IntegrationHostsOutput, OutcomeOutput, looks_like_path,
         parse_attach_host_output, parse_binding_read_output, parse_detach_host_output, parse_hosts_output,
@@ -159,7 +159,7 @@ struct Context<'a> {
     app: &'a App,
     workspace: Workspace,
     location: ControlLocation,
-    root_handle: Option<String>,
+    pin: LocationPin,
     entry: IntegrationCatalogEntry,
     endpoint: Arc<Endpoint>,
     principal: Option<CancellationToken>,
@@ -460,12 +460,12 @@ where
         if !matches!(recognition.runtime.as_ref().map(|r| &r.state), Some(RuntimeState::Active)) {
             return Err(AttachmentError::Inactive);
         }
-        let root_handle = capture_root_handle(&workspace).await;
+        let pin = capture_location_pin(&workspace, &snapshot.location.directory).await;
         let ctx = Context {
             app,
             workspace,
             location: snapshot.location,
-            root_handle,
+            pin,
             entry: recognition.entry,
             endpoint,
             principal,
@@ -488,7 +488,7 @@ async fn authorize(ctx: &Context<'_>) -> Result<(), AttachmentError> {
     let _ = ctx.remaining()?;
     assert_current(ctx.app, &ctx.endpoint, &ctx.workspace, ctx.principal.as_ref()).map_err(map_auth_fail)?;
     if ctx.location.workspace_id.is_some()
-        || !owns_location(ctx.app, &ctx.workspace, &ctx.location.directory, ctx.root_handle.as_deref()).await
+        || !owns_location(ctx.app, &ctx.workspace, &ctx.location.directory, &ctx.pin).await
     {
         return Err(AttachmentError::Forbidden);
     }
@@ -528,11 +528,9 @@ async fn fetch_session(ctx: &Context<'_>, session_id: &str) -> Result<Value, Att
     let mut parsed = crate::opencode::read_json(response, SESSION_RECORD_MAX_BYTES)
         .await
         .map_err(|_| AttachmentError::Unavailable)?;
-    let record = match parsed.as_object_mut().and_then(|o| o.remove("data")) {
-        Some(inner) if inner.is_object() => inner,
-        Some(_) => return Err(AttachmentError::Unavailable),
-        None if parsed.is_object() => parsed,
-        None => return Err(AttachmentError::Unavailable),
+    // Native `GET /api/session/:id` always wraps the session record in `{ "data": { ... } }`.
+    let Some(record) = parsed.as_object_mut().and_then(|o| o.remove("data")).filter(Value::is_object) else {
+        return Err(AttachmentError::Unavailable);
     };
 
     authorize(ctx).await?;
@@ -593,7 +591,7 @@ async fn rpc_call(
         .send()
         .await
     {
-        Ok(response) if response.status().is_success() => {
+        Ok(response) if response.status() == Status::OK => {
             match crate::opencode::read_json(response, RPC_OUTPUT_MAX_BYTES).await {
                 Ok(mut body) => match body.as_object_mut().and_then(|o| o.remove("output")) {
                     Some(output) => Ok(output),
@@ -682,7 +680,7 @@ async fn write_hint(ctx: &Context<'_>, session_id: &str, hint: Option<Value>) ->
         .await
         .map_err(|_| AttachmentError::Unavailable)?;
 
-    if !response.status().is_success() {
+    if response.status() != Status::NO_CONTENT {
         return Err(AttachmentError::Unavailable);
     }
     let _ = fetch_session(ctx, session_id).await?;

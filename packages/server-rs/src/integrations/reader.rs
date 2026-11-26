@@ -30,7 +30,7 @@ use crate::{
 };
 
 use super::{
-    capture_root_handle,
+    capture_location_pin,
     contract::{
         IntegrationStatusConnection, IntegrationStatusHost, IntegrationStatusOutput, is_integration_docs_url,
         looks_like_path, parse_status_output,
@@ -167,28 +167,55 @@ pub(crate) async fn read_with_timeout(
         },)?;
 
     let owned = snapshot.location.clone();
-    let root_handle = capture_root_handle(&workspace).await;
+    let pin = capture_location_pin(&workspace, &owned.directory).await;
     let recognitions = recognize_integrations(&catalog.catalog, &snapshot);
 
     let sem = Arc::new(Semaphore::new(INTEGRATION_STATUS_CONCURRENCY));
     let statuses = join_all(recognitions.iter().map(|recognition| {
         let sem = sem.clone();
         let endpoint = endpoint.clone();
+        let workspace = workspace.clone();
         let dir = owned.directory.clone();
+        let pin = pin.clone();
         async move {
-            let _permit = sem.acquire_owned().await.ok();
-            read_one_status(app, &endpoint, &dir, recognition, timeout).await
+            // Short-circuit entries that require no RPC without consuming a concurrency slot.
+            if let Some(local) = local_status_state(recognition) {
+                return StatusRead::State(local);
+            }
+            let _permit = match principal {
+                Some(tok) => tokio::select! {
+                    biased;
+                    _ = tok.cancelled() => return StatusRead::Aborted,
+                    res = sem.acquire_owned() => match res { Ok(p) => p, Err(_) => return StatusRead::Aborted },
+                },
+                None => match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => return StatusRead::Aborted,
+                },
+            };
+            // Re-verify connection, principal, and location authority right after acquiring the
+            // semaphore permit so queued RPCs never dispatch after authority revocation.
+            if assert_current(app, &endpoint, &workspace, principal).is_err()
+                || !owns_location(app, &workspace, &dir, &pin).await
+                || assert_current(app, &endpoint, &workspace, principal).is_err()
+            {
+                return StatusRead::Aborted;
+            }
+            read_one_status(app, &endpoint, &dir, recognition, principal, timeout).await
         }
     }))
     .await;
 
-    if !owns_location(app, &workspace, &owned.directory, root_handle.as_deref()).await {
+    if !owns_location(app, &workspace, &owned.directory, &pin).await {
         return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
     }
     assert_current(app, &endpoint, &workspace, principal).map_err(|err| match err {
         Fail::Status(Status::UNAUTHORIZED, msg) => Fail::Status(Status::UNAUTHORIZED, msg),
         _ => fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"),
     })?;
+    if statuses.iter().any(|s| matches!(s, StatusRead::Aborted)) {
+        return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"));
+    }
 
     let find_target = |scope: ConfigScope, path: Option<&str>| -> Option<(&'static str, Option<String>)> {
         let scope_str = writable_scope(scope)?;
@@ -267,6 +294,7 @@ pub(crate) async fn read_with_timeout(
                     }),
                 ),
                 StatusRead::State(state) => (state, None),
+                StatusRead::Aborted => (IntegrationRuntimeState::Unknown, None),
             };
 
             IntegrationView {
@@ -302,6 +330,23 @@ pub(crate) async fn read_with_timeout(
 enum StatusRead {
     State(IntegrationRuntimeState),
     Ok(IntegrationStatusOutput),
+    Aborted,
+}
+
+fn local_status_state(recognition: &IntegrationRecognition) -> Option<IntegrationRuntimeState> {
+    if recognition.ways.is_empty() {
+        return Some(IntegrationRuntimeState::Absent);
+    }
+    if recognition.ambiguous {
+        return Some(IntegrationRuntimeState::NonConforming);
+    }
+    let Some(ref runtime) = recognition.runtime else {
+        return Some(IntegrationRuntimeState::Inactive);
+    };
+    if matches!(runtime.state, RuntimeState::Failed { .. }) {
+        return Some(IntegrationRuntimeState::Failed);
+    }
+    None
 }
 
 async fn read_one_status(
@@ -309,20 +354,9 @@ async fn read_one_status(
     endpoint: &Endpoint,
     directory: &str,
     recognition: &IntegrationRecognition,
+    principal: Option<&CancellationToken>,
     timeout: Duration,
 ) -> StatusRead {
-    if recognition.ways.is_empty() {
-        return StatusRead::State(IntegrationRuntimeState::Absent);
-    }
-    if recognition.ambiguous {
-        return StatusRead::State(IntegrationRuntimeState::NonConforming);
-    }
-    let Some(ref runtime) = recognition.runtime else {
-        return StatusRead::State(IntegrationRuntimeState::Inactive);
-    };
-    if matches!(runtime.state, RuntimeState::Failed { .. }) {
-        return StatusRead::State(IntegrationRuntimeState::Failed);
-    }
     let Ok(url) = endpoint.url.join(&format!("/api/rpc/{}/status", recognition.entry.rpc)) else {
         return StatusRead::State(IntegrationRuntimeState::Unknown);
     };
@@ -336,11 +370,21 @@ async fn read_one_status(
         .timeout(timeout)
         .send();
 
-    let response = match tokio::time::timeout(timeout, send).await {
-        Ok(Ok(resp)) => resp,
-        _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
+    let response = match principal {
+        Some(tok) => tokio::select! {
+            biased;
+            _ = tok.cancelled() => return StatusRead::Aborted,
+            res = tokio::time::timeout(timeout, send) => match res {
+                Ok(Ok(resp)) => resp,
+                _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
+            },
+        },
+        None => match tokio::time::timeout(timeout, send).await {
+            Ok(Ok(resp)) => resp,
+            _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
+        },
     };
-    if !response.status().is_success() {
+    if response.status() != Status::OK {
         let state = match tokio::time::timeout(timeout, crate::opencode::read_json(response, RPC_ERROR_MAX_BYTES)).await
         {
             Ok(Ok(body)) => classify_rpc_error(&body),
