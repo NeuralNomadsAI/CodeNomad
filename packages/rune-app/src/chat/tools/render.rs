@@ -264,12 +264,8 @@ fn render_body(
         && !matches!(tool.name.as_str(), "question" | "todowrite");
     // Per dev-docs/TRANSCRIPT.md, latestChildState drives both status and end time
     // across every launch/continuation card of the same background child.
-    let timing = if let Some(delivery) = &task_delivery {
-        if delivery.running {
-            tool.started.map(|start| (start, None))
-        } else {
-            tool.started.zip(delivery.ended.map(Some))
-        }
+    let timing = if is_task {
+        task::timing(tool, task_delivery.as_ref())
     } else {
         super::duration::tool_timing(tool)
     };

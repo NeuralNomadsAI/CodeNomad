@@ -63,20 +63,20 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
             })
         })
         .collect();
-    let mut steps_truncated = raw_tools.len() > STEP_LIMIT;
+    let steps_count_truncated = raw_tools.len() > STEP_LIMIT;
     let kept_tools: Vec<_> = raw_tools.into_iter().take(STEP_LIMIT).collect();
     let total_tool_bytes: usize = kept_tools
         .iter()
         .map(|(_, tool)| tool.retained_bytes())
         .sum();
+    let steps_bytes_truncated = total_tool_bytes > STEP_BYTES;
     let mut truncated_tools = HashSet::new();
-    let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
+    let mut tools: Steps = if !steps_bytes_truncated {
         kept_tools
             .into_iter()
             .map(|(row, tool)| (row.id.clone(), tool.clone()))
             .collect()
     } else {
-        steps_truncated = true;
         // Shortest-first water-filling keeps smaller steps intact beside an oversized step.
         let mut order: Vec<usize> = (0..kept_tools.len()).collect();
         order.sort_by_key(|&i| kept_tools[i].1.retained_bytes());
@@ -158,8 +158,9 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
     reports.reverse();
     Snapshot {
         steps: tools,
-        steps_truncated,
-        steps_incomplete: steps_truncated || page.older.is_some(),
+        steps_count_truncated,
+        steps_bytes_truncated,
+        steps_incomplete: steps_count_truncated || steps_bytes_truncated || page.older.is_some(),
         truncated_tools,
         reports,
     }

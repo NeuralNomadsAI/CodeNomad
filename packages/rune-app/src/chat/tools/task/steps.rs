@@ -34,7 +34,8 @@ pub(super) struct StepsInput<'a> {
     pub legacy_base: usize,
     pub legacy: &'a [serde_json::Value],
     pub step_count: usize,
-    pub live_truncated: bool,
+    pub live_count_truncated: bool,
+    pub live_bytes_truncated: bool,
     pub live_incomplete: bool,
 }
 
@@ -57,7 +58,8 @@ pub(super) fn append_steps(
         legacy_base,
         legacy,
         step_count,
-        live_truncated,
+        live_count_truncated,
+        live_bytes_truncated,
         live_incomplete,
     } = input;
     let step_key = format!("{key}-task-steps");
@@ -160,30 +162,27 @@ pub(super) fn append_steps(
         0
     };
     let legacy_truncated = child_steps.is_empty() && legacy_count_truncated;
-    if live_truncated || legacy_truncated || budget_truncated {
-        let notice = if (child_steps.is_empty() && live_truncated)
-            || (budget_truncated && rendered_steps == 0)
-        {
-            text(t("toolCall.output.tooLarge")).role("status")
-        } else {
-            let shown_limit = if budget_truncated {
-                rendered_steps
-            } else if live_truncated && child_steps.len() < STEP_LIMIT {
-                child_steps.len()
-            } else if legacy_truncated && legacy.len() < STEP_LIMIT {
-                legacy.len()
+    let count_truncated = live_count_truncated || legacy_truncated || budget_truncated;
+    let count_label = if live_count_truncated || legacy_truncated {
+        catalogue::format(
+            locale(),
+            "toolCall.task.steps.count.other",
+            &[("count", &format!("{STEP_LIMIT}+"))],
+        )
+    } else {
+        catalogue::format(
+            locale(),
+            if step_count == 1 {
+                "toolCall.task.steps.count.one"
             } else {
-                STEP_LIMIT
-            };
-            text(catalogue::format(
-                locale(),
-                "toolCall.task.steps.truncated",
-                &[("count", &shown_limit.to_string())],
-            ))
-            .role("status")
-        };
-        result = result.child(notice);
-    }
+                "toolCall.task.steps.count.other"
+            },
+            &[("count", &step_count.to_string())],
+        )
+    };
+    let mut header = layout::action_row()
+        .child(text(t("toolCall.task.sections.steps")).text_role(TextRole::Label))
+        .child(text(count_label).text_role(TextRole::Label));
     if live_incomplete && let Some(cid) = child_id {
         let copy_id = format!("copy-{key}-steps");
         let copy_target = CopyKey::Steps {
@@ -192,7 +191,7 @@ pub(super) fn append_steps(
             child: cid.to_owned(),
         };
         let action_target = copy_target.clone();
-        let mut row = layout::action_row().child(
+        header = header.child(
             markdown::copy_button(
                 t("toolCall.io.copyOutputAriaLabel"),
                 screen::action_tx(&s.input_scope, move |s, tx| {
@@ -206,16 +205,15 @@ pub(super) fn append_steps(
             .key(copy_id),
         );
         if s.transcript_display.children.copy_failed(&copy_target) {
-            row = row.child(text(t("messageSection.quote.copyFailed")).role("status"));
+            header = header.child(text(t("messageSection.quote.copyFailed")).role("status"));
         } else if s.transcript_display.children.copy_copied(&copy_target) {
-            row = row.child(text(t("markdown.codeBlock.copy.copied")).role("status"));
+            header = header.child(text(t("markdown.codeBlock.copy.copied")).role("status"));
         } else if s.transcript_display.children.copy_ready(&copy_target) {
-            row = row.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+            header = header.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
         }
-        result = result.child(row);
     } else if legacy_truncated {
         let snapshot = Arc::clone(tool);
-        result = result.child(
+        header = header.child(
             markdown::copy_button(
                 t("toolCall.io.copyOutputAriaLabel"),
                 screen::action_tx(&s.input_scope, move |s, tx| {
@@ -238,6 +236,25 @@ pub(super) fn append_steps(
             )
             .key(format!("copy-{key}-steps")),
         );
+    }
+    result = result.child(header);
+    if count_truncated || live_bytes_truncated {
+        let notice = if count_truncated && rendered_steps > 0 {
+            let shown_limit = if budget_truncated {
+                rendered_steps
+            } else {
+                STEP_LIMIT
+            };
+            text(catalogue::format(
+                locale(),
+                "toolCall.task.steps.truncated",
+                &[("count", &shown_limit.to_string())],
+            ))
+            .role("status")
+        } else {
+            text(t("toolCall.output.tooLarge")).role("status")
+        };
+        result = result.child(notice);
     }
     if rendered_steps > 0 {
         let remaining_step_budget = step_budget.min(STEP_LIMIT).saturating_sub(rendered_steps);
@@ -598,7 +615,26 @@ pub(super) fn step_contains_link(
             format!("{row_key}-tool_output"),
         )
     };
-    if within_displayed(s, &step.output, output_limit, &output_key, target)
+    let expanded_output = owner
+        .strip_prefix("child:")
+        .and_then(|v| v.split_once(':'))
+        .and_then(|(child, row_id)| {
+            let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+            s.transcript_display
+                .children
+                .tool_truncated(owner_parent, child, row_id, &step.id)
+                .then(|| super::super::children::ToolCopyKey {
+                    key: format!("copy-{row_key}-output"),
+                    parent: owner_parent.map(str::to_owned),
+                    child: child.to_owned(),
+                    row_id: row_id.to_owned(),
+                    call: step.id.clone(),
+                    section: 1,
+                })
+        })
+        .and_then(|key| s.transcript_display.children.loaded_tool_output(&key));
+    let output_text = expanded_output.unwrap_or(&step.output);
+    if within_displayed(s, output_text, output_limit, &output_key, target)
         || within_displayed(
             s,
             string(&step.input, &["prompt"]),

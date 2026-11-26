@@ -115,7 +115,8 @@ type Reports = Vec<ChildReport>;
 #[derive(Default, PartialEq)]
 struct Snapshot {
     steps: Steps,
-    steps_truncated: bool,
+    steps_count_truncated: bool,
+    steps_bytes_truncated: bool,
     steps_incomplete: bool,
     truncated_tools: HashSet<(String, String)>,
     reports: Reports,
@@ -363,10 +364,16 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
-    pub(super) fn steps_truncated(&self, parent: Option<&str>, id: &str) -> bool {
+    pub(super) fn steps_count_truncated(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
             .get(&child_key(parent, id))
-            .is_some_and(|entry| entry.snapshot.steps_truncated)
+            .is_some_and(|entry| entry.snapshot.steps_count_truncated)
+    }
+
+    pub(super) fn steps_bytes_truncated(&self, parent: Option<&str>, id: &str) -> bool {
+        self.entries
+            .get(&child_key(parent, id))
+            .is_some_and(|entry| entry.snapshot.steps_bytes_truncated)
     }
 
     pub(super) fn tool_truncated(

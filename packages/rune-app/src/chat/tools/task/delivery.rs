@@ -15,6 +15,13 @@ struct ChildDeliveries {
     reports: Vec<(u64, usize, usize)>,
 }
 
+fn mix_str(mut fp: u64, value: &str) -> u64 {
+    for &byte in value.as_bytes() {
+        fp = (fp ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    fp.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (value.len() as u64)
+}
+
 impl DeliveryCache {
     pub(in crate::chat) fn clear(&mut self) {
         self.fingerprint = 0;
@@ -25,23 +32,25 @@ impl DeliveryCache {
         use crate::content::Part;
         let mut fp = revision.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (rows.len() as u64);
         for row in rows {
-            fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-                ^ (Arc::as_ptr(row) as usize as u64)
-                ^ ((row.parts.len() as u64) << 1);
+            fp = mix_str(
+                fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    ^ (Arc::as_ptr(row) as usize as u64)
+                    ^ ((row.parts.len() as u64) << 1),
+                &row.id,
+            );
             for part in &row.parts {
                 match part {
                     Part::Tool(tool) if is_task(tool) => {
                         fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
                             ^ (Arc::as_ptr(tool) as usize as u64)
-                            ^ launch_at(tool).unwrap_or(0)
-                            ^ ((child(tool).len() as u64) << 4)
-                            ^ (tool.status.len() as u64);
+                            ^ launch_at(tool).unwrap_or(0);
+                        fp = mix_str(fp, child(tool));
+                        fp = mix_str(fp, &tool.status);
                     }
                     Part::SubagentReport(report) => {
-                        fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-                            ^ report.created
-                            ^ ((report.state.len() as u64) << 8)
-                            ^ (report.child.len() as u64);
+                        fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ report.created;
+                        fp = mix_str(fp, &report.state);
+                        fp = mix_str(fp, &report.child);
                     }
                     _ => {}
                 }
@@ -92,7 +101,29 @@ pub(in crate::chat::tools) struct Delivery<'a> {
 }
 
 pub(in crate::chat::tools) fn is_task(tool: &Tool) -> bool {
-    matches!(tool.name.as_str(), "task" | "subagent")
+    let trimmed = tool.name.trim();
+    let canonical = trimmed.strip_prefix("opencode_").unwrap_or(trimmed);
+    matches!(canonical, "task" | "subagent")
+}
+
+pub(in crate::chat::tools) fn timing(
+    tool: &Tool,
+    delivery: Option<&Delivery<'_>>,
+) -> Option<(u64, Option<u64>)> {
+    let start = launch_at(tool);
+    if let Some(delivery) = delivery {
+        if delivery.running {
+            start.map(|s| (s, None))
+        } else {
+            start.zip(delivery.ended.map(Some))
+        }
+    } else {
+        match tool.status.as_str() {
+            "running" => start.map(|s| (s, tool.ended)),
+            "completed" | "error" => start.zip(tool.ended.map(Some)),
+            _ => None,
+        }
+    }
 }
 
 pub(in crate::chat::tools) fn detail(tool: &Tool) -> String {
@@ -136,34 +167,35 @@ fn resolve_delivery<'a>(
         bool,
     )],
 ) -> Delivery<'a> {
-    let report = launch_at(tool).and_then(|from| {
+    let from = launch_at(tool).unwrap_or(0);
+    let report = {
         let mut boundaries: Vec<_> = launches.iter().copied().filter(|at| *at > from).collect();
         boundaries.sort_unstable();
-        let first = reports
+        reports
             .iter()
             .filter(|(created, _, _, _, _)| *created >= from)
             .map(|(created, _, _, _, _)| *created)
-            .min()?;
-        let end = boundaries
-            .into_iter()
-            .find(|next| *next > first)
-            .unwrap_or(u64::MAX);
-        reports
-            .iter()
-            .filter(|(created, _, _, _, _)| *created >= from && *created < end)
-            .max_by_key(|(created, id, _, _, _)| (*created, *id))
-            .map(|(_, row_id, part_idx, report, truncated)| {
-                (*row_id, *part_idx, *report, *truncated)
+            .min()
+            .and_then(|first| {
+                let end = boundaries
+                    .into_iter()
+                    .find(|next| *next > first)
+                    .unwrap_or(u64::MAX);
+                reports
+                    .iter()
+                    .filter(|(created, _, _, _, _)| *created >= from && *created < end)
+                    .max_by_key(|(created, id, _, _, _)| (*created, *id))
+                    .map(|(_, row_id, part_idx, report, truncated)| {
+                        (*row_id, *part_idx, *report, *truncated)
+                    })
             })
-    });
-    let newest = launches.iter().copied().max().or_else(|| launch_at(tool));
-    let latest = newest.and_then(|from| {
-        reports
-            .iter()
-            .filter(|(created, _, _, _, _)| *created >= from)
-            .max_by_key(|(created, id, _, _, _)| (*created, *id))
-            .map(|(created, _, _, report, _)| (*created, report.state.as_str()))
-    });
+    };
+    let newest = launches.iter().copied().max().unwrap_or(0).max(from);
+    let latest = reports
+        .iter()
+        .filter(|(created, _, _, _, _)| *created >= newest)
+        .max_by_key(|(created, id, _, _, _)| (*created, *id))
+        .map(|(created, _, _, report, _)| (*created, report.state.as_str()));
     let (status, running, ended) = match latest {
         Some((created, "completed")) => (
             "toolCall.status.completed",

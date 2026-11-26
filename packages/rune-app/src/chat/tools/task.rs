@@ -7,7 +7,7 @@ mod anchor_tests;
 mod tests;
 
 pub(in crate::chat) use delivery::DeliveryCache;
-pub(super) use delivery::{child, delivery, detail, is_task, output, parent_child};
+pub(super) use delivery::{child, delivery, detail, is_task, output, parent_child, timing};
 
 #[cfg(test)]
 use steps::{key_matches_row, legacy_identities, step_contains_link};
@@ -52,8 +52,17 @@ pub(super) fn body(
     let child_steps = child_id.map_or(&[][..], |id| {
         s.transcript_display.children.steps(parent, id)
     });
-    let live_truncated =
-        child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(parent, id));
+    let live_count_truncated = child_id.is_some_and(|id| {
+        s.transcript_display
+            .children
+            .steps_count_truncated(parent, id)
+    });
+    let live_bytes_truncated = child_id.is_some_and(|id| {
+        s.transcript_display
+            .children
+            .steps_bytes_truncated(parent, id)
+    });
+    let live_truncated = live_count_truncated || live_bytes_truncated;
     let live_incomplete =
         child_id.is_some_and(|id| s.transcript_display.children.steps_incomplete(parent, id));
     let child_load_error =
@@ -248,7 +257,8 @@ pub(super) fn body(
                 legacy_base,
                 legacy,
                 step_count,
-                live_truncated,
+                live_count_truncated,
+                live_bytes_truncated,
                 live_incomplete,
             },
         );
