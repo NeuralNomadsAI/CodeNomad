@@ -102,14 +102,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "Скрыть {name}",
   "transcriptFilters.expand": "Развернуть {name}",
   "transcriptFilters.collapse": "Свернуть {name}",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "Открыть список сессий",
-  "messageListHeader.metrics.usedLabel": "Использовано",
-  "messageListHeader.metrics.availableLabel": "Доступно",
-  "messageListHeader.commandPalette.ariaLabel": "Открыть палитру команд",
-  "messageListHeader.commandPalette.button": "Палитра команд",
-  "messageListHeader.connection.connected": "Подключено",
-  "messageListHeader.connection.connecting": "Подключение…",
-  "messageListHeader.connection.disconnected": "Отключено",
 
   "messageSection.empty.logoAlt": "Логотип CodeNomad",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -259,7 +251,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "Запрос был прерван",
   "messageItem.errors.unknownFallback": "Произошла неизвестная ошибка",
 
-  "attachmentChip.removeAriaLabel": "Удалить вложение",
 
   "expandButton.toggleAriaLabel": "Переключить высоту поля ввода",
 
