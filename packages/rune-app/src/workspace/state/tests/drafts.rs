@@ -2089,4 +2089,102 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &mut restarted_m2,
         "ses_r7_str"
     ));
+
+    // 13. R8 Bloquant: Tab A closes with independent text, then Tab B closes with an untouched
+    // restored attachment-only copy for the same session -> reopen AND 404 recovery must prefer
+    // A's independent draft rather than clobbering it with B's restored copy.
+    let mut r8_b = draft_state();
+    let mut tab_a8 = closed("ses_r8_indep", "");
+    tab_a8.drafts.clear();
+    tab_a8.active_session_id = Some("ses_r8_indep".into());
+    let mut tab_b8 = closed("ses_r8_indep", "");
+    tab_b8.drafts.clear();
+    tab_b8.occurrence = 1;
+    tab_b8.active_session_id = None;
+    tab_b8.attachment_drafts.insert("ses_r8_indep".into());
+    tab_b8.attachment_parts.insert(
+        "ses_r8_indep".into(),
+        crate::composer::draft_storage::SavedParts::missing(),
+    );
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(tab_a8), Tab::Workspace(tab_b8)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r8_indep"));
+    r8_b.workspace = Some(ui);
+    r8_b.show_chat();
+    r8_b.draft = TextEdit::new("independent text from A");
+    capture(&mut r8_b);
+    close(&mut r8_b, "tab-0", &mut tx);
+    if let Some(l) = r8_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    close(&mut r8_b, "tab-1", &mut tx);
+    if let Some(l) = r8_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r8_b,
+        &Project {
+            id: "proj-r8b".into(),
+            path: "/fixture".into(),
+        },
+    );
+    assert!(recover_missing_session_draft(&mut r8_b, "ses_r8_indep"));
+    let Tab::Workspace(after_r8) = &r8_b.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected reopened tab");
+    };
+    assert_eq!(
+        after_r8.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("independent text from A")
+    );
+    assert!(!after_r8.attachment_drafts.contains(NO_SESSION_DRAFT_ID));
+
+    // 14. R8 Moyen 1: A valid v1 snapshot where Tab B has drafts[id] = "" alongside an attachment
+    // marker and Tab A has text for the same session must NOT treat Tab B as a clear tombstone or
+    // prune Tab A's text even when snapshot budgets are exceeded.
+    let mut r8_m1 = draft_state();
+    let mut a8_m1 = closed("ses_r8_att_empty", "text from A");
+    a8_m1.active_session_id = Some("ses_r8_att_empty".into());
+    let mut b8_m1 = closed("ses_r8_att_empty", "");
+    b8_m1.occurrence = 1;
+    b8_m1.active_session_id = Some("ses_r8_att_empty".into());
+    b8_m1.attachment_drafts.insert("ses_r8_att_empty".into());
+    b8_m1
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), "b".repeat(160));
+    let mut tabs_r8 = vec![Tab::Workspace(a8_m1), Tab::Workspace(b8_m1)];
+    for i in 0..24 {
+        let mut filler = closed("ses_fill", "");
+        filler.drafts.clear();
+        filler.active_session_id = None;
+        filler.occurrence = (i + 2) as u64;
+        filler.folder = format!("/r{i:02}/{}", "m".repeat(4_060));
+        tabs_r8.push(Tab::Workspace(filler));
+    }
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: tabs_r8,
+        active: Some(1),
+    });
+    ui.ready = true;
+    r8_m1.workspace = Some(ui);
+    let snap_r8 = r8_m1.workspace.as_ref().unwrap().snapshot();
+    assert_eq!(
+        match &snap_r8.tabs[0] {
+            Tab::Workspace(w) => w.drafts.get("ses_r8_att_empty").map(String::as_str),
+            _ => None,
+        },
+        Some("text from A")
+    );
 }

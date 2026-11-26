@@ -708,6 +708,11 @@ pub(super) fn peek_closed_state_for_scope(
             .get(idx)
             .is_none_or(|set| set.contains(session_id));
         if is_restored {
+            let has_current_independent = !from_restored
+                && (text.is_some() || attachment_draft || attachment_parts.is_some());
+            if has_current_independent {
+                continue;
+            }
             let copy = DraftCopy::from_workspace(w, session_id);
             if copy.is_some()
                 && open_clear_authorities

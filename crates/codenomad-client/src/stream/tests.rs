@@ -977,3 +977,33 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
             );
         });
 }
+
+#[test]
+fn valid_frame_preceding_invalid_utf8_in_same_chunk_is_delivered() {
+    use futures_lite::StreamExt;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            let (out, recovery) = crate::bounded(8);
+            let state = State::default();
+            let (send, chunks) = crate::bounded(2);
+            let wire = native::read_frames(&backend, 1, &out, &state, "stream", chunks.map(Ok));
+            let mut chunk = format!("data: {}\n\n", json!({"type": "memory.changed"})).into_bytes();
+            chunk.extend_from_slice(b"data: \xff\xfe\n\n");
+            send.send(chunk).await.unwrap();
+            drop(send);
+            let result = tokio::time::timeout(Duration::from_secs(2), wire)
+                .await
+                .unwrap();
+            assert!(result.is_err(), "invalid UTF-8 line must fail the stream");
+            assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
+            assert!(matches!(
+                recovery.try_recv().unwrap(),
+                Input::Workspace(1, WorkspaceEvent::MemoryChanged)
+            ));
+        });
+}

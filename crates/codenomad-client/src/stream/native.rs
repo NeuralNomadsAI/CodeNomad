@@ -238,12 +238,20 @@ async fn receive_chunk(
     // bounded frame queue, while keeping quota ingress aligned with each queued frame.
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     let mut parsed = Vec::new();
+    let mut parse_err = None;
     for byte in chunk {
-        if let Some(frame) = parser.byte(*byte)? {
-            if let Parsed::Data(kind, data) = &frame {
-                state.observe_frame(b, kind, data);
+        match parser.byte(*byte) {
+            Ok(Some(frame)) => {
+                if let Parsed::Data(kind, data) = &frame {
+                    state.observe_frame(b, kind, data);
+                }
+                parsed.push(frame);
             }
-            parsed.push(frame);
+            Ok(None) => {}
+            Err(err) => {
+                parse_err = Some(err);
+                break;
+            }
         }
     }
     for frame in parsed {
@@ -257,6 +265,9 @@ async fn receive_chunk(
             }
         }
         frames.send(frame).await?;
+    }
+    if let Some(err) = parse_err {
+        return Err(err);
     }
     if let Some(chunk) = unobserved {
         chunk.finish();

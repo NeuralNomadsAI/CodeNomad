@@ -256,7 +256,11 @@ impl Ui {
                 continue;
             };
             for (id, auth) in &e.clear_authority {
-                if !e.cleared.contains(id) {
+                if !e.cleared.contains(id)
+                    || w.drafts.get(id).is_some_and(|text| !text.is_empty())
+                    || w.attachment_drafts.contains(id)
+                    || w.attachment_parts.contains_key(id)
+                {
                     continue;
                 }
                 let mut targeted = Vec::new();
@@ -414,10 +418,14 @@ fn entry(key: String, mut saved: Tab) -> Entry {
     let mut derived_from = std::collections::BTreeMap::new();
     let mut clear_authority = std::collections::BTreeMap::new();
     if let Tab::Workspace(w) = &mut saved {
+        let attachment_drafts = &w.attachment_drafts;
+        let attachment_parts = &w.attachment_parts;
         w.drafts.retain(|id, text| {
             if text.is_empty() {
-                cleared.insert(id.clone());
-                clear_authority.insert(id.clone(), drafts::ClearAuthority::Persisted);
+                if !attachment_drafts.contains(id) && !attachment_parts.contains_key(id) {
+                    cleared.insert(id.clone());
+                    clear_authority.insert(id.clone(), drafts::ClearAuthority::Persisted);
+                }
                 false
             } else {
                 true
