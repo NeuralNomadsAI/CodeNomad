@@ -39,6 +39,7 @@ pub(super) struct Persistence {
     saving_file_drafts: Option<(u64, Receiver<(u64, bool)>)>,
     saved: u64,
     cleared_revision: Option<u64>,
+    cleared_file_drafts_revision: Option<u64>,
     mutation_baseline: Option<(u64, u64, u64)>,
     saved_file_drafts: u64,
     attempted_file_drafts: u64,
@@ -72,6 +73,7 @@ impl Persistence {
             saving_file_drafts: None,
             saved: 0,
             cleared_revision: None,
+            cleared_file_drafts_revision: None,
             mutation_baseline: None,
             saved_file_drafts: 0,
             attempted_file_drafts: 0,
@@ -417,6 +419,7 @@ impl Persistence {
         documents.block_file_draft_updates(false);
         if enabled {
             self.cleared_revision = None;
+            self.cleared_file_drafts_revision = None;
             documents.mark_file_drafts_dirty_if_nonempty();
             outlines.mark_dirty_if_nonempty();
             self.saved = 0;
@@ -436,6 +439,7 @@ impl Persistence {
             let drafts_rev = documents.file_draft_revision();
             self.saved = current_revision;
             self.cleared_revision = Some(current_revision);
+            self.cleared_file_drafts_revision = None;
             self.saved_file_drafts = drafts_rev;
             self.attempted_file_drafts = drafts_rev;
             #[cfg(not(target_arch = "wasm32"))]
@@ -496,6 +500,7 @@ impl Persistence {
             if drafts_rev > base_drafts {
                 // File edits arrived while Clear was running: keep them dirty so they checkpoint
                 // and trigger recovery if unsaved on exit.
+                self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = base_drafts;
                 self.attempted_file_drafts = base_drafts;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -504,7 +509,22 @@ impl Persistence {
                     self.file_drafts_due = 0.0;
                     self.file_draft_retry_requested = true;
                 }
+            } else if documents.has_saved_file_drafts() {
+                // Clear removed saved drafts from disk, but open dirty editors still hold unsaved
+                // edits: stay quiet while idle, yet leave them unpersisted so exit flushes them
+                // (or opens recovery on failure).
+                documents.mark_file_drafts_dirty_if_nonempty();
+                let next_rev = documents.file_draft_revision();
+                self.cleared_file_drafts_revision = Some(next_rev);
+                self.saved_file_drafts = drafts_rev;
+                self.attempted_file_drafts = drafts_rev;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.file_drafts_dirty_revision = next_rev;
+                    self.file_draft_retry_requested = false;
+                }
             } else {
+                self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -638,6 +658,7 @@ impl Persistence {
                     return false;
                 }
                 self.saved_file_drafts = revision;
+                self.cleared_file_drafts_revision = None;
                 self.file_draft_error = false;
             }
         }
@@ -653,6 +674,15 @@ impl Persistence {
             #[cfg(not(target_arch = "wasm32"))]
             self.drain_file_draft_save();
             return;
+        }
+        let current_rev = documents.file_draft_revision();
+        if let Some(cleared) = self.cleared_file_drafts_revision {
+            if current_rev == cleared {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.drain_file_draft_save();
+                return;
+            }
+            self.cleared_file_drafts_revision = None;
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -722,6 +752,7 @@ impl Persistence {
             return false;
         }
         self.saved_file_drafts = revision;
+        self.cleared_file_drafts_revision = None;
         self.file_draft_error = false;
         true
     }
@@ -736,10 +767,13 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
         #[cfg(not(target_arch = "wasm32"))]
-        crate::files::document::recovery::show(
-            s.documents.closing_drafts(!drafts_saved),
-            !drafts_saved,
-        );
+        {
+            let drafts_persisted = ui.persistence.restore_enabled && drafts_saved;
+            crate::files::document::recovery::show(
+                s.documents.closing_drafts(!drafts_persisted),
+                !drafts_saved,
+            );
+        }
         if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
             ui.release_all();
         } else {

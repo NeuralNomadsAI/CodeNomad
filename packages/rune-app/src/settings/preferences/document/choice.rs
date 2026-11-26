@@ -139,7 +139,7 @@ impl Choice {
                     &Value::Null,
                     legacy.as_ref(),
                     dark,
-                    Some(value),
+                    None,
                 );
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({

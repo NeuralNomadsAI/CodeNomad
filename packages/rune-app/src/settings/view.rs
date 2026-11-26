@@ -69,6 +69,8 @@ pub(super) struct Window {
 #[derive(Default)]
 pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
+    pub guard_close: Cell<bool>,
+    pub detached: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
     pub palette_reopen: RefCell<Option<super::general::Controls>>,
@@ -233,6 +235,18 @@ impl Window {
         }
     }
 
+    pub(super) fn sync_close_guard(&self, prefs: &Preferences) {
+        if let Some(request) = &self.close_request {
+            let guarded = !self.closing
+                && (self.memory_editor.has_unsaved()
+                    || self.config_files.dirty()
+                    || self.config_files.busy()
+                    || self.general.dirty()
+                    || self.general.busy(prefs));
+            request.guard_close.set(guarded);
+        }
+    }
+
     fn retain_editor_on_native_close(&mut self) -> bool {
         let palette_saving = {
             let mut prefs = self.shared.borrow_mut();
@@ -263,7 +277,18 @@ impl Window {
         }
         let mut prefs = self.shared.borrow_mut();
         prefs.window_wake = None;
-        if let Some(wake) = &prefs.main_wake {
+        if request.detached.get() {
+            let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
+            drop(prefs);
+            let editor = request.reopen.borrow_mut().take();
+            super::reopen_detached(
+                self.shared.clone(),
+                request.clone(),
+                editor,
+                self.focused.clone(),
+                locale,
+            );
+        } else if let Some(wake) = &prefs.main_wake {
             wake();
         }
         true
@@ -289,6 +314,7 @@ impl Window {
 pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     s.general.commit_palette(&s.shared, cx.system_dark());
     let prefs = s.shared.borrow();
+    s.sync_close_guard(&prefs);
     if prefs.awaiting_appearance() {
         return rune::el().key("preferences-bootstrap");
     }

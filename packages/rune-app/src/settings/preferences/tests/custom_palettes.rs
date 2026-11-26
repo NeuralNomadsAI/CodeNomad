@@ -139,34 +139,25 @@ fn named_preset_create_delete_and_limit_follow_solid_contract() {
         );
 
         assert!(prefs.delete_palette_preset(&id));
-        let pre_delete_get = poll_next_request(&mut prefs, &listener).await;
-        assert!(pre_delete_get.first.starts_with("GET "));
-        pre_delete_get.reply(200, created_snapshot).await;
         let delete_req = poll_next_request(&mut prefs, &listener).await;
         assert!(delete_req.first.starts_with("PATCH "));
         assert!(delete_req.body["colorSchemePresets"][&id].is_null());
-        assert!(delete_req.body["activeColorSchemePresetId"].is_null());
-        assert!(delete_req.body["appearancePreferences"]["dark"]["presetId"].is_null());
-        // Deleting an active preset preserves its resolved custom colors in the slot (Solid parity).
-        assert_eq!(
-            delete_req.body["appearancePreferences"]["dark"]["scheme"]["id"],
-            "custom"
-        );
-        assert_eq!(
-            delete_req.body["appearancePreferences"]["dark"]["scheme"]["colors"]["surfaceBase"],
-            "#101218"
+        assert!(
+            delete_req.body["appearancePreferences"].is_null(),
+            "delete must only patch colorSchemePresets without clobbering concurrent slot edits: {}",
+            delete_req.body
         );
         delete_req
             .reply(
                 200,
                 json!({
                     "colorSchemePresets": {},
-                    "activeColorSchemePresetId": null,
+                    "activeColorSchemePresetId": id,
                     "appearancePreferences": {
                         "mode": "system",
                         "dark": {
                             "scheme": { "id": "custom", "appearance": "dark", "colors": colors.to_json() },
-                            "presetId": null
+                            "presetId": id
                         }
                     }
                 }),
@@ -404,34 +395,14 @@ fn concurrent_delete_respects_newer_slot_and_concurrent_create_enforces_limit() 
             }
         }));
 
-        // Delete queued while local snapshot shows p1 active; fresh GET reports another window
-        // switched the dark slot to slate -> Delete PATCH must NOT overwrite slate.
+        // Delete queued while local snapshot shows p1 active -> PATCH only deletes p1 in
+        // colorSchemePresets and never overwrites a concurrent slot switch in another window.
         assert!(prefs.delete_palette_preset("p1"));
-        let pre_delete_get = poll_next_request(&mut prefs, &listener).await;
-        assert!(pre_delete_get.first.starts_with("GET "));
-        pre_delete_get
-            .reply(
-                200,
-                json!({
-                    "appearancePreferences": {
-                        "mode": "dark",
-                        "dark": {
-                            "scheme": { "id": "slate", "appearance": "dark", "colors": null },
-                            "presetId": null
-                        }
-                    },
-                    "activeColorSchemePresetId": null,
-                    "colorSchemePresets": {
-                        "p1": { "name": "Midnight", "appearance": "dark", "colors": colors.to_json() }
-                    }
-                }),
-            )
-            .await;
         let delete_patch = poll_next_request(&mut prefs, &listener).await;
         assert!(delete_patch.first.starts_with("PATCH "));
         assert!(delete_patch.body["colorSchemePresets"]["p1"].is_null());
         assert!(
-            delete_patch.body["appearancePreferences"]["dark"].is_null(),
+            delete_patch.body["appearancePreferences"].is_null(),
             "delete must not clobber newer slot selection: {}",
             delete_patch.body
         );
@@ -742,5 +713,119 @@ fn switching_from_slot_only_custom_builtin_migrates_override_and_deleted_preset_
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         assert!(prefs.palette_save_failed());
+    });
+}
+
+#[test]
+fn builtin_selection_skips_stale_override_colors_and_migrates_legacy_config_override() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let mist = built_in().iter().find(|p| p.id == "mist").unwrap();
+        let edited_mist = mist
+            .colors()
+            .with(ColorField::AccentPrimary, "#FF3366")
+            .unwrap();
+
+        // Local snapshot still lists an override on Mist while another window resets it.
+        // Selecting Mist must send colors: null so the reset override is never resurrected.
+        prefs.state.snapshot = Some(json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": { "scheme": { "id": "slate", "appearance": "dark", "colors": null }, "presetId": null }
+            },
+            "colorSchemeOverrides": { "mist": edited_mist.to_json() }
+        }));
+        let mist_option = prefs
+            .palette_options(true)
+            .into_iter()
+            .find(|o| o.key == "builtin:mist")
+            .unwrap();
+        assert!(prefs.select_palette_option(&mist_option, false));
+        let patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(patch.first.starts_with("PATCH "));
+        assert_eq!(
+            patch.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "mist"
+        );
+        assert!(
+            patch.body["appearancePreferences"]["dark"]["scheme"]["colors"].is_null(),
+            "selecting a built-in must not embed stale override colors: {}",
+            patch.body
+        );
+        patch
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": { "scheme": { "id": "mist", "appearance": "dark", "colors": null }, "presetId": null }
+                    },
+                    "colorSchemeOverrides": {}
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.state.requested(Choice::Palette(true)).is_some() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.palette_slot(true).unwrap().colors.is_none());
+
+        // Legacy override stored only in config/ui migrates into colorSchemeOverrides even on
+        // a clean built-in switch.
+        prefs.config.snapshot = Some(json!({
+            "settings": { "locale": "en", "highContrast": "system" },
+            "colorScheme": {
+                "id": "mist",
+                "appearance": "dark",
+                "colors": edited_mist.to_json()
+            }
+        }));
+        prefs.state.snapshot = Some(json!({ "appearancePreferences": { "mode": "dark" } }));
+        let slate_option = prefs
+            .palette_options(true)
+            .into_iter()
+            .find(|o| o.key == "builtin:slate")
+            .unwrap();
+        assert!(prefs.select_palette_option(&slate_option, false));
+        let migrate_patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(migrate_patch.first.starts_with("PATCH "));
+        assert_eq!(
+            migrate_patch.body["colorSchemeOverrides"]["mist"]["accentPrimary"], "#FF3366",
+            "legacy config/ui built-in override must migrate on switch: {}",
+            migrate_patch.body
+        );
+        assert_eq!(
+            migrate_patch.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "slate"
+        );
+        migrate_patch
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": { "scheme": { "id": "slate", "appearance": "dark", "colors": null }, "presetId": null }
+                    },
+                    "colorSchemeOverrides": { "mist": edited_mist.to_json() }
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.has_saved_override("mist"));
     });
 }

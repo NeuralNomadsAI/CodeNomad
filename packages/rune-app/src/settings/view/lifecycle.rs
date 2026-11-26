@@ -71,6 +71,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     .poll(&mut prefs, s.section == Section::Advanced && !s.closing);
                 let changed = prefs.poll();
                 let palette_settled = s.general.settle_save(&mut prefs);
+                s.sync_close_guard(&prefs);
                 let recording_ended = s.section == Section::Shortcuts
                     && s.shortcut_capture
                         .poll(&mut s.recording_shortcut, &prefs, tx);

@@ -57,7 +57,7 @@ pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
 pub(crate) use window::gallery;
 pub(crate) use window::{close, direct_entry, entries, open_providers};
 #[cfg(not(target_arch = "wasm32"))]
-use window::{launch_preferences, settle_close, warn_save_failed};
+use window::{launch_preferences, reopen_detached, settle_close, warn_save_failed};
 
 use crate::{State, strings};
 use preferences::Preferences;

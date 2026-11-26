@@ -188,7 +188,8 @@ fn startup_state_card_renders_and_controls_native_persistence() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
-    // Insert a live file draft before Clear, clear, then exit without further edits -> files stay absent.
+    // Insert a live file draft before Clear, clear, then exit without further edits:
+    // state.json stays absent while the live unsaved file draft is flushed on exit instead of lost.
     rt.state.documents.insert_test_file_draft("a.rs", "draft");
     pref_rt.frame(0.02);
     click_key(&mut pref_rt, "startup-clear-button");
@@ -199,10 +200,20 @@ fn startup_state_card_renders_and_controls_native_persistence() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(!root.join("state.json").exists());
+    assert!(
+        !root.join("workspace-file-drafts.json").exists(),
+        "Clear must leave workspace-file-drafts.json absent while idle"
+    );
     rt.update(|s, tx| crate::workspace::finish(s, tx));
     assert!(
         !root.join("state.json").exists(),
         "normal quit after Clear must not rewrite cleared snapshot"
+    );
+    let flushed_drafts = std::fs::read_to_string(root.join("workspace-file-drafts.json"))
+        .expect("active unsaved file draft must flush on exit after Clear");
+    assert!(
+        flushed_drafts.contains("a.rs") && flushed_drafts.contains("draft"),
+        "expected flushed active draft in {flushed_drafts}"
     );
 
     // Pre-Clear save future admitted BEFORE Clear and polled AFTER Clear cannot recreate files.
@@ -331,5 +342,86 @@ fn delete_confirmation_dialog_labels_question_and_buttons_correctly() {
     assert!(
         tree.to_string().contains("Midnight"),
         "dialog message must contain preset name: {tree}"
+    );
+}
+
+#[test]
+fn dirty_legacy_custom_draft_stays_custom_when_remote_window_switches_away() {
+    let request = Rc::new(CloseRequest::default());
+    let state = Window::new(
+        Rc::new(RefCell::new(Preferences::default())),
+        Rc::new(Cell::new(false)),
+    )
+    .with_close_request(request.clone(), None);
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend = Some(
+            crate::platform::block_on(crate::backend::Backend::connect("http://127.0.0.1:9/", ""))
+                .unwrap(),
+        );
+        let default_custom =
+            rune_theme_codenomad::palettes::ColorSchemeColors::default_custom().to_json();
+        prefs.fixture_state(serde_json::json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": { "id": "custom", "appearance": "dark", "colors": default_custom },
+                    "presetId": null
+                }
+            }
+        }));
+    }
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(true, 1.0));
+    runtime.frame(0.0);
+    assert!(!request.guard_close.get());
+
+    // Edit Accent on default dark custom -> marks dirty and arms main-window close guard.
+    click_key(&mut runtime, "palette-swatch-accentPrimary");
+    click_key(&mut runtime, "palette-color-hex");
+    press(&mut runtime, rune::Key::End);
+    for _ in 0..10 {
+        press(&mut runtime, rune::Key::Backspace);
+    }
+    runtime.paste("#FF00AA");
+    runtime.frame(0.02);
+    assert!(runtime.state.general.dirty());
+    assert!(request.guard_close.get());
+    press(&mut runtime, rune::Key::Escape);
+
+    // Another window switches dark slot to Slate -> "builtin:custom" drops out of palette_options.
+    runtime
+        .state
+        .shared
+        .borrow_mut()
+        .fixture_state(serde_json::json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": { "scheme": { "id": "slate", "appearance": "dark", "colors": null }, "presetId": null }
+            }
+        }));
+    runtime.frame(0.02);
+
+    // Editing another swatch must NOT rebind the dirty draft to Mist (first built-in).
+    click_key(&mut runtime, "palette-swatch-surfaceBase");
+    click_key(&mut runtime, "palette-color-hex");
+    press(&mut runtime, rune::Key::End);
+    for _ in 0..10 {
+        press(&mut runtime, rune::Key::Backspace);
+    }
+    runtime.paste("#111319");
+    runtime.frame(0.02);
+    press(&mut runtime, rune::Key::Escape);
+    let tree = runtime.accessibility_json();
+    let accent = node(&tree, "palette-swatch-accentPrimary").unwrap();
+    let label = accent["name"].as_str().unwrap();
+    assert!(
+        !label.contains("Mist"),
+        "legacy custom draft must not fall back to Mist: {label}"
+    );
+    click_key(&mut runtime, "palette-save");
+    assert!(
+        runtime.state.shared.borrow().palette_saving(),
+        "Save must dispatch SaveCustom even after legacy custom left options"
     );
 }

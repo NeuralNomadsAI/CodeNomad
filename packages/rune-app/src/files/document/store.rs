@@ -313,6 +313,9 @@ impl Store {
             store.revision = store.revision.wrapping_add(1);
         }
     }
+    pub(crate) fn has_saved_file_drafts(&self) -> bool {
+        !lock(&self.0).saved.is_empty()
+    }
     pub(crate) fn discard_unopened_saved_drafts(&self) {
         let live: Vec<(SavedKey, Shared)> = {
             let mut store = lock(&self.0);

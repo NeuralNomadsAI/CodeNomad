@@ -1163,10 +1163,34 @@ impl Preferences {
         if !self.palette_ready() || self.backend.is_none() {
             return;
         }
+        if self.needs_legacy_config_migration(palette.dark) {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
+                id: palette.id,
+                dark: palette.dark,
+            });
+            self.state.stage_palette_mutation(mutation);
+            return;
+        }
         self.state.clear_palette_mutation();
         if self.state.requested(Choice::Palette(palette.dark)) != Some(palette.id) {
             self.state.stage(Choice::Palette(palette.dark), palette.id);
         }
+    }
+
+    fn needs_legacy_config_migration(&self, dark: bool) -> bool {
+        let Some(state) = self.saved(Owner::State) else {
+            return false;
+        };
+        let mode = super::palettes::mode_str(dark);
+        if !state["appearancePreferences"][mode].is_null() || !state["colorScheme"].is_null() {
+            return false;
+        }
+        let Some(config) = self.saved(Owner::Config) else {
+            return false;
+        };
+        super::palettes::legacy_scheme(&Value::Null, config).is_some_and(|scheme| {
+            scheme.dark == dark && scheme.id != "custom" && scheme.colors.is_some()
+        })
     }
 
     pub(super) fn set_palette_preview(
@@ -1177,6 +1201,10 @@ impl Preferences {
             self.palette_preview = preview;
             self.revision += 1;
         }
+    }
+
+    pub(super) fn has_palette_preview(&self) -> bool {
+        self.palette_preview.is_some()
     }
 
     pub(super) fn palette_slot(&self, dark: bool) -> Option<super::palettes::SlotSelection> {
@@ -1318,25 +1346,14 @@ impl Preferences {
         if id == "custom" {
             let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectCustom {
                 dark: option.dark,
-                colors: option.colors.clone(),
             });
             self.state.stage_palette_mutation(mutation);
             return true;
         }
-        if self.has_saved_override(id) || option.colors != option.original_colors {
+        if force_mutation || self.needs_legacy_config_migration(option.dark) {
             let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
                 id,
                 dark: option.dark,
-                colors: Some(option.colors.clone()),
-            });
-            self.state.stage_palette_mutation(mutation);
-            return true;
-        }
-        if force_mutation {
-            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
-                id,
-                dark: option.dark,
-                colors: None,
             });
             self.state.stage_palette_mutation(mutation);
             return true;

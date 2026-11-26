@@ -220,6 +220,32 @@ impl Controls {
         let mut prefs = shared.borrow_mut();
         let dark = prefs.dark(system_dark);
         self.settle_and_sync(&mut prefs, dark);
+        if self.draft.borrow().dirty && !prefs.has_palette_preview() {
+            let (draft_dark, creating, editing_key, colors) = {
+                let draft = self.draft.borrow();
+                (
+                    draft.dark,
+                    draft.creating,
+                    draft.editing_key.clone(),
+                    draft.colors.clone(),
+                )
+            };
+            let builtin_id = (!creating)
+                .then(|| {
+                    if editing_key == "builtin:custom" {
+                        Some("custom")
+                    } else {
+                        prefs
+                            .palette_options(draft_dark)
+                            .into_iter()
+                            .find(|candidate| candidate.key == editing_key)
+                            .and_then(|candidate| candidate.builtin_id)
+                    }
+                })
+                .flatten();
+            prefs.set_palette_preview(Some((draft_dark, builtin_id, colors)));
+            wake_all(&prefs);
+        }
         let Some(key) = self.palette_choice.take() else {
             return;
         };
@@ -480,6 +506,17 @@ impl Controls {
             .iter()
             .find(|candidate| candidate.key == editing_key)
         else {
+            if editing_key == "builtin:custom" {
+                if prefs.save_palette_override("custom", draft_dark, colors) {
+                    let mut draft = self.draft.borrow_mut();
+                    draft.local_error = false;
+                    draft.awaiting_save = Some(SavedTarget::BuiltInOrCustom);
+                    wake_all(prefs);
+                } else {
+                    self.draft.borrow_mut().local_error = true;
+                }
+                return;
+            }
             if editing_key.starts_with("preset:") {
                 // The preset disappeared externally; offer explicit creation as a new preset.
                 let suggested = clamp_preset_name(TextEdit::new(&source_name));
@@ -536,6 +573,19 @@ impl Controls {
             .iter()
             .find(|candidate| candidate.key == editing_key)
         else {
+            if editing_key == "builtin:custom" {
+                if prefs.reset_palette_override("custom", draft_dark) {
+                    let mut draft = self.draft.borrow_mut();
+                    draft.local_error = false;
+                    draft.awaiting_save = Some(SavedTarget::Reset {
+                        key: editing_key,
+                        default_colors: ColorSchemeColors::default_custom(),
+                    });
+                    wake_all(prefs);
+                } else {
+                    self.draft.borrow_mut().local_error = true;
+                }
+            }
             return;
         };
         let Some(id) = option.builtin_id else {
@@ -656,12 +706,26 @@ impl Controls {
             .iter()
             .find(|option| option.key == draft.editing_key)
             .cloned();
+        let missing_legacy_custom = draft.dirty
+            && !draft.creating
+            && draft.editing_key == "builtin:custom"
+            && found_option.is_none();
         let missing_target = draft.dirty
             && !draft.creating
             && draft.editing_key.starts_with("preset:")
             && found_option.is_none();
         let editing_option = found_option.or_else(|| {
-            if missing_target || (draft.dirty && draft.creating) {
+            if missing_legacy_custom {
+                Some(PaletteOption {
+                    key: "builtin:custom".to_owned(),
+                    builtin_id: Some("custom"),
+                    preset_id: None,
+                    name: t("settings.appearance.palette.saved").to_owned(),
+                    dark: draft.dark,
+                    colors: draft.colors.clone(),
+                    original_colors: ColorSchemeColors::default_custom(),
+                })
+            } else if missing_target || (draft.dirty && draft.creating) {
                 Some(PaletteOption {
                     key: draft.editing_key.clone(),
                     builtin_id: None,
@@ -685,7 +749,10 @@ impl Controls {
                 .iter()
                 .find(|(_, key)| *key == opt.key)
                 .map(|(label, _)| label.as_str())
-                .or_else(|| (missing_target || draft.creating).then_some(opt.name.as_str()))
+                .or_else(|| {
+                    (missing_target || missing_legacy_custom || draft.creating)
+                        .then_some(opt.name.as_str())
+                })
         });
         let choose_pairs = option_pairs.clone();
         let palette_title = t("settings.appearance.colorScheme.title");
