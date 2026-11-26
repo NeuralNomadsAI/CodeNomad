@@ -201,6 +201,32 @@ fn check_cancelled(cancel: Option<&CancellationToken>) -> Result<(), Fail> {
     Ok(())
 }
 
+/// Resolves an owned service directory without spawning `git rev-parse` for the unused checkout
+/// path when `directory` is already the canonical workspace root (`worktrees::ownership::resolve`).
+async fn resolve_owned_directory(app: &App, workspace: &Workspace, directory: &str) -> Option<String> {
+    if !crate::files::paths::under(&app.scope, Path::new(directory)) {
+        return None;
+    }
+    let dir = directory.to_owned();
+    let root = workspace.path.clone();
+    let scope = app.scope.clone();
+    let is_root = tokio::task::spawn_blocking(move || {
+        let target = dunce::canonicalize(&dir).ok()?;
+        if !target.starts_with(&scope) {
+            return Some(false);
+        }
+        (target == root && dunce::canonicalize(&root).ok().as_ref() == Some(&root)).then_some(true)
+    })
+    .await
+    .ok()
+    .flatten();
+    match is_root {
+        Some(true) => Some(workspace.path.to_string_lossy().into_owned()),
+        Some(false) => None,
+        None => ownership::resolve(app, workspace, directory).await.map(|owned| owned.directory),
+    }
+}
+
 async fn native_get_cancellable(
     app: &App,
     endpoint: &Endpoint,
@@ -387,9 +413,8 @@ pub(super) async fn read_context(
     if ws_selector.is_some() || input.unrepresentable_workspace_id || input.unrepresentable_directory {
         return Err(foreign);
     }
-    let resolved = ownership::resolve(app, &workspace, &directory).await.ok_or(foreign.clone())?;
-    let location_dir = resolved.directory;
-    if ownership::resolve(app, &workspace, &location_dir).await.is_none() {
+    let location_dir = resolve_owned_directory(app, &workspace, &directory).await.ok_or(foreign.clone())?;
+    if resolve_owned_directory(app, &workspace, &location_dir).await.is_none() {
         return Err(foreign);
     }
     let location = ControlLocation::new(location_dir, None);
@@ -556,13 +581,25 @@ async fn compute_discovery_loaders(ctx: &ReadContext) -> Option<Vec<Vec<String>>
 }
 
 /// `PluginControls.read`: `GET /api/workspaces/:id/plugin-controls`.
-pub(super) async fn read(
+pub(crate) async fn read(
     app: &App,
     workspace_id: &str,
     location: &ControlLocation,
     principal: Option<&CancellationToken>,
     cancel: Option<&CancellationToken>,
 ) -> Result<Snapshot, Fail> {
+    read_bound(app, workspace_id, location, principal, cancel).await.map(|(snapshot, _, _)| snapshot)
+}
+
+/// `PluginControls.read` returning the bound `Workspace` and `Endpoint` that produced the snapshot,
+/// so integration routes re-verify the exact same connection and ownership after follow-up RPCs.
+pub(crate) async fn read_bound(
+    app: &App,
+    workspace_id: &str,
+    location: &ControlLocation,
+    principal: Option<&CancellationToken>,
+    cancel: Option<&CancellationToken>,
+) -> Result<(Snapshot, Workspace, Arc<Endpoint>), Fail> {
     let mut ctx = read_context(app, workspace_id, location, principal, cancel).await?;
     let base = snapshot_base(&ctx.eval_ctx())?;
     let mut snapshot = evaluate_documents(&base, &ctx.eval_ctx(), None).snapshot;
@@ -604,7 +641,7 @@ pub(super) async fn read(
     }
     assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     check_cancelled(cancel)?;
-    Ok(snapshot)
+    Ok((snapshot, ctx.workspace, ctx.endpoint))
 }
 
 /// `PluginControls.readConfigDocuments` (`strictDocuments = false`) for `sources::add`.
@@ -826,6 +863,7 @@ pub(super) struct EditTarget<'a> {
     pub(super) location: &'a ControlLocation,
     pub(super) scope: Scope,
     pub(super) principal: Option<CancellationToken>,
+    pub(super) pinned_endpoint: Option<Arc<Endpoint>>,
 }
 
 /// Shared commit-admission state for `POST /plugin-sources` deadline arbitration:
@@ -851,7 +889,7 @@ where
     E: Send + 'static,
     F: FnOnce(&Document, &[PluginConfigEntry]) -> Result<jsonc::Text, E> + Send + 'static,
 {
-    let EditTarget { workspace_id, location, scope, principal } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint } = target_req;
     let queue_key = match scope {
         Scope::Global => format!("{workspace_id}\nglobal"),
         Scope::Project => fence::project_key(workspace_id, &location.directory),
@@ -862,6 +900,9 @@ where
     }
 
     let ctx = read_context(app, workspace_id, location, principal.as_ref(), Some(&cancel)).await.map_err(map_fail)?;
+    if let Some(ref pinned) = pinned_endpoint {
+        assert_current(app, pinned, &ctx.workspace, principal.as_ref()).map_err(map_fail)?;
+    }
     let target =
         ctx.targets.into_iter().find(|t| t.scope == scope).ok_or_else(|| {
             map_fail(fail(Status::SERVICE_UNAVAILABLE, "OpenCode configuration scope is unavailable"))
@@ -883,12 +924,18 @@ where
         }
         let doc = fs::load(&target.io_path).map_err(|e| map_fail(mapped(e)))?;
         let plugins = document_plugins(&doc).map_err(|e| map_fail(mapped(e)))?;
+        if let Some(ref pinned) = pinned_endpoint {
+            assert_current(&app_commit, pinned, &workspace, principal.as_ref()).map_err(map_fail)?;
+        }
         assert_current(&app_commit, &endpoint, &workspace, principal.as_ref()).map_err(map_fail)?;
         let updated = edit(&doc, &plugins)?;
         let mut prepared = fs::prepare(&doc, &updated).map_err(|e| map_fail(mapped(e)))?;
         prepared.commit_in_place(
             |e| map_fail(mapped(e)),
-            || guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail),
+            || {
+                guard_current(&app_commit, &endpoint, pinned_endpoint.as_ref(), &workspace, principal.as_ref())
+                    .map_err(map_fail)
+            },
             || {
                 use std::sync::atomic::Ordering;
                 if Instant::now() >= deadline {
@@ -926,7 +973,7 @@ where
     E: Send + 'static,
     F: FnOnce(&PluginDocumentsView<'_>) -> Result<Vec<(Scope, jsonc::Text)>, E>,
 {
-    let EditTarget { workspace_id, location, scope, principal } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint: _ } = target_req;
     // Global and Project queues are always held in that fixed order.
     let global_guard = fence::serialize(format!("{workspace_id}\nglobal")).await;
     let project_guard = fence::serialize(fence::project_key(workspace_id, &location.directory)).await;

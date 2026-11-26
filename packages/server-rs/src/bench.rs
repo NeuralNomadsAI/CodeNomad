@@ -203,7 +203,7 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let raw_path = req.uri().path().to_owned();
     let sensitive_path = crate::auth::remote::is_no_store_account_path(&raw_path);
-    let path = if sensitive_path { "<account-route>".to_owned() } else { raw_path };
+    let path = if sensitive_path { "<account-route>".to_owned() } else { sanitize_trace_path(&raw_path) };
     let keys = if sensitive_path {
         Vec::new()
     } else {
@@ -249,4 +249,22 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
     let bytes = axum::body::to_bytes(body, 16 * 1024).await.unwrap_or_default();
     line(&String::from_utf8_lossy(&bytes));
     Response::from_parts(parts, Body::from(bytes))
+}
+
+fn sanitize_trace_path(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("/api/workspaces/") else {
+        return path.to_owned();
+    };
+    let mut parts = rest.split('/');
+    let Some(_ws) = parts.next() else { return path.to_owned() };
+    if parts.next() != Some("integrations") {
+        return path.to_owned();
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => "/api/workspaces/:id/integrations".to_owned(),
+        (Some(_), Some(action @ ("hosts" | "binding" | "install" | "install-host" | "attach" | "detach")), None) => {
+            format!("/api/workspaces/:id/integrations/:integrationId/{action}")
+        }
+        _ => "<unmatched>".to_owned(),
+    }
 }

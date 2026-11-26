@@ -65,7 +65,7 @@ pub(super) fn validate_plugin_source_spec(spec: &str) -> Result<(), (SpecErrorCo
 }
 
 /// Registry package name for integration catalog recognition (`registryPackageName` in `recognition.ts`).
-pub(super) fn registry_package_name(spec: &str) -> Option<String> {
+pub(crate) fn registry_package_name(spec: &str) -> Option<String> {
     match parse_npa(spec)? {
         ParsedSpec::Alias { target_name, .. } => Some(target_name.to_ascii_lowercase()),
         ParsedSpec::Registry { name: Some(name) } => Some(name.to_ascii_lowercase()),
