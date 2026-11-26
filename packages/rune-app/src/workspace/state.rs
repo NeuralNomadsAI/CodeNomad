@@ -145,6 +145,56 @@ pub(super) struct Entry {
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
+impl Entry {
+    pub(in crate::workspace) fn key_str(&self) -> &str {
+        &self.key
+    }
+    pub(in crate::workspace) fn saved_ref(&self) -> &Tab {
+        &self.saved
+    }
+    pub(in crate::workspace) fn cache_ref(&self) -> Option<&Cache> {
+        self.cache.as_ref()
+    }
+    pub(in crate::workspace) fn last_touched(&self) -> u64 {
+        self.history_touched
+    }
+    pub(in crate::workspace) fn project_root(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .map(|project| project.path.as_str())
+            .or_else(|| match &self.saved {
+                Tab::Workspace(saved) if !saved.folder.is_empty() => Some(saved.folder.as_str()),
+                _ => None,
+            })
+    }
+    pub(in crate::workspace) fn binding_ref(&self) -> Option<&Backend> {
+        self.binding.as_ref()
+    }
+    pub(in crate::workspace) fn missions_ref(&self) -> Option<&crate::missions::Panel> {
+        self.missions.as_ref()
+    }
+    pub(in crate::workspace) fn live_drafts_bytes(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.live_drafts.values().fold(0usize, |total, draft| {
+            total.saturating_add(draft.retained_bytes(seen))
+        })
+    }
+    pub(in crate::workspace) fn inactive_secondary_bytes(
+        &self,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
+        let cache_secondary = self.cache.as_ref().map_or(0, |cache| {
+            cache.evictable_secondary_bytes(active_outline_ptr)
+        });
+        let missions = self
+            .missions
+            .as_ref()
+            .map_or(0, crate::missions::Panel::evictable_inactive_bytes);
+        cache_secondary.saturating_add(missions)
+    }
+}
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
     let entry = ui.entries.get(ui.active)?;
@@ -201,8 +251,82 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    memory_budget: super::memory_budget::Coordinator,
 }
 impl Ui {
+    pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
+        &self.entries
+    }
+    pub(in crate::workspace) fn active_tab_index(&self) -> usize {
+        self.active
+    }
+    pub(in crate::workspace) fn entry_cache_mut(&mut self, index: usize) -> Option<&mut Cache> {
+        self.entries.get_mut(index)?.cache.as_mut()
+    }
+    pub(in crate::workspace) fn evict_entry_secondary_caches(
+        &mut self,
+        index: usize,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return 0;
+        };
+        let mut freed = entry.cache.as_mut().map_or(0, |cache| {
+            super::memory_budget::evict_cache_secondary(cache, active_outline_ptr)
+        });
+        if let Some(missions) = &mut entry.missions {
+            freed = freed.saturating_add(missions.evict_inactive_caches());
+        }
+        freed
+    }
+    pub(in crate::workspace) fn evict_active_closed_mission_cache(&mut self) -> usize {
+        self.entries
+            .get_mut(self.active)
+            .and_then(|entry| entry.missions.as_mut())
+            .map_or(0, crate::missions::Panel::evict_closed_reader_cache)
+    }
+    pub(in crate::workspace) fn memory_budget_mut(
+        &mut self,
+    ) -> &mut super::memory_budget::Coordinator {
+        &mut self.memory_budget
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn push_fixture_entry(
+        &mut self,
+        key: &str,
+        touched: u64,
+        cache: Cache,
+        missions: Option<crate::missions::Panel>,
+    ) {
+        let mut item = entry(key.into(), Tab::Blank);
+        item.history_touched = touched;
+        item.cache = Some(cache);
+        item.missions = missions;
+        self.entries.push(item);
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn take_entry_cache(&mut self, index: usize) -> Option<Cache> {
+        self.entries.get_mut(index)?.cache.take()
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn entry_missions_ref(
+        &self,
+        index: usize,
+    ) -> Option<&crate::missions::Panel> {
+        self.entries.get(index)?.missions.as_ref()
+    }
+    #[cfg(test)]
+    pub(crate) fn mark_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn with_cached_git(&mut self, key: &str, f: impl FnOnce(&mut crate::git::Binding)) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.key == key)
+            && let Some(cache) = entry.cache.as_mut()
+        {
+            f(cache.git_mut());
+        }
+    }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }
@@ -248,6 +372,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            memory_budget: super::memory_budget::Coordinator::new(),
         }
     }
     fn changed(&mut self) {
@@ -321,6 +446,21 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
+        let records: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                Some((
+                    e.binding.as_ref()?.base.clone(),
+                    e.project.as_ref()?.id.clone(),
+                ))
+            })
+            .collect();
+        if self.persistence.suppresses_snapshot(self.revision) {
+            store.stage(&[], &records);
+            self.staged_revision = Some(self.revision);
+            return;
+        }
         let bytes = match super::encode_for_save(&self.snapshot()) {
             Ok((bytes, partial)) => {
                 self.persistence.partial = partial;
@@ -332,18 +472,80 @@ impl Ui {
                 return;
             }
         };
-        let records: Vec<_> = self
-            .entries
-            .iter()
-            .filter_map(|e| {
-                Some((
-                    e.binding.as_ref()?.base.clone(),
-                    e.project.as_ref()?.id.clone(),
-                ))
-            })
-            .collect();
         store.stage(&bytes, &records);
         self.staged_revision = Some(self.revision);
+    }
+    pub(crate) fn persistence_store(&self) -> Option<platform::storage::Store> {
+        self.persistence.store.clone()
+    }
+    pub(crate) fn is_primary_startup(&self) -> bool {
+        self.ready && self.persistence.store.is_some()
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_primary_store(&mut self, store: platform::storage::Store) {
+        self.ready = true;
+        self.persistence.store = Some(store);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_unreadable_restore(&mut self) {
+        self.touched = false;
+        self.persistence.restore_enabled = false;
+        self.persistence.restore_read_error = true;
+        self.persistence.read_error = true;
+        self.persistence.file_draft_read_error = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn persistence_loading(&self) -> bool {
+        self.persistence.loading
+    }
+    #[cfg(test)]
+    pub(crate) fn workspace_revision(&self) -> u64 {
+        self.revision
+    }
+    pub(crate) fn restore_enabled(&self) -> bool {
+        self.persistence.restore_enabled
+    }
+    pub(crate) fn begin_startup_mutation(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .begin_startup_mutation(self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.persistence.cancel_startup_mutation(outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_restore_enabled(
+        &mut self,
+        enabled: bool,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+        wake: rune::Waker,
+    ) {
+        if self
+            .persistence
+            .apply_restore_enabled(enabled, self.revision, documents, outlines, wake)
+        {
+            self.changed();
+        }
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_startup_cleared(
+        &mut self,
+        outcome: platform::storage::ClearOutcome,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .apply_cleared(outcome, self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {

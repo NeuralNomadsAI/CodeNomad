@@ -73,7 +73,9 @@ pub(super) fn poll(s: &mut State) -> bool {
         Err(_) => {
             l.search_results.failed = true;
             #[cfg(target_arch = "wasm32")]
-            crate::platform::pairing::observe(s);
+            if !crate::platform::pairing::required(s) {
+                crate::platform::pairing::observe(s);
+            }
         }
     }
     true

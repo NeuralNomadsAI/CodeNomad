@@ -219,7 +219,7 @@ pub(crate) fn view<S: 'static>(
                     .and_then(|p| p.editor.form.as_mut())
                     .map_or(fallback, |f| &mut f.objective)
             })
-            .build(field_kit(dark()))
+            .build(&field_kit(dark()))
             .key("mission-editor-objective"),
         )
         .child(counter(&form.objective.text, TEXT_LIMIT));
@@ -267,7 +267,7 @@ pub(crate) fn view<S: 'static>(
                         .and_then(|p| p.editor.form.as_mut())
                         .map_or(fallback, |f| &mut f.title)
                 })
-                .build(field_kit(dark()))
+                .build(&field_kit(dark()))
                 .key("mission-editor-title"),
         )
         .child(counter(&form.title.text, TITLE_LIMIT));
@@ -288,7 +288,7 @@ pub(crate) fn view<S: 'static>(
                         .and_then(|p| p.editor.form.as_mut())
                         .map_or(fallback, |f| &mut f.notes)
                 })
-                .build(field_kit(dark()))
+                .build(&field_kit(dark()))
                 .key("mission-editor-notes"),
         )
         .child(counter(&form.notes.text, TEXT_LIMIT));

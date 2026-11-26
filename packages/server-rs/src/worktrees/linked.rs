@@ -937,7 +937,10 @@ fn evacuation_paths(cat: &Catalogue, target: &Tree, families: &[Vec<Value>]) -> 
         .collect()
 }
 async fn clean(target: &Tree) -> Result<(), Error> {
-    let status = git(target.registered(), &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
+    let filter_flags = crate::git::host_filter_disables(target.registered()).await?;
+    let mut args: Vec<&str> = filter_flags.iter().map(String::as_str).collect();
+    args.extend(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    let status = git(target.registered(), &args).await?;
     if status.is_empty() { Ok(()) } else { Err(conflict("Worktree has uncommitted changes")) }
 }
 

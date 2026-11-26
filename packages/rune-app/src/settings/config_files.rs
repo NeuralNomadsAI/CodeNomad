@@ -350,7 +350,7 @@ impl Editor {
                         .disabled(waiting || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
                         .on_change(move |s, _| edit(s).diagnose())
-                        .build(field_kit(layout::dark())),
+                        .build(&field_kit(layout::dark())),
                 )
                 .children(self.syntax_line.map(|line| {
                     text(t("settings.configFiles.syntaxLine").replace("{line}", &line.to_string()))

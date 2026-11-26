@@ -1116,6 +1116,11 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
                 files.event(event.clone());
                 delivered = true;
             }
+            if matches!(event, WorkspaceEvent::Stopped { .. })
+                && let Some(agent) = &mut s.agent
+            {
+                delivered |= agent.workspace_stopped(target);
+            }
         }
     }
     if let Some(ui) = &mut s.workspace {

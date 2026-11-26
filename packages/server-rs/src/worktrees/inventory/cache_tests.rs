@@ -259,6 +259,7 @@ impl Harness {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": canon_root}),
+            temporary: None,
         };
         app.inner.lock().unwrap().workspaces.push(ws.clone());
         Self { _dir: dir, root: canon_root, native: native_state, app, id, ws, events, http }

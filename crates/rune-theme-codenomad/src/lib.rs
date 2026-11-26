@@ -27,23 +27,41 @@ mod tokens;
 pub mod usage;
 pub mod window_control;
 pub mod workspace_tree;
-pub use kit::{field_kit, kit};
+pub use kit::{KitRef, field_kit, kit};
 use rune::Theme;
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::{ops::Deref, rc::Rc, sync::OnceLock};
 pub use tokens::{Dimension, Length, MotionRole, Space, TextRole, Tokens, tokens};
+
+pub enum ThemeRef {
+    Static(&'static Theme),
+    Dynamic(Rc<palettes::CustomPalette>),
+}
+
+impl Deref for ThemeRef {
+    type Target = Theme;
+    fn deref(&self) -> &Theme {
+        match self {
+            Self::Static(theme) => theme,
+            Self::Dynamic(palette) => palette.theme(),
+        }
+    }
+}
 
 pub const THEME: &str = include_str!("../assets/theme.json");
 fn document() -> &'static Value {
     static DOCUMENT: OnceLock<Value> = OnceLock::new();
     DOCUMENT.get_or_init(|| serde_json::from_str(THEME).expect("generated CodeNomad theme"))
 }
-pub fn theme(dark: bool) -> &'static Theme {
+pub fn theme(dark: bool) -> ThemeRef {
     if let Some(palette) = palettes::active(dark) {
-        return palette.theme();
+        return match palette {
+            palettes::ResolvedPalette::BuiltIn(palette) => ThemeRef::Static(palette.theme()),
+            palettes::ResolvedPalette::Custom(palette) => ThemeRef::Dynamic(palette),
+        };
     }
     static THEMES: [OnceLock<Theme>; 4] = [const { OnceLock::new() }; 4];
-    THEMES[palette_index(dark)].get_or_init(|| {
+    ThemeRef::Static(THEMES[palette_index(dark)].get_or_init(|| {
         let doc = document();
         if layout::source_palette() {
             let product = serde_json::json!({
@@ -57,7 +75,7 @@ pub fn theme(dark: bool) -> &'static Theme {
             Theme::from_value(doc, dark)
         }
         .expect("generated CodeNomad colors")
-    })
+    }))
 }
 fn palette_index(dark: bool) -> usize {
     2 * usize::from(layout::source_palette()) + usize::from(dark)

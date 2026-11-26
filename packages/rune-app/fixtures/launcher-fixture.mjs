@@ -20,6 +20,7 @@ import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
+import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
@@ -27,7 +28,7 @@ const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
-if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+if(needsOwnedWindowsWorker(process.argv)){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
   const closed=new Promise(resolve=>worker.once('close',resolve))
   const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
@@ -51,8 +52,12 @@ const webSearch=process.argv.includes('--web-history-search')
 const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webOutline,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
+const webKeyboard=process.argv.includes('--web-keyboard-viewport')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
+assert(!webMobileDrawers||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webKeyboard&&!process.argv.includes('--web-restore')),'Mobile drawers uses its own loopback Chromium fixture mode')
+assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webMobileDrawers&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
 assert(!webMissions||!webRestore&&!webMobile)
 assert(!webGitImages||!webRestore&&!webMobile&&!webMissions)
 if(!web)requireTestSupport()
@@ -80,6 +85,7 @@ if(webSearch){
 const browserOutput=path.join(output,run,'browser')
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 if(webFileWrap)await writeFile(path.join(project,'wrap.txt'),'Workspace word wrap fixture: '+'wide source '.repeat(24)+'\n')
+if(webMobileDrawers)await writeFile(path.join(project,'drawer-probe.txt'),'Mobile drawer fixture file\n')
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
 const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
 const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'),'utf8')):null
@@ -101,7 +107,7 @@ if(gitPanel){
   await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
 }
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
-const linked=(webMobile&&!webAndroid||webSearch)?path.join(path.dirname(project),'linked'):null
+const linked=(webMobile&&!webAndroid||webSearch||webMobileDrawers)?path.join(path.dirname(project),'linked'):null
 if(linked){
   const hooks=path.join(profile,'empty-hooks')
   await mkdir(hooks)
@@ -203,7 +209,9 @@ function add(id,title,directory=project) {
   return row
 }
 add('ses_existing','Existing history')
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_existing').append('assistant',`Keyboard passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_another').append('assistant',`Question passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 seedHistory({stores,webTimeline:webTimeline||webOutline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
@@ -217,6 +225,7 @@ if(linked&&!webSearch){
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
 }
 const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
+let keyboardPermissionSettled=false,keyboardFormSettled=false
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
@@ -231,8 +240,26 @@ const upstream=createServer(async(req,res)=>{
       assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid&&!webMoreActions)&&
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits prompts only in the Android and mobile menu scenes')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:webKeyboard?[{...fixtureModel,enabled:true}]:[]})
       if(url.pathname==='/api/command'&&webSearch)return json({location:{directory:project},data:[]})
+      if(webKeyboard){
+        const keyboardPermission={id:'permission-keyboard',sessionID:'ses_existing',action:'edit',
+          resources:Array.from({length:12},(_,i)=>`/synthetic/keyboard-${i}.rs`),message:'Approve synthetic edit'}
+        const keyboardForm={id:'form-keyboard',sessionID:'ses_another',title:'Synthetic keyboard question',
+          fields:Array.from({length:8},(_,i)=>({key:`q${i}`,type:'string',title:`Question field ${i}`}))}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission')return json({data:keyboardPermissionSettled?[]:[keyboardPermission]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard'){
+          if(keyboardPermissionSettled){res.statusCode=404;return json({_tag:'PermissionNotFoundError',requestID:'permission-keyboard',message:'Permission is no longer pending for this session'})}
+          return json({data:keyboardPermission})
+        }
+        if(req.method==='POST'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard/reply'){keyboardPermissionSettled=true;return json({data:{}})}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form')return json({data:keyboardFormSettled?[]:[keyboardForm]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){
+          if(keyboardFormSettled){res.statusCode=404;return json({_tag:'FormNotFoundError',id:'form-keyboard',message:'Question is no longer pending for this session'})}
+          return json({data:{...keyboardForm,state:{status:'pending'}}})
+        }
+        if(req.method==='DELETE'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){keyboardFormSettled=true;return json({data:{}})}
+      }
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -245,7 +272,7 @@ const upstream=createServer(async(req,res)=>{
       res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
-    if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
+    if((webMobile||compare||webMobileDrawers)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){
       if(url.pathname==='/api/session/active')return json({data:{}})
       if(url.pathname==='/api/project')return json([])
@@ -316,7 +343,7 @@ const upstream=createServer(async(req,res)=>{
       if(!cursor){
         assert.equal(url.searchParams.get('limit'),'200')
         const search=url.searchParams.get('search')
-        if(webMobile&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
+        if((webMobile||webMobileDrawers)&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
         if(rows.length>1)next=Buffer.from(JSON.stringify({directory,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
         rows=rows.slice(0,1)
       }else rows=rows.slice(1)
@@ -472,7 +499,7 @@ try{
   if(web){
     await signIn(origin)
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
