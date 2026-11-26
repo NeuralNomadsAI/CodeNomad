@@ -1742,7 +1742,7 @@ fn composer_stays_blocked_until_reconciliation_read_after_superseded_pending_rep
 #[test]
 fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_missing_scope() {
     use crate::agent_api::{Form, Permission};
-    let (jobs, _jobs_rx) = super::bounded(4);
+    let (jobs, jobs_rx) = super::bounded(4);
     let (permissions, perm_rx) = super::bounded(4);
     let (forms, form_rx) = super::bounded(4);
     let (catalog, _catalog_rx) = super::bounded(4);
@@ -1866,11 +1866,18 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     assert!(ui.permissions_locked());
     assert!(ui.forms_locked());
 
-    // Late post-mutation results, valid reads, or online flips arriving after workspace_stopped
-    // must neither re-arm navigation_blocked nor unlock composer/model/reply controls.
+    // Late post-mutation failures, valid reads, stop failures, or online flips arriving after
+    // workspace_stopped must neither set errors, dispatch VerifyIdle/reads, re-arm
+    // navigation_blocked, nor unlock composer/model/reply controls.
+    while jobs_rx.try_recv().is_ok() {}
     ui.online = true;
-    out.try_send(super::Result::ActForm(true, None, form_act_gen))
+    ui.attention.observe_session(true, Some("/repo"));
+    ui.attention.execution(Some("idle_1".into()));
+    out.try_send(super::Result::ActPermission(false, None, act_gen))
         .unwrap();
+    out.try_send(super::Result::ActForm(false, None, form_act_gen))
+        .unwrap();
+    out.try_send(super::Result::Stop(false)).unwrap();
     out.try_send(super::Result::Session(
         super::Snapshot {
             models: None,
@@ -1895,6 +1902,10 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     out.try_send(super::Result::Forms(Some(vec![]), form_gen_now))
         .unwrap();
     assert!(ui.poll());
+    assert!(!ui.error);
+    assert!(!ui.known);
+    assert!(!ui.pending_known);
+    assert!(jobs_rx.try_recv().is_err());
     assert!(!ui.navigation_blocked());
     assert!(ui.blocked());
     assert!(ui.model_locked());

@@ -306,14 +306,21 @@ impl Ui {
         self.trailing = None;
         self.catalog_trailing = None;
         self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.session_error = false;
+        self.catalog_error = false;
+        self.stop_error = false;
         self.permissions_lane.bump();
         self.permissions_lane.known = false;
         self.permissions_lane.reconciling = false;
         self.permissions_lane.trailing = false;
+        self.permissions_lane.error = false;
         self.forms_lane.bump();
         self.forms_lane.known = false;
         self.forms_lane.reconciling = false;
         self.forms_lane.trailing = false;
+        self.forms_lane.error = false;
+        self.attention.disconnected();
+        self.sync_error();
         self.sync_pending_known();
     }
 
@@ -911,70 +918,80 @@ impl Ui {
                 }
                 Result::ActPermission(ok, permissions, generation) => {
                     self.permissions_lane.busy = false;
-                    let fresh = generation == self.permissions_lane.generation;
-                    self.permissions_lane.error = !ok || (fresh && permissions.is_none());
-                    self.sync_error();
                     if self.scope_missing {
                         self.permissions_lane.reconciling = false;
-                    } else if fresh {
-                        self.permissions_lane.reconciling = permissions.is_none();
-                        self.apply_permissions(permissions);
                     } else {
-                        self.permissions_lane.reconciling = true;
-                        self.permissions_lane.trailing = true;
+                        let fresh = generation == self.permissions_lane.generation;
+                        self.permissions_lane.error = !ok || (fresh && permissions.is_none());
+                        self.sync_error();
+                        if fresh {
+                            self.permissions_lane.reconciling = permissions.is_none();
+                            self.apply_permissions(permissions);
+                        } else {
+                            self.permissions_lane.reconciling = true;
+                            self.permissions_lane.trailing = true;
+                        }
                     }
                 }
                 Result::ActForm(ok, forms, generation) => {
                     self.forms_lane.busy = false;
-                    let fresh = generation == self.forms_lane.generation;
-                    self.forms_lane.error = !ok || (fresh && forms.is_none());
-                    self.sync_error();
                     if self.scope_missing {
                         self.forms_lane.reconciling = false;
-                    } else if fresh {
-                        self.forms_lane.reconciling = forms.is_none();
-                        self.apply_forms(forms);
                     } else {
-                        self.forms_lane.reconciling = true;
-                        self.forms_lane.trailing = true;
+                        let fresh = generation == self.forms_lane.generation;
+                        self.forms_lane.error = !ok || (fresh && forms.is_none());
+                        self.sync_error();
+                        if fresh {
+                            self.forms_lane.reconciling = forms.is_none();
+                            self.apply_forms(forms);
+                        } else {
+                            self.forms_lane.reconciling = true;
+                            self.forms_lane.trailing = true;
+                        }
                     }
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;
-                    self.stop_error = !ok;
-                    self.sync_error();
-                    self.refresh(false)
+                    if !self.scope_missing {
+                        self.stop_error = !ok;
+                        self.sync_error();
+                        self.refresh(false)
+                    }
                 }
                 Result::VerifiedIdle(idle, inactive) => {
-                    self.attention
-                        .confirm_idle(idle, inactive && self.online && !self.running);
+                    if !self.scope_missing {
+                        self.attention
+                            .confirm_idle(idle, inactive && self.online && !self.running);
+                    }
                 }
             }
             changed = true;
         }
-        if !self.reading && !self.busy {
-            if let Some(catalog) = self.trailing.take() {
-                self.refresh_session(catalog)
-            } else if let Some((id, directory)) = self.attention.verify_idle() {
-                let _ = self.handle.jobs.try_send(Job::VerifyIdle(id, directory));
+        if !self.scope_missing {
+            if !self.reading && !self.busy {
+                if let Some(catalog) = self.trailing.take() {
+                    self.refresh_session(catalog)
+                } else if let Some((id, directory)) = self.attention.verify_idle() {
+                    let _ = self.handle.jobs.try_send(Job::VerifyIdle(id, directory));
+                }
             }
-        }
-        if !self.permissions_lane.reading
-            && !self.permissions_lane.busy
-            && std::mem::take(&mut self.permissions_lane.trailing)
-        {
-            self.dispatch_permissions_read(self.permissions_lane.generation);
-        }
-        if !self.forms_lane.reading
-            && !self.forms_lane.busy
-            && std::mem::take(&mut self.forms_lane.trailing)
-        {
-            self.dispatch_forms_read(self.forms_lane.generation);
-        }
-        if !self.catalog_reading
-            && let Some(directory) = self.catalog_trailing.take()
-        {
-            self.dispatch_catalog_read(directory, self.catalog_generation);
+            if !self.permissions_lane.reading
+                && !self.permissions_lane.busy
+                && std::mem::take(&mut self.permissions_lane.trailing)
+            {
+                self.dispatch_permissions_read(self.permissions_lane.generation);
+            }
+            if !self.forms_lane.reading
+                && !self.forms_lane.busy
+                && std::mem::take(&mut self.forms_lane.trailing)
+            {
+                self.dispatch_forms_read(self.forms_lane.generation);
+            }
+            if !self.catalog_reading
+                && let Some(directory) = self.catalog_trailing.take()
+            {
+                self.dispatch_catalog_read(directory, self.catalog_generation);
+            }
         }
         changed
     }
