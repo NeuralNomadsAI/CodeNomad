@@ -22,6 +22,7 @@ pub(super) struct Editor {
     read: Option<(Sender<()>, Receiver<Read>)>,
     write: Option<Receiver<(String, bool)>>,
     goal: Option<usize>,
+    requested_id: Option<String>,
     confirm: Option<usize>,
     notice: Option<&'static str>,
 }
@@ -42,6 +43,21 @@ impl Editor {
         self.write.is_some()
     }
 
+    pub fn request_file(&mut self, id: String) {
+        if let Some(files) = &self.files {
+            if let Some(index) = files.iter().position(|f| f.id == id) {
+                self.requested_id = None;
+                if self.active != Some(index) {
+                    self.choose(index);
+                }
+            } else {
+                self.requested_id = Some(id);
+            }
+        } else {
+            self.requested_id = Some(id);
+        }
+    }
+
     pub fn suspend(&mut self) {
         self.read = None;
         self.goal = None;
@@ -55,8 +71,10 @@ impl Editor {
         };
         let mut changed = self.owner.is_some() && self.owner.as_deref() != Some(&backend.client_id);
         if changed {
+            let requested = self.requested_id.take();
             *self = Self {
                 owner: Some(backend.client_id.clone()),
+                requested_id: requested,
                 ..Self::default()
             };
         }
@@ -84,7 +102,11 @@ impl Editor {
             self.read = None;
             match result {
                 Read::List(Some(files)) => {
-                    self.goal = (!files.is_empty()).then_some(0);
+                    self.goal = self
+                        .requested_id
+                        .take()
+                        .and_then(|id| files.iter().position(|f| f.id == id))
+                        .or_else(|| (!files.is_empty()).then_some(0));
                     self.files = Some(files);
                 }
                 Read::List(None) => self.notice = Some("settings.configFiles.errors.loadList"),

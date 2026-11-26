@@ -112,12 +112,49 @@ pub(crate) fn detail_section<S: 'static>(
                 | "missions.scheduleList.readFailed"
                 | "missions.scheduleList.capacity"
                 | "missions.scheduleList.activationRefused"
+                | "missions.scheduleList.runNowRequiresEnabled"
         );
         reg = reg.child(note(k, if alert { "alert" } else { "status" }));
     }
+    if let Some(refusal) = ui.schedules.refusal.as_ref() {
+        let mut ref_row = layout::action_row();
+        if let Some(cfg_id) = refusal.openable_config_id() {
+            ref_row = ref_row.child(tbtn(
+                "missionsPanel.action.openSchedulingSettings",
+                "mission-schedule-open-settings",
+                G::OpenConfigFile(cfg_id.to_owned()),
+                act,
+            ));
+        }
+        let layer_key = format!(
+            "missions.scheduleList.activationRefused.layer.{}",
+            refusal.layer
+        );
+        let layer_label = catalogue::message(locale(), &layer_key).unwrap_or(&refusal.layer);
+        let msg_key = if refusal.layer == "environment" {
+            "missions.scheduleList.activationRefused.environment"
+        } else {
+            "missions.scheduleList.activationRefused.document"
+        };
+        let mut tip = fmt(msg_key, &[("layer", layer_label)]);
+        if let Some(path) = refusal.path.as_deref().filter(|p| !p.is_empty()) {
+            tip.push('\n');
+            tip.push_str(path);
+        }
+        ref_row = ref_row.child(info_btn(
+            t("missions.scheduleList.activationRefused"),
+            &tip,
+            ui.schedules.refusal_info_open,
+            "mission-schedule-refusal-info",
+            G::ToggleRefusalInfo,
+            act,
+        ));
+        reg = reg.child(ref_row);
+    }
 
     reg = append_facts(reg, doc);
-    Some(append_instructions_and_runs(reg, ui, doc, act))
+    reg = append_instructions_and_runs(reg, ui, doc, act);
+    Some(append_diagnostics(reg, ui, doc, act))
 }
 
 fn action_bar<S: 'static>(
@@ -154,6 +191,19 @@ fn action_bar<S: 'static>(
             a,
             !ui.schedules.capable(doc, a, held, en, dir),
             key,
+            act,
+        ));
+    }
+    if doc.configuration.launch.requires_calendar
+        && ui.schedules.capability == Some(Cap::Activatable)
+        && (doc.available_actions.contains(&A::Play) || doc.available_actions.contains(&A::Resume))
+    {
+        bar = bar.child(info_btn(
+            t("missions.scheduling.title"),
+            t("missions.scheduling.capability.activatable"),
+            ui.schedules.activatable_info_open,
+            "mission-schedule-activatable-info",
+            G::ToggleActivatableInfo,
             act,
         ));
     }
@@ -311,6 +361,133 @@ fn append_instructions_and_runs<S: 'static>(
     reg
 }
 
+fn append_diagnostics<S: 'static>(
+    mut reg: El,
+    ui: &Panel,
+    doc: &UnifiedSchedule,
+    act: ScheduleAct<S>,
+) -> El {
+    let open = ui.schedules.diagnostics_open.contains(&doc.id);
+    let info_open = ui.schedules.diagnostics_info_open.contains(&doc.id);
+    let info_text = format!(
+        "{} {}",
+        t("missions.scheduleDiagnostics.cost"),
+        t("missions.scheduleDiagnostics.retention")
+    );
+    let hdr = layout::action_row()
+        .child(
+            tbtn(
+                "missions.scheduleDiagnostics.title",
+                "mission-schedule-diagnostics-toggle",
+                G::ToggleDiagnostics,
+                act,
+            )
+            .expanded(open),
+        )
+        .child(info_btn(
+            t("missions.scheduleDiagnostics.title"),
+            &info_text,
+            info_open,
+            "mission-schedule-diagnostics-info",
+            G::ToggleDiagnosticsInfo,
+            act,
+        ));
+    reg = reg.child(hdr);
+    if !open {
+        return reg;
+    }
+    let wakes_val = doc.observation.wake_count.map_or_else(
+        || t("missions.scheduleList.unavailable").to_owned(),
+        |n| n.to_string(),
+    );
+    let cleanup_key = if doc.technical.cleanup_pending {
+        "missions.scheduleDiagnostics.cleanupPending"
+    } else {
+        "missions.scheduleDiagnostics.cleanupClear"
+    };
+    let mut body = col()
+        .full_width()
+        .pad(Space::Xs)
+        .separate(Space::Xs)
+        .inset_surface()
+        .key("mission-schedule-diagnostics")
+        .role("region")
+        .label(t("missions.scheduleDiagnostics.title"))
+        .child(small(fmt(
+            "missions.scheduleDiagnostics.wakes",
+            &[("count", &wakes_val)],
+        )))
+        .child(note(cleanup_key, "status"));
+    if doc.technical.carriers.is_empty() {
+        body = body.child(small(t("missions.scheduleDiagnostics.noCarriers")));
+    } else {
+        for (idx, carrier) in doc.technical.carriers.iter().enumerate() {
+            let role_key = if carrier.role == "reconciliation" {
+                "missions.scheduleDiagnostics.role.reconciliation"
+            } else {
+                "missions.scheduleDiagnostics.role.principal"
+            };
+            let slot_num = (carrier.slot + 1).to_string();
+            let gen_num = carrier.time_generation.to_string();
+            let mut summary = format!(
+                "{} · {}",
+                fmt(role_key, &[("number", &slot_num)]),
+                fmt(
+                    "missions.scheduleDiagnostics.generation",
+                    &[("number", &gen_num)]
+                ),
+            );
+            if carrier.retiring {
+                let rk = if carrier.cleanup_pending {
+                    "missions.scheduleDiagnostics.cleanupPending"
+                } else {
+                    "missions.scheduleDiagnostics.retired"
+                };
+                summary.push_str(" · ");
+                summary.push_str(t(rk));
+            }
+            let cal_id = carrier
+                .schedule_id
+                .as_deref()
+                .unwrap_or(t("missions.scheduleList.none"));
+            body = body.child(
+                col()
+                    .full_width()
+                    .separate(Space::Xs)
+                    .key(format!("mission-schedule-carrier-{idx}"))
+                    .child(small(summary))
+                    .child(
+                        row()
+                            .full_width()
+                            .separate(Space::Xs)
+                            .child(small(t("missions.scheduleDiagnostics.session")))
+                            .child(
+                                text(&carrier.session_id)
+                                    .text_role(TextRole::Small)
+                                    .literal_direction()
+                                    .wrap_anywhere()
+                                    .remaining(),
+                            ),
+                    )
+                    .child(
+                        row()
+                            .full_width()
+                            .separate(Space::Xs)
+                            .child(small(t("missions.scheduleDiagnostics.calendar")))
+                            .child(
+                                text(cal_id)
+                                    .text_role(TextRole::Small)
+                                    .literal_direction()
+                                    .wrap_anywhere()
+                                    .remaining(),
+                            ),
+                    ),
+            );
+        }
+    }
+    reg.child(body)
+}
+
 pub(crate) fn confirmation<S: 'static>(holds: &ScheduleHolds, act: ScheduleAct<S>) -> Option<El> {
     let c = holds.confirmation.as_ref()?;
     let prompt = match c.action {
@@ -346,6 +523,21 @@ fn fact_t(lk: &str, v: &str) -> El {
 }
 fn tbtn<S: 'static>(lk: &str, key: impl Into<String>, g: G, act: ScheduleAct<S>) -> El {
     btn(t(lk), key, g, act)
+}
+fn info_btn<S: 'static>(
+    label: &str,
+    help: &str,
+    open: bool,
+    key: &'static str,
+    g: G,
+    act: ScheduleAct<S>,
+) -> El {
+    layout::button_tx("ⓘ", false, move |s: &mut S, tx| act(s, g.clone(), tx))
+        .key(key)
+        .label(label)
+        .description(help)
+        .help(help)
+        .help_open(open)
 }
 fn btn<S: 'static>(lbl: &str, key: impl Into<String>, g: G, act: ScheduleAct<S>) -> El {
     layout::button_tx(lbl, false, move |s: &mut S, tx| act(s, g.clone(), tx)).key(key.into())
@@ -398,13 +590,6 @@ fn status_key(
         match ui.schedules.capability {
             Some(Cap::Refused) => return Some("missions.scheduleList.activationRefused"),
             Some(Cap::Missing) => return Some("missions.scheduling.capability.missing"),
-            Some(Cap::Available)
-                if !doc.activation_ready()
-                    && (doc.available_actions.contains(&A::Play)
-                        || doc.available_actions.contains(&A::Resume)) =>
-            {
-                return Some("missions.scheduling.capability.missing");
-            }
             _ => {}
         }
     }

@@ -9,6 +9,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             prefs.window_wake = Some(wake);
             if std::mem::take(&mut prefs.open_providers) {
                 s.section = Section::Providers;
+            } else if let Some(id) = prefs.open_config_file.take() {
+                s.section = Section::ConfigFiles;
+                s.config_files.request_file(id);
             }
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
@@ -32,8 +35,18 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let mut prefs = s.shared.borrow_mut();
                 let jump = std::mem::take(&mut prefs.open_providers);
-                if jump && !s.config_files.busy() && !s.confirm_close && !s.closing {
-                    s.section = Section::Providers;
+                let jump_config = prefs.open_config_file.take();
+                if (jump || jump_config.is_some())
+                    && !s.config_files.busy()
+                    && !s.confirm_close
+                    && !s.closing
+                {
+                    if let Some(id) = jump_config {
+                        s.section = Section::ConfigFiles;
+                        s.config_files.request_file(id);
+                    } else {
+                        s.section = Section::Providers;
+                    }
                     s.general.close();
                     s.transcript_picker.set(None);
                     s.advanced_help = None;
@@ -68,7 +81,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if let Some(wake) = prefs.window_wake.clone() {
                     config_changed = s.host_support.poll(&prefs, &wake, !s.closing);
                     let capable = s.host_support.config_files(&prefs);
-                    if s.section == Section::ConfigFiles && !capable && !s.config_files.dirty() {
+                    if s.section == Section::ConfigFiles
+                        && !capable
+                        && !s.host_support.pending(&prefs)
+                        && !s.config_files.dirty()
+                    {
                         s.section = Section::General;
                         prefs.memory.show(true);
                         config_changed = true;

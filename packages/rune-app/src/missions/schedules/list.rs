@@ -11,8 +11,9 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     missions::{
-        SCHEDULE_PAGE_LIMIT, ScheduleAction as Act, ScheduleCapability, ScheduleControlRequest,
-        ScheduleFetch as Fetch, ScheduleListPage, ScheduleReadOutcome as ReadOut, UnifiedSchedule,
+        ActivationRefusal, SCHEDULE_PAGE_LIMIT, ScheduleAction as Act, ScheduleCapability,
+        ScheduleControlRequest, ScheduleFetch as Fetch, ScheduleListPage,
+        ScheduleReadOutcome as ReadOut, UnifiedSchedule, request_id,
     },
 };
 use std::collections::HashSet;
@@ -20,6 +21,7 @@ use std::collections::HashSet;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Cap {
     Available,
+    Activatable,
     Refused,
     Missing,
 }
@@ -159,11 +161,16 @@ pub(crate) struct Schedules {
     list_owed: bool,
     point_flight: Option<Flight<ReadOut, (String, u64)>>,
     pub(crate) capability: Option<Cap>,
+    pub(crate) refusal: Option<ActivationRefusal>,
     cap_flight: Option<Flight<Fetch<ScheduleCapability>, u64>>,
     pre: Option<Flight<PreOut, Pre>>,
     pending_pre: Option<(Pre, Backend, PreOut)>,
     pub(crate) feedback: Option<(String, &'static str)>,
     pub(crate) instructions_open: HashSet<String>,
+    pub(crate) diagnostics_open: HashSet<String>,
+    pub(crate) diagnostics_info_open: HashSet<String>,
+    pub(crate) refusal_info_open: bool,
+    pub(crate) activatable_info_open: bool,
     auth_sink: AuthSink,
     auth_expired: Vec<Backend>,
 }
@@ -185,11 +192,16 @@ impl Default for Schedules {
             list_owed: false,
             point_flight: None,
             capability: None,
+            refusal: None,
             cap_flight: None,
             pre: None,
             pending_pre: None,
             feedback: None,
             instructions_open: HashSet::new(),
+            diagnostics_open: HashSet::new(),
+            diagnostics_info_open: HashSet::new(),
+            refusal_info_open: false,
+            activatable_info_open: false,
             auth_sink: AuthSink::default(),
             auth_expired: Vec::new(),
         }
@@ -281,8 +293,13 @@ impl Schedules {
             && doc.owns_directory(dir)
             && doc.available_actions.contains(&act);
         let cal = doc.configuration.launch.requires_calendar;
-        ok && (!(cal && act.requires_calendar_check()) || self.capability == Some(Cap::Available))
-            && (!(cal && act.requires_activation_proof()) || doc.activation_ready())
+        let cap_ok = if cal && act.requires_calendar_check() {
+            self.capability == Some(Cap::Available)
+                || (act.requires_activation_proof() && self.capability == Some(Cap::Activatable))
+        } else {
+            true
+        };
+        ok && cap_ok
     }
 
     pub(crate) fn show(&mut self, show: bool) {
@@ -307,6 +324,9 @@ impl Schedules {
         self.cancel_flights();
         self.fresh.clear();
         self.capability = None;
+        self.refusal = None;
+        self.refusal_info_open = false;
+        self.activatable_info_open = false;
     }
     pub(crate) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -354,6 +374,9 @@ impl Schedules {
         self.selected = None;
         self.selection_error = None;
         self.feedback = None;
+        self.refusal = None;
+        self.refusal_info_open = false;
+        self.activatable_info_open = false;
         self.cancel_pre();
         cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
     }
@@ -399,6 +422,32 @@ impl Schedules {
                 if !self.instructions_open.remove(id) {
                     self.instructions_open.insert(id.to_owned());
                 }
+                true
+            }
+            G::ToggleDiagnostics => {
+                let Some(id) = self.selected.as_deref() else {
+                    return false;
+                };
+                if !self.diagnostics_open.remove(id) {
+                    self.diagnostics_open.insert(id.to_owned());
+                }
+                true
+            }
+            G::ToggleDiagnosticsInfo => {
+                let Some(id) = self.selected.as_deref() else {
+                    return false;
+                };
+                if !self.diagnostics_info_open.remove(id) {
+                    self.diagnostics_info_open.insert(id.to_owned());
+                }
+                true
+            }
+            G::ToggleRefusalInfo => {
+                self.refusal_info_open = !self.refusal_info_open;
+                true
+            }
+            G::ToggleActivatableInfo => {
+                self.activatable_info_open = !self.activatable_info_open;
                 true
             }
             G::Action(act) => {
@@ -547,8 +596,21 @@ impl Schedules {
                 push_auth_expired(&mut self.auth_expired, b);
             } else if epoch == self.generation {
                 match res {
-                    Some(Fetch::Ready(cap)) => self.capability = Some(cap_state(cap)),
-                    _ => self.capability = Some(Cap::Missing),
+                    Some(Fetch::Ready(cap)) => {
+                        self.capability = Some(cap_state(&cap));
+                        self.refusal = cap.refusal.clone();
+                        if cap.activation_available
+                            && self.feedback.as_ref().is_some_and(|(_, k)| {
+                                *k == "missions.scheduleList.activationRefused"
+                            })
+                        {
+                            self.feedback = None;
+                        }
+                    }
+                    _ => {
+                        self.capability = Some(Cap::Missing);
+                        self.refusal = None;
+                    }
                 }
             }
         }
@@ -718,33 +780,65 @@ impl Schedules {
                     return;
                 }
                 Fetch::Ready(c) => {
-                    self.capability = Some(cap_state(c));
+                    self.capability = Some(cap_state(&c));
+                    self.refusal = c.refusal.clone();
                     if !self.visible || self.selected.as_deref() != Some(m.key.schedule_id.as_str())
                     {
                         return;
                     }
-                    if !c.ready() {
+                    if c.refused() {
+                        self.feedback =
+                            Some((m.key.schedule_id, "missions.scheduleList.activationRefused"));
+                        return;
+                    }
+                    if !c.api_available || (!c.enabled && !c.activation_available) {
+                        self.feedback =
+                            Some((m.key.schedule_id, "missions.scheduling.capability.missing"));
+                        return;
+                    }
+                    if m.act == Act::RunNow && !c.enabled {
                         self.feedback = Some((
                             m.key.schedule_id,
-                            if c.refused() {
-                                "missions.scheduleList.activationRefused"
-                            } else {
-                                "missions.scheduling.capability.missing"
-                            },
+                            "missions.scheduleList.runNowRequiresEnabled",
                         ));
+                        return;
+                    }
+                    if m.act != Act::RunNow && (!c.enabled || !m.doc.activation_ready()) {
+                        if !m.doc.owns_directory(ctx.directory) {
+                            return;
+                        }
+                        if !holds.has_capacity_for(&m.key) {
+                            self.feedback =
+                                Some((m.key.schedule_id, "missions.scheduleList.capacity"));
+                            return;
+                        }
+                        let (req_id, proof_rev) = match m
+                            .doc
+                            .schedule_activation
+                            .as_ref()
+                            .filter(|a| a.state == "ready" && !a.request_id.is_empty())
+                        {
+                            Some(prev) => (prev.request_id.clone(), prev.expected_revision),
+                            None => {
+                                let Ok(id) = request_id() else {
+                                    self.feedback = Some((
+                                        m.key.schedule_id,
+                                        "missions.scheduleList.readFailed",
+                                    ));
+                                    return;
+                                };
+                                (id, m.rev)
+                            }
+                        };
+                        holds.dispatch_activation(
+                            m.key, m.occ, m.act, req_id, proof_rev, m.rev, m.doc, ctx,
+                        );
                         return;
                     }
                 }
             }
         }
         if !m.doc.owns_directory(ctx.directory) {
-            return;
-        }
-        if m.doc.configuration.launch.requires_calendar
-            && m.act.requires_activation_proof()
-            && !m.doc.activation_ready()
-        {
-            self.feedback = Some((m.key.schedule_id, "missions.scheduling.capability.missing"));
             return;
         }
         self.dispatch_control(m, holds, ctx);
@@ -757,7 +851,10 @@ impl Schedules {
         let (mut changed, mut refresh) = (false, false);
         for ev in evs {
             let key = match ev {
-                Ev::Settled(k, _) | Ev::Refused(k, _) | Ev::NeedsRefresh(k) => k,
+                Ev::Settled(k, _)
+                | Ev::Refused(k, _)
+                | Ev::ActivationRefused(k, _)
+                | Ev::NeedsRefresh(k) => k,
             };
             if !key.matches_scope(ctx.backend, &p, ctx.scope) {
                 continue;
@@ -766,6 +863,13 @@ impl Schedules {
             match ev {
                 Ev::Settled(_, true) if sel => self.clear_selection(),
                 Ev::Refused(_, fb) if sel => self.feedback = Some((key.schedule_id.clone(), *fb)),
+                Ev::ActivationRefused(_, refusal) if sel => {
+                    self.refusal = refusal.clone();
+                    self.feedback = Some((
+                        key.schedule_id.clone(),
+                        "missions.scheduleList.activationRefused",
+                    ));
+                }
                 _ => {}
             }
             refresh = true;
@@ -928,9 +1032,11 @@ impl Schedules {
         self.cancel_pre();
     }
 }
-fn cap_state(c: ScheduleCapability) -> Cap {
+fn cap_state(c: &ScheduleCapability) -> Cap {
     if c.ready() {
         Cap::Available
+    } else if c.activatable() {
+        Cap::Activatable
     } else if c.refused() {
         Cap::Refused
     } else {

@@ -31,29 +31,41 @@ pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
-    open_window(s, false);
+    open_window(s, false, None);
 }
 
 pub(crate) fn open_providers(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
-    open_window(s, true);
+    open_window(s, true, None);
     #[cfg(target_arch = "wasm32")]
     web::open_providers(s);
 }
 
+pub(crate) fn open_config_file(s: &mut State, id: String) {
+    #[cfg(not(target_arch = "wasm32"))]
+    open_window(s, false, Some(id));
+    #[cfg(target_arch = "wasm32")]
+    web::open_config_file(s, id);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-fn open_window(s: &mut State, providers: bool) {
+fn open_window(s: &mut State, providers: bool, config_file: Option<String>) {
     let host = &s.settings;
     if providers {
         let target = providers::Target::capture(s);
         let mut prefs = host.shared.borrow_mut();
         prefs.provider_target = target;
         prefs.open_providers = true;
+        prefs.open_config_file = None;
+    } else if let Some(id) = &config_file {
+        let mut prefs = host.shared.borrow_mut();
+        prefs.open_providers = false;
+        prefs.open_config_file = Some(id.clone());
     }
     if let Some((window, token, request)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        if providers {
+        if providers || config_file.is_some() {
             window.focus();
             if let Some(wake) = &host.shared.borrow().window_wake {
                 wake();
@@ -79,6 +91,7 @@ fn open_window(s: &mut State, providers: bool) {
         let mut prefs = host.shared.borrow_mut();
         prefs.provider_target = target;
         prefs.open_providers = providers;
+        prefs.open_config_file = config_file;
         prefs
             .memory
             .bind_seen(crate::workspace::native_window_store(s));

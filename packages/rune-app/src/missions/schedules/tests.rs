@@ -468,7 +468,7 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         })
         .await;
 
-        // R2 #2: Play without scheduleActivation.state == "ready" is blocked even with Cap::Available
+        // Tranche 2: Play without scheduleActivation.state == "ready" runs /schedule-settings handshake then chains Play
         assert!(h.act(G::Select("msn_new".into())));
         h.reply_lc(vec![unact.clone(), s1.clone()], true).await;
         h.pump(|p, _| {
@@ -477,10 +477,90 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
                 && p.schedules.capability == Some(Cap::Available)
         })
         .await;
-        assert!(!h.act(G::Action(A::Play)));
-        h.http.quiet().await;
+        assert!(h.act(G::Action(A::Play)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(unact.clone())).await;
+            }
+        }
+        let k_new = h.key("msn_new");
+        let k_s1 = h.key("msn_s1");
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&k_new),
+                Some((
+                    P::Activation {
+                        action: A::Play,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        assert!(
+            h.holds
+                .has_unresolved_control_for_workspace(&h.panel.backend)
+        );
+        let act_post = h.http.accept().await;
+        assert!(
+            act_post.header.starts_with("POST ")
+                && act_post
+                    .header
+                    .contains("/missions/msn_new/schedule-settings")
+        );
+        let act_req_id = act_post.body["requestID"].as_str().unwrap().to_owned();
+        assert_eq!(act_post.body["expectedDocumentRevision"], 1);
+        act_post
+            .reply(
+                200,
+                json!({
+                    "document": {
+                        "revision": 2,
+                        "scheduleActivation": {
+                            "requestID": act_req_id,
+                            "expectedRevision": 1,
+                            "state": "ready"
+                        }
+                    }
+                }),
+            )
+            .await;
+        // Chains immediately into POST /missions/msn_new/schedule (action: play, expectedRevision: 2)
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&k_new),
+                Some((P::Control(r, false), true)) if r.action == A::Play
+            )
+        })
+        .await;
+        let play_post = h.http.accept().await;
+        assert!(
+            play_post.header.starts_with("POST ")
+                && play_post.header.contains("/missions/msn_new/schedule")
+        );
+        assert_eq!(play_post.body["action"], "play");
+        assert_eq!(play_post.body["expectedRevision"], 2);
+        let play_rid = play_post.body["requestID"].as_str().unwrap().to_owned();
+        let played_doc = row(
+            "msn_new",
+            "Unactivated",
+            "running",
+            3,
+            &format!(
+                r#"{{"requestID":"{play_rid}","expectedRevision":2,"action":"play","pending":false}}"#
+            ),
+        );
+        play_post.reply(200, rdoc(played_doc.clone())).await;
+        h.pump(|_, hs| matches!(hs.get(&k_new), Some((P::Publication(3), false))))
+            .await;
+        h.reply_lc(vec![played_doc, s1.clone()], true).await;
+        h.pump(|_, hs| hs.get(&k_new).is_none()).await;
 
-        // R2 #2 (pre-check race): Resume where fresh GET lost scheduleActivation refuses POST
+        // Tranche 2: Activation refused with exact notApplied releases hold and surfaces refusal + configFileID
         assert!(h.act(G::Select("msn_s1".into())));
         h.reply_lc(vec![s1.clone()], true).await;
         h.pump(|p, _| {
@@ -492,15 +572,149 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         assert!(h.act(G::Action(A::Resume)));
         let mut lost_act = s1.clone();
         lost_act["scheduleActivation"] = Value::Null;
-        h.http.accept().await.reply(200, rdoc(lost_act)).await;
-        h.http.accept().await.reply(200, cap_body(true)).await;
-        h.pump(|p, _| {
-            p.schedules.feedback_for("msn_s1") == Some("missions.scheduling.capability.missing")
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(
+                    200,
+                    json!({"api":{"available":true},"enabled":false,"activation":{"available":true,"targets":[{"scope":"project","path":"/owned/.opencode/opencode.jsonc"}]}}),
+                )
+                .await;
+            } else {
+                req.reply(200, rdoc(lost_act.clone())).await;
+            }
+        }
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&k_s1),
+                Some((
+                    P::Activation {
+                        action: A::Resume,
+                        ..
+                    },
+                    true
+                ))
+            )
         })
         .await;
-        assert!(h.holds.get(&h.key("msn_s1")).is_none());
-        assert!(!h.act(G::Action(A::Resume)));
-        h.http.quiet().await;
+        let ref_post = h.http.accept().await;
+        assert!(
+            ref_post.header.starts_with("POST ")
+                && ref_post
+                    .header
+                    .contains("/missions/msn_s1/schedule-settings")
+        );
+        let ref_rid = ref_post.body["requestID"].as_str().unwrap().to_owned();
+        ref_post
+            .reply(
+                403,
+                json!({
+                    "code": "schedule-activation-refused",
+                    "refusal": {
+                        "reason": "explicit-off",
+                        "provenance": "automations-setting",
+                        "layer": "global",
+                        "path": "/home/.config/opencode/opencode.jsonc",
+                        "openable": true,
+                        "configFileID": "opencode-global-config-jsonc"
+                    },
+                    "notApplied": {"requestID": ref_rid, "expectedRevision": 7}
+                }),
+            )
+            .await;
+        h.pump(|p, hs| {
+            hs.get(&k_s1).is_none()
+                && p.schedules.feedback_for("msn_s1")
+                    == Some("missions.scheduleList.activationRefused")
+                && p.schedules
+                    .refusal
+                    .as_ref()
+                    .and_then(|r| r.openable_config_id())
+                    == Some("opencode-global-config-jsonc")
+        })
+        .await;
+        // Drain refresh triggered by ActivationRefused event
+        h.reply_lc(vec![s1.clone()], true).await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_s1"))
+            .await;
+
+        // Tranche 2: Uncertain activation (503) keeps hold and reconciles via GET /schedule-settings (and handles 401)
+        let mut need_act = s1.clone();
+        need_act["scheduleActivation"] = Value::Null;
+        assert!(h.act(G::Action(A::Resume)));
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, rdoc(need_act.clone())).await;
+            }
+        }
+        h.pump(|_, hs| {
+            matches!(
+                hs.get(&k_s1),
+                Some((
+                    P::Activation {
+                        action: A::Resume,
+                        ..
+                    },
+                    true
+                ))
+            )
+        })
+        .await;
+        let unc_post = h.http.accept().await;
+        let unc_rid = unc_post.body["requestID"].as_str().unwrap().to_owned();
+        unc_post
+            .reply(503, json!({"code": "schedule-activation-pending"}))
+            .await;
+        h.pump(|_, hs| matches!(hs.get(&k_s1), Some((P::Activation { .. }, false))))
+            .await;
+        h.reply_lc(vec![s1.clone()], true).await;
+        h.pump(|p, _| !p.schedules.loading()).await;
+        // Reconcile -> 401 preserves hold and routes to auth_expired
+        assert!(h.act(G::Reconcile));
+        let get_401 = h.http.accept().await;
+        assert!(
+            get_401.header.starts_with("GET ")
+                && get_401
+                    .header
+                    .contains("/missions/msn_s1/schedule-settings")
+        );
+        get_401.reply(401, js(r#"{"error":"unauthorized"}"#)).await;
+        h.pump(|_, hs| matches!(hs.get(&k_s1), Some((P::Activation { .. }, false))))
+            .await;
+        assert!(!h.auth_expired.is_empty());
+        h.auth_expired.clear();
+        // Reconcile -> 200 ready settles activation to Publication(8)
+        assert!(h.act(G::Reconcile));
+        let get_ok = h.http.accept().await;
+        assert!(
+            get_ok.header.starts_with("GET ")
+                && get_ok.header.contains(&format!("requestID={unc_rid}"))
+        );
+        get_ok
+            .reply(
+                200,
+                json!({
+                    "document": {
+                        "revision": 8,
+                        "scheduleActivation": {
+                            "requestID": unc_rid,
+                            "expectedRevision": 7,
+                            "state": "ready"
+                        }
+                    }
+                }),
+            )
+            .await;
+        h.pump(|_, hs| matches!(hs.get(&k_s1), Some((P::Publication(8), false))))
+            .await;
+        let s1_rev8_pub = row("msn_s1", "Alpha nightly", "paused", 8, "null");
+        h.reply_lc(vec![s1_rev8_pub.clone()], true).await;
+        h.pump(|p, hs| hs.get(&k_s1).is_none() && p.schedules.is_fresh("msn_s1"))
+            .await;
+        let s1 = s1_rev8_pub;
 
         // R2 #4: Confirming Delete parks in pending_pre and respects same-tick 401 barrier
         assert!(h.act(G::Action(A::Delete)));
@@ -540,19 +754,19 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
         h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_s1"))
             .await;
 
-        // R4 #2: pre-check returning rev 7 must not overwrite rev 8 already published in rows
+        // R4 #2: pre-check returning rev 8 must not overwrite rev 9 already published in rows
         assert!(h.act(G::Action(A::Resume)));
         h.http.accept().await.reply(200, rdoc(s1.clone())).await;
         let cap_req = h.http.accept().await;
-        let s1_rev8 =
-            UnifiedSchedule::from_value(&row("msn_s1", "Alpha nightly", "paused", 8, "null"))
+        let s1_rev9 =
+            UnifiedSchedule::from_value(&row("msn_s1", "Alpha nightly", "paused", 9, "null"))
                 .unwrap();
         *h.panel
             .schedules
             .rows
             .iter_mut()
             .find(|r| r.id == "msn_s1")
-            .unwrap() = s1_rev8;
+            .unwrap() = s1_rev9;
         cap_req.reply(200, cap_body(true)).await;
         h.pump(|p, _| p.schedules.feedback_for("msn_s1") == Some("missions.scheduleList.conflict"))
             .await;
@@ -564,7 +778,7 @@ fn r2_activation_proof_confirm_401_stale_invalidation_and_page_step_down() {
                 .find(|r| r.id == "msn_s1")
                 .unwrap()
                 .revision,
-            8
+            9
         );
         assert!(h.holds.get(&h.key("msn_s1")).is_none());
         h.http.quiet().await;
@@ -594,8 +808,21 @@ fn capability_missing_blocks_calendar_launch_and_view_renders_controls() {
     b.workspace = "owned".into();
     let mut panel = Panel::new(b, Some("proj_1".into()), Reads::default(), Arc::new(|| {}))
         .with_owner_scope("/owned".into());
-    let doc =
-        UnifiedSchedule::from_value(&row("msn_ui", "Nightly build", "paused", 5, "null")).unwrap();
+    let mut doc_v = row("msn_ui", "Nightly build", "paused", 5, "null");
+    doc_v["observation"]["wakeCount"] = json!(9);
+    doc_v["technical"] = json!({
+        "cleanupPending": false,
+        "carriers": [{
+            "role": "principal",
+            "slot": 0,
+            "timeGeneration": 2,
+            "sessionID": "ses_carrier_diag_1",
+            "scheduleID": "sch_carrier_diag_1",
+            "retiring": false,
+            "cleanupPending": false
+        }]
+    });
+    let doc = UnifiedSchedule::from_value(&doc_v).unwrap();
     let foreign = UnifiedSchedule::from_value(&row_root(
         "msn_foreign",
         "Foreign",
@@ -700,13 +927,33 @@ fn capability_missing_blocks_calendar_launch_and_view_renders_controls() {
         "mission-schedule-delete",
         "mission-schedule-open-conversation",
         "mission-schedule-run-open-psg_hist_1",
+        "mission-schedule-diagnostics-toggle",
+        "mission-schedule-diagnostics-info",
     ] {
         assert!(rt.find(key).is_some(), "missing {key}");
     }
+    // Technical diagnostics are collapsed by default (no carrier session IDs visible before expanding).
+    assert!(rt.find("mission-schedule-diagnostics").is_none());
+    assert!(
+        !rt.accessibility_json()
+            .to_string()
+            .contains("ses_carrier_diag_1")
+    );
+
     rt.update(|s, _| {
         s.0.schedules.capability = Some(Cap::Refused);
+        s.0.schedules.refusal = Some(codenomad_client::missions::ActivationRefusal {
+            reason: "explicit-off".into(),
+            provenance: "automations-setting".into(),
+            layer: "global".into(),
+            path: Some("/home/.config/opencode/opencode.jsonc".into()),
+            openable: true,
+            config_file_id: Some("opencode-global-config-jsonc".into()),
+        });
         let _ =
             s.0.schedule_gesture("occ-1", &mut s.1, G::ToggleInstructions);
+        let _ =
+            s.0.schedule_gesture("occ-1", &mut s.1, G::ToggleDiagnostics);
     });
     rt.frame(0.01);
     let tree = rt.accessibility_json().to_string();
@@ -714,7 +961,12 @@ fn capability_missing_blocks_calendar_launch_and_view_renders_controls() {
         tree.contains("Nightly build")
             && tree.contains("Run nightly audit")
             && tree.contains(t("missions.scheduleList.activationRefused"))
+            && tree.contains("ses_carrier_diag_1")
+            && tree.contains("sch_carrier_diag_1")
     );
+    assert!(rt.find("mission-schedule-diagnostics").is_some());
+    assert!(rt.find("mission-schedule-open-settings").is_some());
+    assert!(rt.find("mission-schedule-refusal-info").is_some());
     rt.update(|s, _| {
         s.0.schedules.selected = Some("msn_leg".into());
         s.0.schedules.capability = Some(Cap::Available);

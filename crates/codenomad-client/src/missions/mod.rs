@@ -50,10 +50,11 @@ pub use profile_defaults::{
     normalize_mission_defaults, template_roles, valid_mission_profiles,
 };
 pub use schedules::{
-    LaunchItem, LaunchPolicy, SCHEDULE_PAGE_LIMIT, ScheduleAction, ScheduleActivation,
-    ScheduleCapability, ScheduleChecks, ScheduleConfiguration, ScheduleControlOutcome,
+    ActivationRefusal, LaunchItem, LaunchPolicy, SCHEDULE_PAGE_LIMIT, ScheduleAction,
+    ScheduleActivation, ScheduleActivationOutcome, ScheduleActivationRequest, ScheduleCapability,
+    ScheduleCarrier, ScheduleChecks, ScheduleConfiguration, ScheduleControlOutcome,
     ScheduleControlRequest, ScheduleControlState, ScheduleDeletionReceipt, ScheduleFetch,
     ScheduleListPage, ScheduleObservation, SchedulePassageReceipt, SchedulePendingPassage,
-    ScheduleRead, ScheduleReadOutcome, ScheduleRoot, ScheduleState, UnifiedSchedule,
-    classify_schedule_control_read, valid_schedule_id, valid_schedule_request_id,
+    ScheduleRead, ScheduleReadOutcome, ScheduleRoot, ScheduleState, ScheduleTechnical,
+    UnifiedSchedule, classify_schedule_control_read, valid_schedule_id, valid_schedule_request_id,
 };

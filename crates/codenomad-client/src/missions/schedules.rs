@@ -1,5 +1,5 @@
-//! Unified native Mission schedule reads, capability probes and guarded
-//! control/receipt reconciliation.
+//! Unified native Mission schedule reads, capability probes, activation
+//! handshake and guarded control/receipt reconciliation.
 use super::lifecycle::request_id;
 use crate::{
     Receiver,
@@ -15,6 +15,7 @@ pub const SCHEDULE_PAGE_LIMIT: u8 = 8;
 const MAX_REV: u64 = (1 << 53) - 1;
 const CTRL_TIMEOUT: Duration = Duration::from_secs(105);
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 pub fn valid_schedule_id(v: &str) -> bool {
@@ -91,6 +92,8 @@ pub struct ScheduleObservation {
     pub state: String,
     pub native_status: Option<String>,
     pub next_due_at: Option<u64>,
+    pub wake_count: Option<u64>,
+    pub time_generation: u64,
     pub kind: String,
 }
 impl ScheduleObservation {
@@ -302,6 +305,27 @@ fn parse_cond(v: &Value) -> std::result::Result<LaunchItem, String> {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ScheduleCarrier {
+    pub role: String,
+    pub slot: u64,
+    pub time_generation: u64,
+    #[serde(rename = "sessionID")]
+    pub session_id: String,
+    #[serde(rename = "scheduleID")]
+    pub schedule_id: Option<String>,
+    #[serde(default)]
+    pub retiring: bool,
+    #[serde(default)]
+    pub cleanup_pending: bool,
+}
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ScheduleTechnical {
+    pub cleanup_pending: bool,
+    pub carriers: Vec<ScheduleCarrier>,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ScheduleRoot {
     pub directory: String,
 }
@@ -319,6 +343,10 @@ pub struct ScheduleConfiguration {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleActivation {
+    #[serde(default, rename = "requestID")]
+    pub request_id: String,
+    #[serde(default)]
+    pub expected_revision: u64,
     pub state: String,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -338,6 +366,8 @@ pub struct UnifiedSchedule {
     pub checks: Option<ScheduleChecks>,
     pub configuration: ScheduleConfiguration,
     pub observation: ScheduleObservation,
+    #[serde(default)]
+    pub technical: ScheduleTechnical,
     #[serde(default)]
     pub available_actions: Vec<ScheduleAction>,
     pub block_reason: Option<String>,
@@ -381,6 +411,7 @@ impl UnifiedSchedule {
         valid_schedule_id(&self.id)
             && self.revision <= MAX_REV
             && matches!(self.kind.as_str(), "schedule" | "one-time")
+            && self.technical.carriers.len() <= 18
     }
 }
 
@@ -396,20 +427,76 @@ pub struct ScheduleListPage {
     pub schedules: Vec<UnifiedSchedule>,
     pub next: Option<String>,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationRefusal {
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub provenance: String,
+    #[serde(default)]
+    pub layer: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub openable: bool,
+    #[serde(default, rename = "configFileID")]
+    pub config_file_id: Option<String>,
+}
+impl ActivationRefusal {
+    pub fn openable_config_id(&self) -> Option<&str> {
+        self.openable
+            .then_some(self.config_file_id.as_deref())
+            .flatten()
+            .filter(|id| !id.trim().is_empty())
+    }
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduleCapability {
     pub api_available: bool,
     pub enabled: bool,
     pub activation_available: bool,
     pub activation_refused: bool,
+    pub refusal: Option<ActivationRefusal>,
+    pub location_directory: Option<String>,
 }
 impl ScheduleCapability {
-    pub const fn ready(self) -> bool {
+    pub fn ready(&self) -> bool {
         self.api_available && self.enabled && self.activation_available && !self.activation_refused
     }
-    pub const fn refused(self) -> bool {
+    pub fn activatable(&self) -> bool {
+        self.api_available && !self.enabled && self.activation_available && !self.activation_refused
+    }
+    pub fn refused(&self) -> bool {
         self.api_available && !self.activation_available && self.activation_refused
     }
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleActivationRequest {
+    #[serde(rename = "requestID")]
+    pub request_id: String,
+    pub expected_document_revision: u64,
+}
+impl ScheduleActivationRequest {
+    pub fn validate(&self) -> Result<()> {
+        (valid_schedule_request_id(&self.request_id) && self.expected_document_revision <= MAX_REV)
+            .then_some(())
+            .ok_or_else(|| "invalid schedule activation request".into())
+    }
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScheduleActivationOutcome {
+    Ready {
+        revision: u64,
+    },
+    Refused {
+        refusal: Option<ActivationRefusal>,
+        not_applied: bool,
+    },
+    Conflict,
+    AuthExpired,
+    Unconfirmed,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -607,15 +694,67 @@ fn parse_read(b: &Value) -> std::result::Result<ScheduleRead, String> {
         .then_some(r)
         .ok_or_else(|| "doc".into())
 }
+fn parse_refusal(v: &Value) -> Option<ActivationRefusal> {
+    v.is_object()
+        .then(|| serde_json::from_value::<ActivationRefusal>(v.clone()).ok())
+        .flatten()
+}
 fn parse_cap(b: &Value) -> std::result::Result<ScheduleCapability, String> {
     let act = &b["activation"];
+    let refusal = parse_refusal(&act["refusal"]);
     Ok(ScheduleCapability {
         api_available: b["api"]["available"].as_bool().ok_or("api")?,
         enabled: b["enabled"].as_bool().ok_or("enabled")?,
         activation_available: act["available"].as_bool().ok_or("activation")?,
-        activation_refused: act["refusal"].is_object()
+        activation_refused: refusal.is_some()
             || act["code"].as_str() == Some("schedule-activation-refused"),
+        refusal,
+        location_directory: b["location"]["directory"]
+            .as_str()
+            .filter(|d| valid_dir(d))
+            .map(str::to_owned),
     })
+}
+fn classify_activation(
+    st: StatusCode,
+    b: &Value,
+    req_id: &str,
+    proof_expected_rev: u64,
+    min_doc_rev: u64,
+) -> ScheduleActivationOutcome {
+    use ScheduleActivationOutcome as O;
+    if st == StatusCode::UNAUTHORIZED {
+        return O::AuthExpired;
+    }
+    let code = b["code"].as_str();
+    if code == Some("schedule-activation-refused") {
+        let not_applied = b["notApplied"]["requestID"].as_str() == Some(req_id)
+            && b["notApplied"]["expectedRevision"].as_u64() == Some(proof_expected_rev);
+        return O::Refused {
+            refusal: parse_refusal(&b["refusal"]),
+            not_applied,
+        };
+    }
+    if matches!(
+        code,
+        Some("schedule-activation-conflict" | "schedule-activation-unavailable")
+    ) {
+        return O::Conflict;
+    }
+    if st.is_success() {
+        let doc = &b["document"];
+        let proof = &doc["scheduleActivation"];
+        if let Some(rev) = doc["revision"]
+            .as_u64()
+            .filter(|&r| r <= MAX_REV && r >= min_doc_rev)
+            && proof["requestID"].as_str() == Some(req_id)
+            && proof["expectedRevision"].as_u64() == Some(proof_expected_rev)
+            && proof["state"].as_str() == Some("ready")
+        {
+            return O::Ready { revision: rev };
+        }
+    }
+    O::Unconfirmed
 }
 
 async fn race_cancel<U>(
@@ -804,6 +943,71 @@ impl Backend {
             _ => ScheduleControlOutcome::Unconfirmed,
         }
     }
+    pub async fn mission_schedule_settings_read(
+        &self,
+        mid: &str,
+        req: &ScheduleActivationRequest,
+        proof_expected_rev: u64,
+        c: &Receiver<()>,
+    ) -> ScheduleActivationOutcome {
+        if !valid_schedule_id(mid) || req.validate().is_err() || proof_expected_rev > MAX_REV {
+            return ScheduleActivationOutcome::Unconfirmed;
+        }
+        let rev = req.expected_document_revision.to_string();
+        match self
+            .send_sched(
+                &["missions", mid, "schedule-settings"],
+                &[
+                    ("requestID", Some(req.request_id.as_str())),
+                    ("expectedDocumentRevision", Some(rev.as_str())),
+                ],
+                None::<&()>,
+                READ_TIMEOUT,
+                Some(c),
+            )
+            .await
+        {
+            Some((StatusCode::UNAUTHORIZED, _)) => ScheduleActivationOutcome::AuthExpired,
+            Some((s, Some(b))) => classify_activation(
+                s,
+                &b,
+                &req.request_id,
+                proof_expected_rev,
+                req.expected_document_revision,
+            ),
+            _ => ScheduleActivationOutcome::Unconfirmed,
+        }
+    }
+    pub async fn mission_schedule_settings_apply(
+        &self,
+        mid: &str,
+        req: &ScheduleActivationRequest,
+        proof_expected_rev: u64,
+    ) -> ScheduleActivationOutcome {
+        if !valid_schedule_id(mid) || req.validate().is_err() || proof_expected_rev > MAX_REV {
+            return ScheduleActivationOutcome::Unconfirmed;
+        }
+        match self
+            .send_sched(
+                &["missions", mid, "schedule-settings"],
+                &[],
+                Some(req),
+                ACTIVATE_TIMEOUT,
+                None,
+            )
+            .await
+        {
+            Some((StatusCode::UNAUTHORIZED, _)) => ScheduleActivationOutcome::AuthExpired,
+            Some((s, Some(b))) => classify_activation(
+                s,
+                &b,
+                &req.request_id,
+                proof_expected_rev,
+                req.expected_document_revision,
+            ),
+            _ => ScheduleActivationOutcome::Unconfirmed,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -929,5 +1133,100 @@ mod tests {
         assert_eq!(c(S::OK, &tomb, &del), O::Settled(None));
         tomb["deletionReceipt"]["deleteManagedSessions"] = Value::Bool(true);
         assert_eq!(c(S::OK, &tomb, &del), O::Pending(false));
+    }
+
+    #[test]
+    fn parses_carriers_activation_handshake_and_save_outcomes() {
+        let mut doc = sample("msn_s2", 7, "null");
+        doc["observation"]["wakeCount"] = serde_json::json!(12);
+        doc["observation"]["timeGeneration"] = serde_json::json!(3);
+        doc["edit"] = serde_json::json!({"structural":true,"reason":null});
+        doc["technical"] = serde_json::json!({
+            "cleanupPending": true,
+            "carriers": [{
+                "role": "principal",
+                "slot": 0,
+                "timeGeneration": 3,
+                "sessionID": "ses_car_1",
+                "scheduleID": "sch_car_1",
+                "retiring": false,
+                "cleanupPending": false
+            }, {
+                "role": "reconciliation",
+                "slot": 0,
+                "timeGeneration": 2,
+                "sessionID": "ses_car_old",
+                "scheduleID": null,
+                "retiring": true,
+                "cleanupPending": true
+            }]
+        });
+        let parsed = UnifiedSchedule::from_value(&doc).unwrap();
+        assert_eq!(parsed.observation.wake_count, Some(12));
+        assert!(parsed.technical.cleanup_pending);
+        assert_eq!(parsed.technical.carriers.len(), 2);
+        assert_eq!(parsed.technical.carriers[0].session_id, "ses_car_1");
+        assert!(
+            parsed.technical.carriers[1].retiring && parsed.technical.carriers[1].cleanup_pending
+        );
+
+        let cap_act = parse_cap(&js(
+            r#"{"location":{"directory":"/owned"},"api":{"available":true},"enabled":false,"activation":{"available":true,"targets":[{"scope":"project","path":"/owned/.opencode/opencode.jsonc"}]}}"#,
+        ))
+        .unwrap();
+        assert!(cap_act.activatable() && !cap_act.ready());
+        assert_eq!(cap_act.location_directory.as_deref(), Some("/owned"));
+
+        let cap_ref = parse_cap(&js(
+            r#"{"api":{"available":true},"enabled":false,"activation":{"available":false,"reason":"forbidden","code":"schedule-activation-refused","refusal":{"reason":"explicit-off","provenance":"automations-setting","layer":"global","path":"/home/.config/opencode/opencode.jsonc","openable":true,"configFileID":"opencode-global-config-jsonc"}}}"#,
+        ))
+        .unwrap();
+        assert!(cap_ref.refused());
+        assert_eq!(
+            cap_ref
+                .refusal
+                .as_ref()
+                .and_then(|r| r.openable_config_id()),
+            Some("opencode-global-config-jsonc")
+        );
+
+        let act_ready = js(
+            r#"{"document":{"revision":8,"scheduleActivation":{"requestID":"act_1","expectedRevision":7,"state":"ready"}}}"#,
+        );
+        assert_eq!(
+            classify_activation(S::OK, &act_ready, "act_1", 7, 7),
+            ScheduleActivationOutcome::Ready { revision: 8 }
+        );
+        let act_ref = js(
+            r#"{"code":"schedule-activation-refused","refusal":{"reason":"explicit-off","layer":"global","openable":true,"configFileID":"opencode-global-config"},"notApplied":{"requestID":"act_1","expectedRevision":7}}"#,
+        );
+        assert!(matches!(
+            classify_activation(S::FORBIDDEN, &act_ref, "act_1", 7, 7),
+            ScheduleActivationOutcome::Refused { not_applied: true, refusal: Some(r) } if r.openable_config_id() == Some("opencode-global-config")
+        ));
+        let act_ref_unproven = js(
+            r#"{"code":"schedule-activation-refused","refusal":{"reason":"explicit-off","layer":"global"}}"#,
+        );
+        assert!(matches!(
+            classify_activation(S::FORBIDDEN, &act_ref_unproven, "act_1", 7, 7),
+            ScheduleActivationOutcome::Refused {
+                not_applied: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            classify_activation(
+                S::CONFLICT,
+                &js(r#"{"code":"schedule-activation-conflict"}"#),
+                "act_1",
+                7,
+                7
+            ),
+            ScheduleActivationOutcome::Conflict
+        );
+        assert_eq!(
+            classify_activation(S::UNAUTHORIZED, &js("{}"), "act_1", 7, 7),
+            ScheduleActivationOutcome::AuthExpired
+        );
     }
 }

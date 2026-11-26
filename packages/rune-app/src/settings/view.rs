@@ -187,6 +187,7 @@ impl Window {
             prefs.memory.show(false);
             prefs.provider_target = None;
             prefs.open_providers = false;
+            prefs.open_config_file = None;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);

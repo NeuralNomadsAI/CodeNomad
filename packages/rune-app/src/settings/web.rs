@@ -278,6 +278,23 @@ pub(super) fn open_providers(s: &mut State) {
     open(s);
 }
 
+pub(super) fn open_config_file(s: &mut State, id: String) {
+    let panel = &mut s.settings.web;
+    if panel.config_files.busy() {
+        return;
+    }
+    panel.section = Section::ConfigFiles;
+    panel.config_files.request_file(id);
+    panel.general.close();
+    panel.behavior.close();
+    panel.transcript_picker = None;
+    panel.advanced_help = None;
+    panel.recording_shortcut = false;
+    panel.shortcut_capture = Default::default();
+    panel.memory_help.clear();
+    open(s);
+}
+
 fn close(s: &mut State) {
     let panel = &mut s.settings.web;
     if panel.config_files.busy() {

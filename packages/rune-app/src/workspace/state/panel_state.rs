@@ -421,6 +421,11 @@ fn mission_schedule_act(s: &mut State, gesture: missions::ScheduleGesture, tx: &
         open_mission_conversation(s, session_id, tx);
         return;
     }
+    if let missions::ScheduleGesture::OpenConfigFile(id) = gesture {
+        crate::settings::open_config_file(s, id);
+        tx.instant();
+        return;
+    }
     let Some(ui) = &mut s.workspace else {
         return;
     };
