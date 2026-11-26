@@ -19,12 +19,27 @@ let cachedSystem32Dir=null
 
 const isUnc=value=>typeof value==='string'&&(/^[\\/]{2}/.test(value)||/^[\\/]{2}/.test(path.normalize(value)))
 
-function fixtureJobBin(){
+const envValue=(source,name)=>{
+  if(!source)return undefined
+  if(source===process.env)return source[name]
+  const target=name.toLowerCase()
+  for(const [k,v] of Object.entries(source)){
+    if(k.toLowerCase()===target)return v
+  }
+  return undefined
+}
+
+export function resolveFixtureJobBinary(sourceEnv=process.env){
   const suffix=process.platform==='win32'?'.exe':''
   const expectedName=`codenomad-fixture-job${suffix}`
+  const explicit=envValue(sourceEnv,'CODENOMAD_FIXTURE_JOB_EXE')
+  const cargoTarget=envValue(sourceEnv,'CARGO_TARGET_DIR')
+  const cargoCandidate=typeof cargoTarget==='string'&&cargoTarget.length>0&&!isUnc(cargoTarget)
+    ?path.resolve(repoRoot,cargoTarget,'debug',expectedName)
+    :null
   const candidates=[
-    process.env.CODENOMAD_FIXTURE_JOB_EXE,
-    process.env.CARGO_TARGET_DIR?path.join(process.env.CARGO_TARGET_DIR,'debug',expectedName):null,
+    explicit,
+    cargoCandidate,
     path.join(repoRoot,'target','debug',expectedName),
   ].filter(v=>typeof v==='string'&&v.length>0&&path.isAbsolute(v)&&!isUnc(v))
   for(const candidate of candidates){
@@ -39,6 +54,28 @@ function fixtureJobBin(){
     }catch{}
   }
   return null
+}
+
+export function fixtureAttestationEnv(sourceEnv=process.env,{includeServerRoots=false}={}){
+  const out={}
+  const jobBin=resolveFixtureJobBinary(sourceEnv)
+  if(jobBin)out.CODENOMAD_FIXTURE_JOB_EXE=jobBin
+  if(includeServerRoots){
+    const cargoTarget=envValue(sourceEnv,'CARGO_TARGET_DIR')
+    if(typeof cargoTarget==='string'&&cargoTarget.length>0&&!isUnc(cargoTarget)){
+      const abs=path.resolve(repoRoot,cargoTarget)
+      if(path.isAbsolute(abs)&&!isUnc(abs))out.CARGO_TARGET_DIR=abs
+    }
+    const serverExe=envValue(sourceEnv,'RUNE_SERVER_EXE')
+    if(typeof serverExe==='string'&&serverExe.length>0&&path.isAbsolute(serverExe)&&!isUnc(serverExe)){
+      out.RUNE_SERVER_EXE=serverExe
+    }
+  }
+  return out
+}
+
+function fixtureJobBin(){
+  return resolveFixtureJobBinary(process.env)
 }
 
 const system32Dir=()=>{

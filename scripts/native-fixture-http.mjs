@@ -11,11 +11,13 @@ import {
   attestPeerWithRetry,
   createClientPidGate,
   extractNodeEntryScript,
+  fixtureAttestationEnv,
   isPidInOwnedTree,
   parseWindowsCommandLine,
   pidAlive,
   probeProcessIdentity,
   processIdentityOf,
+  resolveFixtureJobBinary,
   resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
   verifyExecutableMatches,
@@ -28,11 +30,13 @@ export {
   attestPeerWithRetry,
   createClientPidGate,
   extractNodeEntryScript,
+  fixtureAttestationEnv,
   isPidInOwnedTree,
   parseWindowsCommandLine,
   pidAlive,
   probeProcessIdentity,
   processIdentityOf,
+  resolveFixtureJobBinary,
   resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
   verifyExecutableMatches,
@@ -527,7 +531,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
                     servername,
                     ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
                   })
-                  tlsSocket.once('secureConnect',()=>{onAttested?.();done(null,tlsSocket)})
+                  tlsSocket.once('secureConnect',()=>{try{onAttested?.()}catch(err){done(err,null);return}done(null,tlsSocket)})
                   tlsSocket.once('error',err=>done(err,null))
                 },postError=>done(postError,null))
             })
@@ -559,7 +563,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
               .then(()=>checkIncarnation())
               .then(()=>{
                 if(closed||socket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
-                onAttested?.()
+                try{onAttested?.()}catch(err){done(err,null);return}
                 done(null,socket)
               },postError=>done(postError,null))
           })

@@ -4,8 +4,8 @@ import { openSync, closeSync, fstatSync, readSync, realpathSync, opendirSync, wr
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
-import { fixtureChildPid, fixtureJobExecutable, stopFixtureHandle } from "./native-fixture-guards.mjs"
-import { createAttestedFetch } from "./native-fixture-http.mjs"
+import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, fixtureAttestationEnv } from "./native-fixture-http.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -38,10 +38,10 @@ export function fixtureRedactor(values) {
 }
 
 export function coldDiagnosticWorkerEnv(sourceEnv = process.env) {
-  const env = Object.fromEntries(Object.entries(sourceEnv).filter(([key]) => /^(SystemRoot|WINDIR)$/i.test(key)))
-  const jobExe = fixtureJobExecutable({ required: false, env: sourceEnv })
-  if (jobExe) env.CODENOMAD_FIXTURE_JOB_EXE = jobExe
-  return env
+  return {
+    ...Object.fromEntries(Object.entries(sourceEnv).filter(([key]) => /^(SystemRoot|WINDIR)$/i.test(key))),
+    ...fixtureAttestationEnv(sourceEnv),
+  }
 }
 
 // A killable owned process also interrupts synchronous SQLite/native filesystem work.

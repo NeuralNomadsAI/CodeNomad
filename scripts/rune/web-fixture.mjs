@@ -1,7 +1,7 @@
 //! Owned Rust static server and browser smoke fixture; upstream service discovery is closed.
 import assert from 'node:assert/strict'
 import {fixtureChildPid,spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
-import {stripFixtureServerSecrets} from '../native-fixture-http.mjs'
+import {fixtureAttestationEnv,stripFixtureServerSecrets} from '../native-fixture-http.mjs'
 import {createHash} from 'node:crypto'
 import {access, chmod, mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
@@ -81,7 +81,7 @@ try {
     '--target-pid', String(serverPid), '--launcher-pid', String(process.pid), '--profile', profile,
     '--storage-state', storage, '--out', path.join(profile, 'browser'), '--executable', chromium.executablePath(),
     ...(pasteOnly ? ['--paste-only'] : [])], {cwd: root, windowsHide: true,
-      env: stripFixtureServerSecrets(env), stdio: ['ignore', 'pipe', 'pipe']})
+      env: {...stripFixtureServerSecrets(env), ...fixtureAttestationEnv(process.env, {includeServerRoots: true})}, stdio: ['ignore', 'pipe', 'pipe']})
   let diagnostic = ''
   for (const stream of [smoke.stdout, smoke.stderr]) stream.on('data', chunk => {if (diagnostic.length < 65536) diagnostic += chunk})
   const timer = setTimeout(() => smoke.kill(), 240_000)

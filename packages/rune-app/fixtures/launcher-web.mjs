@@ -4,8 +4,8 @@ import {createHash} from 'node:crypto'
 import {chmod,readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
-import {fixtureJobExecutable,spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedTcpRelay,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyExecutableMatches,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../../../scripts/native-fixture-http.mjs'
+import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {createAttestedTcpRelay,fixtureAttestationEnv,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyExecutableMatches,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../../../scripts/native-fixture-http.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
@@ -84,11 +84,7 @@ export async function launchWeb({
     }
   }
   const safeClientEnv=stripFixtureServerSecrets(env)
-  const attestationEnv={}
-  const jobExe=fixtureJobExecutable({required:false})
-  if(jobExe)attestationEnv.CODENOMAD_FIXTURE_JOB_EXE=jobExe
-  if(process.env.CARGO_TARGET_DIR&&path.isAbsolute(process.env.CARGO_TARGET_DIR))attestationEnv.CARGO_TARGET_DIR=process.env.CARGO_TARGET_DIR
-  if(process.env.RUNE_SERVER_EXE&&path.isAbsolute(process.env.RUNE_SERVER_EXE))attestationEnv.RUNE_SERVER_EXE=process.env.RUNE_SERVER_EXE
+  const attestationEnv=fixtureAttestationEnv(process.env,{includeServerRoots:true})
   const launch=webMobile?spawn:spawnFixtureChild
   const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...safeClientEnv,...androidEnv,...attestationEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
   state.client=client

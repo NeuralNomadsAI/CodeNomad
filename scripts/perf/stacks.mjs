@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
-import { createAttestedFetch, createStreamRedactor, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { createAttestedFetch, createStreamRedactor, fixtureAttestationEnv, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
@@ -28,7 +28,7 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
     PERF_DAEMON_URL: daemon.url, PERF_DAEMON_PID: String(daemon.pid), CODENOMAD_SERVER_PASSWORD: password,
     ...(resolvedRust
       ? {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.relayPassword ?? daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}
-      : {OPENCODE_SERVER_PASSWORD: daemon.password}),
+      : {OPENCODE_SERVER_PASSWORD: daemon.password, ...fixtureAttestationEnv(process.env)}),
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
   const startedBy = new Date()
   const outRedactor = createStreamRedactor([password, daemon.password])
