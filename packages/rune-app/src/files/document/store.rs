@@ -330,9 +330,63 @@ impl Store {
         store.saved = saved;
         true
     }
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn file_draft_revision(&self) -> u64 {
         lock(&self.0).revision
+    }
+    pub(crate) fn mark_file_drafts_dirty_if_nonempty(&self) {
+        let mut store = lock(&self.0);
+        if !store.saved.is_empty() {
+            store.revision = store.revision.wrapping_add(1);
+        }
+    }
+    pub(crate) fn has_saved_file_drafts(&self) -> bool {
+        !lock(&self.0).saved.is_empty()
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn live_file_draft_bytes(&self) -> Option<Vec<u8>> {
+        let live: Vec<(SavedKey, Shared)> = {
+            let store = lock(&self.0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let store = lock(&self.0);
+        let rows: Vec<Saved> = store
+            .saved
+            .iter()
+            .filter(|row| active.contains(&row.key))
+            .cloned()
+            .collect();
+        (!rows.is_empty()).then(|| Self::encode(&rows))
+    }
+    pub(crate) fn discard_unopened_saved_drafts(&self) {
+        let live: Vec<(SavedKey, Shared)> = {
+            let mut store = lock(&self.0);
+            store.live.retain(|_, pointer| pointer.strong_count() > 0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let mut store = lock(&self.0);
+        store.saved.retain(|row| active.contains(&row.key));
     }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);

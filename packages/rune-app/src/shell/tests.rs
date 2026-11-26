@@ -375,7 +375,7 @@ fn keyboard_focus_wraps_at_the_visible_floating_drawer_edges() {
     };
     for (toggle, last) in [
         ("sessions-panel-toggle", "refresh-sessions"),
-        ("right-panel-toggle", "right-panel-toggle"),
+        ("right-panel-toggle", "right-panel-tab-0"),
     ] {
         if !rt
             .state

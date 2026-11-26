@@ -15,7 +15,7 @@ pub use wheel::RailWheelOverride;
 pub fn navigation_status(label: &'static str) -> El {
     use crate::{Space, TextRole, layout::Layout};
     let dark = layout::dark();
-    let k = crate::kit(dark);
+    let k = &*crate::kit(dark);
     rune_kit::popover::raised(
         k,
         rune::col()
@@ -198,7 +198,7 @@ pub fn view<S: 'static>(
                 let enter = id.clone();
                 let on_enter = activate.clone();
                 let activate = activate.clone();
-                palettes::with_palette(palette, || {
+                palettes::with_resolved(palette.clone(), || {
                     let button = button(dark, marker(s, i))
                         .key(id.clone())
                         .pin(Some(0.0), Some((i - first) as f32 * pitch), Some(0.0), None)

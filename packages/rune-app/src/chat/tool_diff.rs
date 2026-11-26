@@ -970,7 +970,6 @@ pub(super) fn body(
                 Arc::as_ptr(tool) as usize,
                 Rc::as_ptr(&s.input_scope) as usize,
                 locale(),
-                layout::dark(),
                 s.transcript_display.toggled(&wrap_key),
                 s.transcript_display.steps(key),
             );

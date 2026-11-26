@@ -54,10 +54,18 @@ impl Default for Section {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AfterPaletteSave {
+    Close,
+    Section(Section),
+}
+
 #[derive(Default)]
 pub(super) struct Panel {
     shown: bool,
     section: Section,
+    pending_section: Option<Section>,
+    after_palette_save: Option<(u64, AfterPaletteSave)>,
     general: super::general::Controls,
     behavior: super::behavior::General,
     memory_help: super::ExternalLink,
@@ -70,6 +78,7 @@ pub(super) struct Panel {
     environment: super::advanced::environment::Editor,
     advanced_help: Option<super::advanced::Toggle>,
     confirm_config_close: bool,
+    confirm_palette_close: bool,
     stats: super::stats::Dashboard,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
@@ -106,6 +115,9 @@ impl Panel {
             self.general.commit_palette(shared, system_dark);
         } else {
             self.general.discard_palette();
+            if !self.shown || !paired {
+                shared.borrow_mut().set_palette_preview(None);
+            }
         }
     }
 
@@ -184,8 +196,52 @@ impl Panel {
             false
         };
         let editor = prefs.memory.poll_editor(&mut self.memory_editor);
+        let mut palette_settled = self.general.settle_save(prefs);
+        if !self.general.dirty() {
+            if self.confirm_palette_close || self.pending_section.is_some() {
+                self.confirm_palette_close = false;
+                self.pending_section = None;
+                palette_settled = true;
+            }
+        } else if self
+            .pending_section
+            .is_some_and(|next| !self.can_open_section(prefs, next))
+        {
+            self.pending_section = None;
+            palette_settled = true;
+        }
+        if self.confirm_config_close && !self.config_files.dirty() {
+            self.confirm_config_close = false;
+            palette_settled = true;
+        }
+        if let Some((epoch, _)) = self.after_palette_save
+            && epoch != prefs.binding_epoch()
+        {
+            self.after_palette_save = None;
+            palette_settled = true;
+        }
+        if !self.general.busy(prefs)
+            && let Some((epoch, after)) = self.after_palette_save.take()
+            && epoch == prefs.binding_epoch()
+            && !self.general.dirty()
+            && !prefs.palette_save_failed()
+        {
+            match after {
+                AfterPaletteSave::Close => {
+                    request_close_panel(self, prefs);
+                    palette_settled = true;
+                }
+                AfterPaletteSave::Section(section) => {
+                    if self.can_open_section(prefs, section) {
+                        apply_web_section(self, prefs, section);
+                        palette_settled = true;
+                    }
+                }
+            }
+        }
         picker_closed
             | editor
+            | palette_settled
             | scope_changed
             | environment
             | opencode
@@ -243,15 +299,26 @@ impl Panel {
     fn local(&self, prefs: &Preferences) -> bool {
         self.scope.local(prefs)
     }
+
+    fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
+        match section {
+            Section::Stats => super::stats::supported(prefs),
+            Section::OpenCode | Section::Remote => self.local(prefs),
+            Section::ConfigFiles => self.scope.config_files(prefs),
+            _ => true,
+        }
+    }
 }
 
-pub(super) fn entry(touch: bool) -> El {
+pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
     rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, t("settings.title"), open)
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key("open-preferences")
 }
 
 fn open(s: &mut State) {
+    s.shell.leave_project();
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;
@@ -266,6 +333,24 @@ pub(super) fn open_providers(s: &mut State) {
     let panel = &mut s.settings.web;
     if panel.config_files.busy() {
         return;
+    }
+    if panel.section != Section::Providers {
+        let prefs = s.settings.shared.borrow();
+        if panel.general.busy(&prefs) {
+            panel.after_palette_save = Some((
+                prefs.binding_epoch(),
+                AfterPaletteSave::Section(Section::Providers),
+            ));
+            drop(prefs);
+            open(s);
+            return;
+        }
+        drop(prefs);
+        if panel.general.dirty() {
+            panel.pending_section = Some(Section::Providers);
+            open(s);
+            return;
+        }
     }
     panel.section = Section::Providers;
     panel.general.close();
@@ -283,17 +368,45 @@ fn close(s: &mut State) {
     if panel.config_files.busy() {
         return;
     }
+    if panel.general.dismiss_overlay() {
+        return;
+    }
+    let mut prefs = s.settings.shared.borrow_mut();
+    request_close_panel(panel, &mut prefs);
+}
+
+fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
+    if panel.config_files.busy() {
+        return;
+    }
+    panel.general.settle_save(prefs);
+    if panel.general.busy(prefs) {
+        panel.after_palette_save = Some((prefs.binding_epoch(), AfterPaletteSave::Close));
+        return;
+    }
     if panel.config_files.dirty() {
         panel.confirm_config_close = true;
         return;
     }
+    if panel.general.dirty() {
+        panel.confirm_palette_close = true;
+        return;
+    }
+    close_panel(panel, prefs);
+}
+
+fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.shown = false;
+    panel.confirm_config_close = false;
+    panel.confirm_palette_close = false;
+    panel.pending_section = None;
+    panel.after_palette_save = None;
+    prefs.set_palette_preview(None);
     panel.general.close();
     panel.advanced_help = None;
     panel.behavior.close();
     panel.catalog.suspend();
     panel.stats.suspend();
-    let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
     prefs.show_environment(false);
     panel.environment = Default::default();
@@ -398,35 +511,31 @@ pub(super) fn view(
             {
                 return;
             }
-            panel.section = section;
-            panel.transcript_picker = None;
-            panel.recording_shortcut = false;
-            panel.shortcut_capture = Default::default();
-            if section != Section::OpenCode {
-                prefs.hide_opencode();
-                panel.logging.close();
-                panel.opencode = opencode::Status::default();
+            if section != panel.section {
+                if panel.general.busy(&prefs) {
+                    panel.after_palette_save =
+                        Some((prefs.binding_epoch(), AfterPaletteSave::Section(section)));
+                    return;
+                }
+                if panel.general.dirty() {
+                    panel.pending_section = Some(section);
+                    return;
+                }
             }
-            if panel.section != Section::Providers {
-                panel.catalog.suspend();
-            }
-            if panel.section != Section::Remote {
-                panel.remote.close();
-            }
-            if panel.section != Section::Info {
-                panel.info.close();
-            }
-            panel.general.close();
-            panel.advanced_help = None;
-            panel.behavior.close();
-            panel.memory_help.clear();
-            prefs.memory.show(panel.section == Section::General);
+            apply_web_section(panel, &mut prefs, section);
         },
     );
     let mut layers = Vec::new();
     let body = match panel.section {
         Section::General => {
             let system_dark = cx.system_dark();
+            let workbench_width = cx
+                .window_layout_with("palette-workbench", |rect| rect[2])
+                .unwrap_or(0.0);
+            let actions_width = cx
+                .window_layout_with("palette-actions", |rect| rect[2])
+                .unwrap_or(0.0);
+            let coarse = cx.touch_controls();
             panel
                 .general
                 .close_palette_on_slot_change(prefs.dark(system_dark));
@@ -447,6 +556,9 @@ pub(super) fn view(
                     &s.settings.shared,
                     system_dark,
                     system_more,
+                    workbench_width,
+                    actions_width,
+                    coarse,
                     &mut layers,
                     |s: &mut State| &mut s.settings.web.general,
                 ))
@@ -465,6 +577,13 @@ pub(super) fn view(
                     |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
                     |s: &mut State, action| {
                         super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
+                    },
+                ))
+                .child(super::startup_state::view(
+                    &s.settings.shared,
+                    panel.general.startup_help,
+                    |s: &mut State| {
+                        s.settings.web.general.startup_help = !s.settings.web.general.startup_help;
                     },
                 ))
                 .child(panel.behavior.view(
@@ -635,13 +754,44 @@ pub(super) fn view(
     ) {
         layers.push(editor);
     }
+    let palette_dirty = panel.general.dirty() && !panel.general.busy(prefs);
     if panel.confirm_config_close {
         layers.push(super::config_files::confirm_discard(
             |s: &mut State, accept, _| {
                 s.settings.web.confirm_config_close = false;
                 if accept {
                     s.settings.web.config_files = Default::default();
-                    close(s);
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    request_close_panel(&mut s.settings.web, &mut prefs);
+                }
+            },
+        ));
+    } else if panel.confirm_palette_close && palette_dirty {
+        layers.push(super::config_files::confirm_discard(
+            |s: &mut State, accept, _| {
+                s.settings.web.confirm_palette_close = false;
+                if accept {
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    s.settings.web.general.discard_draft(&mut prefs);
+                    request_close_panel(&mut s.settings.web, &mut prefs);
+                }
+            },
+        ));
+    } else if let Some(next_section) = panel
+        .pending_section
+        .filter(|&next| palette_dirty && panel.can_open_section(prefs, next))
+    {
+        layers.push(super::config_files::confirm_discard(
+            move |s: &mut State, accept, _| {
+                s.settings.web.pending_section = None;
+                if accept && !s.settings.web.config_files.busy() {
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    if !s.settings.web.general.busy(&prefs)
+                        && s.settings.web.can_open_section(&prefs, next_section)
+                    {
+                        s.settings.web.general.discard_draft(&mut prefs);
+                        apply_web_section(&mut s.settings.web, &mut prefs, next_section);
+                    }
                 }
             },
         ));
@@ -664,6 +814,32 @@ pub(super) fn view(
         )
         .children(layers),
     )
+}
+
+fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Section) {
+    panel.section = section;
+    panel.transcript_picker = None;
+    panel.recording_shortcut = false;
+    panel.shortcut_capture = Default::default();
+    if section != Section::OpenCode {
+        prefs.hide_opencode();
+        panel.logging.close();
+        panel.opencode = opencode::Status::default();
+    }
+    if panel.section != Section::Providers {
+        panel.catalog.suspend();
+    }
+    if panel.section != Section::Remote {
+        panel.remote.close();
+    }
+    if panel.section != Section::Info {
+        panel.info.close();
+    }
+    panel.general.close();
+    panel.advanced_help = None;
+    panel.behavior.close();
+    panel.memory_help.clear();
+    prefs.memory.show(panel.section == Section::General);
 }
 
 fn open_remote(s: &mut State) {

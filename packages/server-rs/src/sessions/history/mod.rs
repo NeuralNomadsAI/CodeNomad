@@ -78,6 +78,9 @@ pub async fn handle(
     if matches!(action.as_str(), "query" | "ranked") {
         return super::history_search::handle(app, principal, id, &action, req).await;
     }
+    if action == "prune" {
+        return super::pruning::batch(app, principal, id, req).await;
+    }
     let reference =
         action == "window" && req.headers().get("x-codenomad-user-files").is_some_and(|v| v == user_files::REFERENCE);
     let (method, limit) = match action.as_str() {

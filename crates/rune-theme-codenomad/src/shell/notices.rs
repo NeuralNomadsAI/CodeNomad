@@ -13,6 +13,7 @@ pub fn bell<S: 'static>(
     unread: Option<(String, String)>,
     open: bool,
     touch: bool,
+    skip_tab: bool,
     invoke: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
     let invoke = Rc::new(invoke);
@@ -29,9 +30,10 @@ pub fn bell<S: 'static>(
             .help(label)
             .expanded(open)
             .on_press_tx(move |s, tx| press(s, tx))
-            .build(kit(layout::dark()))
+            .build(&kit(layout::dark()))
     }
     .on_key(layout::enter_action(invoke))
+    .tab_index(if skip_tab { -1 } else { 0 })
     .key(ANCHOR);
     row()
         .center_y()
@@ -46,7 +48,13 @@ pub fn title(title: &str) -> El {
         .max_lines(2)
 }
 
-pub fn record(title: El, body: &str, toolbar: El, bubble_height: Option<f32>) -> El {
+pub fn record(
+    title: El,
+    body: &str,
+    toolbar: El,
+    bubble_height: Option<f32>,
+    skip_tab: bool,
+) -> El {
     col()
         .full_width()
         .pad(Space::Sm)
@@ -57,6 +65,7 @@ pub fn record(title: El, body: &str, toolbar: El, bubble_height: Option<f32>) ->
             col()
                 .key("notification-text")
                 .focusable(true)
+                .tab_index(if skip_tab { -1 } else { 0 })
                 .max_h((height * 0.15).max(32.0))
                 .scroll(ScrollSpec {
                     stick_bottom: false,

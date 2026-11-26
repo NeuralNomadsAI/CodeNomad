@@ -7,13 +7,14 @@ import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
+import {mobileDrawersBrowser} from './web-mobile-drawers.mjs'
 import {keyboardViewport} from './web-keyboard-viewport.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'mobile-drawers':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
 assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
@@ -22,9 +23,10 @@ const out=path.resolve(values.out)
 const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
-assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap or --outline')
+assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values['mobile-drawers']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap, --mobile-drawers or --outline')
 if(values['pending-open']){await pendingBrowser({values,m,out,storage});process.exit(0)}
 if(values['file-wrap']){await fileWrapBrowser({values,m,out,storage,url,root});process.exit(0)}
+if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,storage,url,root});process.exit(0)}
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
 const draftA='Brouillon Alpha\nété · 日本語 · 🦀',draftB='Brouillon Beta\nשלום · e\u0301 · 🧭'

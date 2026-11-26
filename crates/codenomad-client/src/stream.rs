@@ -23,7 +23,7 @@ mod staleness;
 pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
-use notifications::session_attention;
+pub(crate) use notifications::session_attention;
 use routing::dispatch;
 pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]
@@ -31,7 +31,7 @@ pub use staleness::probe_stale;
 mod browser;
 
 pub struct State {
-    pub cancelled: AtomicBool,
+    cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub running: AtomicBool,
@@ -44,6 +44,8 @@ pub struct State {
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
+    cancel_signal: (Sender<()>, crate::Receiver<()>),
+    stopped: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
 }
 
@@ -63,6 +65,8 @@ impl Default for State {
             catalogue: None,
             placement: None,
             closed: crate::bounded(1),
+            cancel_signal: crate::bounded(1),
+            stopped: crate::bounded(1),
             provider_usage: None,
         }
     }
@@ -111,13 +115,53 @@ impl State {
             .is_some_and(|(_, changed)| changed.is_closed())
     }
 
+    pub fn cancel(&self) {
+        self.cancelled.store(true, SeqCst);
+        self.cancel_signal.0.close();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(SeqCst)
+    }
+
+    pub(crate) async fn wait_cancelled(&self, out: &Sender<Input>) {
+        if self.cancelled.load(SeqCst) || out.is_closed() {
+            return;
+        }
+        futures_lite::future::or(
+            async {
+                let _ = self.cancel_signal.1.recv().await;
+            },
+            out.closed(),
+        )
+        .await;
+    }
+
+    pub(crate) async fn wait_stopped(&self) {
+        if !self.running.load(SeqCst) {
+            return;
+        }
+        let _ = self.stopped.1.recv().await;
+    }
+
     pub(crate) async fn stream_closed(&self) {
         let _ = self.closed.1.recv().await;
+    }
+
+    pub(crate) fn is_stream_closed(&self) -> bool {
+        self.closed.1.is_closed()
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
         self.closed.0.close();
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn close_placement(&self) {
+        if let Some((cancel, _)) = &self.placement {
+            cancel.close();
+        }
     }
 
     async fn notify_preferences(
@@ -172,47 +216,57 @@ impl State {
     }
 }
 
+struct RunGuard(Arc<State>);
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        self.0.alive.store(false, SeqCst);
+        self.0.closed.0.close();
+        self.0.version.fetch_add(1, SeqCst);
+        self.0.running.store(false, SeqCst);
+        self.0.stopped.0.close();
+    }
+}
+
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     state.running.store(true, SeqCst);
+    let guard = RunGuard(state.clone());
     runtime::spawn(async move {
-        let result = if backend.client.tracks_server_attestation() {
-            if epoch > 1 {
-                backend.client.note_reconnect_attempt(&backend.client_id);
-            }
-            match futures_lite::future::race(
-                async {
-                    backend.attest_server().await?;
-                    Ok(())
-                },
-                async {
-                    while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                        runtime::sleep(Duration::from_millis(25)).await;
-                    }
-                    Ok(())
-                },
-            )
-            .await
-            {
-                Ok(()) if !state.cancelled.load(SeqCst) && !out.is_closed() => {
-                    read(&backend, epoch, &out, &state).await
+        let result = {
+            let _guard = guard;
+            if backend.client.tracks_server_attestation() {
+                if epoch > 1 {
+                    backend.client.note_reconnect_attempt(&backend.client_id);
                 }
-                Err(err) => {
-                    if !state.cancelled.load(SeqCst) && !out.is_closed() {
-                        backend
-                            .client
-                            .record_transport_drop(&backend.client_id, false);
+                match futures_lite::future::or(
+                    async {
+                        state.wait_cancelled(&out).await;
+                        Ok(())
+                    },
+                    async {
+                        backend.attest_server().await?;
+                        Ok(())
+                    },
+                )
+                .await
+                {
+                    Ok(()) if !state.cancelled.load(SeqCst) && !out.is_closed() => {
+                        read(&backend, epoch, &out, &state).await
                     }
-                    Err(err)
+                    Err(err) => {
+                        if !state.cancelled.load(SeqCst) && !out.is_closed() {
+                            backend
+                                .client
+                                .record_transport_drop(&backend.client_id, false);
+                        }
+                        Err(err)
+                    }
+                    other => other,
                 }
-                other => other,
+            } else {
+                read(&backend, epoch, &out, &state).await
             }
-        } else {
-            read(&backend, epoch, &out, &state).await
         };
-        state.alive.store(false, SeqCst);
-        state.closed.0.close();
-        state.running.store(false, SeqCst);
-        state.version.fetch_add(1, SeqCst);
         if let Some(quota) = state.quota_ingress(&backend) {
             quota.transport(false);
         }
@@ -253,22 +307,23 @@ pub(crate) async fn read(
     }
     let notices = backend.client.preferences_notices();
     let _ = state.preferences_notices.set(notices.clone());
-    let result = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            futures_lite::future::race(native::read_native(backend, epoch, out, state), async {
-                while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                    runtime::sleep(Duration::from_millis(25)).await;
-                }
-                Ok(())
-            })
-            .await
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            browser::read(backend, epoch, out, state).await
-        }
-    };
+    let result = futures_lite::future::or(
+        async {
+            state.wait_cancelled(out).await;
+            Ok(())
+        },
+        async {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                native::read_native(backend, epoch, out, state).await
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                browser::read(backend, epoch, out, state).await
+            }
+        },
+    )
+    .await;
     let was_open = stream_guard.release_open();
     if !state.cancelled.load(SeqCst) && !out.is_closed() {
         backend
