@@ -250,6 +250,83 @@ impl Document {
         );
     }
 
+    pub(super) fn stage_palette_mutation(
+        &mut self,
+        mutation: crate::settings::palettes::PaletteMutation,
+    ) {
+        if matches!(
+            mutation.op,
+            crate::settings::palettes::PaletteOp::SetMode { .. }
+        ) {
+            self.write.requested.remove(&Choice::Mode);
+            self.write.pending.remove(&Choice::Mode);
+            self.write.failed.remove(&Choice::Mode);
+            self.write.retry.remove(&Choice::Mode);
+        } else if let Some(dark) = mutation.target_dark() {
+            self.write.requested.remove(&Choice::Palette(dark));
+            self.write.pending.remove(&Choice::Palette(dark));
+            self.write.failed.remove(&Choice::Palette(dark));
+            self.write.retry.remove(&Choice::Palette(dark));
+        } else {
+            for dark in [false, true] {
+                self.write.requested.remove(&Choice::Palette(dark));
+                self.write.pending.remove(&Choice::Palette(dark));
+                self.write.failed.remove(&Choice::Palette(dark));
+                self.write.retry.remove(&Choice::Palette(dark));
+            }
+        }
+        if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null)) {
+            self.read.fresh_for_write = false;
+        }
+        self.stage_value(
+            Choice::PaletteMutation,
+            ChoiceValue::Palette(Box::new(mutation)),
+        );
+    }
+
+    pub(super) fn clear_palette_mutation(&mut self) {
+        self.write.requested.remove(&Choice::PaletteMutation);
+        self.write.pending.remove(&Choice::PaletteMutation);
+        self.write.failed.remove(&Choice::PaletteMutation);
+        self.write.retry.remove(&Choice::PaletteMutation);
+        self.write.uncertain.remove(&Choice::PaletteMutation);
+    }
+
+    pub(super) fn settle_palette_mutation_on_auth_expired(&mut self) {
+        let had_unsent = self.write.pending.remove(&Choice::PaletteMutation)
+            | self.write.retry.remove(&Choice::PaletteMutation);
+        let had_sent = self
+            .write
+            .uncertain
+            .remove(&Choice::PaletteMutation)
+            .is_some()
+            || self.flight.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            })
+            || self.barrier.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            });
+        let had_requested = self
+            .write
+            .requested
+            .remove(&Choice::PaletteMutation)
+            .is_some();
+        if had_unsent || had_sent || had_requested {
+            self.write.failed.insert(Choice::PaletteMutation);
+        }
+    }
+
+    pub(super) fn palette_mutation_pending(&self) -> bool {
+        (self.write.requested.contains_key(&Choice::PaletteMutation)
+            || self.write.pending.contains(&Choice::PaletteMutation)
+            || self.write.uncertain.contains_key(&Choice::PaletteMutation))
+            && !self.choice_failed(Choice::PaletteMutation)
+    }
+
+    pub(super) fn palette_mutation_failed(&self) -> bool {
+        self.choice_failed(Choice::PaletteMutation)
+    }
+
     pub(super) fn environment_pending(&self) -> bool {
         self.write.requested.contains_key(&Choice::Environment)
             && !self.choice_failed(Choice::Environment)
@@ -385,6 +462,7 @@ impl Document {
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
                 | Choice::ShortcutReset
+                | Choice::PaletteMutation
         ) {
             self.write.failed.remove(&choice);
         }
@@ -474,7 +552,9 @@ impl Document {
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         match self.write.requested.get(&choice)? {
             ChoiceValue::Text(value) => Some(*value),
-            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
+            ChoiceValue::Shortcut(_)
+            | ChoiceValue::Palette(_)
+            | ChoiceValue::Environment { .. } => None,
         }
     }
 
@@ -552,6 +632,15 @@ impl Document {
         {
             self.invalidate();
         }
+    }
+
+    pub(super) fn needs_fresh_palette_snapshot(&self) -> bool {
+        self.write.pending.contains(&Choice::PaletteMutation)
+            && matches!(
+                self.write.requested.get(&Choice::PaletteMutation),
+                Some(ChoiceValue::Palette(mutation))
+                    if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null))
+            )
     }
 
     fn has_stale_sensitive_write(&self) -> bool {

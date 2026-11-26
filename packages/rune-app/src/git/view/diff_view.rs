@@ -116,7 +116,9 @@ pub(crate) fn reader(s: &State) -> El {
         Some(t("gitPanel.backChat")),
         |s: &mut State| &mut s.git.close,
         run(s, |s, tx| {
+            let had_preview = crate::git::has_preview(s);
             crate::git::close_preview(s);
+            crate::git::restore_reading_if_closed(s, had_preview, tx);
             tx.focus("composer", tx.focus_visible());
         }),
     ));

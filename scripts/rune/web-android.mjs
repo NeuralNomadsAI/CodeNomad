@@ -3,19 +3,29 @@ import assert from 'node:assert/strict'
 import {createHash,X509Certificate} from 'node:crypto'
 import {readFile,readdir,writeFile} from 'node:fs/promises'
 import path from 'node:path'
+import {fileURLToPath} from 'node:url'
 import {_android} from 'playwright'
+import {createAttestedFetch,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {androidDevice,hierarchy} from '../../packages/rune-app/fixtures/android-device.mjs'
-import {bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {bundleAssetPaths,workspacePolicy} from './web-workspace-policy.mjs'
 import {command,navigatePair} from './web-live.mjs'
 import {androidLive,androidPrompt} from './web-android-contract.mjs'
 import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
 import {observeGpu,gpuState,chromeGraphicsReport,observeBoot,bootActivity} from './web-android-gpu.mjs'
 
-const [origin,profile,project,bundle]=process.argv.slice(2)
+const root=fileURLToPath(new URL('../../',import.meta.url))
+const [origin,profile,project,bundle,rawServerPid,rawLauncherPid]=process.argv.slice(2)
 const useTs=process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert.match(origin,useTs?/^https:\/\/rune-server\.fixture\.test:\d+$/:/^https:\/\/127\.0\.0\.1:\d+$/)
 assert(process.send&&path.basename(profile).startsWith('launcher-'))
+let currentServerPid=Number(rawServerPid)
+const launcherPid=Number(rawLauncherPid)
+assert(Number.isSafeInteger(currentServerPid)&&currentServerPid>0,'Android fixture requires owned server PID')
+assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Android fixture requires private launcher PID')
+await verifyLoopbackListenerOwner(Number(new URL(origin).port),currentServerPid)
+let currentServerStartId=(await verifyPrivateFixtureServer({targetPid:currentServerPid,launcherPid,profile,root})).targetStartId
+const caCert=await readFile(path.join(profile,'identity.data/tls/ca-cert.pem'))
 const auth=new X509Certificate(await readFile(path.join(profile,'identity.data/tls/server-cert.pem')))
 const pin=createHash('sha256').update(auth.publicKey.export({type:'spki',format:'der'})).digest('base64')
 const solid=process.env.RUNE_ANDROID_SOLID_DIR
@@ -28,15 +38,32 @@ const scrollOnly=process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const locale=comparison?'en':'fr'
 const messages=JSON.parse(await readFile(new URL(`../../crates/rune-theme-codenomad/assets/catalogues/${locale}.json`,import.meta.url),'utf8'))
 const {serial,port,run}=androidDevice(process.env)
-const [device,...others]=await _android.devices({port:Number(port),omitDriverInstall:true})
-assert(device?.serial()===serial&&!others.length,'Use a dedicated ADB server with the single named emulator')
-let context, page, cdp
+let attestedFetch, device, openedDevices=[], context, page, cdp
 const evidence={timings:{},memory:{}}
+const attestedFulfillWorkspaceCreation=async(route,policy)=>{
+  const req=route.request()
+  const headers={...(await req.allHeaders())}
+  delete headers['host'];delete headers['content-length']
+  const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+  const bytes=Buffer.from(await res.arrayBuffer())
+  assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+  if(res.ok&&policy)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
+  const outHeaders=Object.fromEntries(res.headers.entries())
+  const setCookies=res.headers.getSetCookie?.()??(outHeaders['set-cookie']?[outHeaders['set-cookie']]:[])
+  if(setCookies.length)outHeaders['set-cookie']=setCookies.join('\n')
+  await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
+  return {status:res.status,admitted:res.ok}
+}
 const metrics=page=>page.evaluate(()=>({height:visualViewport.height,top:visualViewport.offsetTop,layout:innerHeight,
   canvas:document.querySelector('canvas')?.getBoundingClientRect().height,
   dpr:devicePixelRatio,mobile:navigator.userAgentData?.mobile,ua:navigator.userAgent,
   active:document.activeElement?.tagName,inputMode:document.activeElement?.inputMode}))
 async function runAndroid() {
+  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert,targetStartId:currentServerStartId})
+  openedDevices=await _android.devices({port:Number(port),omitDriverInstall:true})
+  const [matched,...others]=openedDevices
+  assert(matched?.serial()===serial&&!others.length,'Use a dedicated ADB server with the single named emulator')
+  device=matched
   context=await device.launchBrowser({noDefaultViewport:true,serviceWorkers:'block',
     args:[`--ignore-certificate-errors-spki-list=${pin}`,'--disable-background-networking',
       ...(useTs?['--host-resolver-rules="MAP rune-server.fixture.test 127.0.0.1"']:[]),
@@ -119,11 +146,15 @@ async function runAndroid() {
     const req=route.request(),p=new URL(req.url()).pathname
     if(solid){
       if(new URL(req.url()).origin!==origin)return route.abort()
+      if(req.method()==='POST'&&p==='/api/workspaces'){
+        try{return await attestedFulfillWorkspaceCreation(route,null)}
+        catch{errors.push('Private workspace response was refused before delivery');return route.abort()}
+      }
       return route.continue()
     }
     if(!await policy.request(req)){forbidden.push(p);return route.abort()}
     if(req.method()==='POST'&&p==='/api/workspaces'){
-      try{return await fulfillWorkspaceCreation(route,policy)}
+      try{return await attestedFulfillWorkspaceCreation(route,policy)}
       catch{errors.push('Private workspace response was refused before delivery');return route.abort()}
     }
     return route.continue()
@@ -268,6 +299,15 @@ async function runAndroid() {
   assert(events>0)
   const previous=[...policy.workspaces],beforeRestart=events,restart=performance.now()
   evidence.restart=await command('restart')
+  const restartedPid=Number(evidence.restart?.serverPid)
+  assert(Number.isSafeInteger(restartedPid)&&restartedPid>0,'Restarted Android fixture must report owned server PID')
+  await verifyLoopbackListenerOwner(Number(new URL(origin).port),restartedPid)
+  const restartedStartId=(await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile,root})).targetStartId
+  const previousFetch=attestedFetch
+  currentServerPid=restartedPid
+  currentServerStartId=restartedStartId
+  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert,targetStartId:currentServerStartId})
+  await previousFetch?.close().catch(()=>{})
   try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
   catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}
   await recovering.waitFor({state:'hidden'})
@@ -305,7 +345,8 @@ try {
       .split('\n').filter(line=>/mInputShown|mShowRequested|mCurFocusedWindow|mCurAttribute|mCurMethodId/.test(line))},null,2))
   throw error
 } finally {
+  await attestedFetch?.close().catch(()=>{})
   await cdp?.detach().catch(()=>{})
   await context?.close().catch(()=>{})
-  await device.close()
+  for(const opened of openedDevices){await opened?.close().catch(()=>{})}
 }

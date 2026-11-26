@@ -12,12 +12,19 @@ use rune_theme_codenomad::{
 };
 pub(crate) mod family;
 
+fn non_blank(text: &str) -> bool {
+    !text
+        .trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+        .is_empty()
+}
+
 fn text_part(part: &Part) -> bool {
-    matches!(part, Part::Text(text) if !text.text.trim().is_empty())
+    matches!(part, Part::Text(text) if non_blank(&text.text))
 }
 
 fn boundary(part: &Part) -> bool {
-    text_part(part) || matches!(part, Part::File(_))
+    text_part(part)
+        || matches!(part, Part::File(file) if file.name.as_deref().is_some_and(|name| !name.is_empty()))
 }
 
 pub(super) fn last_text(row: &Message) -> Option<usize> {
@@ -33,15 +40,28 @@ fn response_total(s: &State, index: usize, final_text: usize) -> Option<Usage> {
         if row.role == "user" {
             break;
         }
+        if i != index && row.role == "assistant" && row.parts.is_empty() && non_blank(&row.body) {
+            break;
+        }
         let (head, tail) = super::transcript::part_window(
             row.parts.len(),
             s.transcript_display.steps(&format!("parts-gap-{}", row.id)),
         );
-        let end = if i == index {
-            final_text
+        let mut end = if i == index {
+            final_text.min(row.parts.len())
         } else {
             row.parts.len()
         };
+        // Solid starts technical cleanup from the first part of the content block containing
+        // the final text fragment, so consecutive text/file parts stay inside one answer block.
+        if i == index {
+            while end > 0
+                && !(head..tail).contains(&(end - 1))
+                && !matches!(row.parts[end - 1], Part::Tool(_) | Part::Reasoning(_))
+            {
+                end -= 1;
+            }
+        }
         let mut technical = false;
         let mut stop = false;
         for (at, part) in row.parts[..end].iter().enumerate().rev() {
@@ -203,14 +223,16 @@ fn disclosure(
     } else {
         format!("{label}. {detail}")
     };
+    let metrics: Vec<_> = entries
+        .iter()
+        .map(|(label, value, full)| theme::Metric { label, value, full })
+        .collect();
     theme::disclosure(
         &key,
         &accessible,
         title,
         expanded,
-        entries
-            .into_iter()
-            .map(|(label, value, full)| theme::metric(label, &value, &full)),
+        &metrics,
         screen::action(&s.input_scope, move |s| {
             if session {
                 super::actions::Display::toggle(s, &toggle);
@@ -245,101 +267,4 @@ fn counter(label: &'static str, count: u64) -> (&'static str, String, String) {
 }
 
 #[cfg(test)]
-#[test]
-fn token_line_counts_distinct_technical_rows_and_precedes_trailing_tools() {
-    use crate::{Phase, history, init};
-    use rune::{Env, Runtime};
-    use serde_json::{Value, json};
-
-    let row = |id: &str, input, content: Value| {
-        history::decode_message(&json!({
-            "id":id,"type":"assistant","time":{"completed":1},
-            "tokens":{"input":input,"output":10,"reasoning":9,"cache":{"read":8,"write":7}},
-            "cost":0.004, "content":content,
-        }))
-        .unwrap()
-        .into()
-    };
-    let tech = json!({"type":"tool","id":"work","name":"read","state":{
-        "status":"completed","input":{"filePath":"trailing.txt"}
-    }});
-    let prose = |text: &str| json!({"type":"text","text":text});
-    let user = history::decode_message(&json!({"id":"user","type":"user","text":"Ask"})).unwrap();
-    let mut state = init();
-    state.phase = Phase::Ready;
-    state.messages = vec![
-        row("old", 1000, json!([tech])),
-        user.into(),
-        row(
-            "prior",
-            20,
-            json!([tech,{"type":"reasoning","text":"Thinking"}]),
-        ),
-        row("answer", 50, json!([prose("Answer text"), tech])),
-    ];
-    let total = response_total(&state, 3, 0).unwrap();
-    assert_eq!((total.input, total.cache_read), (70, 16));
-    assert_eq!(total.cost, 0.008);
-    assert!(
-        message(&state, 3, 0).is_none(),
-        "default visibility is hidden"
-    );
-
-    let mut rt = Runtime::new(
-        state,
-        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
-        (960.0, 900.0),
-        Env::new(false, 1.0),
-    );
-    rt.update(|s, _| crate::settings::fixture_message_usage(s, "collapsed"));
-    rt.frame(0.0);
-    let tree = rt.accessibility_json().to_string();
-    let usage = tree.find("Input: 70").expect("collapsed usage");
-    assert!(
-        tree.find("Answer text").unwrap() < usage && usage < tree.rfind("trailing.txt").unwrap()
-    );
-    assert!(!tree.contains("Reasoning: 18"));
-    let (x, y) = rt.find("toggle-message-usage-answer").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    for _ in 0..12 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.accessibility_json()
-            .to_string()
-            .contains("Reasoning: 18")
-    );
-}
-
-#[cfg(test)]
-#[test]
-fn status_tokens_accessible_name_contains_its_visible_heading() {
-    use rune::{Env, Runtime};
-    let mut rt = Runtime::new(
-        crate::init(),
-        |s, _| {
-            crate::strings::with_locale("en", || {
-                disclosure(
-                    s,
-                    family::KEY.into(),
-                    Usage {
-                        input: 1250,
-                        ..Usage::default()
-                    },
-                    true,
-                    false,
-                    false,
-                )
-            })
-        },
-        (600.0, 200.0),
-        Env::new(false, 1.0),
-    );
-    rt.frame(0.0);
-    let value = rt.accessibility_json().to_string();
-    assert!(
-        value.contains("Tokens. ") && value.contains("Input: 1,250"),
-        "{value}"
-    );
-}
+mod tests;

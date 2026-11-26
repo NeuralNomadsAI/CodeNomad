@@ -100,14 +100,13 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
         meta_b
             .reply(200, json!({"apiContract":1,"serverId":"server-a","capabilities":["settings-atomic-patches"]}))
             .await;
-        let mut sse_b = request(&listener).await;
-        sse_b
-            .socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-            .await
-            .unwrap();
-        request(&listener)
-            .await
+        let history_b = request(&listener).await;
+        assert!(
+            !history_b.first.starts_with("GET /api/events?"),
+            "second tab must share existing /api/events stream, got {}",
+            history_b.first
+        );
+        history_b
             .reply(200, json!({"status":"window","messages":[{"id":"b","type":"user","text":"b"}],"older":null,"newer":null,"latest":true}))
             .await;
         request(&listener)
@@ -125,32 +124,35 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
                 break;
             }
         }
-        // Drop hidden tab B and hold its reconnect /api/meta, then try saving a masked secret.
-        drop(sse_b);
+        // Drop the shared SSE stream while attestation is valid, verify EOF itself revokes
+        // attestation, then stage a masked secret and confirm Preferences probes /api/meta
+        // (and blocks on foreign server-b) without ever sending "top-secret" in a PATCH.
         let client = prefs.backend.as_ref().unwrap().client.clone();
-        wait_until(|| client.transport_drops(&tab_b_id) == 1).await;
-        let _held_tab_b_meta = request(&listener).await;
-        assert_eq!(_held_tab_b_meta.first, "GET /api/meta HTTP/1.1");
+        assert!(!client.needs_capability_recheck());
+        drop(sse_a);
+        wait_until(|| client.needs_capability_recheck() && client.transport_drops(&tab_b_id) == 1)
+            .await;
         assert!(prefs.stage_environment("API_KEY".into(), Some("top-secret".into()), Some(true),));
         assert!(prefs.poll());
         let pre_patch_meta = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(
             pre_patch_meta.first, "GET /api/meta HTTP/1.1",
-            "PATCH must attest /api/meta before sending a secret while hidden tab reconnect is pending"
+            "Preferences must attest /api/meta before sending a masked secret after SSE EOF"
         );
         pre_patch_meta
             .reply(200, json!({"apiContract":1,"serverId":"server-b","capabilities":["settings-atomic-patches"]}))
             .await;
         wait_until(|| {
             prefs.poll();
-            client.needs_capability_recheck()
+            !prefs.environment_ready()
         })
         .await;
         // Drain any follow-up revalidation /api/meta (still server-b) and confirm zero PATCH ever ran.
         let mut saw_patch = false;
-        for _ in 0..3 {
+        let deadline = std::time::Instant::now() + Duration::from_millis(600);
+        while std::time::Instant::now() < deadline {
             prefs.poll();
-            if let Ok(accepted) = timeout(Duration::from_millis(80), listener.accept()).await {
+            if let Ok(accepted) = timeout(Duration::from_millis(40), listener.accept()).await {
                 let (socket, _) = accepted.unwrap();
                 let req = read_request(socket, Duration::from_secs(2)).await;
                 if req.first.starts_with("PATCH ") {
@@ -163,9 +165,12 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
             !saw_patch,
             "masked secret PATCH must never be sent to foreign server-b"
         );
+        assert!(
+            !prefs.environment_ready(),
+            "Preferences must stay blocked after foreign server-b rejection"
+        );
         let _ = cmd_a.send(Command::Close).await;
         let _ = cmd_b.send(Command::Close).await;
-        drop(sse_a);
 
         // 2. Active Tab A drops while hidden Tab B is healthy: repeated outage must be detected.
         let (listener2, mut prefs2) = fixture().await;

@@ -16,6 +16,8 @@ mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
 mod missions;
 mod opencode;
+mod opencode_settings;
+mod plugin_controls;
 mod previews;
 mod provider_usage;
 mod remote_control;
@@ -27,6 +29,7 @@ mod shared;
 mod sidecars;
 mod storage;
 mod subagent_depth;
+mod temporary_workspaces;
 mod usage;
 mod workspaces;
 mod worktrees;
@@ -88,20 +91,49 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     }
     let listener = launch.http.listen().await?;
     let port = listener.local_addr()?.port();
-    let (identity, data) = (launch.identity.as_path(), launch.data);
+    let (identity, data) = (launch.identity.as_deref(), launch.data);
     fs::create_dir_all(&data)?;
     data_owner::protect(&data)?;
     git::empty_hooks(&data.join("git-empty-hooks"))?;
-    if data_owner::foreign(identity)? {
-        return Err("Identity file is owned by another account".into());
-    }
+    let identity_ok = match identity {
+        Some(path) => match data_owner::foreign(path) {
+            Ok(true) => {
+                eprintln!(
+                    "Stable server identity unavailable; backend compatibility falls back: Identity file is owned by another account"
+                );
+                false
+            }
+            Ok(false) => true,
+            Err(err) => {
+                eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
+                false
+            }
+        },
+        None => {
+            eprintln!(
+                "Stable server identity unavailable; backend compatibility falls back: Settings path could not be resolved"
+            );
+            false
+        }
+    };
     let tls = match launch.https {
         Some(settings) => Some(auth::tls::Listener::open(settings).await?),
         None => None,
     };
     let devices = Some(auth::devices::open(&data, tls.as_ref())?);
     let settings = settings::Settings::new(launch.settings);
-    let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
+    let server_id = if identity_ok {
+        match settings.server_id() {
+            Ok(id) => Some(id),
+            Err(err) => {
+                eprintln!("Stable server identity unavailable; backend compatibility falls back: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let meta = meta::document(server_id, port, &root, tls.as_ref(), launch.ui.meta())?;
     let positional = launch.binary.to_string_lossy();
     let binary = if !positional.is_empty() {
         opencode::launch::resolve(&positional)
@@ -133,6 +165,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     let routes = Router::new()
         .merge(meta::routes())
         .merge(auth::routes())
+        .merge(temporary_workspaces::routes())
         .merge(workspaces::routes())
         .merge(files::routes())
         .merge(search::routes())
@@ -142,6 +175,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
+        .merge(opencode_settings::routes())
+        .merge(plugin_controls::routes())
         .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())

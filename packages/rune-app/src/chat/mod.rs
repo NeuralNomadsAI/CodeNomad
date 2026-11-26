@@ -13,6 +13,7 @@ mod media;
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) use media::browser_fixture as images_fixture;
 pub(crate) mod message_actions;
+pub(crate) mod queue;
 #[cfg(feature = "test-support")]
 pub(crate) use links::SAMPLE as LOOPBACK_LINK_SCENE;
 pub(crate) mod reader;
@@ -26,9 +27,9 @@ mod rtl_tests;
 #[cfg(test)]
 mod tests;
 mod tool_diff;
-mod tool_patch;
-pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
 mod tool_groups;
+mod tool_patch;
+pub(crate) use tool_diff::{ComposerCaretPins, Preferences as ToolDiffPreferences};
 pub(crate) mod tools;
 pub(crate) mod transcript;
 pub(crate) mod transport;

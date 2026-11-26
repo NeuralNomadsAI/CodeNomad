@@ -187,6 +187,7 @@ impl Harness {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         };
         app.inner.lock().unwrap().workspaces.push(ws.clone());
         Self { _dir: dir, linked, trace, app, id, ws, http }
@@ -223,7 +224,8 @@ async fn root_only_uses_shared_git_runner_and_classifies_git_and_non_git() {
     assert_eq!(non_git.rev_parse_runs("root-only"), 1);
 
     // Broken gitfile ("fatal: not a git repository: ..."): display list falls back to isGitRepo=false
-    // (TS native-worktree-fallback.test.ts), while strict readable_checkout returns false (no departure verdict).
+    // (TS native-worktree-fallback.test.ts), while authority checks fail closed (503) and strict
+    // readable_checkout returns false (no departure verdict).
     let broken = Harness::new("root-only-broken-gitfile", false, false).await;
     std::fs::write(broken.ws.path.join(".git"), "gitdir: ./missing-admin\n").unwrap();
     let broken_list = REQUEST
@@ -242,7 +244,36 @@ async fn root_only_uses_shared_git_runner_and_classifies_git_and_non_git() {
     let broken_json: Value = serde_json::from_slice(&broken_body).unwrap();
     assert_eq!(broken_json["isGitRepo"], false);
     assert_eq!(broken.rev_parse_runs("broken-list"), 1);
+    assert_eq!(root_only(&broken.ws).await.unwrap_err().0, Status::SERVICE_UNAVAILABLE);
+    assert_eq!(exact_root_supported(&broken.app, &broken.ws).await.unwrap_err().0, Status::SERVICE_UNAVAILABLE);
     assert!(!linked::readable_checkout(&broken.ws.path).await);
+
+    // Invalid gitfile format (exit 128 without "not a git repository"): display list falls back to
+    // isGitRepo=false (TS git-worktrees.ts:14-22), while authority checks fail closed.
+    let invalid_gitfile = Harness::new("root-only-invalid-gitfile", false, false).await;
+    std::fs::write(invalid_gitfile.ws.path.join(".git"), "not-a-gitdir-header\n").unwrap();
+    let invalid_list = REQUEST
+        .scope(
+            ("invalid-list", invalid_gitfile.trace.clone()),
+            list(
+                State(invalid_gitfile.app.clone()),
+                Path(invalid_gitfile.id.to_string()),
+                Ok(Query(Input { fresh: Some("false".into()) })),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_list.status(), Status::OK);
+    let invalid_body = axum::body::to_bytes(invalid_list.into_body(), 64 * 1024).await.unwrap();
+    let invalid_json: Value = serde_json::from_slice(&invalid_body).unwrap();
+    assert_eq!(invalid_json["isGitRepo"], false);
+    assert_eq!(root_only(&invalid_gitfile.ws).await.unwrap_err().0, Status::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        exact_root_supported(&invalid_gitfile.app, &invalid_gitfile.ws).await.unwrap_err().0,
+        Status::SERVICE_UNAVAILABLE
+    );
+    assert!(strict_non_git_workspace(&invalid_gitfile.ws).await.is_err());
+    assert!(!linked::readable_checkout(&invalid_gitfile.ws.path).await);
 }
 
 #[tokio::test]

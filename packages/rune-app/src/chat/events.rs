@@ -7,14 +7,30 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true)
+    drain_chat(s, limit, true, true, false, None)
 }
 
 pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
-    drain_chat(s, limit, false, !active_has_stream)
+    drain_chat(s, limit, false, !active_has_stream, false, None)
 }
 
-fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: bool) -> bool {
+pub(crate) fn poll_chat_for_window(
+    s: &mut State,
+    limit: usize,
+    defer_reader_sync: bool,
+    clock: f64,
+) -> bool {
+    drain_chat(s, limit, true, true, defer_reader_sync, Some(clock))
+}
+
+fn drain_chat(
+    s: &mut State,
+    limit: usize,
+    visible: bool,
+    affects_preferences: bool,
+    defer_reader_sync: bool,
+    clock: Option<f64>,
+) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -35,7 +51,21 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
     for _ in 0..limit {
         let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
         let content = observation.is_none();
-        let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(
+                    defer_reader_sync,
+                    reading,
+                    history_bounds,
+                    cached_gap,
+                    clock,
+                )
+            })
+        });
         let Some(event) = event else { break };
         crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
@@ -47,12 +77,14 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.conversation_client_id = Some(backend.client_id.clone());
                 s.conversation_stream_connected = false;
                 s.status_permissions.bind(&backend);
+                s.status_services.bind(&backend);
                 s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
                 s.transcript_display.pictures.bind(backend.clone());
                 s.transcript_display.receipts.bind(backend.clone());
                 s.transcript_display.messages.bind(backend.clone());
+                s.transcript_display.queue.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -66,9 +98,15 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    let newly_connected = !s.conversation_stream_connected;
                     s.conversation_stream_connected = true;
+                    #[cfg(target_arch = "wasm32")]
+                    platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let _ = newly_connected;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
+                    s.status_services.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -80,11 +118,24 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                {
                     if catalog {
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::AgentControl(lane) => {
+                if let Some(a) = s.agent.as_mut() {
+                    match lane {
+                        codenomad_client::transport::AgentLane::Session => a.refresh_session(false),
+                        codenomad_client::transport::AgentLane::Permissions => {
+                            a.refresh_permissions()
+                        }
+                        codenomad_client::transport::AgentLane::Forms => a.refresh_forms(),
+                    }
                 }
             }
             Event::SessionUsage(usage) => {
@@ -107,6 +158,23 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
             ) => {
                 s.status_permissions.invalidate(root.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::PluginsChanged {
+                directory,
+                ..
+            }) => {
+                s.status_services.invalidate_plugins(directory.as_deref());
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::McpStatusChanged {
+                ..
+            }) => {
+                s.status_services.invalidate_mcp();
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ServicesConfigChanged { .. },
+            ) => {
+                s.status_services.invalidate_plugins(None);
+                s.status_services.invalidate_mcp();
             }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
@@ -139,10 +207,29 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 form,
                 id,
             }) => {
-                if !uses_workspace_attention(s)
-                    && let Some(agent) = &mut s.agent
-                {
-                    agent.notice_request(form, id);
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.notice_request(form, id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
+                }
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::SessionRequestResolved { form, id },
+            ) => {
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.resolve_request(form, &id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
@@ -154,7 +241,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     let verify = notice.is_some();
                     agent.attention.execution(notice);
                     if verify {
-                        agent.refresh(false);
+                        agent.refresh_session(false);
                     }
                 }
             }
@@ -165,7 +252,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     && let Some(agent) = &mut s.agent
                 {
                     agent.attention.compacted(id);
-                    agent.refresh(false);
+                    agent.refresh_session(false);
                 }
             }
             Event::Workspace(
@@ -193,16 +280,24 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
                     s.status_permissions.online(false);
+                    s.status_services.location_moved();
                     s.status_usage.disconnect();
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
+                    s.transcript_display.queue.clear();
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
                     if let Some(agent) = &mut s.agent {
                         agent.attention.disconnected();
                     }
+                }
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                    &event
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.workspace_stopped(workspace_id);
                 }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
@@ -211,17 +306,93 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::Preferences(owner) => {
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                if newly_connected {
+                    platform::pairing::observe_conversation_authenticated(s, true);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 settings::invalidate(s, owner);
             }
-            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+            event @ (Event::Sync(_) | Event::ReaderSync { .. }) => {
+                let (page, reader_version) = match event {
+                    Event::Sync(page) => (page, None),
+                    Event::ReaderSync { page, version } => (page, Some(version)),
+                    _ => continue,
+                };
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
+                    s.status_services.synchronized();
                 }
-                chat::reader::reconcile_bookmark(s, &page.rows);
+                if chat::reader::reconcile_bookmark(s, &page) {
+                    s.revision += 1;
+                    changed = true;
+                    continue;
+                }
+                let sync_undo = if let Some(version) = reader_version
+                    && !s.messages.is_empty()
+                    && s.reader
+                        .as_ref()
+                        .is_some_and(chat::reader::Reader::is_resuming)
+                {
+                    let trimmed_older = page.older.is_some()
+                        && s.messages
+                            .first()
+                            .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
+                    let trimmed_newer = page.newer.is_some()
+                        && s.messages
+                            .last()
+                            .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
+                    (trimmed_older || trimmed_newer).then(|| {
+                        (
+                            version,
+                            page.clone(),
+                            std::mem::take(&mut s.messages),
+                            s.can_older,
+                            s.history_detached,
+                            s.phase,
+                            trimmed_older,
+                            trimmed_newer,
+                        )
+                    })
+                } else {
+                    None
+                };
+                let had_sync_undo = sync_undo.is_some();
                 if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                    if let Some((
+                        version,
+                        page_copy,
+                        prev_rows,
+                        prev_can_older,
+                        prev_detached,
+                        prev_phase,
+                        trimmed_older,
+                        trimmed_newer,
+                    )) = sync_undo
+                    {
+                        reader.save_sync_undo(
+                            page_copy,
+                            version,
+                            prev_rows,
+                            prev_can_older,
+                            prev_detached,
+                            prev_phase,
+                            trimmed_older,
+                            trimmed_newer,
+                            clock,
+                        );
+                    }
                     reader.install(page.newer.is_some());
                     reader.sync_activity(stale_activity);
                 }
@@ -232,14 +403,24 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
-                    if !a.online || a.running != page.running {
-                        a.online = true;
-                        s.composer.picker.refresh_commands(&s.reads, &s.wake);
-                        a.refresh(false);
-                    }
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                    && (!a.online || a.running != page.running)
+                {
+                    a.online = true;
+                    s.composer.picker.refresh_commands(&s.reads, &s.wake);
+                    a.refresh(false);
+                }
+                let previous_rows = if !had_sync_undo {
+                    std::mem::take(&mut s.messages)
+                } else {
+                    Vec::new()
+                };
+                if !previous_rows.is_empty() {
+                    chat::reader::preserve_anchor_on_displacement(s, &previous_rows, &page.rows);
                 }
                 s.messages = page.rows;
+                s.transcript_display.queue.prune_committed(&s.messages);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
                 crate::timeline::restore_search(s);
                 if s.history_detached {
@@ -286,8 +467,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
                 workspace::suspend_mission_briefing(s);
                 s.transcript_display.messages.offline();
+                s.transcript_display.queue.offline();
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -335,6 +518,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
+                s.transcript_display.queue.clear();
                 s.messages.clear();
                 s.history_detached = false;
                 s.can_older = false;
@@ -345,10 +529,15 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
+                if let Some(a) = s.agent.as_mut() {
+                    a.mark_scope_missing();
+                }
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
+                s.transcript_display.queue.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -362,13 +551,43 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             Event::History(messages) => {
                 s.transcript_display.tool_clock.resume();
                 s.conversation_stream_connected = true;
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
                 s.messages = messages;
                 s.phase = Phase::Ready;
             }
             Event::Message(m) => {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                     s.messages.push(m.into());
                 }
+            }
+            Event::Inbox {
+                items,
+                authoritative,
+                fence,
+            } => {
+                if !authoritative || !chat::queue::receive_authoritative(s, items, fence) {
+                    continue;
+                }
+            }
+            Event::InboxDelta(delta) => {
+                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta
+                    && s.messages.iter().any(|row| row.id == item.id)
+                {
+                    continue;
+                }
+                let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
+                    continue;
+                };
+                chat::reader::preserve_anchor_on_inbox_change(s, &next);
+                s.transcript_display.queue.apply_preview(next);
+            }
+            Event::InboxFailed => {
+                s.transcript_display.queue.failed();
             }
             Event::PromptAcknowledged { attempted, outcome } => {
                 composer::acknowledge(s, &attempted, outcome);
@@ -377,7 +596,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::Text(id, event) => {
+                let mut touched = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
                         && m.parts
                             .iter()
@@ -395,8 +616,16 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                         crate::timeline::structure_changed(s);
                     }
                 }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
             }
             Event::Reasoning(id, event) => {
+                if s.messages.iter().any(|m| m.id == id)
+                    && let Some(reader) = &mut s.reader
+                {
+                    reader.clear_sync_undo();
+                }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
                 if changed {
@@ -404,15 +633,21 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::StepUsage(id, usage) => {
+                let mut touched = false;
                 if let Some(row) = s
                     .messages
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Tool(id, tool) => {
+                let mut touched = false;
                 if let Some(row) = s.messages.iter_mut().find(|row| {
                     row.id == id
                         && (!row.completed
@@ -429,11 +664,15 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                                     )
                                 })))
                 }) {
+                    touched = true;
                     let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
                     if inserted {
                         crate::timeline::structure_changed(s);
                     }
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Done => s.phase = Phase::Ready,
@@ -465,6 +704,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
+                s.status_services.online(false);
                 s.status_usage.disconnect();
                 chat::reader::suspend(s);
                 git::online(s, false);

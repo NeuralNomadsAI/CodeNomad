@@ -24,7 +24,7 @@ pub fn prose<S: 'static>(
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
 ) -> El {
     let dark = dark();
-    let kit = kit(dark);
+    let kit = &*kit(dark);
     let t = tokens(dark);
     let style = MarkdownStyle::from_kit(kit)
         .code_block(t.color("surface-inset"), t.color("border-base"))
@@ -38,7 +38,8 @@ pub fn prose<S: 'static>(
         .link(t.color("accent-primary"))
         .link_hover(t.color("accent-hover"))
         .link_underline(rune::Color::TRANSPARENT)
-        .syntax_highlight(highlight);
+        .syntax_highlight(highlight)
+        .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
     let source = literal_breaks_with(source, truncated).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
@@ -536,7 +537,7 @@ pub fn language_for_path(path: &str) -> &str {
 }
 
 pub fn copy_button<S: 'static>(label: &str, copy: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
-    let kit = kit(dark());
+    let kit = &*kit(dark());
     rune_kit::IconButton::new(kit.glyph.copy)
         .label(label)
         .help(label)
@@ -545,7 +546,7 @@ pub fn copy_button<S: 'static>(label: &str, copy: impl Fn(&mut S, &mut rune::Tx)
 }
 
 pub fn hold_frame(key: String, stamp: impl std::hash::Hash, build: impl FnOnce() -> El) -> El {
-    rune::memo(key, stamp, build)
+    rune::memo(key, (crate::layout::appearance_key(), stamp), build)
 }
 
 pub const STEP_DETACH_THRESHOLD: f32 = 24.0;
@@ -618,7 +619,7 @@ pub fn search_code(
 ) -> El {
     let dark = dark();
     let spans = if highlight {
-        syntax::SyntaxTheme::from_kit(kit(dark))
+        syntax::SyntaxTheme::from_kit(&kit(dark))
             .spans(&syntax::highlight(Some(language), source), 0)
     } else {
         Vec::new()
@@ -736,4 +737,78 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert!(!prose_has_match(hard_break, space_query));
+}
+
+#[cfg(test)]
+#[test]
+fn hold_frame_invalidates_when_palette_or_contrast_changes_at_same_luminance() {
+    use crate::palettes::{
+        ColorField, ResolvedPalette, built_in, custom, increased_contrast, with_resolved,
+    };
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let first = built_in().iter().find(|p| p.dark).expect("dark palette");
+    let second = built_in()
+        .iter()
+        .find(|p| p.dark && p.id != first.id)
+        .expect("second dark palette");
+    let contrast = increased_contrast(Some(first), true).expect("high-contrast variant");
+    let custom_a = custom(Some("card-custom"), true, false, first.colors());
+    let custom_b = custom(
+        Some("card-custom"),
+        true,
+        false,
+        first
+            .colors()
+            .with(ColorField::SurfaceBase, "#102820")
+            .expect("valid hex"),
+    );
+
+    let builds = Rc::new(Cell::new(0usize));
+    let mut rt = rune::Runtime::new(
+        (Some(ResolvedPalette::BuiltIn(first)), Rc::clone(&builds)),
+        |(palette, count), cx| {
+            with_resolved(palette.clone(), || {
+                crate::layout::render_with_dark(cx, true, |_| {
+                    hold_frame("tool-card".into(), 1u8, || {
+                        count.set(count.get() + 1);
+                        rune::text("ok")
+                    })
+                })
+            })
+        },
+        (400.0, 200.0),
+        rune::Env::new(true, 1.0),
+    );
+
+    rt.frame(0.02);
+    assert_eq!(builds.get(), 1);
+
+    rt.frame(0.02);
+    assert_eq!(builds.get(), 1, "same palette must reuse hold_frame memo");
+
+    rt.update(|state, _| state.0 = Some(ResolvedPalette::BuiltIn(second)));
+    rt.frame(0.02);
+    assert_eq!(
+        builds.get(),
+        2,
+        "switching built-in dark palette must rebuild"
+    );
+
+    rt.update(|state, _| state.0 = Some(ResolvedPalette::BuiltIn(contrast)));
+    rt.frame(0.02);
+    assert_eq!(builds.get(), 3, "toggling high contrast must rebuild");
+
+    rt.update(|state, _| state.0 = Some(custom_a));
+    rt.frame(0.02);
+    assert_eq!(builds.get(), 4, "switching to custom palette must rebuild");
+
+    rt.update(|state, _| state.0 = Some(custom_b));
+    rt.frame(0.02);
+    assert_eq!(
+        builds.get(),
+        5,
+        "editing custom palette colors must rebuild"
+    );
 }

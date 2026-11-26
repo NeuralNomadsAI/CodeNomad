@@ -294,6 +294,99 @@ async fn go(ctx: &Context, auth: &Value, http: &Http) -> Quota {
     if w.is_empty() { Err(INVALID) } else { Ok(w.into()) }
 }
 
+/// Explicit-credential OpenCode Go quota read for account selection (no env-cookie fallback,
+/// preserves upstream HTTP statuses so definite 4xx errors reject a candidate).
+pub(super) async fn go_selection(e: &Value, http: &Http, now: u64) -> Quota {
+    let scope = e.get("server").is_none_or(|s| {
+        text(s)
+            .and_then(|s| reqwest::Url::parse(s).ok())
+            .is_some_and(|url| url.origin().ascii_serialization() == "https://opencode.ai")
+    });
+    if !scope {
+        return Err(FAILED);
+    }
+    let oauth = e["type"] == "oauth";
+    let token = if e["type"] == "api" {
+        text(&e["key"])
+    } else if oauth {
+        text(&e["access"]).filter(|s| {
+            let limit = (now + 120_000) as f64;
+            e["expires"].as_f64().is_some_and(|n| n > limit)
+                && !num(&jwt(s)["exp"]).is_some_and(|n| n * 1000.0 <= limit)
+        })
+    } else {
+        None
+    };
+    let Some(tok) = token else {
+        return Err(FAILED);
+    };
+    let authorization = format!("Bearer {tok}");
+    let mut headers = vec![("Authorization", authorization.as_str()), ("Accept", "application/json")];
+    if let Some(org) = text(&e["orgId"]) {
+        headers.push(("x-org-id", org));
+    } else if oauth {
+        return Err(FAILED);
+    }
+    let mut w = Fields::new();
+    if oauth {
+        let p = http.get(&format!("{CONSOLE}/api/go/status"), &headers, true).await?;
+        for (field, name, seconds) in
+            [("fiveHour", "5h", FIVE_HOURS), ("week", "weekly", WEEK), ("month", "monthly", 30.0 * DAY)]
+        {
+            let s = &p["access"]["meters"][field];
+            if s.is_null() {
+                continue;
+            }
+            let used = amount(&s["usedMicroCents"]).filter(|n| *n >= 0.0).ok_or(INVALID)?;
+            let cap = amount(&s["limitMicroCents"]).filter(|n| *n > 0.0).ok_or(INVALID)?;
+            let at = timestamp(&s["resetsAt"]);
+            if !s["resetsAt"].is_null() && at.is_none() {
+                return Err(INVALID);
+            }
+            w.insert(name.into(), window(Some(used / cap * 100.0), Some(seconds), at, None));
+        }
+        match http.get(&format!("{CONSOLE}/api/billing/status"), &headers, true).await {
+            Ok(p) => {
+                if let Some(balance) = console_balance(&p) {
+                    w.insert("credits_balance".into(), balance);
+                }
+            }
+            Err(err) if err.status == Some(401) => return Err(err),
+            _ => {}
+        }
+    } else {
+        let p = http.get("https://opencode.ai/zen/go/v1/usage", &headers, true).await?;
+        for (keys, name, seconds) in [
+            (["rolling", "rollingUsage"], "5h", FIVE_HOURS),
+            (["weekly", "weeklyUsage"], "weekly", WEEK),
+            (["monthly", "monthlyUsage"], "monthly", 30.0 * DAY),
+        ] {
+            let s = [&p["usage"], &p]
+                .into_iter()
+                .find_map(|c| keys.iter().find_map(|k| c.get(*k).filter(|v| !v.is_null())));
+            let Some(s) = s else { continue };
+            if !s.is_object() || s.get("status").is_some_and(|v| !matches!(v.as_str(), Some("ok" | "rate-limited"))) {
+                return Err(INVALID);
+            }
+            let used = num(s.get("percent").filter(|v| !v.is_null()).unwrap_or(&s["usagePercent"]))
+                .filter(|n| *n >= 0.0)
+                .ok_or(INVALID)?;
+            let at = if !s["resetsAt"].is_null() {
+                Some(timestamp(&s["resetsAt"]).ok_or(INVALID)?)
+            } else if !s["resetInSec"].is_null() {
+                Some(now as f64 + num(&s["resetInSec"]).filter(|n| *n >= 0.0).ok_or(INVALID)? * 1000.0)
+            } else {
+                None
+            };
+            w.insert(
+                name.into(),
+                window(Some(if s["status"] == "rate-limited" { 100.0 } else { used }), Some(seconds), at, None),
+            );
+        }
+    }
+    if w.is_empty() { Err(INVALID) } else { Ok(w.into()) }
+}
+
 const METRICS: [&str; 7] = [
     "totalRequests",
     "totalInputTokens",

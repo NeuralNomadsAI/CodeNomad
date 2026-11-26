@@ -1,26 +1,23 @@
-// Explicit interactive qualification against installed OpenCode. Only owned session copies mutate.
+// Interactive qualification against a seeded, private OpenCode database.
 import assert from 'node:assert/strict'
-import {fixtureChildPid,spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
-import {mkdir,writeFile} from 'node:fs/promises'
-import {randomUUID,createHash} from 'node:crypto'
+import {writeFile} from 'node:fs/promises'
+import {createHash,randomUUID} from 'node:crypto'
+import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
-import {connectNative} from './live-access.mjs'
-import {privateEnvironment} from './private-profile.mjs'
+import {args,requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
+import {prepareRealHistory} from './real-history-prepare.mjs'
+import {seedRealHistory} from './real-history-seed.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const directory=path.resolve(process.argv[2]??''),title=process.argv[3]
-assert(directory&&path.isAbsolute(directory)&&title,'usage: interactive-live.mjs <project-folder> <existing-session-title>')
-const native=await connectNative(),here=path.resolve(import.meta.dirname,'..')
-const profile=path.join(here,'fixture-profile',`interactive-${randomUUID()}`);await mkdir(profile,{recursive:true})
-const list=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
-const sources=list.data.filter(s=>s.title===title&&!s.parentID&&!s.id.startsWith('ses_cn_schedule_'))
-assert.equal(sources.length,1,'unique source session in bounded first catalogue page')
-const source=sources[0]
+requirePrivateCli();requireTestSupport()
+assert.equal(args.length,0,'Usage: interactive-live.mjs --opencode <absolute executable>; external sessions are forbidden')
+await withNative(async native=>{
+const {profile,project:directory}=native
+const source=(await seedRealHistory(native,await prepareRealHistory(native))).info
 const first=await native.read(`/api/session/${source.id}/message?limit=200`)
 assert.equal(first.data.length,200);assert(first.cursor?.next,'source must be a real long history')
-const fork=process.env.RUNE_TEST_REUSE_FORK
-  ? (await native.read(`/api/session/${process.env.RUNE_TEST_REUSE_FORK}`)).data
-  : (await native.read(`/api/session/${source.id}/fork`,{method:'POST',body:'{}'})).data
+const fork=(await native.read(`/api/session/${source.id}/fork`,{method:'POST',body:'{}'})).data
 assert.equal(fork?.fork?.sessionID,source.id,'fork retains the exact real source')
 assert(fork?.id&&fork.id!==source.id&&fork.location.directory.toLowerCase()===directory.toLowerCase())
 const deny=[{action:'*',resource:'*',effect:'deny'}]
@@ -28,19 +25,27 @@ const suffix=path.basename(profile).slice(-8),longTitle=`Rune · reprise réelle
 await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify({title:longTitle,permissions:deny})})
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
-const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=spawn(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',child,observer,stopped=false,newID
+const rustPassword=randomUUID()
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1'}
+const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,rustPassword]})
+native.allowRelayClient(server.pid(),server.closed)
+let child,observer,stream,watchTask,guardTask,rustFetch,rustRelay,stopped=false,newID,guardError=null
+const guarded=new Set([source.id,fork.id])
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
-  let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))}
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'})});assert.equal(login.status,200)
+  const origin=await server.ready(rustOrigin)
+  const rustPid=await server.pid()
+  rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:rustPassword,isolateSessionCookie:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
-  const stream=await fetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  const openTimer=setTimeout(()=>observer.abort(Error('SSE open timed out')),15000)
+  try{stream=await rustFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})}
+  finally{clearTimeout(openTimer)}
+  assert.equal(stream.status,200)
   const fragments=new Map()
   async function watch(){
     let buffer='';const decoder=new TextDecoder()
@@ -49,8 +54,9 @@ try{
         if(block.includes('event: codenomad.client.ping')){await call('/api/client-connections/pong',{method:'POST',body:JSON.stringify({clientId:'rune-interactive-observer',connectionId:'observer'})});continue}
         const raw=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5)).join('\n');if(!raw)continue
         const value=JSON.parse(raw),e=value.event,id=e?.data?.sessionID
-        if(value.type!=='instance.event'||![fork.id,newID].includes(id))continue
-        if(e.type.startsWith('session.tool.'))stats.tools++
+        if(value.type!=='instance.event')continue
+        if(e?.type?.startsWith('session.tool.'))stats.tools++
+        if(![fork.id,newID].includes(id))continue
         if(e.type==='session.text.delta')fragments.set(id,(fragments.get(id)??0)+1)
         if(['session.execution.succeeded','session.execution.failed','session.execution.interrupted'].includes(e.type)){
           const rows=(await native.read(`/api/session/${id}/message?limit=200`)).data
@@ -60,24 +66,47 @@ try{
         }
       }
     }
+    if(!stopped)guardError??=Error('Interactive SSE observer ended unexpectedly')
   }
-  watch().catch(error=>{if(!stopped&&error.name!=='AbortError')console.error('observer:',error.message)})
-  const guard=setInterval(async()=>{
-    if(newID||stopped)return
-    try{
-      const rows=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
-      const found=rows.data.filter(r=>r.title===newTitle&&!r.parentID)
-      if(found.length===1){
-        assert.equal(found[0].location.directory.toLowerCase(),directory.toLowerCase())
-        await native.read(`/api/session/${found[0].id}`,{method:'PATCH',body:JSON.stringify({permissions:deny})})
-        const readback=(await native.read(`/api/session/${found[0].id}`)).data;assert.deepEqual(readback.permissions,deny)
-        newID=found[0].id;stats.newID=newID;await save();console.log(JSON.stringify({type:'INTERACTIVE_NEW_SESSION_GUARDED',session:newID}))
-      }
-    }catch(error){console.error('guard:',error.message)}
-  },1000)
+  watchTask=watch().catch(error=>{if(!stopped&&error.name!=='AbortError'){guardError??=error;console.error('observer:',error.message)}})
+  guardTask=(async()=>{
+    while(!stopped){
+      try{
+        const rows=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`,{signal:observer.signal})
+        for(const row of rows.data.filter(r=>!r.parentID&&!guarded.has(r.id))){
+          assert.equal(row.location.directory.toLowerCase(),directory.toLowerCase())
+          await native.read(`/api/session/${row.id}`,{method:'PATCH',body:JSON.stringify({permissions:deny}),signal:observer.signal})
+          const readback=(await native.read(`/api/session/${row.id}`,{signal:observer.signal})).data;assert.deepEqual(readback.permissions,deny)
+          guarded.add(row.id)
+          if(row.title===newTitle&&!newID){newID=row.id;stats.newID=newID;await save();console.log(JSON.stringify({type:'INTERACTIVE_NEW_SESSION_GUARDED',session:newID}))}
+        }
+      }catch(error){if(!stopped&&error.name!=='AbortError'){guardError??=error;console.error('guard:',error.message)}}
+      try{await delay(1000,undefined,{signal:observer.signal})}catch{break}
+    }
+  })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
-  child.stdout.on('data',d=>log+=d);child.stderr.on('data',d=>{log+=d;console.error(String(d).trim())})
-  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await fixtureChildPid(child)}))
-  await new Promise(r=>child.on('exit',r));clearInterval(guard)
-}finally{stopped=true;observer?.abort();if(child?.exitCode===null)child.kill();server.stdin.end();await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill();await save();await writeFile(path.join(profile,'rust.log'),log)}
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,rustPassword],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  rustRelay.allowClientPid(child.pid(),child.closed)
+  let stderrBuffer=''
+  child.child.stderr.on('data',d=>{
+    stderrBuffer+=d
+    for(let at;(at=stderrBuffer.indexOf('\n'))>=0;){
+      const line=stderrBuffer.slice(0,at).trim();stderrBuffer=stderrBuffer.slice(at+1)
+      if(line)console.error(child.redact(line))
+    }
+  })
+  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await child.pid()}))
+  const exitCode=await child.closed
+  if(stderrBuffer.trim())console.error(child.redact(stderrBuffer.trim()))
+  stopped=true;observer.abort();void stream?.body?.cancel?.().catch(()=>{})
+  await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])
+  assert.equal(exitCode,0,child.output())
+  if(guardError)throw guardError
+  assert.equal(stats.tools,0,'Interactive fixture must not execute tools')
+}finally{
+  stopped=true;observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
+  await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])
+  try{await child?.stop()}finally{try{await Promise.allSettled([rustFetch?.close(),rustRelay?.close()])}finally{await server.stop()}}
+  await save();await writeFile(path.join(profile,'rust.log'),server.output())
+}
+},{denyAllTools:true})

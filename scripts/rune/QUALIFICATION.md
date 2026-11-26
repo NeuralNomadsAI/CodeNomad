@@ -82,7 +82,7 @@ wasm-bindgen --target web --out-name probe --out-dir "$env:CARGO_TARGET_DIR/tool
 node packages/rune-app/fixtures/tool-progress-sse.mjs "$env:CARGO_TARGET_DIR/debug/examples/tool-progress-sse.exe" "$env:CARGO_TARGET_DIR/tool-progress-sse"
 ```
 
-`pending-live-fixture.mjs <opencode-exécutable-absolu>` utilise un OpenCode jetable, le serveur Rust et Rune sans fenêtre. Il vérifie trois décisions d’autorisation dans le fil et deux règlements de Forms dans le dock. `RUNE_PENDING_EVIDENCE` fixe le dossier de preuves ; `CNRS_PLUGIN_ASSETS` fournit le dossier absolu des plugins construits lorsque le binaire serveur se trouve hors de son dossier de distribution.
+`pending-live-fixture.mjs --opencode <exécutable-absolu>` utilise un OpenCode privé, le serveur Rust et Rune sans fenêtre. Il vérifie trois décisions d’autorisation dans le fil et deux règlements de Forms dans le dock, et écrit ses preuves dans son profil jetable `scripts/perf/run/trial-rune-live-*`.
 
 ## Parité par composant
 
@@ -105,6 +105,8 @@ Le banc `scripts/perf/bench.mjs` définit le protocole : marqueurs `MARKER` de `
 L'adaptateur `scripts/perf/rune.mjs` pilote la sonde `tests/probes/latency.rs`, compilée avec `test-support`. Elle utilise le vrai état et le rendu CPU Rune, les clips et positions des glyphes, puis vérifie l'encre contre un tampon sans glyphes avant horodatage monotone. La mesure inclut cette validation et porte sur le tampon CPU. Le pilote corrèle les horloges et réutilise les mêmes marqueurs, touches et budgets que la TUI.
 
 Un préflight L1 d'un tour qualifie le parcours. L'admission exige des builds optimisés, trois tours L8/L32 et le contrôle des budgets, avec le vrai OpenCode privé et son fournisseur local. Le plugin d'historique utilise l'installateur du produit dans le seul profil du banc.
+
+Le banc atteste via l'OS le propriétaire du socket d'écoute avant l'ouverture et le pair TCP établi après l'ouverture de chaque nouvelle connexion, avant d'envoyer le premier `/api/info` de contrôle d'identité puis toute requête authentifiée. Les requêtes JSON, le flux SSE du pilote (`daemon.send`), le serveur Rust et la TUI passent par ce pool ou relais loopback attesté, sans proxy ni redirection ; la TUI démarre dans un environnement purgé des variables proxy, sous Job Object Windows avec héritage ConPTY (`codenomad-fixture-job --inherit-console`) ou sous le superviseur POSIX dédié en même groupe (`native-fixture-posix-supervisor.mjs --same-group`). Construire `codenomad-fixture-job` ou fournir son chemin absolu dans `CODENOMAD_FIXTURE_JOB_EXE` (requis sous Windows ; un superviseur POSIX prend le relais pour les autres fixtures si le binaire n'est pas construit).
 
 ```powershell
 node scripts/perf/bench.mjs $env:OPENCODE_TEST_BINARY --mode latency --rune-only --rune $env:RUNE_CLIENT_EXE --rune-server $env:RUNE_SERVER_EXE --rounds 3 --levels 8,32
