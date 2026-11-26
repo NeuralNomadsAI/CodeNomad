@@ -39,14 +39,27 @@ async function runIsolatedPairFixture({root,options,state,isInterrupted}){
     helper.once('close',(code,signal)=>resolve({code,signal}))
     helper.once('error',error=>resolve({code:1,signal:null,error}))
   })
+  let pairingStopSettled
+  const pairingStopDone=new Promise(resolve=>{pairingStopSettled=resolve})
   state.pairingChild=helper
   state.pairingClosed=closed
   state.pairingStartedBy=startedBy
+  state.resolvePairingStop=()=>{pairingStopSettled({exited:false})}
   helper.stdin?.on('error',()=>{})
   helper.stdin?.end(JSON.stringify({options,outFile:pairProofFile}))
   try{
-    const exit=await closed
+    const outcome=await Promise.race([
+      closed.then(exit=>({exited:true,exit})),
+      pairingStopDone,
+    ])
+    let exit=outcome.exited?outcome.exit:null
+    if(!outcome.exited){
+      let timer
+      try{exit=await Promise.race([closed,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),250)})])}
+      finally{clearTimeout(timer)}
+    }
     if(isInterrupted?.())throw Error('Launcher interrupted during pairing')
+    if(!exit)throw Error('Isolated pairing helper exit was not confirmed after stop')
     if(exit.error)throw exit.error
     assert.equal(exit.code,0,`Isolated pairing helper failed (code=${exit.code}, signal=${exit.signal}): ${helperErr.trim()}`)
     return JSON.parse(await readFile(pairProofFile,'utf8'))
@@ -55,6 +68,7 @@ async function runIsolatedPairFixture({root,options,state,isInterrupted}){
       state.pairingChild=undefined
       state.pairingClosed=undefined
       state.pairingStartedBy=undefined
+      state.resolvePairingStop=undefined
     }
   }
 }
@@ -124,11 +138,13 @@ export async function launchWeb({
     const device=androidDevice(androidEnv)
     const adbPid=await resolveLoopbackListenerPid(Number(device.port))
     await verifyExecutableMatches(adbPid,androidEnv.RUNE_ANDROID_ADB)
+    if(isInterrupted?.())throw Error('Launcher interrupted before Android relay')
     const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid,{
       requireClientAttestation:true,
       allowedClientPids:[adbPid],
     })
     state.androidRelay=androidRelay
+    if(isInterrupted?.())throw Error('Launcher interrupted before Android lease open')
     const lease=androidLease(device,uiOrigin,{
       localPort:androidRelay.port,
       closeRelay:()=>androidRelay.close(),

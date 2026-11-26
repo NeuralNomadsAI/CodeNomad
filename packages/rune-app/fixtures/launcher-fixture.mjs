@@ -5,7 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {readFileSync,renameSync,writeFileSync} from 'node:fs'
+import {readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -42,21 +42,84 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
   await mkdir(workerProfile,{recursive:true})
   const workerEnv={...process.env,CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile}
+  const graceMs=webAndroid?150000:25000
   const workerStartedBy=new Date()
+  const spawnPosixBridge=()=>{
+    const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
+    const bridgeCode=`
+      import {spawnFixtureChild,stopFixtureChild} from ${JSON.stringify(guardsUrl)}
+      const workerArgs=JSON.parse(process.env.CODENOMAD_POSIX_WORKER_ARGS)
+      const graceMs=Number(process.env.CODENOMAD_POSIX_WORKER_GRACE_MS)
+      delete process.env.CODENOMAD_POSIX_WORKER_ARGS
+      delete process.env.CODENOMAD_POSIX_WORKER_GRACE_MS
+      const child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
+      child.stdin?.on('error',()=>{})
+      const closed=new Promise(resolve=>{
+        child.once('close',(code,signal)=>resolve({code,signal}))
+        child.once('error',error=>resolve({code:1,signal:null,error}))
+      })
+      let stopping,stopError,stopSettled
+      const stopDone=new Promise(resolve=>{stopSettled=resolve})
+      const stop=line=>{
+        stopping??=(async()=>{
+          try{
+            try{child.stdin?.end(line)}catch{}
+            let t
+            try{await Promise.race([closed,new Promise(r=>{t=setTimeout(r,graceMs)})])}
+            finally{clearTimeout(t)}
+            await stopFixtureChild(child,closed,5500,2000)
+          }catch(error){
+            stopError=error
+            console.error(error.message)
+          }finally{
+            stopSettled({exited:false})
+          }
+        })()
+      }
+      process.stdin.resume()
+      process.stdin.on('data',chunk=>{
+        const text=String(chunk)
+        if(text.includes('shutdown:SIGINT'))stop('shutdown:SIGINT\\n')
+        else if(text.includes('shutdown'))stop('shutdown:SIGTERM\\n')
+      })
+      process.stdin.once('end',()=>stop('shutdown:SIGTERM\\n'))
+      const outcome=await Promise.race([closed.then(exit=>({exited:true,exit})),stopDone])
+      let exit=outcome.exited?outcome.exit:null
+      if(outcome.exited){await stopping}
+      else{
+        let timer
+        try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
+        finally{clearTimeout(timer)}
+      }
+      if(!exit||stopError||exit.error||exit.code===86)process.exit(exit?.code===86?86:1)
+      process.exit(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1))
+    `
+    return spawn(process.execPath,['--input-type=module','-e',bridgeCode],{
+      cwd:root,
+      detached:true,
+      windowsHide:true,
+      stdio:['pipe','inherit','inherit'],
+      env:{
+        ...workerEnv,
+        CODENOMAD_POSIX_WORKER_ARGS:JSON.stringify([...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker']),
+        CODENOMAD_POSIX_WORKER_GRACE_MS:String(graceMs),
+      },
+    })
+  }
   const worker=process.platform==='win32'
     ?spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
-    :spawn(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{detached:true,windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
+    :spawnPosixBridge()
   worker.stdin?.on('error',()=>{})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
     worker.once('error',error=>resolve({code:1,signal:null,error}))
   })
-  const graceMs=webAndroid?150000:25000
+  const outerGraceMs=process.platform==='win32'?graceMs:graceMs+15000
   let stopping,stopError,outerSignal,stopSettled
   const stopDone=new Promise(resolve=>{stopSettled=resolve})
   const stop=signal=>{
     outerSignal??=signal
-    stopping??=stopFixtureChild(worker,closed,graceMs,2000,{
+    stopping??=stopFixtureChild(worker,closed,outerGraceMs,2000,{
       ...(process.platform!=='win32'?{group:true,startedBy:workerStartedBy}:{}),
       close:()=>{try{worker.stdin?.end(signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n')}catch{}},
     }).catch(error=>{
@@ -81,10 +144,11 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   }
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
-  const proofTmp=path.join(workerProfile,'proof.json.tmp')
+  const workerProofFile=path.join(workerProfile,'proof.worker.json.tmp')
+  const supervisorProofTmp=path.join(workerProfile,'proof.supervisor.json.tmp')
   const proofFile=path.join(workerProfile,'proof.json')
   let proof
-  try{proof=JSON.parse(readFileSync(proofTmp,'utf8'))}catch{}
+  try{proof=JSON.parse(readFileSync(workerProofFile,'utf8'))}catch{}
   const workerExited=exit!==null
   const workerCode=workerExited?(exit.code??(exit.signal==='SIGINT'?130:exit.signal==='SIGTERM'?143:1)):null
   const supervisorFailed=!workerExited||workerCode!==0||Boolean(exit.signal)||Boolean(exit.error)||Boolean(stopError)
@@ -101,8 +165,9 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     ...(stopError?{workerStopError:String(stopError?.message??stopError)}:{}),
     ...(exit?.error?{workerSpawnError:String(exit.error?.message??exit.error)}:{}),
   }
-  writeFileSync(proofTmp,JSON.stringify(finalProof,null,2))
-  renameSync(proofTmp,proofFile)
+  writeFileSync(supervisorProofTmp,JSON.stringify(finalProof,null,2))
+  renameSync(supervisorProofTmp,proofFile)
+  if(workerExited){try{unlinkSync(workerProofFile)}catch{}}
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
@@ -666,14 +731,14 @@ const recordTeardown=async(label,fn)=>{
 }
 let pairingStopPromise,pairingStopError
 const stopPairingOnce=()=>{
+  if(pairingStopPromise)return pairingStopPromise
   const helper=webState.pairingChild
   if(!helper)return Promise.resolve()
-  if(!pairingStopPromise){
-    const stopped=webState.pairingClosed??new Promise(resolve=>helper.once('close',resolve))
-    pairingStopPromise=stopFixtureChild(helper,stopped,5000,2000,{startedBy:webState.pairingStartedBy}).catch(error=>{
-      pairingStopError=String(error?.message??error)
-    })
-  }
+  const stopped=webState.pairingClosed??new Promise(resolve=>helper.once('close',resolve))
+  const resolveStop=webState.resolvePairingStop
+  pairingStopPromise=stopFixtureChild(helper,stopped,5000,2000,{startedBy:webState.pairingStartedBy})
+    .catch(error=>{pairingStopError=String(error?.message??error)})
+    .finally(()=>{resolveStop?.()})
   return pairingStopPromise
 }
 function finalize(){
@@ -718,10 +783,18 @@ function finalize(){
     const interrupted=interruptedSignal??null
     const serverFailed=server?.exitCode!==0
     const finalResult=result===0&&!interrupted&&!serverFailed&&!clientStopError&&!androidCleanup?.length&&teardownErrors.length===0?0:1
-    const proofTmp=path.join(profile,'proof.json.tmp')
-    const proofFile=path.join(profile,'proof.json')
-    writeFileSync(proofTmp,JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interrupted,clientStopError,teardownErrors:teardownErrors.length?teardownErrors:undefined,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2))
-    if(!ownedWorker)renameSync(proofTmp,proofFile)
+    const proofPayload=JSON.stringify({result:finalResult,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:webState.staticProof,profile,project,forbidden,androidCleanup,expired,interruptedSignal:interrupted,clientStopError,teardownErrors:teardownErrors.length?teardownErrors:undefined,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2)
+    if(ownedWorker){
+      const workerPart=path.join(profile,'proof.worker.json.part')
+      const workerTmp=path.join(profile,'proof.worker.json.tmp')
+      writeFileSync(workerPart,proofPayload)
+      renameSync(workerPart,workerTmp)
+    }else{
+      const proofTmp=path.join(profile,'proof.json.tmp')
+      const proofFile=path.join(profile,'proof.json')
+      writeFileSync(proofTmp,proofPayload)
+      renameSync(proofTmp,proofFile)
+    }
     proofPublished=true
     publishedResult=finalResult
     process.exitCode=finalResult
