@@ -352,6 +352,8 @@ impl Persistence {
         }
         if let Some(store) = &self.store {
             store.begin_startup_mutation();
+            #[cfg(target_arch = "wasm32")]
+            store.stage_pending_file_drafts(documents.live_file_draft_bytes());
         }
         let outlines_version = outlines.begin_freeze();
         self.mutation_baseline = Some((

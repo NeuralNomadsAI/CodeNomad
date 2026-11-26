@@ -167,6 +167,15 @@ pub(crate) fn poll_stats(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
+    if s.settings
+        .window
+        .as_ref()
+        .is_some_and(|(_, _, request)| request.close_main_now.replace(false))
+    {
+        tx.close_window();
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
         let editor = request.reopen.borrow_mut().take();
         (editor.is_some()

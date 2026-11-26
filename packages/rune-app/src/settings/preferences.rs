@@ -1163,7 +1163,7 @@ impl Preferences {
         if !self.palette_ready() || self.backend.is_none() {
             return;
         }
-        if self.needs_legacy_config_migration(palette.dark) {
+        if self.needs_slot_migration(palette.dark) {
             let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
                 id: palette.id,
                 dark: palette.dark,
@@ -1177,20 +1177,12 @@ impl Preferences {
         }
     }
 
-    fn needs_legacy_config_migration(&self, dark: bool) -> bool {
+    fn needs_slot_migration(&self, dark: bool) -> bool {
         let Some(state) = self.saved(Owner::State) else {
             return false;
         };
-        let mode = super::palettes::mode_str(dark);
-        if !state["appearancePreferences"][mode].is_null() || !state["colorScheme"].is_null() {
-            return false;
-        }
-        let Some(config) = self.saved(Owner::Config) else {
-            return false;
-        };
-        super::palettes::legacy_scheme(&Value::Null, config).is_some_and(|scheme| {
-            scheme.dark == dark && scheme.id != "custom" && scheme.colors.is_some()
-        })
+        let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
+        super::palettes::needs_slot_migration(state, config, dark, None)
     }
 
     pub(super) fn set_palette_preview(
@@ -1350,7 +1342,7 @@ impl Preferences {
             self.state.stage_palette_mutation(mutation);
             return true;
         }
-        if force_mutation || self.needs_legacy_config_migration(option.dark) {
+        if force_mutation || self.needs_slot_migration(option.dark) {
             let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
                 id,
                 dark: option.dark,
@@ -1419,6 +1411,18 @@ impl Preferences {
         preset_id: Option<String>,
         allow_new_id: bool,
     ) -> Option<String> {
+        self.save_palette_preset_fields(name, dark, colors, preset_id, allow_new_id, None)
+    }
+
+    pub(super) fn save_palette_preset_fields(
+        &mut self,
+        name: &str,
+        dark: bool,
+        colors: ColorSchemeColors,
+        preset_id: Option<String>,
+        allow_new_id: bool,
+        edited_fields: Option<Vec<rune_theme_codenomad::palettes::ColorField>>,
+    ) -> Option<String> {
         if !self.palette_ready() || self.backend.is_none() {
             return None;
         }
@@ -1453,6 +1457,7 @@ impl Preferences {
             dark,
             colors,
             allow_new: allow_new_id,
+            edited_fields,
         });
         self.state.stage_palette_mutation(mutation);
         Some(id)

@@ -133,6 +133,7 @@ pub(super) enum PaletteOp {
         dark: bool,
         colors: ColorSchemeColors,
         allow_new: bool,
+        edited_fields: Option<Vec<ColorField>>,
     },
     DeletePreset {
         preset_id: String,
@@ -177,19 +178,29 @@ impl PaletteMutation {
             PaletteOp::SelectPreset { .. }
             | PaletteOp::SelectCustom { .. }
             | PaletteOp::SavePreset { .. } => true,
-            PaletteOp::SaveOverride { dark, .. }
-            | PaletteOp::ResetOverride { dark, .. }
-            | PaletteOp::SaveCustom { dark, .. } => {
+            PaletteOp::SelectBuiltIn { dark, .. } => {
+                needs_slot_migration(snapshot, &self.legacy_config, *dark, None)
+            }
+            PaletteOp::SaveOverride { id, dark, .. }
+            | PaletteOp::ResetOverride { id, dark, .. } => {
                 let sibling_dark = !*dark;
                 let sibling_mode = mode_str(sibling_dark);
                 !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
                     || (snapshot["appearancePreferences"][sibling_mode].is_null()
                         && legacy_scheme(snapshot, &self.legacy_config)
                             .is_some_and(|l| l.dark == sibling_dark))
+                    || needs_slot_migration(snapshot, &self.legacy_config, *dark, Some(*id))
             }
-            PaletteOp::SelectBuiltIn { .. }
-            | PaletteOp::DeletePreset { .. }
-            | PaletteOp::SetMode { .. } => false,
+            PaletteOp::SaveCustom { dark, .. } => {
+                let sibling_dark = !*dark;
+                let sibling_mode = mode_str(sibling_dark);
+                !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
+                    || (snapshot["appearancePreferences"][sibling_mode].is_null()
+                        && legacy_scheme(snapshot, &self.legacy_config)
+                            .is_some_and(|l| l.dark == sibling_dark))
+                    || needs_slot_migration(snapshot, &self.legacy_config, *dark, Some("custom"))
+            }
+            PaletteOp::DeletePreset { .. } | PaletteOp::SetMode { .. } => false,
         }
     }
 
@@ -402,10 +413,33 @@ impl PaletteMutation {
                 name,
                 dark,
                 colors,
-                ..
+                allow_new,
+                edited_fields,
             } => {
                 let mode = mode_str(*dark);
-                let colors_json = colors.to_json();
+                let live_preset = (!*allow_new)
+                    .then(|| {
+                        normalize_presets(snapshot)
+                            .into_iter()
+                            .find(|p| p.id == *preset_id)
+                    })
+                    .flatten();
+                let effective_name = live_preset
+                    .as_ref()
+                    .map_or(name.as_str(), |p| p.name.as_str());
+                let merged_colors = match (live_preset.as_ref(), edited_fields.as_deref()) {
+                    (Some(live), Some(fields)) if !fields.is_empty() => {
+                        let mut merged = live.colors.clone();
+                        for &field in fields {
+                            if let Some(updated) = merged.with(field, colors.get(field)) {
+                                merged = updated;
+                            }
+                        }
+                        merged
+                    }
+                    _ => colors.clone(),
+                };
+                let colors_json = merged_colors.to_json();
                 let scheme = json!({
                     "id": "custom",
                     "appearance": mode,
@@ -413,7 +447,7 @@ impl PaletteMutation {
                 });
                 patch["colorScheme"] = scheme.clone();
                 patch["colorSchemePresets"][preset_id] = json!({
-                    "name": name,
+                    "name": effective_name,
                     "appearance": mode,
                     "colors": colors_json,
                 });
@@ -503,20 +537,42 @@ impl PaletteMutation {
                 name,
                 dark,
                 colors,
-                ..
+                allow_new,
+                edited_fields,
             } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
                 let preset = &snapshot["colorSchemePresets"][preset_id];
-                preset["name"] == *name
+                let preset_colors = ColorSchemeColors::from_json(&preset["colors"]);
+                let slot_colors = ColorSchemeColors::from_json(&slot["scheme"]["colors"]);
+                let name_ok = if *allow_new {
+                    preset["name"] == *name
+                } else {
+                    preset["name"]
+                        .as_str()
+                        .is_some_and(|s| !s.trim().is_empty())
+                };
+                let colors_ok = match (preset_colors, slot_colors, edited_fields.as_deref()) {
+                    (Some(saved_preset), Some(saved_slot), Some(fields))
+                        if !*allow_new && !fields.is_empty() =>
+                    {
+                        saved_preset == saved_slot
+                            && fields
+                                .iter()
+                                .all(|&field| saved_preset.get(field) == colors.get(field))
+                    }
+                    (Some(saved_preset), Some(saved_slot), _) => {
+                        saved_preset == *colors && saved_slot == *colors
+                    }
+                    _ => false,
+                };
+                name_ok
                     && preset["appearance"] == mode
-                    && ColorSchemeColors::from_json(&preset["colors"]).as_ref() == Some(colors)
+                    && colors_ok
                     && snapshot["activeColorSchemePresetId"] == *preset_id
                     && slot["presetId"] == *preset_id
                     && slot["scheme"]["id"] == "custom"
                     && slot["scheme"]["appearance"] == mode
-                    && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
-                        == Some(colors)
             }
             PaletteOp::DeletePreset { preset_id } => {
                 snapshot["colorSchemePresets"][preset_id].is_null()
@@ -598,6 +654,42 @@ pub(super) fn legacy_config_fields(config: &Value) -> Value {
     } else {
         Value::Object(out)
     }
+}
+
+/// Returns true when replacing `target_dark`'s active slot would migrate unmigrated slot-only or
+/// legacy inline colors into `colorSchemeOverrides` or `customColorScheme`.
+pub(super) fn needs_slot_migration(
+    snapshot: &Value,
+    legacy_config: &Value,
+    target_dark: bool,
+    skip_builtin: Option<&str>,
+) -> bool {
+    let legacy = legacy_scheme(snapshot, legacy_config);
+    let current = resolve_slot(snapshot, legacy_config, legacy.as_ref(), target_dark);
+    if current.preset_id.is_some() {
+        return false;
+    }
+    let Some(prev_id) = current.builtin_id else {
+        return false;
+    };
+    if skip_builtin == Some(prev_id) {
+        return false;
+    }
+    let Some(prev_colors) = current.colors else {
+        return false;
+    };
+    if prev_id == "custom" {
+        return snapshot["customColorScheme"].is_null()
+            && legacy_config["customColorScheme"].is_null()
+            && (!prev_colors.is_default_custom() || !target_dark);
+    }
+    if !snapshot["colorSchemeOverrides"][prev_id].is_null() {
+        return false;
+    }
+    !built_in()
+        .iter()
+        .find(|p| p.id == prev_id && p.dark == target_dark)
+        .is_some_and(|p| p.colors() == prev_colors)
 }
 
 /// Migrates slot-only or legacy inline built-in custom colors into `colorSchemeOverrides`
@@ -991,6 +1083,7 @@ mod tests {
                 dark: true,
                 colors: ColorSchemeColors::default_custom(),
                 allow_new: true,
+                edited_fields: None,
             },
             legacy_config: Value::Null,
         };

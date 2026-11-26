@@ -136,6 +136,7 @@ pub(crate) fn close_request(
             || request.config_reopen.borrow().is_some()
             || request.palette_reopen.borrow().is_some();
         if (alive && request.guard_close.get()) || has_reopen {
+            request.close_main_after.set(true);
             request.requested.set(true);
             if alive {
                 window.focus();

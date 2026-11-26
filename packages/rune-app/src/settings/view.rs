@@ -70,6 +70,8 @@ pub(super) struct Window {
 pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
     pub guard_close: Cell<bool>,
+    pub close_main_after: Cell<bool>,
+    pub close_main_now: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
     pub palette_reopen: RefCell<Option<super::general::Controls>>,
@@ -230,7 +232,21 @@ impl Window {
             self.confirm_close = Some(CloseConfirm::Memory);
         } else {
             self.closing = true;
+            if let Some(request) = &self.close_request
+                && request.close_main_after.replace(false)
+            {
+                request.close_main_now.set(true);
+                if let Some(wake) = &self.shared.borrow().main_wake {
+                    wake();
+                }
+            }
             tx.close_window();
+        }
+    }
+
+    pub(super) fn cancel_close_main(&self) {
+        if let Some(request) = &self.close_request {
+            request.close_main_after.set(false);
         }
     }
 
@@ -621,6 +637,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     if accept {
                         s.config_files = Default::default();
                         s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
                     }
                 },
             ));
@@ -633,6 +651,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                         s.general.discard_draft(&mut prefs);
                         drop(prefs);
                         s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
                     }
                 },
             ));
@@ -647,6 +667,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     if accept {
                         s.memory_editor = Default::default();
                         s.request_close(tx);
+                    } else {
+                        s.cancel_close_main();
                     }
                 },
             ));

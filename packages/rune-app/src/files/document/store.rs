@@ -316,6 +316,32 @@ impl Store {
     pub(crate) fn has_saved_file_drafts(&self) -> bool {
         !lock(&self.0).saved.is_empty()
     }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn live_file_draft_bytes(&self) -> Option<Vec<u8>> {
+        let live: Vec<(SavedKey, Shared)> = {
+            let store = lock(&self.0);
+            store
+                .live
+                .iter()
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect()
+        };
+        let active: std::collections::HashSet<SavedKey> = live
+            .into_iter()
+            .filter_map(|(key, shared)| {
+                let draft = lock(&shared);
+                (draft.owns_saved && draft.retained()).then_some(key)
+            })
+            .collect();
+        let store = lock(&self.0);
+        let rows: Vec<Saved> = store
+            .saved
+            .iter()
+            .filter(|row| active.contains(&row.key))
+            .cloned()
+            .collect();
+        (!rows.is_empty()).then(|| Self::encode(&rows))
+    }
     pub(crate) fn discard_unopened_saved_drafts(&self) {
         let live: Vec<(SavedKey, Shared)> = {
             let mut store = lock(&self.0);

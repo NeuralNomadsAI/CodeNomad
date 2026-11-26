@@ -215,6 +215,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 return false;
             }
             if s.confirm_close.take().is_some() {
+                s.cancel_close_main();
             } else if s.pending_section.take().is_some() || s.general.dismiss_overlay() {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();

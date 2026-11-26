@@ -138,7 +138,14 @@ fn menus(locale: &'static str) -> El {
                         menu_look.clone(),
                         items,
                         move |s: &mut State, choice, tx| match choice {
-                            Some("close") => tx.close_window(),
+                            Some("close") => {
+                                if matches!(
+                                    crate::settings::close_request(s, tx),
+                                    shell::CloseResponse::Close
+                                ) {
+                                    tx.close_window();
+                                }
+                            }
                             Some("fullscreen") => tx.toggle_full_screen(),
                             Some("minimize") => tx.minimize(),
                             Some("maximize") => tx.toggle_maximized(),

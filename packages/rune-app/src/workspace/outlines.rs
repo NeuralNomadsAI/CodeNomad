@@ -113,7 +113,6 @@ impl Cache {
         self.loading = None;
         self.saving = None;
         self.dirty = false;
-        self.invalidated_while_loading.clear();
         self.version
     }
 
@@ -183,7 +182,7 @@ impl Cache {
             self.version = self.version.wrapping_add(1);
             self.dirty = true;
         }
-        if !self.started || self.loading.is_some() {
+        if !self.started || self.loading.is_some() || self.unloaded_before_freeze {
             self.invalidated_while_loading.insert(key);
         }
     }

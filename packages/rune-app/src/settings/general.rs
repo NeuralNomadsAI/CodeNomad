@@ -71,6 +71,7 @@ struct Draft {
     source_name: String,
     dark: bool,
     colors: ColorSchemeColors,
+    edited_fields: Vec<ColorField>,
     creating: bool,
     dirty: bool,
     pending_create_id: Option<String>,
@@ -161,6 +162,7 @@ impl Controls {
     pub(super) fn discard_draft(&mut self, prefs: &mut Preferences) {
         let draft = self.draft.get_mut();
         draft.dirty = false;
+        draft.edited_fields.clear();
         draft.creating = false;
         draft.pending_create_id = None;
         draft.active_swatch = None;
@@ -283,6 +285,7 @@ impl Controls {
         if draft.binding_epoch != epoch {
             draft.binding_epoch = epoch;
             draft.dirty = false;
+            draft.edited_fields.clear();
             draft.creating = false;
             draft.pending_create_id = None;
             draft.active_swatch = None;
@@ -300,6 +303,7 @@ impl Controls {
             settled = true;
             if !prefs.palette_save_failed() {
                 draft.dirty = false;
+                draft.edited_fields.clear();
                 draft.creating = false;
                 draft.pending_create_id = None;
                 draft.active_swatch = None;
@@ -398,6 +402,7 @@ impl Controls {
         draft.colors = option.colors.clone();
         draft.creating = false;
         draft.dirty = false;
+        draft.edited_fields.clear();
         draft.pending_create_id = None;
         draft.active_swatch = None;
         draft.local_error = false;
@@ -436,6 +441,9 @@ impl Controls {
             draft.source_name = option.name.clone();
             draft.dark = option.dark;
             draft.colors = next_colors;
+            if !draft.edited_fields.contains(&field) {
+                draft.edited_fields.push(field);
+            }
             draft.dirty = true;
             draft.local_error = false;
         }
@@ -464,7 +472,16 @@ impl Controls {
     }
 
     fn save_draft(&mut self, prefs: &mut Preferences, _dark: bool) {
-        let (editing_key, creating, dirty, draft_dark, colors, source_name, pending_create_id) = {
+        let (
+            editing_key,
+            creating,
+            dirty,
+            draft_dark,
+            colors,
+            edited_fields,
+            source_name,
+            pending_create_id,
+        ) = {
             let draft = self.draft.borrow();
             (
                 draft.editing_key.clone(),
@@ -472,6 +489,7 @@ impl Controls {
                 draft.dirty,
                 draft.dark,
                 draft.colors.clone(),
+                draft.edited_fields.clone(),
                 draft.source_name.clone(),
                 draft.pending_create_id.clone(),
             )
@@ -548,9 +566,14 @@ impl Controls {
         if name.is_empty() {
             return;
         }
-        if let Some(saved_id) =
-            prefs.save_palette_preset(&name, draft_dark, colors, option.preset_id.clone(), false)
-        {
+        if let Some(saved_id) = prefs.save_palette_preset_fields(
+            &name,
+            draft_dark,
+            colors,
+            option.preset_id.clone(),
+            false,
+            Some(edited_fields),
+        ) {
             let mut draft = self.draft.borrow_mut();
             draft.local_error = false;
             draft.awaiting_save = Some(SavedTarget::Preset {

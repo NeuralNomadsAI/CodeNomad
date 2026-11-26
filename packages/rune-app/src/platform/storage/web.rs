@@ -234,7 +234,6 @@ impl Store {
         self.staged.frozen.set(true);
         self.staged.bump_generation();
         self.staged.payload.borrow_mut().0.clear();
-        self.staged.pending_file_drafts.borrow_mut().take();
         let outcome = self.remove_startup_keys();
         if outcome.state_ok {
             self.staged.snapshot_suppressed.set(true);
