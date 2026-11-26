@@ -3,11 +3,12 @@ use crate::{
     content::{Part, PictureSource},
     history::Row,
 };
-use rune::{El, Image, col};
-use rune_theme_codenomad::{layout::Layout, markdown};
+use rune::{El, Image, text};
+use rune_theme_codenomad::markdown;
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
@@ -22,19 +23,106 @@ pub(super) struct Candidate {
     pub(super) mime: String,
 }
 
-pub(super) struct Demand {
+#[derive(Debug, PartialEq, Eq)]
+enum Match<'a> {
+    Found(&'a Candidate),
+    Ambiguous,
+    Miss,
+}
+
+pub(super) struct Slot {
     key: String,
     source: PictureSource,
     mime: String,
     lease: Rc<()>,
+    fallback: String,
+    image: Option<Image>,
 }
 
 #[derive(Default)]
 pub(super) struct Plan {
-    pub(super) images: HashMap<String, Image>,
-    pub(super) demands: Vec<Demand>,
+    slots: HashMap<String, VecDeque<Slot>>,
+    sentinel: Option<Image>,
     pub(super) stamp: Vec<(String, Option<u64>)>,
-    pub(super) has_local: bool,
+    pub(super) sentinel_ready: bool,
+}
+
+impl Plan {
+    pub(super) fn fallback_label(&self, src: &str, liftable: bool) -> Option<String> {
+        let local = local_image_path(src)?;
+        if !liftable || !self.slots.contains_key(src) {
+            return Some(filename_label(&local));
+        }
+        None
+    }
+
+    pub(super) fn into_render(
+        self,
+        scope: Rc<()>,
+    ) -> (
+        impl Fn(&str, bool) -> Option<String>,
+        impl Fn(&str) -> Option<Image> + 'static,
+        impl Fn(El, &markdown::ImageFrame<'_>) -> El + 'static,
+    ) {
+        let kept: std::collections::HashSet<String> = self.slots.keys().cloned().collect();
+        let fallback = move |src: &str, liftable: bool| {
+            let local = local_image_path(src)?;
+            if !liftable || !kept.contains(src) {
+                return Some(filename_label(&local));
+            }
+            None
+        };
+        let slots = Rc::new(RefCell::new(self.slots));
+        let lookup_slots = slots.clone();
+        let sentinel = self.sentinel;
+        let images = move |src: &str| {
+            let slots = lookup_slots.borrow();
+            let slot = slots.get(src)?.front()?;
+            slot.image.clone().or_else(|| sentinel.clone())
+        };
+        let frame = move |el: El, frame: &markdown::ImageFrame<'_>| {
+            let slot = slots
+                .borrow_mut()
+                .get_mut(frame.src)
+                .and_then(VecDeque::pop_front);
+            let Some(slot) = slot else {
+                return markdown::prose_image(el);
+            };
+            let content = if slot.image.is_some() {
+                markdown::prose_image(el)
+            } else {
+                let label = if frame.alt.trim().is_empty() {
+                    slot.fallback
+                } else {
+                    frame.alt.to_owned()
+                };
+                text(label)
+            };
+            let Slot {
+                key,
+                source,
+                mime,
+                lease,
+                ..
+            } = slot;
+            let scope = scope.clone();
+            let target = key.clone();
+            content
+                .key(key)
+                .on_visible(move |s: &mut State, visible, tx| {
+                    if s.current_scope(&scope) {
+                        s.transcript_display
+                            .pictures
+                            .local_visibility(&target, &source, &mime, &lease, visible);
+                        if visible {
+                            tx.wake_after(std::time::Duration::ZERO);
+                        }
+                    }
+                    tx.live_only();
+                })
+        };
+        (fallback, images, frame)
+    }
 }
 
 /// Agents write Markdown images of files on their machine (`C:/…/image.png`, `/tmp/…`, `./out.png`).
@@ -59,46 +147,24 @@ pub(crate) fn local_image_path(src: &str) -> Option<String> {
 }
 
 fn parse_file_url(value: &str) -> Option<String> {
-    let rest = value.get(5..)?;
-    let without_suffix = rest.split(['?', '#']).next().unwrap_or(rest);
-    let normalized = without_suffix.replace('\\', "/");
-    if normalized.is_empty() {
+    // Reject traversal segments before the WHATWG parser normalizes dot segments away.
+    let raw_tail = value
+        .get(5..)?
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .replace('\\', "/");
+    if has_parent_segment(&raw_tail) || has_parent_segment(&decode_uri_component(&raw_tail)) {
         return None;
     }
-    if let Some(after_slashes) = normalized.strip_prefix("//") {
-        let (raw_host, raw_path) = match after_slashes.find('/') {
-            Some(pos) => (&after_slashes[..pos], &after_slashes[pos..]),
-            None => (after_slashes, "/"),
-        };
-        if raw_host.len() == 2
-            && raw_host.as_bytes()[0].is_ascii_alphabetic()
-            && raw_host.as_bytes()[1] == b':'
-        {
-            let joined = format!("/{raw_host}{raw_path}");
-            let path = decode_uri_component(&joined);
-            return Some(strip_leading_drive_slash(&path).into_owned());
-        }
-        let path = decode_uri_component(raw_path);
-        if !raw_host.is_empty() && !raw_host.eq_ignore_ascii_case("localhost") {
-            if raw_host
-                .bytes()
-                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
-            {
-                return None;
-            }
-            return Some(format!("//{raw_host}{path}"));
-        }
-        if path == "/" && raw_host.is_empty() && after_slashes.is_empty() {
-            return None;
-        }
-        return Some(strip_leading_drive_slash(&path).into_owned());
-    }
-    let raw_path = if normalized.starts_with('/') {
-        Cow::Borrowed(normalized.as_str())
-    } else {
-        Cow::Owned(format!("/{normalized}"))
-    };
+    let (host, raw_path) = codenomad_client::http::file_url_parts(value)?;
     let path = decode_uri_component(&raw_path);
+    if has_parent_segment(&path) {
+        return None;
+    }
+    if let Some(host) = host {
+        return Some(format!("//{host}{path}"));
+    }
     Some(strip_leading_drive_slash(&path).into_owned())
 }
 
@@ -108,6 +174,14 @@ pub(crate) fn is_file_url(src: &str) -> bool {
     value
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+}
+
+fn filename_label(local: &str) -> String {
+    local
+        .split('/')
+        .rfind(|segment| !segment.is_empty())
+        .unwrap_or(local)
+        .to_owned()
 }
 
 fn starts_with_any_ascii_ci(value: &str, prefixes: &[&str]) -> bool {
@@ -144,16 +218,24 @@ fn has_windows_drive_prefix(value: &str) -> bool {
 
 fn strip_leading_drive_slash(path: &str) -> Cow<'_, str> {
     let bytes = path.as_bytes();
-    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
-        Cow::Borrowed(&path[1..])
-    } else {
-        Cow::Borrowed(path)
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() {
+        if bytes[2] == b':' {
+            return Cow::Borrowed(&path[1..]);
+        }
+        if bytes[2] == b'|' && (bytes.len() == 3 || bytes[3] == b'/') {
+            return Cow::Owned(format!("{}:{}", bytes[1] as char, &path[3..]));
+        }
     }
+    Cow::Borrowed(path)
 }
 
 fn normalize_path(value: &str) -> String {
     let replaced = value.replace('\\', "/");
     replaced.trim_end_matches('/').to_owned()
+}
+
+fn has_parent_segment(normalized: &str) -> bool {
+    normalized.split('/').any(|segment| segment == "..")
 }
 
 fn windows_path(value: &str) -> bool {
@@ -211,46 +293,57 @@ fn decode_uri_component(value: &str) -> Cow<'_, str> {
 }
 
 /// Matches the literal path against completed tool images, then (for a plain path written in
-/// Markdown, never one already decoded from a `file:` URL) its percent-decoded form.
+/// Markdown, never one already decoded from a `file:` URL, and never after an ambiguous match)
+/// its percent-decoded form.
 pub(super) fn match_local_image<'a>(
     candidates: &'a [Candidate],
     path: &str,
     decoded_fallback: bool,
 ) -> Option<&'a Candidate> {
-    if let Some(found) = match_path(candidates, path) {
-        return Some(found);
-    }
-    if decoded_fallback {
-        let decoded = decode_uri_component(path);
-        if decoded.as_ref() != path {
-            return match_path(candidates, decoded.as_ref());
+    match match_path(candidates, path) {
+        Match::Found(candidate) => Some(candidate),
+        Match::Ambiguous => None,
+        Match::Miss if decoded_fallback => {
+            let decoded = decode_uri_component(path);
+            if decoded.as_ref() != path {
+                match match_path(candidates, decoded.as_ref()) {
+                    Match::Found(candidate) => Some(candidate),
+                    Match::Ambiguous | Match::Miss => None,
+                }
+            } else {
+                None
+            }
         }
+        Match::Miss => None,
     }
-    None
 }
 
 /// Exact normalized path match, or a unique relative suffix match against completed session tool
 /// images (scanned newest first so re-read files resolve to their latest image).
-fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Option<&'a Candidate> {
+fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     let target = comparable(path);
-    let relative = (!target.starts_with('/')
-        && !windows_path(&target)
-        && !target.starts_with("../"))
-    .then(|| {
-        let mut stripped = target.as_str();
-        while let Some(rest) = stripped.strip_prefix("./") {
-            stripped = rest;
-        }
-        (!stripped.is_empty() && !stripped.starts_with("../")).then(|| format!("/{stripped}"))
-    })
-    .flatten();
+    if target.is_empty() || has_parent_segment(&target) {
+        return Match::Miss;
+    }
+    let relative = (!target.starts_with('/') && !windows_path(&target))
+        .then(|| {
+            let mut stripped = target.as_str();
+            while let Some(rest) = stripped.strip_prefix("./") {
+                stripped = rest;
+            }
+            (!stripped.is_empty() && !has_parent_segment(stripped)).then(|| format!("/{stripped}"))
+        })
+        .flatten();
     let relative_lower = relative.as_deref().map(str::to_lowercase);
     let mut suffixes: HashMap<String, &'a Candidate> = HashMap::new();
     for candidate in candidates {
         for raw_known in &candidate.paths {
             let known = comparable(raw_known);
+            if known.is_empty() || has_parent_segment(&known) {
+                continue;
+            }
             if known == target {
-                return Some(candidate);
+                return Match::Found(candidate);
             }
             if let Some(rel) = relative.as_deref()
                 && !suffixes.contains_key(&known)
@@ -266,9 +359,14 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Option<&'a Candida
             }
         }
     }
-    (suffixes.len() == 1)
-        .then(|| suffixes.into_values().next())
-        .flatten()
+    match suffixes.len() {
+        0 => Match::Miss,
+        1 => suffixes
+            .into_values()
+            .next()
+            .map_or(Match::Miss, Match::Found),
+        _ => Match::Ambiguous,
+    }
 }
 
 pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
@@ -312,36 +410,38 @@ pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     out
 }
 
-fn markdown_local_sources(shown: &str) -> Vec<(String, String)> {
-    markdown::prose_image_sources(shown)
-        .into_iter()
-        .filter_map(|dest_url| {
-            let local = local_image_path(&dest_url)?;
-            Some((dest_url, local))
-        })
-        .collect()
-}
-
 fn image_stamp(image: &Image) -> u64 {
     let mut hasher = DefaultHasher::new();
     image.id().hash(&mut hasher);
     hasher.finish()
 }
 
-pub(super) fn prepare(s: &State, group: &str, shown: &str) -> Plan {
-    let sources = markdown_local_sources(shown);
-    if sources.is_empty() {
+pub(super) fn prepare(s: &State, group: &str, shown: &str, truncated: bool) -> Plan {
+    let lifted = markdown::prose_lifted_images(shown, truncated);
+    if lifted.is_empty() {
+        return Plan::default();
+    }
+    let local_occurrences: Vec<(String, String)> = lifted
+        .into_iter()
+        .filter_map(|raw| {
+            let local = local_image_path(&raw)?;
+            Some((raw, local))
+        })
+        .collect();
+    if local_occurrences.is_empty() {
         return Plan::default();
     }
     let candidates = session_candidates(&s.messages);
+    if candidates.is_empty() {
+        return Plan::default();
+    }
+    let sentinel = s.transcript_display.pictures.blank_pixel(&s.wake);
     let mut plan = Plan {
-        has_local: true,
+        sentinel_ready: sentinel.is_some(),
+        sentinel,
         ..Plan::default()
     };
-    if candidates.is_empty() {
-        return plan;
-    }
-    for (index, (raw_src, local)) in sources.into_iter().enumerate() {
+    for (index, (raw_src, local)) in local_occurrences.into_iter().enumerate() {
         let Some(matched) = match_local_image(&candidates, &local, !is_file_url(&raw_src)) else {
             continue;
         };
@@ -350,47 +450,20 @@ pub(super) fn prepare(s: &State, group: &str, shown: &str) -> Plan {
             &matched.source,
             &matched.mime,
         );
+        if ready.is_none() && !plan.sentinel_ready {
+            // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.
+            continue;
+        }
         plan.stamp
             .push((raw_src.clone(), ready.as_ref().map(image_stamp)));
-        if let Some(image) = ready {
-            plan.images.insert(raw_src, image);
-        }
-        plan.demands.push(Demand {
+        plan.slots.entry(raw_src).or_default().push_back(Slot {
             key,
             source: matched.source.clone(),
             mime: matched.mime.clone(),
             lease,
+            fallback: filename_label(&local),
+            image: ready,
         });
     }
     plan
-}
-
-pub(super) fn attach(content: El, group: &str, scope: Rc<()>, demands: Vec<Demand>) -> El {
-    if demands.is_empty() {
-        return content;
-    }
-    let mut stamp = DefaultHasher::new();
-    for demand in &demands {
-        demand.key.hash(&mut stamp);
-    }
-    let demand_key = format!("{group}-local-images-{:x}", stamp.finish());
-    col().full_width().child(content.key(demand_key).on_visible(
-        move |s: &mut State, visible, tx| {
-            if s.current_scope(&scope) {
-                for demand in &demands {
-                    s.transcript_display.pictures.local_visibility(
-                        &demand.key,
-                        &demand.source,
-                        &demand.mime,
-                        &demand.lease,
-                        visible,
-                    );
-                }
-                if visible {
-                    tx.wake_after(std::time::Duration::ZERO);
-                }
-            }
-            tx.live_only();
-        },
-    ))
 }

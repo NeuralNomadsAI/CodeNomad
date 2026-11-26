@@ -57,6 +57,12 @@ fn local_image_path_matches_solid_rules() {
         local_image_path("./assets/logo.png").as_deref(),
         Some("./assets/logo.png")
     );
+    assert_eq!(
+        local_image_path("file:///C|/out.png").as_deref(),
+        Some("C:/out.png")
+    );
+    assert_eq!(local_image_path("file://server:123/share/out.png"), None);
+    assert_eq!(local_image_path("file:///tmp/a/../out.png"), None);
     for rejected in [
         "",
         "   ",
@@ -116,8 +122,21 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         match_local_image(&items, "/tmp/a/dup.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("dup-a".into()))
     );
-    // Parent traversal is never matched as a relative suffix.
+    // Parent traversal is never matched via exact or suffix matching.
     assert_eq!(match_local_image(&items, "../only/Unique.png", true), None);
+    let traversal = vec![candidate(&["../x.png"], "bad")];
+    assert_eq!(match_local_image(&traversal, "../x.png", true), None);
+
+    // Ambiguity must stop matching and never fall through to percent-decoding.
+    let ambiguous_encoded = vec![
+        candidate(&["/a/x%20y.png"], "a"),
+        candidate(&["/b/x%20y.png"], "b"),
+        candidate(&["/c/x y.png"], "c"),
+    ];
+    assert_eq!(
+        match_local_image(&ambiguous_encoded, "x%20y.png", true),
+        None
+    );
 
     // Plain paths try literal first, then percent-decoded fallback; file: URLs do not double-decode.
     let encoded = vec![
@@ -325,4 +344,101 @@ fn memoized_large_prose_invalidates_when_matched_local_image_loads() {
         assert!(std::time::Instant::now() < deadline, "{tree}");
         std::thread::yield_now();
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn empty_alt_loads_per_image_while_heading_and_offscreen_images_do_not_queue() {
+    let tool_msg = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[
+            {"id":"read-empty","type":"tool","name":"read","state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/empty-alt.png"},
+                "content":[{"type":"file","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }},
+            {"id":"read-head","type":"tool","name":"read","state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/head.png"},
+                "content":[{"type":"file","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}]
+            }},
+            {"id":"read-far","type":"tool","name":"read","state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/far.png"},
+                "content":[{"type":"file","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}]
+            }}
+        ]
+    }))
+    .unwrap();
+    let empty_alt_msg = history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":2},
+        "content":[{"type":"text","text":"![](empty-alt.png)"}]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![tool_msg.clone().into(), empty_alt_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (800.0, 600.0),
+        Env::new(false, 1.0),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        rt.frame(1.0 / 60.0);
+        let tree = rt.accessibility_json().to_string();
+        if tree.contains("\"role\":\"image\"") {
+            assert_eq!(tree.matches("\"role\":\"image\"").count(), 1, "{tree}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{tree}");
+        std::thread::yield_now();
+    }
+
+    let spacer = "line\n\n".repeat(120);
+    let prose_msg = history::decode_message(&json!({
+        "id":"m3","type":"assistant","time":{"completed":3},
+        "content":[{"type":"text","text":format!("## ![Heading plot](head.png)\n\n{spacer}![Far plot](far.png)")}]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![tool_msg.into(), prose_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (800.0, 320.0),
+        Env::new(false, 1.0),
+    );
+    for _ in 0..8 {
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Heading plot"), "{tree}");
+    assert_eq!(tree.matches("\"role\":\"image\"").count(), 0, "{tree}");
+    rt.update(|s, _| {
+        assert!(
+            s.transcript_display
+                .pictures
+                .local_slot(
+                    "fragment-m3:0-local-image-0",
+                    &PictureSource::Inline(PNG_B.into()),
+                    "image/png",
+                )
+                .2
+                .is_none(),
+            "offscreen or non-liftable image should not be decoded"
+        );
+    });
 }

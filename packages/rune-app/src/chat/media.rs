@@ -9,6 +9,7 @@ use codenomad_client::{Receiver, Sender, bounded};
 use rune::{El, Image, ImageCache};
 use rune_theme_codenomad::{attachment, catalogue, layout};
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     rc::{Rc, Weak},
@@ -24,6 +25,7 @@ pub(crate) mod browser_fixture;
 pub(crate) struct Pictures {
     backend: Option<Backend>,
     cache: Option<ImageCache>,
+    sentinel: RefCell<Option<Image>>,
     images: HashMap<String, Entry>,
     waiting: VecDeque<String>,
     preview: Option<(String, String, Image)>,
@@ -87,6 +89,13 @@ impl Pictures {
                 }
             }
         }
+    }
+
+    pub(super) fn blank_pixel(&self, wake: &rune::Waker) -> Option<Image> {
+        let mut slot = self.sentinel.borrow_mut();
+        let image =
+            slot.get_or_insert_with(|| rune_theme_codenomad::markdown::blank_pixel(wake.clone()));
+        (image.is_ready() && image.error().is_none()).then(|| image.clone())
     }
 
     pub(super) fn local_slot(

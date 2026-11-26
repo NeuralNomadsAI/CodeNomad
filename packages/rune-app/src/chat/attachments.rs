@@ -16,6 +16,8 @@ mod tests;
 pub struct Reader {
     backend: Option<Backend>,
     pending: Option<Request>,
+    generation: u64,
+    active_save: Option<(u64, DownloadSource)>,
     pub saving: bool,
     pub write: Option<Receiver<bool>>,
     pub error: bool,
@@ -54,16 +56,60 @@ struct Request {
 
 impl Reader {
     pub fn bind(&mut self, backend: Backend) {
+        let generation = self.generation.wrapping_add(1);
         *self = Self {
             backend: Some(backend),
+            generation,
             ..Self::default()
         };
     }
     pub fn cancel(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         self.pending = None;
+        self.active_save = None;
         self.saving = false;
         self.write = None;
         self.error = false;
+    }
+    fn begin_save(&mut self, source: DownloadSource) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        let token = self.generation;
+        self.saving = true;
+        self.active_save = Some((token, source));
+        token
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn confirm_save_dialog(s: &mut State, token: u64) -> bool {
+        let Some((active, source)) = s.attachments.active_save.as_ref() else {
+            return false;
+        };
+        if *active != token {
+            return false;
+        }
+        if !contains(s, source) {
+            s.attachments.active_save = None;
+            s.attachments.saving = false;
+            return false;
+        }
+        true
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn dismiss_save_dialog(s: &mut State, token: u64, error: bool) {
+        if s.attachments
+            .active_save
+            .as_ref()
+            .is_some_and(|(active, _)| *active == token)
+        {
+            s.attachments.active_save = None;
+            s.attachments.saving = false;
+            s.attachments.error = error;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn finish_immediate_save(&mut self, error: bool) {
+        self.active_save = None;
+        self.saving = false;
+        self.error = error;
     }
     fn available_for(&self, source: &DownloadSource) -> bool {
         platform::attachment_export_available()
@@ -171,9 +217,17 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .as_ref()
         .and_then(|receiver| receiver.try_recv().ok())
     {
+        s.attachments.active_save = None;
         s.attachments.saving = false;
         s.attachments.write = None;
         s.attachments.error = !ok;
+        return true;
+    }
+    if s.attachments.write.is_none()
+        && let Some((_, source)) = s.attachments.active_save.as_ref()
+        && !contains(s, source)
+    {
+        s.attachments.cancel();
         return true;
     }
     let Some(request) = s.attachments.pending.as_ref() else {
@@ -191,8 +245,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     };
     match result {
         Ok(bytes) => {
-            s.attachments.saving = true;
-            platform::export_attachment(s, tx, &request.name, bytes);
+            let token = s.attachments.begin_save(request.source);
+            platform::export_attachment(s, tx, token, &request.name, bytes);
         }
         Err(_) => s.attachments.error = true,
     }

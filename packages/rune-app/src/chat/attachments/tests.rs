@@ -189,3 +189,48 @@ fn evicting_message_cancels_pending_admitted_download() {
         assert!(!s.attachments.error);
     });
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn stale_save_dialog_after_cancel_or_message_eviction_does_not_write() {
+    let user = history::decode_message(&json!({
+        "id":"m4","type":"user","text":"Save dialog",
+        "files":[
+            {"name":"Inline.png","mime":"image/png","source":{"type":"inline"},"data":PNG}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages = vec![user.into()];
+    let crate::content::Part::File(file) = &state.messages[0].parts[0] else {
+        panic!("missing file")
+    };
+    let source = download_source(file).expect("inline source");
+
+    // 1. Cancel invalidates the active save dialog token.
+    let stale_token = state.attachments.begin_save(source.clone());
+    state.attachments.cancel();
+    assert!(!Reader::confirm_save_dialog(&mut state, stale_token));
+
+    // 2. Evicting the message while the dialog is open refuses commit and clears saving.
+    let evicted_token = state.attachments.begin_save(source.clone());
+    state.messages.clear();
+    assert!(!Reader::confirm_save_dialog(&mut state, evicted_token));
+    assert!(!state.attachments.saving);
+
+    // 3. Dismissing a stale dialog does not clobber a newer active save.
+    let fresh_user = history::decode_message(&json!({
+        "id":"m4","type":"user","text":"Save dialog",
+        "files":[
+            {"name":"Inline.png","mime":"image/png","source":{"type":"inline"},"data":PNG}
+        ]
+    }))
+    .unwrap();
+    state.messages = vec![fresh_user.into()];
+    let fresh_token = state.attachments.begin_save(source);
+    Reader::dismiss_save_dialog(&mut state, stale_token, true);
+    assert!(state.attachments.saving);
+    assert!(!state.attachments.error);
+    assert!(Reader::confirm_save_dialog(&mut state, fresh_token));
+}

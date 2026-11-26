@@ -164,6 +164,8 @@ fn prose_for(
             .map(|hit| hit.text_query(None))
     });
     window(s, key, &[source], limit, |shown, units| {
+        let truncated = shown.len() < source.len();
+        let mut local = local_images::prepare(s, &group, shown, truncated);
         let claim_active =
             query.is_some_and(|q| q.active && q.claimed.is_none_or(|claimed| !claimed.get()));
         let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
@@ -175,7 +177,9 @@ fn prose_for(
             && let Some(q) = query
             && let Some(claimed) = q.claimed
             && let Some(pq) = prose_query
-            && markdown::prose_has_match(shown, pq)
+            && markdown::prose_has_match_with_images(shown, truncated, pq, &|src, liftable| {
+                local.fallback_label(src, liftable)
+            })
         {
             claimed.set(true);
         }
@@ -193,7 +197,7 @@ fn prose_for(
         let search_overrides = s
             .transcript_display
             .diagram_search_overrides(search_id, &group);
-        let local = local_images::prepare(s, &group, shown);
+        let local_stamp = (local.sentinel_ready, std::mem::take(&mut local.stamp));
         let stamp = (
             version,
             steps,
@@ -205,24 +209,19 @@ fn prose_for(
             prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
             &search_overrides,
-            &local.stamp,
+            &local_stamp,
             (!streaming).then_some(shown),
         );
-        let demands = local.demands;
-        let has_local = local.has_local;
-        let resolved_images = local.images;
-        let demand_scope = scope.clone();
-        let demand_group = group.clone();
         let build = || {
             let diagram_sources = diagram_sources.clone();
             let search_overrides = search_overrides.clone();
             let search_terms = query
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
-            let truncated = shown.len() < source.len();
             let diff_group = group.clone();
             let diff_scope = scope.clone();
-            let strip_images = resolved_images.clone();
+            let image_scope = scope.clone();
+            let (fallback_fn, image_lookup, image_frame) = local.into_render(image_scope);
             markdown::prose_with_images(
                 shown,
                 streaming,
@@ -344,20 +343,16 @@ fn prose_for(
                         )
                         .child(card)
                 },
-                move |src| {
-                    has_local
-                        && local_images::local_image_path(src).is_some()
-                        && !strip_images.contains_key(src)
-                },
-                move |src| resolved_images.get(src).cloned(),
+                fallback_fn,
+                image_lookup,
+                image_frame,
             )
         };
-        let rendered = if units > TOOL_LIMIT {
+        if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)
         } else {
             build()
-        };
-        local_images::attach(rendered, &demand_group, demand_scope, demands)
+        }
     })
 }
 

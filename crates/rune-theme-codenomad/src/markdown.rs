@@ -1,6 +1,8 @@
 use crate::{Space, TextRole, kit, layout::dark, tokens};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use rune::{El, ScrollSpec, rich};
+pub use rune_kit::markdown::ImageFrame;
+use rune_kit::markdown::{Block, parse};
 use rune_kit::{CodeFrame, DiffFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
 
@@ -9,22 +11,49 @@ pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) 
     !prose_ranges(&source, query, 1).is_empty()
 }
 
-pub fn prose_image_sources(source: &str) -> Vec<String> {
-    if !source.contains("![") {
-        return Vec::new();
-    }
-    let options =
-        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
-    let mut out = Vec::new();
-    for event in Parser::new_ext(source, options) {
-        if let Event::Start(Tag::Image { dest_url, .. }) = event {
-            let url = dest_url.into_string();
-            if !out.contains(&url) {
-                out.push(url);
+pub fn prose_has_match_with_images(
+    source: &str,
+    truncated: bool,
+    query: crate::timeline::search::Query<'_>,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+) -> bool {
+    let source = literal_breaks_with_images(source, truncated, fallback_label);
+    !prose_ranges(&source, query, 1).is_empty()
+}
+
+/// Returns the source string of every lifted `Block::Image` occurrence in document order.
+/// Images inside headings, table cells, links or emphasis are not lifted by Rune Kit and are
+/// omitted here so callers do not fetch them.
+pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<String> {
+    fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                Block::Image { src, .. } => found.push(src),
+                Block::Quote(items) => collect(items, found),
+                Block::List { items, .. } => {
+                    for item in items {
+                        collect(item, found);
+                    }
+                }
+                _ => {}
             }
         }
     }
-    out
+    if !source.contains("![") {
+        return Vec::new();
+    }
+    let normalized = literal_breaks_with_images(source, truncated, &|_, _| None);
+    let mut found = Vec::new();
+    collect(parse(&normalized), &mut found);
+    found
+}
+
+pub fn prose_image(image: El) -> El {
+    image.radius(0.0).cursor(rune::Cursor::Default)
+}
+
+pub fn blank_pixel(wake: rune::Waker) -> rune::Image {
+    rune::ImageCache::new(wake).rgba(1, 1, [0_u8, 0, 0, 0])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,8 +82,9 @@ pub fn prose<S: 'static>(
         wrapped,
         frame,
         diff_frame,
-        |_| false,
+        |_, _| None,
         |_| None,
+        |el, _| prose_image(el),
     )
 }
 
@@ -71,8 +101,9 @@ pub fn prose_with_images<S: 'static>(
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
-    strip_image: impl Fn(&str) -> bool,
+    fallback_label: impl Fn(&str, bool) -> Option<String>,
     image: impl Fn(&str) -> Option<rune::Image> + 'static,
+    image_frame: impl Fn(El, &ImageFrame<'_>) -> El + 'static,
 ) -> El {
     let dark = dark();
     let kit = kit(dark);
@@ -91,7 +122,7 @@ pub fn prose_with_images<S: 'static>(
         .link_underline(rune::Color::TRANSPARENT)
         .syntax_highlight(highlight)
         .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
-    let source = literal_breaks_with_images(source, truncated, &strip_image).into_owned();
+    let source = literal_breaks_with_images(source, truncated, &fallback_label).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
             .into_iter()
@@ -126,7 +157,7 @@ pub fn prose_with_images<S: 'static>(
         .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
         .link_help(help)
         .images(image)
-        .image_frame(|el, _| el.radius(0.0).cursor(rune::Cursor::Default))
+        .image_frame(image_frame)
         .code_wrap(wrapped)
         .code_frame(frame)
         .diff_frame(diff_frame)
@@ -206,8 +237,29 @@ fn prose_ranges(
         rendered.clear();
         map.clear();
     };
+    let mut image_depth = 0usize;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if image_depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => image_depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    image_depth = image_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            continue;
+        }
         match event {
+            Event::Start(Tag::Image { .. }) => {
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
+                image_depth = 1;
+            }
             Event::Text(ref text) | Event::Code(ref text) => {
                 if text.is_empty() {
                     continue;
@@ -390,7 +442,7 @@ pub fn link_menu<S: 'static>(
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the
 // transcript can gate preview on completion and keep source actions on one frame.
 pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
-    literal_breaks_with_images(source, false, &|_| false)
+    literal_breaks_with_images(source, false, &|_, _| None)
 }
 
 fn push_escaped_markdown(out: &mut String, text: &str) {
@@ -410,7 +462,7 @@ fn push_escaped_markdown(out: &mut String, text: &str) {
 fn literal_breaks_with_images<'a>(
     source: &'a str,
     truncated: bool,
-    strip_image: &dyn Fn(&str) -> bool,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
 ) -> Cow<'a, str> {
     if !source.contains(['<', '\n']) && !source.contains("![") {
         return Cow::Borrowed(source);
@@ -420,7 +472,9 @@ fn literal_breaks_with_images<'a>(
     let mut last = 0;
     let mut in_list_item = 0usize;
     let mut quote_depth = 0usize;
+    let mut non_liftable_depth = 0usize;
     let mut stripped_image_depth = 0usize;
+    let mut stripped_fallback = String::new();
     let mut stripped_alt = String::new();
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
@@ -430,8 +484,14 @@ fn literal_breaks_with_images<'a>(
                 Event::End(pulldown_cmark::TagEnd::Image) => {
                     stripped_image_depth -= 1;
                     if stripped_image_depth == 0 {
-                        push_escaped_markdown(&mut result, &stripped_alt);
+                        let shown = if stripped_alt.trim().is_empty() {
+                            stripped_fallback.as_str()
+                        } else {
+                            stripped_alt.as_str()
+                        };
+                        push_escaped_markdown(&mut result, shown);
                         stripped_alt.clear();
+                        stripped_fallback.clear();
                         last = range.end;
                     }
                 }
@@ -458,11 +518,36 @@ fn literal_breaks_with_images<'a>(
                 quote_depth = quote_depth.saturating_sub(1);
                 continue;
             }
-            Event::Start(Tag::Image { dest_url, .. }) if strip_image(dest_url) => {
-                result.push_str(&source[last..range.start]);
-                stripped_image_depth = 1;
-                stripped_alt.clear();
+            Event::Start(
+                Tag::Heading { .. }
+                | Tag::TableCell
+                | Tag::Emphasis
+                | Tag::Strong
+                | Tag::Strikethrough
+                | Tag::Link { .. },
+            ) => {
+                non_liftable_depth += 1;
                 continue;
+            }
+            Event::End(
+                pulldown_cmark::TagEnd::Heading(_)
+                | pulldown_cmark::TagEnd::TableCell
+                | pulldown_cmark::TagEnd::Emphasis
+                | pulldown_cmark::TagEnd::Strong
+                | pulldown_cmark::TagEnd::Strikethrough
+                | pulldown_cmark::TagEnd::Link,
+            ) => {
+                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+                continue;
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                if let Some(fallback) = fallback_label(dest_url, non_liftable_depth == 0) {
+                    result.push_str(&source[last..range.start]);
+                    stripped_image_depth = 1;
+                    stripped_alt.clear();
+                    stripped_fallback = fallback;
+                    continue;
+                }
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                 let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
@@ -828,9 +913,18 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
 #[cfg(test)]
 #[test]
 fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text() {
-    let source = "See ![*Chart* [1]](missing.png) and ![Ok](found.png) and ![](empty.png)";
-    let rewritten = literal_breaks_with_images(source, false, &|src| src != "found.png");
-    assert_eq!(rewritten, "See Chart &#91;1&#93; and ![Ok](found.png) and ");
+    let source = "See ![*Chart* [1]](missing.png) and ![Ok](found.png) and ![](empty.png)\n\n## ![Head](found.png)\n\nOk again";
+    let rewritten = literal_breaks_with_images(source, false, &|src, liftable| {
+        if !liftable || src != "found.png" {
+            Some(src.to_owned())
+        } else {
+            None
+        }
+    });
+    assert_eq!(
+        rewritten,
+        "See Chart &#91;1&#93; and ![Ok](found.png) and empty&#46;png\n\n## Head\n\nOk again"
+    );
     let terms = vec!["Chart".into()];
     let query = crate::timeline::search::Query {
         terms: &terms,
@@ -839,4 +933,22 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         claimed: None,
     };
     assert_eq!(prose_ranges(&rewritten, query, 8), vec![vec![4..9]]);
+    let ok_terms = vec!["Ok".into()];
+    let ok_query = crate::timeline::search::Query {
+        terms: &ok_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    let ok_spans = prose_ranges(&rewritten, ok_query, 8);
+    assert_eq!(ok_spans.len(), 1);
+    assert_eq!(&rewritten[ok_spans[0][0].clone()], "Ok");
+    assert!(ok_spans[0][0].start > rewritten.find("## Head").unwrap());
+    assert_eq!(
+        prose_lifted_images(
+            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)",
+            false
+        ),
+        vec!["a.png", "e.png"]
+    );
 }
