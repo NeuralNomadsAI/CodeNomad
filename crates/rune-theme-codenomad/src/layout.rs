@@ -189,25 +189,66 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
-pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
-    let t = tokens(dark());
-    let minimum = if compact {
-        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
+fn caret_pin(key: &'static str, top: f32, height: f32) -> El {
+    let top = if top.is_finite() { top.max(0.0) } else { 0.0 };
+    let height = if height.is_finite() {
+        height.max(1.0)
     } else {
-        104.0
+        1.0
     };
-    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+    rune::el().key(key).absolute(0.0, top).w(0.0).h(height)
+}
+
+pub fn composer_field(
+    editor: El,
+    bounds: crate::interruption::SessionLayout,
+    focused: bool,
+    on_scroll: impl Fn(f32, f32) + 'static,
+    inner_caret_pin: Option<(f32, f32)>,
+    stack_caret_pin: Option<(f32, f32)>,
+) -> El {
+    let t = tokens(dark());
+    let minimum = if bounds.composer_min.is_finite() {
+        bounds.composer_min.max(0.0)
+    } else {
+        0.0
+    };
+    let maximum = if bounds.composer_max.is_finite() {
+        bounds.composer_max.max(minimum)
+    } else {
+        minimum
+    };
+    let mut field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
         .min_h(minimum)
-        .max_h(320.0);
-    let field = rune::col()
+        .max_h(maximum)
+        .on_scroll_offset(move |at| on_scroll(at.offset[1], at.max[1]));
+    if let Some((top, height)) = inner_caret_pin {
+        field = field.child(caret_pin("composer-caret-pin", top, height));
+    }
+    let mut field = rune::col()
         .w_full()
         .child(field)
         .fill(t.color("surface-field"));
+    if let Some((top, height)) = stack_caret_pin {
+        field = field.child(caret_pin("stack-caret-pin", top, height));
+    }
     if focused {
         field.outline(1.0, -1.0, t.color("focus-ring-color"))
     } else {
         field
     }
+}
+pub fn caret_rect<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.caret(key)
+}
+pub fn layout_rect<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.layout(key)
+}
+pub fn window_layout<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
+    cx.window_layout(key)
+}
+pub fn layout_probe(key: impl Into<String>) -> El {
+    rune::el().key(key.into()).absolute(0.0, 0.0).w(0.0).h(0.0)
 }
 pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
     tx.announce(text, rune::LiveRegion::Polite);

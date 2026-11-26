@@ -441,10 +441,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Remote => (
                 "remote",
-                s.remote.view(&s.shared, |s: &mut Window| {
-                    (s.section == Section::Remote && !s.closing && !s.confirm_close)
-                        .then_some(&mut s.remote)
-                }),
+                s.remote.view(
+                    &s.shared,
+                    |s: &mut Window| {
+                        (s.section == Section::Remote && !s.closing && !s.confirm_close)
+                            .then_some(&mut s.remote)
+                    },
+                    |s: &mut Window| &mut s.remote,
+                ),
             ),
             Section::ConfigFiles => (
                 "config-files",

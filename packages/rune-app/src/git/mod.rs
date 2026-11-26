@@ -10,15 +10,15 @@ mod request;
 mod view;
 #[cfg(test)]
 pub(crate) use binding::fixture_open_preview;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
     connected_placed, detach_session, diff_preferences, dismiss_panel_overlays, event,
     file_link_scope, files_checkout, has_preview, hold_placement, is_composing, mode, online,
     overlay_open, panel_overlay_open, placeable, placement, placement_hold, placement_unconfirmed,
-    poll, project_opened, release_placement, session_directory, set_diff_preferences, set_mode,
-    show,
+    poll, project_opened, release_placement, restore_reading_if_closed, session_directory,
+    set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{

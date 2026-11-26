@@ -15,8 +15,7 @@ pub(crate) use navigation::{
 pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
-pub(crate) use view::poll_edge;
-pub(crate) use view::{view, watch};
+pub(crate) use view::{notice_key, observe_history_scroll, observe_history_wheel, poll_edge, view};
 
 use crate::{State, backend::Backend, platform, transport::Event};
 use codenomad_client::{
@@ -286,6 +285,33 @@ pub(crate) fn demanded(s: &State) -> bool {
         && rune_theme_codenomad::timeline::fits(t.width)
 }
 
+pub(crate) fn rail_layout_pending(s: &State, history_w: f32) -> bool {
+    if !history_w.is_finite() || history_w <= 0.0 || !conversation_shown(s) {
+        return false;
+    }
+    let t = &s.transcript_display.timeline;
+    let enabled = crate::settings::show_timeline(s);
+    let container_w = if t.width.is_finite() && t.width > 0.0 {
+        t.width
+    } else {
+        history_w
+    };
+    let rail_should_mount = enabled
+        && rune_theme_codenomad::timeline::fits(container_w)
+        && (t.has_raw_markers || !t.markers.is_empty());
+    if enabled
+        && rune_theme_codenomad::timeline::fits(history_w)
+        && (!rune_theme_codenomad::timeline::fits(t.width)
+            || ((!t.visible || t.changed) && !s.messages.is_empty()))
+    {
+        return true;
+    }
+    if rail_should_mount && history_w >= container_w - 1.0 {
+        return true;
+    }
+    !rail_should_mount && t.width.is_finite() && t.width > 0.0 && history_w < t.width - 1.0
+}
+
 fn reproject(s: &mut State) -> bool {
     let t = &s.transcript_display.timeline;
     let blocks: Vec<_> = s
@@ -367,6 +393,12 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
+    if s.reader
+        .as_ref()
+        .is_some_and(crate::chat::reader::Reader::defers_scroll)
+    {
+        return;
+    }
     if owner(s).keep_passage_deferred.is_none()
         && let Some(target) = crate::chat::reading::passage_target(s)
     {
@@ -379,6 +411,10 @@ pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
 
 fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     let on_conversation = conversation_shown(s);
+    let deferring = s
+        .reader
+        .as_ref()
+        .is_some_and(crate::chat::reader::Reader::defers_scroll);
     let t = owner(s);
     if t.keep_passage_deferred.is_none() {
         return false;
@@ -386,7 +422,7 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
     let scroll = t.scroll.get();
     let scrolled =
         scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail == Some(false);
-    if scrolled || !on_conversation || t.jump.align.is_some() {
+    if deferring || scrolled || !on_conversation || t.jump.align.is_some() {
         t.keep_passage_deferred = None;
         return false;
     }
@@ -395,6 +431,9 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
         return false;
     }
     if let Some((key, offset)) = t.keep_passage_deferred.take() {
+        s.transcript_display
+            .reading_mut()
+            .note_programmatic_scroll();
         tx.scroll_key_to(key, offset);
         true
     } else {
