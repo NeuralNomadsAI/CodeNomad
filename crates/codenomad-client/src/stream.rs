@@ -211,12 +211,14 @@ impl State {
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
             && self.alive.load(SeqCst)
+            && !self.is_stream_closed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
     }
     pub(crate) fn history_current(&self, revision: u64) -> bool {
         self.history_revision.load(SeqCst) == revision
             && self.alive.load(SeqCst)
+            && !self.is_stream_closed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
     }

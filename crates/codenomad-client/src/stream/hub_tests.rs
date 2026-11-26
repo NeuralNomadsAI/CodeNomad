@@ -1168,4 +1168,160 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             auth_expired: false
         })
     ));
+
+    // finish() without a prior begin_close() must also signal stream_closed immediately.
+    let state2 = State::default();
+    let sub2 = Subscriber::with_signals(
+        2,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: None,
+            closed: Some(state2.closed_signal()),
+            placement: None,
+        },
+    );
+    let (stop_tx2, _stop_rx2) = bounded(1);
+    let (_done_tx2, done_rx2) = bounded(1);
+    let shared2 = Arc::new(SharedStream {
+        base: "http://127.0.0.1:2/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub2.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx2),
+        }),
+        done: done_rx2,
+    });
+    hub.streams.lock().unwrap().insert(
+        shared2.base.clone(),
+        StreamEntry {
+            stream: shared2.clone(),
+            active: true,
+        },
+    );
+    assert!(shared2.mark_open());
+    shared2.broadcast_frame(
+        &hub,
+        "message".into(),
+        r#"{"type":"memory.changed","seq":2}"#.into(),
+    );
+    assert!(!state2.is_stream_closed());
+    shared2.finish(&hub, false);
+    assert!(state2.is_stream_closed());
+    assert!(matches!(sub2.pop(), Some(HubItem::Opened)));
+    assert!(matches!(sub2.pop(), Some(HubItem::Frame(_))));
+    assert!(matches!(
+        sub2.pop(),
+        Some(HubItem::Closed {
+            auth_expired: false
+        })
+    ));
+}
+
+#[test]
+fn read_shared_delivers_session_moved_before_closed_after_overflow() {
+    block_bounded(
+        "read_shared_delivers_session_moved_before_closed_after_overflow",
+        async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+            backend.workspace = "ws-1".into();
+            backend.session = "ses-1".into();
+            let hub = backend.client.sse_hub();
+            let (stop_tx, _stop_rx) = bounded(1);
+            let (_done_tx, done_rx) = bounded(1);
+            let anchor = Subscriber::new(u64::MAX, None, None);
+            let shared = Arc::new(SharedStream {
+                base: backend.base.clone(),
+                inner: Mutex::new(StreamInner {
+                    phase: Phase::Connecting,
+                    subscribers: vec![anchor.clone()],
+                    replays: HashMap::new(),
+                    replays_overflowed: false,
+                    chunk_active: false,
+                    stop: Some(stop_tx),
+                }),
+                done: done_rx,
+            });
+            hub.streams.lock().unwrap().insert(
+                backend.base.clone(),
+                StreamEntry {
+                    stream: shared.clone(),
+                    active: true,
+                },
+            );
+            assert!(shared.mark_open());
+            assert!(matches!(anchor.pop(), Some(HubItem::Opened)));
+
+            let (ev_tx, _ev_rx) = bounded(8);
+            let state = Arc::new(State::observing_preferences(ev_tx, Arc::new(|| {})));
+            // Capacity 1 lets the first Opened sit in `out` while we overflow the hub queue.
+            let (out, inbox) = bounded(1);
+            let guard = Arc::new(backend.client.track_stream(&backend.client_id));
+            let reader_backend = backend.clone();
+            let reader_out = out.clone();
+            let reader_state = state.clone();
+            let reader = tokio::spawn(async move {
+                let res =
+                    read_shared(&reader_backend, 1, &reader_out, &reader_state, guard, true).await;
+                let _ = reader_out.send(Input::Closed(1)).await;
+                res
+            });
+
+            // Wait until the subscriber attaches and fills `out` (capacity 1) with Input::Opened(1).
+            while inbox.is_empty() {
+                tokio::task::yield_now().await;
+            }
+            // Push a filler frame, then session.moved, then overflow synchronously so session.moved
+            // is guaranteed to sit unpopped in the hub queue when close_overflow() runs.
+            shared.broadcast_frame(
+                hub,
+                "message".into(),
+                r#"{"type":"memory.changed","seq":0}"#.into(),
+            );
+            assert!(matches!(anchor.pop(), Some(HubItem::Frame(_))));
+            let moved = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-1"}}}"#;
+            shared.broadcast_frame(hub, "message".into(), moved.into());
+            assert!(matches!(anchor.pop(), Some(HubItem::Frame(_))));
+            for i in 1..=MAX_SUBSCRIBER_FRAMES {
+                shared.broadcast_frame(
+                    hub,
+                    "message".into(),
+                    format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
+                );
+                assert!(matches!(anchor.pop(), Some(HubItem::Frame(_))));
+            }
+            assert!(state.is_placement_changed());
+            assert!(state.is_stream_closed());
+
+            // Drain inbox: must observe Input::Native(1, _, session.moved) before Input::Closed(1).
+            let mut saw_moved = false;
+            let mut saw_closed = false;
+            while let Ok(item) = inbox.recv().await {
+                match item {
+                    Input::Native(1, _, native) if native["type"] == "session.moved" => {
+                        assert!(
+                            !saw_closed,
+                            "session.moved must arrive before Input::Closed"
+                        );
+                        saw_moved = true;
+                    }
+                    Input::Closed(1) => {
+                        saw_closed = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(saw_moved, "preserved session.moved must be delivered");
+            assert!(
+                saw_closed,
+                "Input::Closed must follow preserved session.moved"
+            );
+            assert!(reader.await.unwrap().is_err());
+            shared.finish(hub, false);
+        },
+    );
 }

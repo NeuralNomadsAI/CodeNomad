@@ -110,10 +110,19 @@ impl Jump {
                 self.cancelled.recv().await.ok();
                 None
             },
-            futures_lite::future::or(request, async {
-                wire.placement_changed().await;
-                None
-            }),
+            futures_lite::future::or(
+                futures_lite::future::or(
+                    async {
+                        wire.placement_changed().await;
+                        None
+                    },
+                    async {
+                        wire.stream_closed().await;
+                        None
+                    },
+                ),
+                request,
+            ),
         )
         .await
         else {
