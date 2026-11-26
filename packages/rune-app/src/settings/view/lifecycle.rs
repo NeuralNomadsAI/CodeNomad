@@ -130,16 +130,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
                 }
-                let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
+                let editor_changed = prefs
+                    .memory
+                    .poll_editor(prefs.backend.as_ref(), &mut s.memory_editor);
                 let mut config_changed = false;
                 if let Some(wake) = prefs.window_wake.clone() {
                     config_changed = s.host_support.poll(&prefs, &wake, !s.closing);
                     let capable = s.host_support.config_files(&prefs);
-                    if s.section == Section::ConfigFiles && !capable && !s.config_files.dirty() {
-                        s.section = Section::General;
-                        prefs.memory.show(true);
-                        config_changed = true;
-                    }
                     config_changed |= s.config_files.poll(
                         &prefs,
                         &wake,
@@ -148,6 +145,15 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             && s.confirm_close.is_none()
                             && !s.closing,
                     );
+                    if s.section == Section::ConfigFiles
+                        && (s.host_support.config_files_unsupported(&prefs)
+                            || prefs.backend.is_none())
+                        && !s.config_files.dirty()
+                    {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                        config_changed = true;
+                    }
                 }
                 if updated {
                     tx.set_title(crate::strings::with_locale(

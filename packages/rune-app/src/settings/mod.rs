@@ -60,11 +60,92 @@ pub(crate) use window::{close, close_request, direct_entry, entries, open_provid
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
-use crate::{State, strings};
+use crate::{State, backend::Backend, strings};
 use preferences::Preferences;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ServerOwner {
+    client_id: String,
+    base: String,
+    server: Option<String>,
+}
+
+impl ServerOwner {
+    pub fn from_backend(backend: &Backend) -> Self {
+        Self {
+            client_id: backend.client_id.clone(),
+            base: backend.base.clone(),
+            server: (!backend.client.attestation_revoked())
+                .then(|| backend.client.server_identity().map(str::to_owned))
+                .flatten(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture() -> Self {
+        Self {
+            client_id: "fixture".into(),
+            base: "http://127.0.0.1/".into(),
+            server: Some("fixture".into()),
+        }
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn server(&self) -> Option<&str> {
+        self.server.as_deref()
+    }
+
+    pub fn seen_key(&self) -> &str {
+        self.server.as_deref().unwrap_or(&self.base)
+    }
+
+    pub fn backend_verified(backend: &Backend) -> bool {
+        !backend.client.attestation_revoked()
+            && !backend.client.needs_capability_recheck()
+            && !(backend.client.tracks_server_attestation()
+                && backend.client.has_unattested_stream_drop())
+    }
+
+    pub fn same_server(&self, other: &Self) -> bool {
+        (self.client_id == other.client_id
+            && (self.server.is_none() || other.server.is_none() || self.server == other.server))
+            || (self.base == other.base && self.server.is_some() && self.server == other.server)
+    }
+
+    pub fn same_backend_server(&self, backend: &Backend) -> bool {
+        let backend_id = backend.client.server_identity();
+        if self.client_id == backend.client_id {
+            self.server.is_none() || backend_id.is_none() || self.server.as_deref() == backend_id
+        } else {
+            self.base == backend.base
+                && self.server.is_some()
+                && !backend.client.attestation_revoked()
+                && self.server.as_deref() == backend_id
+        }
+    }
+
+    pub fn verified_for_write(&self, backend: &Backend) -> bool {
+        self.same_backend_server(backend) && Self::backend_verified(backend)
+    }
+
+    pub fn adopt_same_server(&mut self, backend: &Backend) -> bool {
+        if self.server.is_none() && !backend.client.attestation_revoked() {
+            self.server = backend.client.server_identity().map(str::to_owned);
+        }
+        if self.client_id != backend.client_id {
+            self.client_id = backend.client_id.clone();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Host {

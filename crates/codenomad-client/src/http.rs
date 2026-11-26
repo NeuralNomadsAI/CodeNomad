@@ -349,6 +349,9 @@ impl Http {
         let state = self.6.observed.lock().unwrap();
         (state.0, state.1)
     }
+    pub fn stream_drop_epoch(&self) -> u64 {
+        self.6.stream_drop_epoch.load(Ordering::SeqCst)
+    }
     pub fn has_unattested_stream_drop(&self) -> bool {
         self.6.attested_drop_epoch.load(Ordering::SeqCst)
             < self.6.stream_drop_epoch.load(Ordering::SeqCst)
@@ -573,6 +576,13 @@ pub async fn pairing_required() -> Result<Option<bool>> {
         Some(false) if status["pairingRequired"].as_bool() == Some(true) => Some(true),
         _ => None,
     })
+}
+
+pub fn is_unauthorized(error: &crate::history::Error) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn authentication_expired(error: &crate::history::Error) -> bool {

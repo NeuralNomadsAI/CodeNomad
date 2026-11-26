@@ -26,6 +26,7 @@ pub use children::ChildSettlement;
 pub(crate) use children::Children;
 pub(crate) use hub::Hub;
 pub(crate) use notifications::session_attention;
+#[cfg(test)]
 use routing::dispatch;
 pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]
@@ -40,6 +41,7 @@ pub struct State {
     pub upstream: AtomicBool,
     pub(crate) auth_expired: AtomicBool,
     pub(crate) history_revision: AtomicU64,
+    pub(crate) inbox: crate::inbox::InboxWire,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
     catalogue: Option<Arc<catalogue::Signals>>,
@@ -60,6 +62,7 @@ impl Default for State {
             upstream: AtomicBool::new(false),
             auth_expired: AtomicBool::new(false),
             history_revision: AtomicU64::new(0),
+            inbox: crate::inbox::InboxWire::default(),
             preferences: None,
             preferences_notices: std::sync::OnceLock::new(),
             catalogue: None,
@@ -95,6 +98,7 @@ impl State {
         wake: crate::Wake,
     ) -> Self {
         Self {
+            inbox: crate::inbox::InboxWire::with_wake(wake.clone()),
             preferences: Some((out, wake)),
             placement: Some(crate::bounded(1)),
             ..Self::default()
@@ -110,6 +114,7 @@ impl State {
     }
 
     pub(crate) fn close_placement(&self) {
+        self.inbox.invalidate_closed();
         if let Some((cancel, _)) = &self.placement {
             cancel.close();
         }
@@ -129,6 +134,7 @@ impl State {
 
     pub fn cancel(&self) {
         self.cancelled.store(true, SeqCst);
+        self.inbox.invalidate_closed();
         self.cancel_signal.0.close();
     }
 
@@ -174,6 +180,7 @@ impl State {
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
+        self.inbox.invalidate_closed();
         self.closed.0.close();
     }
 
@@ -242,6 +249,7 @@ impl Drop for RunGuard {
         self.0.alive.store(false, SeqCst);
         self.0.closed.0.close();
         self.0.version.fetch_add(1, SeqCst);
+        self.0.inbox.invalidate_closed();
         self.0.running.store(false, SeqCst);
         self.0.stopped.0.close();
     }

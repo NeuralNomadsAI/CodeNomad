@@ -1,9 +1,5 @@
 //! Envelope dispatch before the session-scoped relay.
-use super::{
-    Backend, Input, Result, Sender, State,
-    limits::{FRAME_LIMIT, reread},
-    sessions,
-};
+use super::{Backend, Input, Result, Sender, State, limits::FRAME_LIMIT, sessions};
 use crate::transport::{DirectoryChange, WorkspaceEvent};
 use serde_json::{Value, json};
 
@@ -21,6 +17,7 @@ fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn dispatch(
     b: &Backend,
     epoch: u64,
@@ -30,8 +27,22 @@ pub(super) async fn dispatch(
     kind: &str,
     data: &str,
 ) -> Result<()> {
+    dispatch_marked(b, epoch, out, state, connection, kind, data, 0).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn dispatch_marked(
+    b: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    connection: &str,
+    kind: &str,
+    data: &str,
+    inbox_mark: u64,
+) -> Result<()> {
     if data.len() > FRAME_LIMIT {
-        return reread(epoch, out, state).await;
+        return super::limits::reread_marked(epoch, out, state, inbox_mark).await;
     }
     if kind == "codenomad.client.ping" {
         b.client
@@ -50,6 +61,11 @@ pub(super) async fn dispatch(
         signals.observe(&value);
         return Ok(());
     }
+    let mark = if inbox_mark > 0 {
+        inbox_mark
+    } else {
+        sessions::note_inbox_value(&b.workspace, &b.session, &state.inbox, &value)
+    };
     if value["instanceId"] == b.workspace
         && state.provider_usage.is_some()
         && value["type"] == "instance.event"
@@ -120,7 +136,7 @@ pub(super) async fn dispatch(
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
     }
-    sessions::relay(b, epoch, out, state, &value).await
+    sessions::relay(b, epoch, out, state, &value, mark).await
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
@@ -218,5 +234,57 @@ pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn server_connected_advances_inbox_version_before_blocked_providers_send() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "ws".into();
+            backend.session = "ses".into();
+            let state = Arc::new(State::default());
+            let (out_tx, out_rx) = crate::bounded(1);
+            // Pre-fill channel so routing::dispatch blocks on the ProvidersChanged side send.
+            out_tx.send(Input::Hint(1, 0, 0)).await.unwrap();
+            let before = state.inbox.ingress();
+            let frame = json!({
+                "type": "instance.event",
+                "instanceId": "ws",
+                "event": { "type": "server.connected", "data": {} }
+            })
+            .to_string();
+            let task = {
+                let backend = backend.clone();
+                let out_tx = out_tx.clone();
+                let state = state.clone();
+                tokio::spawn(async move {
+                    dispatch(&backend, 1, &out_tx, &state, "c1", "message", &frame).await
+                })
+            };
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while state.inbox.ingress() == before {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("server.connected must advance inbox_version before awaiting side sends");
+            assert!(
+                !task.is_finished(),
+                "dispatch should still be blocked on the full ProvidersChanged channel"
+            );
+            drop(out_rx);
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+        });
     }
 }

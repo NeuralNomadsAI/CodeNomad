@@ -87,7 +87,7 @@ pub struct Prompt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume: Option<bool>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Delivery {
     Queue,

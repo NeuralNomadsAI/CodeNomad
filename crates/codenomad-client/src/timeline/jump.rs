@@ -23,7 +23,7 @@ pub(crate) async fn page_offer(
     cancelled: Option<&Receiver<()>>,
     page: &crate::history::Page,
     wire: &Arc<stream::State>,
-    stamp: u64,
+    revision: u64,
     send: impl AsyncFnOnce(Event) -> bool,
 ) -> bool {
     let Some(cancelled) = cancelled else {
@@ -35,8 +35,7 @@ pub(crate) async fn page_offer(
             page: page.clone(),
             admit: Admission {
                 wire: wire.clone(),
-                revision: wire.history_revision.load(SeqCst),
-                live_version: Some(stamp),
+                revision,
                 admit,
             },
             cancelled: cancelled.clone(),
@@ -55,7 +54,6 @@ pub(crate) async fn page_offer(
 pub struct Admission {
     wire: Arc<stream::State>,
     revision: u64,
-    live_version: Option<u64>,
     admit: Sender<()>,
 }
 
@@ -69,9 +67,7 @@ impl std::fmt::Debug for Admission {
 
 impl Admission {
     pub fn accept(self) -> bool {
-        self.wire.history_current(self.revision)
-            && self.live_version.is_none_or(|stamp| self.wire.valid(stamp))
-            && self.admit.try_send(()).is_ok()
+        self.wire.history_current(self.revision) && self.admit.try_send(()).is_ok()
     }
 }
 
@@ -164,7 +160,6 @@ impl Jump {
             admit: Admission {
                 wire: wire.clone(),
                 revision,
-                live_version: page.newer.is_none().then_some(stamp),
                 admit,
             },
         })
@@ -309,7 +304,6 @@ fn admission_rejects_after_placement_change_even_before_revision_bumps() {
     let admission = Admission {
         wire: wire.clone(),
         revision: 0,
-        live_version: None,
         admit,
     };
     wire.close_placement();
