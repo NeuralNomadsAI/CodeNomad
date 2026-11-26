@@ -943,9 +943,13 @@ fn option_card<S: 'static>(
     if !disabled {
         let action = std::rc::Rc::new(press);
         let click = action.clone();
+        let focus_key = key.to_string();
         let key_action = std::rc::Rc::new(move |s: &mut S, _: &mut rune::Tx| action(s));
         item = item
-            .on_press(move |s: &mut S| click(s))
+            .on_press_tx(move |s: &mut S, tx: &mut rune::Tx| {
+                tx.focus(focus_key.clone(), tx.focus_visible());
+                click(s);
+            })
             .on_key(layout::enter_action(key_action));
     }
     item

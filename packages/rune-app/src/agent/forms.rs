@@ -50,24 +50,42 @@ pub fn normalized_options(field: &Value) -> Vec<NormalizedOption<'_>> {
     out
 }
 
+fn opaque_option_key(prefix: &str, field_key: &str, value: &str) -> String {
+    let mut h1: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h2: u64 = 0x243f_6a88_85a3_08d3;
+    for part in [field_key, value] {
+        for b in (part.len() as u64).to_le_bytes() {
+            h1 ^= u64::from(b);
+            h1 = h1.wrapping_mul(0x0000_0100_0000_01b3);
+            h2 ^= u64::from(b);
+            h2 = h2.wrapping_mul(0x9e37_79b1_85eb_ca87);
+        }
+        for &b in part.as_bytes() {
+            h1 ^= u64::from(b);
+            h1 = h1.wrapping_mul(0x0000_0100_0000_01b3);
+            h2 ^= u64::from(b);
+            h2 = h2.wrapping_mul(0x9e37_79b1_85eb_ca87);
+        }
+    }
+    h1 ^= h1 >> 33;
+    h1 = h1.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h1 ^= h1 >> 33;
+    h2 ^= h2 >> 30;
+    h2 = h2.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h2 ^= h2 >> 27;
+    format!("{prefix}:{h1:016x}{h2:016x}")
+}
+
 pub fn bool_option_key(field_key: &str, value: &str) -> String {
     format!("bool-{field_key}-{value}")
 }
 
 pub fn string_option_key(field_key: &str, value: &str) -> String {
-    format!(
-        "option:{}:{field_key}:{}:{value}",
-        field_key.len(),
-        value.len()
-    )
+    opaque_option_key("option", field_key, value)
 }
 
 pub fn multi_option_key(field_key: &str, value: &str) -> String {
-    format!(
-        "multi:{}:{field_key}:{}:{value}",
-        field_key.len(),
-        value.len()
-    )
+    opaque_option_key("multi", field_key, value)
 }
 
 pub fn field_group_key(field_key: &str) -> String {
@@ -120,7 +138,7 @@ fn field_kind(field: &Value) -> FieldKind {
 }
 
 fn is_line_editable_custom(value: &str) -> bool {
-    !value.contains(['\n', '\r']) && value.trim() == value
+    !value.contains(['\n', '\r', ',']) && value.trim() == value
 }
 
 fn parse_u64_bound(field: &Value, key: &str) -> Result<Option<u64>, ()> {
@@ -195,6 +213,9 @@ pub fn field_unanswerable(field: &Value) -> bool {
         || !string_constraints::valid_string_constraints(field)
     {
         return true;
+    }
+    if field["hidden"] == true {
+        return false;
     }
     match field["type"].as_str() {
         Some("string") if has_declared_options(field) && field["custom"] != true => {
@@ -282,11 +303,11 @@ pub enum ValidationError {
 fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str) -> bool) -> bool {
     let text = edit.text.as_str();
     let bytes = text.as_bytes();
-    let mut lines: Vec<(usize, usize, usize, bool)> = Vec::new();
+    let mut entries: Vec<(usize, usize, usize, bool)> = Vec::new();
     let mut pos = 0;
     while pos < bytes.len() {
         let start = pos;
-        while pos < bytes.len() && bytes[pos] != b'\n' {
+        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b',' {
             pos += 1;
         }
         let content_end = if pos > start && bytes[pos - 1] == b'\r' {
@@ -294,32 +315,36 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
         } else {
             pos
         };
-        let full_end = if pos < bytes.len() && bytes[pos] == b'\n' {
+        let mut full_end = if pos < bytes.len() && (bytes[pos] == b'\n' || bytes[pos] == b',') {
             pos + 1
         } else {
             pos
         };
+        if pos < bytes.len() && bytes[pos] == b',' {
+            while full_end < bytes.len() && bytes[full_end] == b' ' {
+                full_end += 1;
+            }
+        }
         let trimmed = text[start..content_end].trim();
         let remove = !trimmed.is_empty() && should_remove(trimmed);
-        lines.push((start, content_end, full_end, remove));
+        entries.push((start, content_end, full_end, remove));
         pos = full_end;
     }
-    if !lines.iter().any(|&(_, _, _, remove)| remove) {
+    if !entries.iter().any(|&(_, _, _, remove)| remove) {
         return false;
     }
-    // Delete only the byte spans of promoted lines (never rebuilding or dropping a trailing
-    // newline on kept lines), and merge adjacent deletions before remapping selection offsets.
+    // Delete only the byte spans of promoted entries (preserving trailing newlines and
+    // surrounding separators on kept entries), and merge adjacent deletions before remapping
+    // selection offsets.
     let mut deletions: Vec<(usize, usize)> = Vec::new();
-    for (idx, &(start, content_end, full_end, remove)) in lines.iter().enumerate() {
+    for (idx, &(start, content_end, full_end, remove)) in entries.iter().enumerate() {
         if !remove {
             continue;
         }
         let del_start = if full_end > content_end {
             start
-        } else if idx > 0 && !lines[idx - 1].3 {
-            // Removing the final line (without a trailing newline) also removes the newline
-            // separating it from the immediately preceding kept line.
-            lines[idx - 1].1
+        } else if idx > 0 && !entries[idx - 1].3 {
+            entries[idx - 1].1
         } else {
             start
         };
@@ -533,13 +558,19 @@ impl Default for Draft {
 }
 pub type Drafts = HashMap<(String, String), Draft>;
 
+fn all_declared_option_values(field: &Value) -> BTreeSet<String> {
+    field["options"]
+        .as_array()
+        .map(|opts| {
+            opts.iter()
+                .filter_map(|o| o["value"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn declared_option_set(field: &Value) -> Option<BTreeSet<String>> {
-    has_declared_options(field).then(|| {
-        normalized_options(field)
-            .into_iter()
-            .map(|o| o.value.to_string())
-            .collect()
-    })
+    has_declared_options(field).then(|| all_declared_option_values(field))
 }
 
 fn fresh_draft(field: &Value) -> Draft {
@@ -561,7 +592,9 @@ fn fresh_draft(field: &Value) -> Draft {
                 let allowed = normalized_options(field);
                 for entry in values {
                     if let Some(raw) = entry.as_str() {
-                        if allowed.iter().any(|opt| opt.value == raw) {
+                        if allowed.iter().any(|opt| opt.value == raw)
+                            || declared.as_ref().is_some_and(|all| all.contains(raw))
+                        {
                             d.prior_choice_values.insert(raw.to_string());
                         }
                         d.prior_hidden_values.insert(raw.to_string());
@@ -579,9 +612,14 @@ fn fresh_draft(field: &Value) -> Draft {
             let mut seen = HashSet::new();
             let mut editable_custom = Vec::new();
             for raw in values.iter().filter_map(Value::as_str) {
-                let is_declared = allowed.iter().any(|opt| opt.value == raw);
-                if is_declared {
+                let is_allowed = allowed.iter().any(|opt| opt.value == raw);
+                let is_any_declared =
+                    is_allowed || declared.as_ref().is_some_and(|all| all.contains(raw));
+                if is_allowed {
                     d.selected.insert(raw.to_string());
+                    d.prior_choice_values.insert(raw.to_string());
+                } else if is_any_declared {
+                    // Declared outside the 64-option render cap: never hydrate into visible custom text.
                     d.prior_choice_values.insert(raw.to_string());
                 } else if allow_custom && !raw.is_empty() && seen.insert(raw.to_string()) {
                     if !is_line_editable_custom(raw) {
@@ -605,15 +643,22 @@ fn fresh_draft(field: &Value) -> Draft {
                 d.prior_hidden_values.insert(raw.to_string());
             }
             let allowed = normalized_options(field);
-            if allowed.iter().any(|opt| opt.value == raw) {
+            let is_allowed = allowed.iter().any(|opt| opt.value == raw);
+            let is_any_declared =
+                is_allowed || declared.as_ref().is_some_and(|all| all.contains(raw));
+            if is_allowed {
                 d.choice = Some(raw.to_string());
                 d.prior_choice_values.insert(raw.to_string());
-            } else if !raw.is_empty() {
+            } else if is_any_declared {
+                // Declared outside the 64-option render cap: never hydrate into visible custom text.
+                d.prior_choice_values.insert(raw.to_string());
                 if hidden {
                     d.hidden_value = Some(raw.to_string());
-                } else if field["custom"] == true {
-                    d.custom = TextEdit::new(raw);
                 }
+            } else if hidden {
+                d.hidden_value = Some(raw.to_string());
+            } else if !raw.is_empty() && field["custom"] == true {
+                d.custom = TextEdit::new(raw);
             }
         }
     } else if matches!(field["type"].as_str(), Some("number" | "integer")) {
@@ -951,10 +996,11 @@ pub fn supported(form: &Form) -> bool {
         }) && matches!(
             f["type"].as_str(),
             Some("string" | "number" | "integer" | "boolean" | "multiselect")
-        ) && valid_options_shape(f)
-            && valid_bounds(f)
-            && string_constraints::valid_string_constraints(f)
-            && !(f["when"].as_array().is_none() && field_unanswerable(f))
+        ) && (f["when"].as_array().is_some()
+            || (valid_options_shape(f)
+                && valid_bounds(f)
+                && string_constraints::valid_string_constraints(f)
+                && !field_unanswerable(f)))
     })
 }
 pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationError> {
@@ -987,16 +1033,22 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     return Err(ValidationError::Unsupported);
                 }
                 let allow_custom = field["custom"] == true;
-                let custom_text = if field["hidden"] == true && d.custom.text.is_empty() {
-                    d.hidden_value.as_deref().unwrap_or("")
+                let hidden_explicit = field["hidden"] == true && d.custom.text.is_empty();
+                let custom_opt = if hidden_explicit {
+                    d.hidden_value.as_deref()
+                } else if !d.custom.text.is_empty() {
+                    Some(d.custom.text.as_str())
                 } else {
-                    d.custom.text.as_str()
+                    None
                 };
-                if !allow_custom && !custom_text.is_empty() {
+                if !allow_custom && custom_opt.is_some_and(|v| !v.is_empty()) {
                     return Err(ValidationError::Unsupported);
                 }
-                let (selected_text, from_custom) = if allow_custom && !custom_text.is_empty() {
-                    (Some(custom_text), true)
+                let (selected_text, from_custom) = if allow_custom
+                    && let Some(custom_val) = custom_opt
+                    && (!custom_val.is_empty() || hidden_explicit)
+                {
+                    (Some(custom_val), true)
                 } else {
                     (d.choice.as_deref(), false)
                 };
@@ -1033,17 +1085,22 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                 }
                 return Ok(Some(json!(selected_text)));
             }
-            let effective = if field["hidden"] == true && text.is_empty() {
+            let hidden_present =
+                field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
+            let effective = if hidden_present {
                 d.hidden_value.as_deref().unwrap_or("")
             } else {
                 text
             };
-            if effective.is_empty() {
+            if effective.is_empty() && !hidden_present {
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
                     Ok(None)
                 };
+            }
+            if field["required"] == true && effective.is_empty() {
+                return Err(ValidationError::Required);
             }
             let n = effective.encode_utf16().count() as u64;
             if let Some(m) = min_len
@@ -1133,49 +1190,66 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             let options = normalized_options(field);
             let is_declared = |entry: &str| options.iter().any(|o| o.value == entry);
             let allow_custom = field["custom"] == true;
-            let mut values = BTreeSet::new();
             if field["hidden"] == true && d.hidden_only {
                 if d.hidden_multiselect_invalid {
                     return Err(ValidationError::Unsupported);
                 }
+                let mut hidden_items = Vec::new();
                 for item in &d.hidden_multiselect {
                     if item.encode_utf16().count() > 20_000 {
                         return Err(ValidationError::TooLong { max: 20_000 });
                     }
                     if is_declared(item) {
-                        values.insert(item.clone());
+                        hidden_items.push(item.clone());
                     } else if allow_custom {
                         if !item.is_empty() {
-                            values.insert(item.clone());
+                            hidden_items.push(item.clone());
                         }
                     } else {
                         return Err(ValidationError::SelectDeclaredOption);
                     }
                 }
-            } else {
-                values = d.selected.clone();
-                if allow_custom {
-                    for item in &d.preserved_custom {
-                        if !d.preserved_custom_selected.contains(item) {
-                            continue;
-                        }
-                        if item.encode_utf16().count() > 20_000 {
-                            return Err(ValidationError::TooLong { max: 20_000 });
-                        }
-                        if !item.is_empty() && !is_declared(item) {
-                            values.insert(item.clone());
-                        }
+                let count = hidden_items.len() as u64;
+                if count > 32 {
+                    return Err(ValidationError::TooManyItems { max: 32 });
+                }
+                if let Some(m) = max_items
+                    && count > m
+                {
+                    return Err(ValidationError::TooManyItems { max: m });
+                }
+                if let Some(m) = min_items
+                    && count < m
+                {
+                    return Err(ValidationError::TooFewItems { min: m });
+                }
+                if field["required"] == true && count == 0 {
+                    return Err(ValidationError::Required);
+                }
+                return Ok(Some(json!(hidden_items)));
+            }
+            let mut values = d.selected.clone();
+            if allow_custom {
+                for item in &d.preserved_custom {
+                    if !d.preserved_custom_selected.contains(item) {
+                        continue;
                     }
-                    for line in d.custom.text.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        if is_declared(trimmed) {
-                            return Err(ValidationError::DuplicateCustomOption);
-                        }
-                        values.insert(trimmed.to_string());
+                    if item.encode_utf16().count() > 20_000 {
+                        return Err(ValidationError::TooLong { max: 20_000 });
                     }
+                    if !item.is_empty() && !is_declared(item) {
+                        values.insert(item.clone());
+                    }
+                }
+                for entry in d.custom.text.split(['\n', ',']) {
+                    let trimmed = entry.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if is_declared(trimmed) {
+                        return Err(ValidationError::DuplicateCustomOption);
+                    }
+                    values.insert(trimmed.to_string());
                 }
             }
             if values

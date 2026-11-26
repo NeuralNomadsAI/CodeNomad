@@ -4,9 +4,34 @@
 //! validation runs identically on native and `wasm32` in guaranteed linear time
 //! without external dependencies.
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 const MAX_REPEAT: usize = 256;
 const MAX_STATES: usize = 2048;
+const MAX_NESTING: usize = 32;
+const MAX_AST_NODES: usize = 1024;
+const MAX_COMPILE_WORK: usize = 4096;
+const MAX_CACHE_ENTRIES: usize = 64;
+
+static PATTERN_CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<Pattern>>>>> = OnceLock::new();
+
+fn compile_cached(src: &str) -> Result<Arc<Pattern>, ()> {
+    let cache = PATTERN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(map) = cache.lock()
+        && let Some(entry) = map.get(src)
+    {
+        return entry.clone().ok_or(());
+    }
+    let compiled = Pattern::compile(src).ok().map(Arc::new);
+    if let Ok(mut map) = cache.lock() {
+        if map.len() >= MAX_CACHE_ENTRIES {
+            map.clear();
+        }
+        map.insert(src.to_string(), compiled.clone());
+    }
+    compiled.ok_or(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StringFormat {
@@ -49,7 +74,7 @@ pub fn valid_string_constraints(field: &Value) -> bool {
     match field.get("pattern") {
         None | Some(Value::Null) => true,
         Some(Value::String(raw)) if raw.is_empty() => true,
-        Some(Value::String(raw)) => Pattern::compile(raw).is_ok(),
+        Some(Value::String(raw)) => compile_cached(raw).is_ok(),
         _ => false,
     }
 }
@@ -64,8 +89,8 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
     if let Some(raw) = field.get("pattern").filter(|v| !v.is_null()) {
         let src = raw.as_str().ok_or(())?;
         if !src.is_empty() {
-            let pat = Pattern::compile(src)?;
-            if !pat.is_full_match(value) {
+            let pat = compile_cached(src)?;
+            if !pat.is_match(value) {
                 return Ok(false);
             }
         }
@@ -74,7 +99,7 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
 }
 
 fn is_valid_email(value: &str) -> bool {
-    if value.is_empty() || value.chars().any(char::is_whitespace) {
+    if value.is_empty() || !value.is_ascii() {
         return false;
     }
     let mut parts = value.split('@');
@@ -84,7 +109,55 @@ fn is_valid_email(value: &str) -> bool {
     let Some(domain) = parts.next() else {
         return false;
     };
-    parts.next().is_none() && !local.is_empty() && !domain.is_empty()
+    if parts.next().is_some() || local.is_empty() || domain.is_empty() {
+        return false;
+    }
+    if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return false;
+    }
+    if !local.bytes().all(|b| {
+        b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'.' | b'_'
+                    | b'\''
+                    | b'+'
+                    | b'-'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'*'
+                    | b'/'
+                    | b'='
+                    | b'?'
+                    | b'^'
+                    | b'`'
+                    | b'{'
+                    | b'|'
+                    | b'}'
+                    | b'~'
+            )
+    }) {
+        return false;
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    let tld = labels.last().copied().unwrap_or_default();
+    if tld.len() < 2 || !tld.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
 }
 
 fn is_valid_uri(value: &str) -> bool {
@@ -219,27 +292,28 @@ fn is_valid_date_time(value: &str) -> bool {
     if hour > 23 || minute > 59 {
         return false;
     }
-    let mut rest = &value[16..];
-    if let Some(after_colon) = rest.strip_prefix(':') {
-        if after_colon.len() < 2 {
-            return false;
-        }
-        let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
-            return false;
-        };
-        if second > 59 {
-            return false;
-        }
-        rest = &after_colon[2..];
-        if let Some(after_dot) = rest.strip_prefix('.') {
-            let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
-            if frac_len == 0 {
-                return false;
-            }
-            rest = &after_dot[frac_len..];
-        }
+    let rest = &value[16..];
+    let Some(after_colon) = rest.strip_prefix(':') else {
+        return false;
+    };
+    if after_colon.len() < 2 {
+        return false;
     }
-    if rest.is_empty() || rest == "Z" || rest == "z" {
+    let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
+        return false;
+    };
+    if second > 59 {
+        return false;
+    }
+    let mut rest = &after_colon[2..];
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
+        if frac_len == 0 {
+            return false;
+        }
+        rest = &after_dot[frac_len..];
+    }
+    if rest == "Z" || rest == "z" {
         return true;
     }
     let rb = rest.as_bytes();
@@ -314,6 +388,8 @@ enum Expr {
 struct Parser {
     chars: Vec<char>,
     pos: usize,
+    depth: usize,
+    nodes: usize,
 }
 
 impl Parser {
@@ -321,6 +397,17 @@ impl Parser {
         Self {
             chars: src.chars().collect(),
             pos: 0,
+            depth: 0,
+            nodes: 0,
+        }
+    }
+
+    fn charge_node(&mut self) -> Result<(), ()> {
+        self.nodes += 1;
+        if self.nodes > MAX_AST_NODES {
+            Err(())
+        } else {
+            Ok(())
         }
     }
 
@@ -400,15 +487,20 @@ impl Parser {
             ) {
                 return Err(());
             }
-            // Optional lazy `?` suffix does not change full-string acceptance.
+            // Optional lazy `?` suffix does not change boolean match acceptance.
             if self.peek() == Some('?') {
                 self.pos += 1;
             }
-            expr = Expr::Repeat {
-                inner: Box::new(expr),
-                min,
-                max,
-            };
+            self.charge_node()?;
+            if min == 0 && max == Some(0) {
+                expr = Expr::Empty;
+            } else {
+                expr = Expr::Repeat {
+                    inner: Box::new(expr),
+                    min,
+                    max,
+                };
+            }
         }
         Ok(expr)
     }
@@ -467,6 +559,7 @@ impl Parser {
     }
 
     fn parse_atom(&mut self) -> Result<Expr, ()> {
+        self.charge_node()?;
         let c = self.next().ok_or(())?;
         match c {
             '^' => Ok(Expr::AssertStart),
@@ -474,6 +567,10 @@ impl Parser {
             '.' => Ok(Expr::Any),
             '*' | '+' | '?' => Err(()),
             '(' => {
+                self.depth += 1;
+                if self.depth > MAX_NESTING {
+                    return Err(());
+                }
                 if self.peek() == Some('?') {
                     self.pos += 1;
                     if self.next() != Some(':') {
@@ -482,6 +579,7 @@ impl Parser {
                     }
                 }
                 let inner = self.parse_alt()?;
+                self.depth -= 1;
                 if self.next() != Some(')') {
                     return Err(());
                 }
@@ -644,12 +742,13 @@ impl Pattern {
     pub fn compile(src: &str) -> Result<Self, ()> {
         let expr = Parser::new(src).parse()?;
         let mut insts = Vec::new();
-        compile_expr(&expr, &mut insts)?;
+        let mut work = 0usize;
+        compile_expr(&expr, &mut insts, &mut work)?;
         push_inst(&mut insts, Inst::Match)?;
         Ok(Self { insts })
     }
 
-    pub fn is_full_match(&self, text: &str) -> bool {
+    pub fn is_match(&self, text: &str) -> bool {
         let chars: Vec<char> = text.chars().collect();
         let n = self.insts.len();
         let mut visited = vec![0u32; n];
@@ -657,6 +756,12 @@ impl Pattern {
         let mut current = Vec::new();
         let mut next = Vec::new();
         self.add_state(0, 0, &chars, &mut visited, stamp, &mut current);
+        if current
+            .iter()
+            .any(|&pc| matches!(self.insts[pc], Inst::Match))
+        {
+            return true;
+        }
         for (pos, &ch) in chars.iter().enumerate() {
             stamp = stamp.wrapping_add(1);
             if stamp == 0 {
@@ -680,14 +785,17 @@ impl Pattern {
                     self.add_state(pc + 1, pos + 1, &chars, &mut visited, stamp, &mut next);
                 }
             }
+            // Unanchored ECMAScript RegExp.test semantics: a match may start at any position.
+            self.add_state(0, pos + 1, &chars, &mut visited, stamp, &mut next);
             std::mem::swap(&mut current, &mut next);
-            if current.is_empty() {
-                return false;
+            if current
+                .iter()
+                .any(|&pc| matches!(self.insts[pc], Inst::Match))
+            {
+                return true;
             }
         }
-        current
-            .iter()
-            .any(|&pc| matches!(self.insts[pc], Inst::Match))
+        false
     }
 
     fn add_state(
@@ -745,7 +853,17 @@ fn push_inst(insts: &mut Vec<Inst>, inst: Inst) -> Result<usize, ()> {
     Ok(idx)
 }
 
-fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>) -> Result<(), ()> {
+fn charge_work(work: &mut usize) -> Result<(), ()> {
+    *work += 1;
+    if *work > MAX_COMPILE_WORK {
+        Err(())
+    } else {
+        Ok(())
+    }
+}
+
+fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<(), ()> {
+    charge_work(work)?;
     match expr {
         Expr::Empty => Ok(()),
         Expr::Literal(c) => {
@@ -780,7 +898,7 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>) -> Result<(), ()> {
         }
         Expr::Concat(items) => {
             for item in items {
-                compile_expr(item, insts)?;
+                compile_expr(item, insts, work)?;
             }
             Ok(())
         }
@@ -790,13 +908,13 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>) -> Result<(), ()> {
                 if i + 1 < branches.len() {
                     let split = push_inst(insts, Inst::Split(0, 0))?;
                     let left = insts.len();
-                    compile_expr(branch, insts)?;
+                    compile_expr(branch, insts, work)?;
                     let jmp = push_inst(insts, Inst::Jmp(0))?;
                     let right = insts.len();
                     insts[split] = Inst::Split(left, right);
                     jmp_ends.push(jmp);
                 } else {
-                    compile_expr(branch, insts)?;
+                    compile_expr(branch, insts, work)?;
                 }
             }
             let end = insts.len();
@@ -807,22 +925,24 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>) -> Result<(), ()> {
         }
         Expr::Repeat { inner, min, max } => {
             for _ in 0..*min {
-                compile_expr(inner, insts)?;
+                charge_work(work)?;
+                compile_expr(inner, insts, work)?;
             }
             match max {
                 None => {
                     let split = push_inst(insts, Inst::Split(0, 0))?;
                     let body = insts.len();
-                    compile_expr(inner, insts)?;
+                    compile_expr(inner, insts, work)?;
                     push_inst(insts, Inst::Jmp(split))?;
                     let end = insts.len();
                     insts[split] = Inst::Split(body, end);
                 }
                 Some(hi) => {
                     for _ in *min..*hi {
+                        charge_work(work)?;
                         let split = push_inst(insts, Inst::Split(0, 0))?;
                         let body = insts.len();
-                        compile_expr(inner, insts)?;
+                        compile_expr(inner, insts, work)?;
                         let end = insts.len();
                         insts[split] = Inst::Split(body, end);
                     }

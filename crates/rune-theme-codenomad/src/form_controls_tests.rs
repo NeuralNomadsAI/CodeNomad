@@ -977,4 +977,38 @@ fn reduced_tab_order_reaches_radios_clear_and_checkboxes_with_full_keyboard_acce
     assert!(rt.state.checked_a, "Enter must toggle focused checkbox");
     send(&mut rt, Key::Tab);
     assert_eq!(focused(&mut rt).as_deref(), Some("chk-b"));
+
+    // Tabbing to radio opt-a then activating opt-b via press moves Rune focus to opt-b so a
+    // subsequent Space press keeps opt-b checked instead of reverting to opt-a.
+    let mut rt2 = Runtime::new(
+        Demo {
+            radio: 0,
+            checked_a: false,
+            checked_b: false,
+            custom: rune::TextEdit::new(""),
+            locked: false,
+        },
+        demo_view,
+        (240.0, 720.0),
+        Env::new(true, 1.0),
+    );
+    rt2.frame(0.0);
+    send(&mut rt2, Key::Tab);
+    assert_eq!(focused(&mut rt2).as_deref(), Some("opt-a"));
+    let (bx, by) = rt2.find("opt-b").expect("opt-b bounds");
+    rt2.pointer_down(bx, by);
+    rt2.pointer_up(bx, by);
+    rt2.frame(1.0 / 60.0);
+    assert_eq!(rt2.state.radio, 1, "activating opt-b must check opt-b");
+    assert_eq!(
+        focused(&mut rt2).as_deref(),
+        Some("opt-b"),
+        "activating opt-b must move Rune focus to opt-b"
+    );
+    send(&mut rt2, Key::Text(" ".into()));
+    assert_eq!(
+        rt2.state.radio, 1,
+        "Space after activating opt-b must keep opt-b checked"
+    );
+    assert_eq!(focused(&mut rt2).as_deref(), Some("opt-b"));
 }

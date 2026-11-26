@@ -355,6 +355,9 @@ pub fn fields(s: &State, form: &Form) -> El {
                 }
                 if allow_custom {
                     let id = identity.clone();
+                    if !valid.is_empty() {
+                        children.push(form_controls::field_description(t("rune.other_values")));
+                    }
                     let custom_label = if !valid.is_empty() {
                         format!("{field_name} · {}", t("rune.other_values"))
                     } else {
@@ -495,6 +498,8 @@ pub fn fields(s: &State, form: &Form) -> El {
                 }
                 if allow_custom {
                     let id = identity.clone();
+                    let custom_hint = t("formRequest.customValuesPlaceholder");
+                    children.push(form_controls::field_description(custom_hint));
                     let custom_label = if has_choices {
                         format!("{field_name} · {}", t("rune.other_values"))
                     } else {
@@ -502,6 +507,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     };
                     let custom_desc = join_notes(&[
                         field_desc,
+                        Some(custom_hint),
                         shared_required.then(|| t("toolCall.question.status.required")),
                         error_text.as_deref(),
                     ]);

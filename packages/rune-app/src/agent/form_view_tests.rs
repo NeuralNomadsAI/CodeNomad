@@ -3276,3 +3276,306 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         );
     });
 }
+
+#[test]
+fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque_paths_and_custom_labels()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Nested empty-repeat pattern fails closed immediately without freezing.
+        let dos_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-dos".into(),
+            title: "Bounded pattern".into(),
+            fields: vec![json!({
+                "key": "re",
+                "title": "Pattern",
+                "type": "string",
+                "pattern": "(?:(?:(?:(?:a{0}){256}){256}){256}){256}"
+            })],
+        };
+        assert!(
+            !agent_forms::supported(&dos_form),
+            "pathological nested repeat pattern must fail closed immediately"
+        );
+
+        // 2. OpenCode string constraint parity: unanchored pattern (`abc` matches `xabcx`),
+        // strict email (`a@b` rejected, `dev@example.com` accepted), and RFC 3339 date-time
+        // (`2026-11-26T14:30` rejected, `2026-11-26T14:30:00Z` accepted).
+        let parity_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-parity".into(),
+            title: "Parity".into(),
+            fields: vec![
+                json!({"key": "sub", "title": "Sub", "type": "string", "required": true, "pattern": "abc"}),
+                json!({"key": "mail", "title": "Mail", "type": "string", "format": "email"}),
+                json!({"key": "dt", "title": "When", "type": "string", "format": "date-time"}),
+            ],
+        };
+        let mut drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&parity_form), &mut drafts);
+        drafts
+            .get_mut(&("form-r12-parity".into(), "sub".into()))
+            .unwrap()
+            .editor()
+            .text = "xabcx".into();
+        drafts
+            .get_mut(&("form-r12-parity".into(), "mail".into()))
+            .unwrap()
+            .editor()
+            .text = "a@b".into();
+        assert!(
+            agent_forms::answer(&parity_form, &drafts).is_err(),
+            "single-label email a@b must be rejected"
+        );
+        drafts
+            .get_mut(&("form-r12-parity".into(), "mail".into()))
+            .unwrap()
+            .editor()
+            .text = "dev@example.com".into();
+        drafts
+            .get_mut(&("form-r12-parity".into(), "dt".into()))
+            .unwrap()
+            .editor()
+            .text = "2026-11-26T14:30".into();
+        assert!(
+            agent_forms::answer(&parity_form, &drafts).is_err(),
+            "date-time without seconds/offset must be rejected"
+        );
+        drafts
+            .get_mut(&("form-r12-parity".into(), "dt".into()))
+            .unwrap()
+            .editor()
+            .text = "2026-11-26T14:30:00+02:00".into();
+        let parity_ans = agent_forms::answer(&parity_form, &drafts)
+            .expect("unanchored pattern xabcx, valid email, and RFC 3339 date-time must pass");
+        assert_eq!(parity_ans["sub"], json!("xabcx"));
+        assert_eq!(parity_ans["mail"], json!("dev@example.com"));
+        assert_eq!(parity_ans["dt"], json!("2026-11-26T14:30:00+02:00"));
+
+        // 3. Inactive conditional field with invalid pattern `[` does not disable the form while
+        // its condition is false, and fails closed once activated.
+        let cond_bad_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-cond-bad".into(),
+            title: "Conditional invalid".into(),
+            fields: vec![
+                json!({"key": "enable", "title": "Enable", "type": "boolean", "default": false}),
+                json!({
+                    "key": "extra",
+                    "title": "Extra",
+                    "type": "string",
+                    "required": true,
+                    "pattern": "[",
+                    "when": [{"key": "enable", "op": "eq", "value": true}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(cond_bad_form);
+        let mut cbrt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        cbrt.frame(0.0);
+        let cb_tree = cbrt.accessibility_json();
+        assert!(
+            find_node(&cb_tree, "form-unsupported").is_none(),
+            "inactive conditional field with bad pattern must not show unsupported banner"
+        );
+        assert!(
+            !has_state(find_node(&cb_tree, "answer-question").unwrap(), "disabled"),
+            "Answer must stay enabled while invalid conditional field is inactive"
+        );
+        assert_eq!(
+            agent_forms::answer(
+                &cbrt.state.agent.as_ref().unwrap().forms[0],
+                &cbrt.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap(),
+            json!({"enable": false})
+        );
+        tap(&mut cbrt, "bool-enable-true");
+        let cb_active = cbrt.accessibility_json();
+        assert_eq!(
+            find_node(&cb_active, "form-unsupported").unwrap()["name"],
+            "Unsupported form"
+        );
+        assert!(has_state(
+            find_node(&cb_active, "answer-question").unwrap(),
+            "disabled"
+        ));
+        assert!(
+            agent_forms::answer(
+                &cbrt.state.agent.as_ref().unwrap().forms[0],
+                &cbrt.state.agent.as_ref().unwrap().drafts
+            )
+            .is_err()
+        );
+
+        // 4. Hidden optional empty string default `""` round-trips and activates dependent `when`,
+        // and hidden multiselect `["b", "a", "b"]` preserves exact order and multiplicity for
+        // `minItems: 3`.
+        let hidden_rt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-hidden-rt".into(),
+            title: "Hidden roundtrip".into(),
+            fields: vec![
+                json!({"key": "empty_h", "type": "string", "hidden": true, "default": ""}),
+                json!({
+                    "key": "dep",
+                    "title": "Dependent",
+                    "type": "string",
+                    "default": "activated",
+                    "when": [{"key": "empty_h", "op": "eq", "value": ""}]
+                }),
+                json!({
+                    "key": "ordered_h",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "minItems": 3,
+                    "options": [
+                        {"value": "a", "label": "A"},
+                        {"value": "b", "label": "B"}
+                    ],
+                    "default": ["b", "a", "b"]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(hidden_rt_form);
+        let mut hrt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        hrt.frame(0.0);
+        let htree = hrt.accessibility_json();
+        assert!(
+            find_node(&htree, "field-dep").is_some(),
+            "hidden empty default must activate dependent when.eq '' field"
+        );
+        assert!(
+            !has_state(find_node(&htree, "answer-question").unwrap(), "disabled"),
+            "hidden multiselect ['b','a','b'] must satisfy minItems=3"
+        );
+        let hans = agent_forms::answer(
+            &hrt.state.agent.as_ref().unwrap().forms[0],
+            &hrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("hidden empty string and ordered duplicate multiselect must submit cleanly");
+        assert_eq!(hans["empty_h"], json!(""));
+        assert_eq!(hans["dep"], json!("activated"));
+        assert_eq!(hans["ordered_h"], json!(["b", "a", "b"]));
+
+        // 5. Wire option values never appear in `_a11yPath` / web mirror JSON, and a 65th declared
+        // option value used as default on a `custom: true` field never hydrates into the custom box.
+        let mut sixty_five: Vec<serde_json::Value> = (0..64)
+            .map(|i| json!({"value": format!("opt_{i}"), "label": format!("Option {i}")}))
+            .collect();
+        sixty_five.push(json!({"value": "internal_prod", "label": "Internal Prod 65"}));
+        let opaque_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-opaque".into(),
+            title: "Opaque paths".into(),
+            fields: vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "options": [{"value": "internal_secret_val", "label": "Production"}]
+                }),
+                json!({
+                    "key": "overflow",
+                    "title": "Overflow",
+                    "type": "string",
+                    "custom": true,
+                    "default": "internal_prod",
+                    "options": sixty_five
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(opaque_form);
+        let mut ort = Runtime::new(state, render_form, (420.0, 760.0), Env::new(false, 1.0));
+        ort.frame(0.0);
+        let web_raw = ort.a11y_json();
+        assert!(
+            !web_raw.contains("internal_secret_val") && !web_raw.contains("internal_prod"),
+            "wire option values must never enter browser mirror paths or values: {web_raw}"
+        );
+        let otree = ort.accessibility_json();
+        let mut ovals = Vec::new();
+        collect_values(&otree, &mut ovals);
+        assert!(
+            !ovals.iter().any(|v| v.contains("internal_prod"))
+                && !ort.elements().iter().any(|e| e
+                    .text
+                    .as_deref()
+                    .is_some_and(|t| t.contains("internal_prod"))),
+            "65th declared option default must never appear in custom textbox: {ovals:?}"
+        );
+
+        // 6 & 7. Custom editors under choices render visible localized labels (including the
+        // discoverable comma separator for multiselect), accept comma-separated custom entries,
+        // and preserve comma-containing defaults verbatim.
+        let custom_label_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r12-custom-labels".into(),
+            title: "Custom labels".into(),
+            fields: vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "custom": true,
+                    "options": [{"value": "prod", "label": "Production"}]
+                }),
+                json!({
+                    "key": "tags",
+                    "title": "Tags",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [{"value": "api", "label": "API"}],
+                    "default": ["with, comma"]
+                }),
+            ],
+        };
+        for (locale, expected_other, expected_multi_hint) in [
+            ("en", "Other values", "Other values, separated by commas"),
+            (
+                "fr",
+                "Autres valeurs",
+                "Autres valeurs, séparées par des virgules",
+            ),
+        ] {
+            crate::strings::with_locale(locale, || {
+                let (state, _rx) = state_with_form(custom_label_form.clone());
+                let mut lrt =
+                    Runtime::new(state, render_form, (420.0, 820.0), Env::new(false, 1.0));
+                lrt.frame(0.0);
+                let texts: Vec<String> =
+                    lrt.elements().into_iter().filter_map(|e| e.text).collect();
+                assert!(
+                    texts.iter().any(|t| t == expected_other),
+                    "{locale}: string custom editor must render visible '{expected_other}' label: {texts:?}"
+                );
+                assert!(
+                    texts.iter().any(|t| t == expected_multi_hint),
+                    "{locale}: multiselect custom editor must render visible '{expected_multi_hint}' label: {texts:?}"
+                );
+                lrt.update(|s, _| {
+                    s.agent
+                        .as_mut()
+                        .unwrap()
+                        .drafts
+                        .get_mut(&("form-r12-custom-labels".into(), "tags".into()))
+                        .unwrap()
+                        .custom_editor()
+                        .text = "alpha, beta".into();
+                });
+                let ans = agent_forms::answer(
+                    &lrt.state.agent.as_ref().unwrap().forms[0],
+                    &lrt.state.agent.as_ref().unwrap().drafts,
+                )
+                .expect("comma-separated custom multiselect entries must submit");
+                assert_eq!(ans["tags"], json!(["alpha", "beta", "with, comma"]));
+            });
+        }
+    });
+}
