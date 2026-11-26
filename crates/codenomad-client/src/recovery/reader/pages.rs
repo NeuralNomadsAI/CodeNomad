@@ -66,6 +66,7 @@ impl Reader {
                             return Ok(Turn::Next);
                         }
                         if !page.rows.is_empty() {
+                            let reordered = !history::order_consistent(&self.resident, &page.rows);
                             self.historical = page.newer.is_some();
                             self.resident = page.rows.clone();
                             self.first = self.resident.first().map(|r| r.id.clone());
@@ -77,7 +78,24 @@ impl Reader {
                             self.frozen_tools.retain(|(id, call), _| {
                                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
-                            if !self.historical && !self.owed_tools.is_empty() && !self.dirty {
+                            let before_inbox = self.inbox.len();
+                            self.inbox.retain(|item| !self.known.contains(&item.id));
+                            if self.inbox.len() != before_inbox {
+                                self.inbox_dirty = true;
+                                self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                let _ = reader_event(
+                                    reading,
+                                    self.generation,
+                                    out,
+                                    wake,
+                                    Event::Inbox(self.inbox.clone()),
+                                )
+                                .await;
+                            }
+                            if !self.historical
+                                && (reordered || !self.owed_tools.is_empty())
+                                && !self.dirty
+                            {
                                 self.dirty = true;
                                 self.quiet = Instant::now() + Duration::from_millis(100);
                             }
@@ -89,6 +107,10 @@ impl Reader {
                                 .await;
                         }
                     } else {
+                        if !self.historical && !self.parked {
+                            self.dirty = true;
+                            self.quiet = Instant::now();
+                        }
                         reader_event(reading, self.generation, out, wake, failed()).await;
                     }
                 }
@@ -159,6 +181,21 @@ impl Reader {
             self.frozen_tools.retain(|(id, call), _| {
                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
             });
+            let before_inbox = self.inbox.len();
+            self.inbox.retain(|item| !self.known.contains(&item.id));
+            if self.inbox.len() != before_inbox {
+                self.inbox_dirty = true;
+                self.inbox_quiet =
+                    crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
+                let _ = reader_event(
+                    reading,
+                    self.generation,
+                    out,
+                    wake,
+                    Event::Inbox(self.inbox.clone()),
+                )
+                .await;
+            }
             self.anchored = None;
             self.parked = false;
             if !self.historical && !self.owed_tools.is_empty() {

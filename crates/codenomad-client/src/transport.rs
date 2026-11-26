@@ -88,6 +88,7 @@ pub enum Command {
     Older,
     Page(HistoryEdge, Receiver<()>),
     Anchor(crate::timeline::Jump),
+    SyncInbox,
     Latest,
     Retry,
     Close,
@@ -150,6 +151,7 @@ pub enum Event {
     },
     AnchorFailed(u64),
     Message(Message),
+    Inbox(Vec<crate::inbox::QueuedPrompt>),
     PromptAcknowledged {
         attempted: String,
         outcome: PromptOutcome,

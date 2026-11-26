@@ -42,6 +42,7 @@ pub struct Display {
     pub(crate) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
+    pub(crate) queue: super::queue::Queue,
     focused_key: Option<String>,
     task_focus_pinned: std::cell::Cell<bool>,
     #[cfg(test)]
@@ -80,6 +81,7 @@ impl Display {
     }
     pub(super) fn suspend_rendered(&mut self) {
         self.messages.suspend();
+        self.queue.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
@@ -113,6 +115,7 @@ impl Display {
             };
         } else if self.session != session {
             self.messages = Default::default();
+            self.queue = Default::default();
             self.timeline = Default::default();
             self.search_highlight = None;
             let mut next = self.saved.remove(session).unwrap_or_default();

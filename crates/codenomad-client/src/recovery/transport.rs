@@ -91,6 +91,10 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
+                reader.inbox_dirty = reader.active_reader;
+                reader.inbox_supported = true;
+                reader.inbox_retries = 0;
+                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
@@ -176,11 +180,21 @@ pub(crate) async fn run_with_reading(
                     Turn::Stop => return Ok(()),
                 }
             }
+            Some(Input::Command(Command::SyncInbox)) => {
+                reader.inbox_dirty = reader.active_reader;
+                reader.inbox_supported = true;
+                reader.inbox_retries = 0;
+                reader.inbox_quiet = Instant::now();
+            }
             Some(Input::Command(Command::Latest)) => {
                 reader.clear_window();
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
+                reader.inbox_dirty = reader.active_reader;
+                reader.inbox_supported = true;
+                reader.inbox_retries = 0;
+                reader.inbox_quiet = Instant::now();
                 if connection_closed {
                     retry = Some(Instant::now());
                 }
@@ -209,6 +223,14 @@ pub(crate) async fn run_with_reading(
                 else {
                     return Ok(());
                 };
+                if !matches!(outcome, PromptOutcome::Rejected)
+                    && (reader.busy || prompt.delivery == Some(crate::prompt::Delivery::Queue))
+                {
+                    reader.inbox_dirty = reader.active_reader;
+                    reader.inbox_supported = true;
+                    reader.inbox_retries = 0;
+                    reader.inbox_quiet = Instant::now() + Duration::from_millis(50);
+                }
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && !reader.busy
                     && prompt.delivery != Some(crate::prompt::Delivery::Queue)
@@ -313,6 +335,116 @@ pub(crate) async fn run_with_reading(
                     reader.quiet = Instant::now();
                     continue;
                 }
+                if matches!(
+                    kind,
+                    "session.inbox.enqueued"
+                        | "session.inbox.delivery.changed"
+                        | "session.inbox.delivered"
+                        | "session.inbox.cancelled"
+                ) {
+                    if reader.active_reader {
+                        reader.inbox_supported = true;
+                        reader.inbox_retries = 0;
+                        match kind {
+                            "session.inbox.enqueued" => {
+                                if let Some(item) = crate::inbox::decode_enqueued(&native) {
+                                    let collides = reader.known.contains(&item.id);
+                                    if let Some(existing) =
+                                        reader.inbox.iter_mut().find(|row| row.id == item.id)
+                                    {
+                                        *existing = item;
+                                    } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
+                                        reader.inbox.push(item);
+                                    }
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Inbox(reader.inbox.clone()),
+                                    )
+                                    .await;
+                                    reader.inbox_dirty = true;
+                                    reader.inbox_quiet =
+                                        Instant::now() + Duration::from_millis(100);
+                                    if collides && !reader.historical {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now();
+                                    }
+                                } else if !reader.historical {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
+                            }
+                            "session.inbox.delivery.changed" => {
+                                if let Some((inbox_id, delivery)) =
+                                    crate::inbox::decode_delivery_changed(&native)
+                                    && let Some(existing) =
+                                        reader.inbox.iter_mut().find(|row| row.id == inbox_id)
+                                {
+                                    existing.delivery = delivery;
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Inbox(reader.inbox.clone()),
+                                    )
+                                    .await;
+                                }
+                                reader.inbox_dirty = true;
+                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                            "session.inbox.delivered" => {
+                                if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
+                                    let before = reader.inbox.len();
+                                    reader.inbox.retain(|row| row.id != inbox_id);
+                                    if reader.inbox.len() != before {
+                                        reader_event(
+                                            reading,
+                                            reader.generation,
+                                            &out,
+                                            &wake,
+                                            Event::Inbox(reader.inbox.clone()),
+                                        )
+                                        .await;
+                                    }
+                                }
+                                reader.inbox_dirty = true;
+                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                reader.dirty = true;
+                                reader.quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                            "session.inbox.cancelled" => {
+                                let inbox_id = crate::inbox::decode_inbox_id(&native);
+                                let was_known =
+                                    inbox_id.is_some_and(|id| reader.known.contains(id));
+                                if let Some(inbox_id) = inbox_id {
+                                    let before = reader.inbox.len();
+                                    reader.inbox.retain(|row| row.id != inbox_id);
+                                    if reader.inbox.len() != before {
+                                        reader_event(
+                                            reading,
+                                            reader.generation,
+                                            &out,
+                                            &wake,
+                                            Event::Inbox(reader.inbox.clone()),
+                                        )
+                                        .await;
+                                    }
+                                }
+                                reader.inbox_dirty = true;
+                                reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                                if was_known || !reader.historical {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
                 if !reader.active_reader || reading.is_some() && reader.historical {
                     match kind {
                         "session.step.started" => {
@@ -393,6 +525,10 @@ pub(crate) async fn run_with_reading(
                 match kind {
                     "session.step.started" => {
                         reader.execution_settlement = 0;
+                        if !reader.inbox.is_empty() {
+                            reader.inbox_dirty = true;
+                            reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                        }
                         let mut reconciled = false;
                         let turn_start = reader
                             .resident
@@ -680,9 +816,13 @@ pub(crate) async fn run_with_reading(
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
+                    "server.connected" => {
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
+                        reader.inbox_dirty = true;
+                        reader.inbox_supported = true;
+                        reader.inbox_retries = 0;
+                        reader.inbox_quiet = Instant::now() + Duration::from_millis(100);
                     }
                     _ => {}
                 }

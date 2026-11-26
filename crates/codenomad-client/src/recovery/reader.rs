@@ -51,6 +51,11 @@ pub(super) struct Reader {
     pub(super) busy: bool,
     pub(super) terminal: bool,
     pub(super) fence: u64,
+    pub(super) inbox: Vec<crate::inbox::QueuedPrompt>,
+    pub(super) inbox_dirty: bool,
+    pub(super) inbox_supported: bool,
+    pub(super) inbox_retries: u8,
+    pub(super) inbox_quiet: Instant,
 }
 
 impl Reader {
@@ -84,6 +89,11 @@ impl Reader {
             busy: false,
             terminal: false,
             fence: 0,
+            inbox: Vec::new(),
+            inbox_dirty: true,
+            inbox_supported: true,
+            inbox_retries: 0,
+            inbox_quiet: Instant::now(),
         }
     }
 
@@ -113,6 +123,10 @@ impl Reader {
                 self.dirty = self.active_reader;
                 self.parked = false;
                 self.quiet = Instant::now();
+                self.inbox.clear();
+                self.inbox_dirty = self.active_reader;
+                self.inbox_retries = 0;
+                self.inbox_quiet = Instant::now();
             }
         }
     }
@@ -145,6 +159,8 @@ impl Reader {
         self.frozen_tools.clear();
         self.execution_settlement = 0;
         self.execution_ended_at = None;
+        self.inbox_dirty = self.active_reader;
+        self.inbox_quiet = Instant::now();
     }
 
     pub(super) async fn sync(
@@ -409,6 +425,23 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
+                    let before_inbox = self.inbox.len();
+                    self.inbox.retain(|item| !self.known.contains(&item.id));
+                    if self.inbox.len() != before_inbox {
+                        self.inbox_dirty = true;
+                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                        if !reader_event(
+                            reading,
+                            self.generation,
+                            out,
+                            wake,
+                            Event::Inbox(self.inbox.clone()),
+                        )
+                        .await
+                        {
+                            return Ok(Turn::Stop);
+                        }
+                    }
                     if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
                     }
@@ -439,6 +472,107 @@ impl Reader {
                     self.dirty = false;
                     self.parked = true;
                     reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                }
+            }
+        }
+        self.sync_inbox(lane, opened).await
+    }
+
+    async fn sync_inbox(&mut self, lane: &Lane<'_>, opened: bool) -> history::Result<Turn> {
+        let Lane {
+            backend,
+            reading,
+            rx,
+            wire,
+            out,
+            wake,
+        } = *lane;
+        if !(self.active_reader
+            && self.inbox_dirty
+            && self.inbox_supported
+            && opened
+            && wire.upstream.load(SeqCst)
+            && (!self.dirty || self.historical)
+            && Instant::now() >= self.inbox_quiet
+            && rx.is_empty())
+        {
+            return Ok(Turn::Process);
+        }
+        let stamp = wire.version.load(SeqCst);
+        let Some(result) = read_fenced(
+            backend,
+            reading,
+            self.generation,
+            wire,
+            backend.session_inbox(),
+        )
+        .await
+        else {
+            return Ok(Turn::Next);
+        };
+        match result {
+            Ok(Some(items)) if wire.valid(stamp) => {
+                let disappeared = self
+                    .inbox
+                    .iter()
+                    .any(|old| !items.iter().any(|next| next.id == old.id));
+                let overlaps_resident = items.iter().any(|item| self.known.contains(&item.id));
+                self.inbox_dirty = false;
+                self.inbox_retries = 0;
+                if (disappeared || overlaps_resident) && !self.historical && !self.parked {
+                    self.dirty = true;
+                    self.quiet = Instant::now();
+                }
+                if self.inbox != items {
+                    self.inbox = items;
+                    if !reader_event(
+                        reading,
+                        self.generation,
+                        out,
+                        wake,
+                        Event::Inbox(self.inbox.clone()),
+                    )
+                    .await
+                    {
+                        return Ok(Turn::Stop);
+                    }
+                }
+            }
+            Ok(None) if wire.valid(stamp) => {
+                self.inbox_dirty = false;
+                self.inbox_supported = false;
+                if !self.inbox.is_empty() {
+                    self.inbox.clear();
+                    if !reader_event(
+                        reading,
+                        self.generation,
+                        out,
+                        wake,
+                        Event::Inbox(Vec::new()),
+                    )
+                    .await
+                    {
+                        return Ok(Turn::Stop);
+                    }
+                }
+            }
+            Ok(_) => {
+                self.inbox_quiet = Instant::now() + Duration::from_millis(200);
+            }
+            Err(PageFailure::StreamClosed) => {
+                return Ok(Turn::Next);
+            }
+            Err(PageFailure::AuthenticationExpired) => {
+                expire_reading(backend, reading, wire, out, wake).await;
+                return Ok(Turn::Stop);
+            }
+            Err(PageFailure::Read(_)) => {
+                self.inbox_retries = self.inbox_retries.saturating_add(1);
+                if self.inbox_retries <= 3 {
+                    self.inbox_quiet =
+                        Instant::now() + Duration::from_millis(200 * u64::from(self.inbox_retries));
+                } else {
+                    self.inbox_dirty = false;
                 }
             }
         }
@@ -512,8 +646,18 @@ async fn read_page(
     wire: &stream::State,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
+    read_fenced(backend, reading, generation, wire, page).await
+}
+
+async fn read_fenced<T>(
+    backend: &Backend,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    wire: &stream::State,
+    read: impl std::future::Future<Output = history::Result<T>>,
+) -> Option<Result<T, PageFailure>> {
     let page = async {
-        match page.await {
+        match read.await {
             Err(error)
                 if crate::http::authentication_expired(&error)
                     && matches!(backend.authentication_status().await, Ok(false)) =>

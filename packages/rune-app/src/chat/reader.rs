@@ -321,6 +321,16 @@ impl Reader {
         self.resume_pending = false;
     }
 
+    pub(crate) fn anchor_in_place(&mut self, bookmark: Bookmark) {
+        self.bookmark = bookmark;
+        self.bookmark_width = 0.0;
+        self.width_grew_while_deferred = false;
+        self.resume_manual_seq = None;
+        self.reconciled_manual_scroll = false;
+        self.awaiting_manual_probe = 0;
+        self.pending_scroll = true;
+    }
+
     pub(crate) fn failed(&mut self) {
         self.parked = true;
     }
@@ -653,6 +663,47 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
         }
     }
     false
+}
+
+pub(crate) fn preserve_anchor_on_displacement(
+    s: &mut State,
+    previous: &[crate::history::Row],
+    next: &[crate::history::Row],
+) {
+    if previous.is_empty()
+        || s.reader
+            .as_ref()
+            .is_none_or(|reader| reader.is_resuming() || reader.has_pending_scroll())
+    {
+        return;
+    }
+    let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let cached_gap = s.history_detached || s.reader.as_ref().is_some_and(|reader| reader.gap);
+    let Bookmark::Message { id, offset } = s
+        .transcript_display
+        .reading()
+        .live_bookmark(history_bounds, cached_gap)
+    else {
+        return;
+    };
+    let Some(next_pos) = next.iter().position(|row| row.id == id) else {
+        return;
+    };
+    let prev_pos = previous.iter().position(|row| row.id == id);
+    let prefix_changed = match prev_pos {
+        Some(prev_pos) => {
+            prev_pos != next_pos
+                || previous[..prev_pos]
+                    .iter()
+                    .zip(&next[..next_pos])
+                    .any(|(a, b)| a.id != b.id)
+        }
+        None => true,
+    };
+    let displaced = prefix_changed || !codenomad_client::history::order_consistent(previous, next);
+    if displaced && let Some(reader) = &mut s.reader {
+        reader.anchor_in_place(Bookmark::Message { id, offset });
+    }
 }
 
 pub(crate) fn suspend(s: &mut State) {

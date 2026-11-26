@@ -303,6 +303,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
+    changed |= chat::queue::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
