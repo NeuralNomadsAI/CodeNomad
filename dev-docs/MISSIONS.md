@@ -1667,11 +1667,12 @@ The content-addressed bundle is provisioned into the authenticated daemon's
 their context hook and the passage prompt hook register once at plugin load,
 independently of presence ([MISSIONS_RECURRING.md](MISSIONS_RECURRING.md)); the typed
 RPC and the ordinary one-time route register through backend presence, for the
-duration of a calendar run (§Mission calendar tool), and at activation while the
-project's `codenomad-missions/registered-v1/<project>` key exists. The key is
-written with each registration and removed when the registration ends for lack of
-work, so an OpenCode restart keeps Missions registered while work remains, at the
-cost of one point read per activation. Without
+steps of a calendar run that need them (§Mission calendar tool), and at activation
+when the project's `codenomad-missions/registered-v1/<project>` key exists and a
+Mission is running. The key is written with each registration and removed when the
+registration ends for lack of work, so only a project whose Missions were registered
+when the service stopped reads its journal at activation; prepared and paused Missions
+wait for a backend. Without
 either route, the context hook removes every `mission_*` tool from the model
 request and the executors refuse. `retainMissionWork` preserves
 the registration while active/unsettled work, receipts or uncertain storage
@@ -1711,7 +1712,7 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - `codenomad-missions/calendar-v1/<project>/<automationID>` holds the calendar's latest run and Mission and its event checkpoints. While that Mission is `active` (including paused or waiting for its final report), a later run launches nothing and answers `{ waiting }`; a Mission whose start did not finish is started by the run that finds it. Otherwise the run creates the Mission prepared, records it, then starts it.
 - `when` lists up to eight events (`missionCalendarEventsSchema`: local branch commits, changed files, remote branch commits, repository activity and the GitHub events), read by the source readers of `missions/` with this machine's own Git and forge access. Any one changed since its checkpoint is news; an event's first read only records where it stands. A run without news answers `{ idle }` and asks nothing of Missions. An active Mission leaves the events unread, so their news launches the next Mission once it ends.
 - A Code Mode program's graph has no Mission storage, so each step goes through this service's own HTTP RPC (`create`, `lifecycle`, `mission`), found by the default registration file of this very process, as CodeNomad's Create and Play do.
-- Each step that needs Missions keeps them registered while it runs; the Mission it starts then retains the registration. Failures surface as fixed `mission-calendar-*` codes in the Automation's last output.
+- Each step that needs Missions keeps them registered while it runs; the Mission it starts then retains the registration. Failures surface as fixed `mission-calendar-*` codes in the Automation's last output (`mission-calendar-source` for an unreadable event).
 
 `node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-isolated-opencode-cli>` (after `npm run build:missions --workspace @neuralnomads/codenomad`) qualifies it on a private runtime with the bundled plugin and no backend: launch and start with the coordinator `/goal` armed, later runs waiting, an independent task whose root is created, prompted and reported, a Mission finishing after an OpenCode restart, and a calendar that launches only once a commit lands on a local branch.
 

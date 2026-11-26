@@ -60,7 +60,8 @@ export default desktopPlugin(${JSON.stringify(presenceDir)})
 // task and reports once that task's report reaches it, or (held) reports after `holdMs`;
 // the task's root reports after `rootHoldMs`.
 const OBJECTIVE = "CALENDAR-OBJECTIVE review what changed", BRIEF = "ROOT-TASK inspect the change", DONE = "ROOT-DONE"
-const script = { mode: "delegate", holdMs: 0, rootHoldMs: 25_000 }
+// `service` counts OpenCode starts: a turn held across a restart answers a service that is gone.
+const script = { mode: "delegate", holdMs: 0, rootHoldMs: 25_000, service: 1 }
 const seen = { delegated: new Set(), rootReports: 0, finals: 0, coordinatorTurns: 0, heldTurns: 0, rootTurns: 0 }
 const provider = createServer(async (req, res) => {
   try {
@@ -84,8 +85,9 @@ const provider = createServer(async (req, res) => {
       if (!report || !delegate) return say("Mission tools missing.")
       if (script.mode === "held") {
         seen.heldTurns++
+        const service = script.service
         await delay(script.holdMs)
-        seen.finals++
+        if (service === script.service) seen.finals++
         return call(report, { outcome: "completed", summary: "Held Mission finished.", final: true })
       }
       if (text.includes(DONE)) { seen.finals++; return call(report, { outcome: "completed", summary: "Delegated work returned.", final: true }) }
@@ -199,11 +201,15 @@ try {
   await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 20_000)
   await daemon.client.experimental.automation.pause({ automationID: automation.id })
   await daemon.stop()
-  script.holdMs = 0
+  script.holdMs = 0; script.service++
   daemon = await startDaemon("2")
   const restored = await until("Missions after restart", () => missions(daemon), list => list.some(mission => mission.id === second.id), 30_000)
   assert.equal(restored.find(mission => mission.id === second.id).status, "active")
-  await until("second Mission completes after restart", () => missions(daemon), list => list.find(mission => mission.id === second.id)?.status === "completed", 120_000)
+  // Once it completes nothing is left to do, and Missions unregisters within two seconds: either reading proves the end.
+  const finals = seen.finals
+  await until("second Mission ends after restart", () => missions(daemon).then(list => list.find(mission => mission.id === second.id)?.status, () => "unregistered"),
+    status => status === "completed" || status === "unregistered", 120_000)
+  assert.ok(seen.finals > finals, "the coordinator sent its final report after the restart")
   console.log("PASS 5 (after an OpenCode restart Missions registers again and the Mission finishes)")
   await daemon.client.experimental.automation.delete({ automationID: automation.id })
 

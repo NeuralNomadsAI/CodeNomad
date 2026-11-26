@@ -15,6 +15,7 @@ import type { NativeJournalRange } from "./native-journal-range"
 import type { NativeCoordinatorGoalRuntime } from "./native-coordinator-goal"
 import { registerMissionCalendarTool } from "./mission-calendar-tool"
 import { missionActorResumeInput } from "../../missions/native-actor-lifecycle"
+import { missionIsRunning } from "../../missions/lifecycle-model"
 import { stableToken } from "../../missions/receipt-identity"
 
 export interface NativeDocumentBusiness {
@@ -37,7 +38,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       let ordinary: MissionBusinessRoute | undefined
       let core: MissionControl | undefined
       // Missions registers without a backend during a calendar run, and after an OpenCode restart
-      // while work remained: this key outlives the process and costs one read per activation.
+      // while a Mission was running. This key outlives the process: an activation reads the
+      // journal only for a project whose Missions were registered when the service stopped.
       const registered = `codenomad-missions/registered-v1/${stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24)}`
       let runs = 0, marked = await ctx.storage.get(registered).then(value => value !== undefined, () => false)
       const mark = async (next: boolean) => {
@@ -45,6 +47,9 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         marked = next
         await (next ? ctx.storage.set(registered, true) : ctx.storage.remove(registered)).catch(() => undefined)
       }
+      // Prepared and paused Missions wait for a person: only a running one resumes by itself.
+      let resumable = marked && await journal.snapshot().then(snapshot => snapshot.missions.some(mission => mission.status === "active" && missionIsRunning(mission)), () => false)
+      if (!resumable) await mark(false)
       // Without a CodeNomad backend claiming the coordinator, the plugin sends through its own session API.
       const start: NonNullable<MissionInputTransport["lifecycle"]> = async (coordinatorID, input) => {
         const mission = (await core?.snapshot())?.missions.find(mission => mission.id === input.missionID), operation = mission?.control
@@ -115,6 +120,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
           (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input, async () => undefined) as Promise<NativeMissionSession | undefined>,
           humanGate, false, index, documents, coordinatorGoal)
+          resumable = false
           await mark(true)
           void coordinatorGoal?.reconcileProject(true).catch(() => undefined)
           return async () => { ordinary = core = undefined; await dispose() }
@@ -123,7 +129,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         const retained = runs > 0 || await retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))
         if (!retained) await mark(false)
         return retained
-      }, undefined, () => runs > 0 || marked) }
+      }, undefined, () => runs > 0 || resumable) }
       catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
       // A calendar run registers Missions for each step that needs them, with or without a backend.
       const calendar = await registerMissionCalendarTool(ctx, async work => {

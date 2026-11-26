@@ -187,10 +187,12 @@ test("passage authors use ordinary preparation and authored reads while their so
 
 test("the calendar tool accepts only an Automation run of a calendar carrier", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "opencode", "missions-calendar-caller-"))
-  const tools = new Map<string, any>(), registration = { dispose: async () => {} }
+  const tools = new Map<string, any>(), registration = { dispose: async () => {} }, removed: string[] = []
   const metadata = new Map<string, Record<string, unknown>>([["ses_plain", {}], ["ses_carrier", { "codenomad.mission-calendar": { version: 1 } }]])
   const cleanup = await desktopPlugin(directory).setup({ location: { directory, project: { id: "project", canonical: directory } },
-    storage: { get: async () => undefined, set: async () => assert.fail("No write"), remove: async () => {}, scan: async () => ({ entries: [] }) },
+    // Registered when the service stopped, but nothing is running: this activation stays unregistered and forgets the key.
+    storage: { get: async (key: string) => key.startsWith("codenomad-missions/registered-v1/") ? true : undefined, set: async () => assert.fail("No write"),
+      remove: async (key: string) => { removed.push(key) }, scan: async () => ({ entries: [] }) },
     session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "project", location: { directory }, metadata: metadata.get(sessionID) }),
       hook: async () => registration },
     rpc: { register: async () => assert.fail("No backend and no run: Missions stays unregistered") },
@@ -199,6 +201,8 @@ test("the calendar tool accepts only an Automation run of a calendar carrier", a
   try {
     const run = (sessionID: string, messageID: string) => tools.get("mission_calendar_run").execute({ objective: "Review", template: "custom" },
       { sessionID, messageID, id: "call", progress: async () => {} })
+    assert.equal(removed.length, 1)
+    assert.match(removed[0]!, /^codenomad-missions\/registered-v1\//)
     await assert.rejects(run("ses_plain", "msg_aut_01ABC_1"), /^Error: mission-calendar-caller$/)
     await assert.rejects(run("ses_carrier", "msg_typed_by_a_model"), /^Error: mission-calendar-caller$/)
     await assert.rejects(run("ses_carrier", "msg_aut_01ABC_1_send"), /^Error: mission-calendar-caller$/)

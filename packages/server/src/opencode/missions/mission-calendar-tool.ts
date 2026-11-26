@@ -43,7 +43,8 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
         const events = missionCalendarEventsSchema.parse(when ?? [])
         const key = missionCalendarKey(stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24), occurrence.automationID)
         // OpenCode gives the whole program 30 seconds.
-        const news = events.length ? missionCalendarNews(events, ctx.location.directory, AbortSignal.timeout(20_000)) : undefined
+        const read = events.length ? missionCalendarNews(events, ctx.location.directory, AbortSignal.timeout(20_000)) : undefined
+        const news = read && ((previous: Parameters<typeof read>[0]) => read(previous).catch(() => { throw new Error("mission-calendar-source") }))
         // Missions registers only for the steps that need it: a run without news costs no registration.
         let own: Promise<MissionCalendarControl> | undefined
         const step = <K extends keyof MissionCalendarControl>(name: K) => ((input: never) => registered(async () =>
