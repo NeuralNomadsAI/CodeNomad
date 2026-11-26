@@ -106,8 +106,28 @@ pub(crate) struct History {
 }
 
 impl History {
+    #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.bytes
+    }
+
+    pub(crate) fn retained_bytes_dedup(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(entry.edit.text.len())
+                .saturating_add(
+                    entry
+                        .edit
+                        .marks()
+                        .len()
+                        .saturating_mul(size_of::<rune::edit::MarkRange>()),
+                )
+                .saturating_add(entry.resolved.len())
+                .saturating_add(entry.draft.retained_bytes(seen))
+        })
     }
 
     pub(crate) fn evict_under_pressure(
@@ -115,7 +135,7 @@ impl History {
         bytes_to_free: usize,
         active_tab: Option<&str>,
         active_session: Option<&str>,
-        active_recall_id: Option<i64>,
+        protected_ids: &[i64],
     ) -> usize {
         if bytes_to_free == 0 || self.entries.is_empty() {
             return 0;
@@ -132,18 +152,18 @@ impl History {
                     active_tab.unwrap_or_default(),
                     active_session.unwrap_or_default(),
                 );
-            if !is_active && Some(entry.id) != active_recall_id {
+            if !is_active && !protected_ids.contains(&entry.id) {
                 let weight = entry.bytes;
                 self.discard(index);
                 freed = freed.saturating_add(weight);
             }
         }
-        // Pass 2: if still over budget, evict oldest remaining entries except the actively recalled one.
+        // Pass 2: if still over budget, evict oldest remaining entries except protected ones.
         let mut index = self.entries.len();
         while index > 0 && freed < bytes_to_free {
             index -= 1;
             let entry = &self.entries[index];
-            if Some(entry.id) != active_recall_id {
+            if !protected_ids.contains(&entry.id) {
                 let weight = entry.bytes;
                 self.discard(index);
                 freed = freed.saturating_add(weight);
@@ -266,6 +286,7 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     }
     history.next += 1;
     history.bytes += bytes;
+    let recorded_id = history.next;
     history.entries.push_front(Entry {
         project,
         origin: Some((tab, session)),
@@ -273,9 +294,9 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         draft,
         resolved,
         bytes,
-        id: history.next,
+        id: recorded_id,
     });
-    crate::workspace::enforce_memory_budget(s);
+    crate::workspace::memory_budget::enforce_protecting_recall(s, Some(recorded_id));
     true
 }
 

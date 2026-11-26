@@ -74,6 +74,17 @@ struct SessionDisplay {
     compact_diffs: (u64, HashSet<String>),
 }
 impl SessionDisplay {
+    fn task_anchors_bytes(&self) -> usize {
+        self.task_anchors
+            .iter()
+            .fold(0usize, |total, (key, state)| {
+                total
+                    .saturating_add(key.len())
+                    .saturating_add(state.visible.iter().map(String::len).sum::<usize>())
+                    .saturating_add(state.selected.iter().map(String::len).sum::<usize>())
+            })
+    }
+
     fn retained_bytes(&self) -> usize {
         let keys_len = |set: &HashSet<String>| set.iter().map(String::len).sum::<usize>();
         let map_keys_len =
@@ -97,13 +108,8 @@ impl SessionDisplay {
                 self.task_mount_gen.keys().map(String::len).sum(),
             ))
             .saturating_add(self.search_revealed.iter().map(String::len).sum::<usize>())
-            .saturating_add(keys_len(&self.compact_diffs.1));
-        for (key, state) in &self.task_anchors {
-            total = total
-                .saturating_add(key.len())
-                .saturating_add(state.visible.iter().map(String::len).sum::<usize>())
-                .saturating_add(state.selected.iter().map(String::len).sum::<usize>());
-        }
+            .saturating_add(keys_len(&self.compact_diffs.1))
+            .saturating_add(self.task_anchors_bytes());
         for (key, set) in &self.unwrapped {
             total = total
                 .saturating_add(key.len())
@@ -119,12 +125,24 @@ impl SessionDisplay {
 }
 
 impl Display {
-    pub(crate) fn retained_bytes(&self) -> usize {
-        let saved: usize = self
-            .saved
+    pub(crate) fn evictable_rendered_bytes(&self) -> usize {
+        let live_ansi: usize = self
+            .live_ansi
+            .borrow()
             .iter()
-            .map(|(id, session)| id.len().saturating_add(session.retained_bytes()))
+            .map(|(key, _)| key.len().saturating_add(1024))
             .sum();
+        self.diffs
+            .retained_bytes()
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.children.retained_bytes())
+            .saturating_add(self.task_deliveries.borrow().retained_bytes())
+            .saturating_add(live_ansi)
+            .saturating_add(self.active.task_anchors_bytes())
+            .saturating_add(self.saved_sessions_bytes())
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
         let live_ansi: usize = self
             .live_ansi
             .borrow()
@@ -138,7 +156,7 @@ impl Display {
             .saturating_add(self.task_deliveries.borrow().retained_bytes())
             .saturating_add(live_ansi)
             .saturating_add(self.active.retained_bytes())
-            .saturating_add(saved)
+            .saturating_add(self.saved_sessions_bytes())
     }
 
     pub(crate) fn saved_sessions_bytes(&self) -> usize {

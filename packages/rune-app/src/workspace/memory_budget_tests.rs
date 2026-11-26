@@ -532,3 +532,102 @@ fn wasm_and_native_limits_are_consistent_and_ui_drop_releases_ledger() {
     s.workspace = None;
     assert_eq!(ledger.total_bytes(), 0);
 }
+
+#[test]
+fn shared_clean_file_draft_stays_intact_in_active_tab_and_resyncs_on_reactivation() {
+    let shared_store = crate::files::document::store::Store::default();
+    let backend = test_backend("ws-shared");
+    let content = "shared file body\n".repeat(400);
+
+    // Active tab opens `shared.rs` against `shared_store`.
+    let mut s = crate::init();
+    s.documents = shared_store.clone();
+    let mut active_files = crate::files::Ui::new(
+        backend.clone(),
+        "/project".into(),
+        Default::default(),
+        Arc::new(|| {}),
+    );
+    active_files
+        .reader
+        .fixture_set_preview("/project", "shared.rs", content.as_bytes().to_vec());
+    active_files.document.fixture_attach_shared(
+        shared_store.clone(),
+        "/project",
+        "shared.rs",
+        &content,
+    );
+    s.files = Some(active_files);
+
+    // Inactive tab opens the exact same file against the same `shared_store`.
+    let mut inactive_state = crate::init();
+    let mut inactive_files = crate::files::Ui::new(
+        backend,
+        "/project".into(),
+        Default::default(),
+        Arc::new(|| {}),
+    );
+    inactive_files
+        .reader
+        .fixture_set_preview("/project", "shared.rs", content.as_bytes().to_vec());
+    inactive_files
+        .document
+        .fixture_attach_shared(shared_store, "/project", "shared.rs", &content);
+    inactive_state.files = Some(inactive_files);
+
+    let mut ui = Ui::new();
+    ui.push_fixture_entry("tab-inactive", 1, Cache::take(&mut inactive_state), None);
+    s.workspace = Some(ui);
+
+    // Force extreme pressure so inactive tab's files caches are evicted.
+    let _ = enforce_with(
+        &mut s,
+        Limits {
+            global_bytes: 1,
+            inactive_history_bytes: usize::MAX,
+            inactive_history_rows: usize::MAX,
+        },
+    );
+
+    // Active tab's shared Draft and edit buffer remain completely intact and editable!
+    let active = s.files.as_ref().unwrap();
+    assert_eq!(active.document.edit().text, content);
+    assert!(active.document.editable());
+
+    // Inactive tab shed its own edit buffer & reader preview, and resyncs from the shared Draft
+    // immediately on reactivation without leaving an empty editor.
+    let mut inactive_cache = s.workspace.as_mut().unwrap().take_entry_cache(1).unwrap();
+    let inactive = inactive_cache.files_mut().as_mut().unwrap();
+    assert!(inactive.document.edit().text.is_empty());
+    assert!(inactive.reader.preview().is_none());
+    inactive.online(true);
+    inactive.activate(true);
+    assert!(inactive.document.poll(&mut inactive.reader));
+    assert_eq!(inactive.document.edit().text, content);
+}
+
+#[test]
+fn recall_eviction_protects_newly_recorded_entry_under_pressure() {
+    use super::memory_budget::enforce_with_recall;
+
+    let mut s = crate::init();
+    s.workspace = Some(Ui::new());
+    let _old_id = s
+        .prompt_history
+        .fixture_push("tab-0", "ses-1", "o".repeat(8_000));
+    let new_id = s
+        .prompt_history
+        .fixture_push("tab-0", "ses-1", "n".repeat(4_000));
+
+    let _ = enforce_with_recall(
+        &mut s,
+        Limits {
+            global_bytes: 1,
+            inactive_history_bytes: usize::MAX,
+            inactive_history_rows: usize::MAX,
+        },
+        Some(new_id),
+    );
+    // Older recall entry was evicted, while the newly recorded entry stayed intact.
+    assert_eq!(s.prompt_history.retained_bytes(), 8_000);
+}

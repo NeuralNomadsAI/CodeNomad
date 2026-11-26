@@ -308,37 +308,40 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= platform::pairing::poll(s, tx);
     }
     shell::sync(s);
-    changed |= workspace::poll(s, now, tx);
+    let workspace_changed = workspace::poll(s, now, tx);
+    let mut after_workspace = false;
     let transcript_revision = s.revision;
-    changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
+    after_workspace |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
     if s.revision != transcript_revision {
         timeline::filters_changed(s);
     }
-    changed |= timeline::search::settle_destination(s, tx);
+    after_workspace |= timeline::search::settle_destination(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
-        changed |= settings::poll_stats(s, now, tx);
+        after_workspace |= settings::poll_stats(s, now, tx);
     }
-    changed |= shell::status_permissions::poll(s, tx);
-    changed |= shell::status_usage::poll(s, now, tx);
+    after_workspace |= shell::status_permissions::poll(s, tx);
+    after_workspace |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
-        changed |= launcher::reopen(s);
+        after_workspace |= launcher::reopen(s);
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        changed |= chat::authentication::poll(s);
+        after_workspace |= chat::authentication::poll(s);
     }
-    changed |= files::poll(s, now, tx);
-    changed |= git::poll(s, now, tx);
-    changed |= workspace::poll_file_drafts(s, now, tx);
-    changed |= shell::notifications::poll(s, tx);
-    changed |= shell::notifications::poll_app_notices(s, now, tx);
+    after_workspace |= files::poll(s, now, tx);
+    after_workspace |= git::poll(s, now, tx);
+    after_workspace |= workspace::poll_file_drafts(s, now, tx);
+    after_workspace |= shell::notifications::poll(s, tx);
+    after_workspace |= shell::notifications::poll_app_notices(s, now, tx);
+    let need_budget_check = changed || after_workspace;
+    changed |= workspace_changed || after_workspace;
     platform::wake_lock::sync(s);
     #[cfg(not(target_arch = "wasm32"))]
     platform::launch::sync(s);
     workspace::capture_files_mode(s);
-    if changed {
+    if need_budget_check {
         workspace::enforce_memory_budget(s);
     }
     timeline::poll_reveal(s, tx, changed);

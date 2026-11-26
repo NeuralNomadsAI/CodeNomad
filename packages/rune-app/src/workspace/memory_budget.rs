@@ -280,7 +280,10 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
 
     // Window-global caches and protected file drafts.
     usage.add(Pool::WindowCaches, s.rail_excerpts.retained_bytes());
-    usage.add(Pool::WindowCaches, s.prompt_history.retained_bytes());
+    usage.add(
+        Pool::WindowCaches,
+        s.prompt_history.retained_bytes_dedup(&mut seen_draft_arcs),
+    );
     usage.add(Pool::WindowCaches, s.saved_outlines.retained_bytes());
     usage.add(Pool::ProtectedDrafts, s.documents.retained_bytes());
 
@@ -313,10 +316,23 @@ pub(crate) fn measure(s: &State) -> PoolUsage {
 }
 
 pub(crate) fn enforce(s: &mut State) {
-    let _ = enforce_with(s, Limits::DEFAULT);
+    let _ = enforce_with_recall(s, Limits::DEFAULT, None);
 }
 
+pub(crate) fn enforce_protecting_recall(s: &mut State, protected_recall_id: Option<i64>) {
+    let _ = enforce_with_recall(s, Limits::DEFAULT, protected_recall_id);
+}
+
+#[cfg(test)]
 pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
+    enforce_with_recall(s, limits, None)
+}
+
+pub(crate) fn enforce_with_recall(
+    s: &mut State,
+    limits: Limits,
+    protected_recall_id: Option<i64>,
+) -> PoolUsage {
     if let Some(ui) = &mut s.workspace {
         trim_inactive_history(
             ui,
@@ -336,11 +352,20 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
         .timeline
         .excerpt_target_message()
         .map(str::to_owned);
-    let active_recall_id = s
+    let mut protected_recall_ids = Vec::with_capacity(2);
+    if let Some(id) = s
         .composer
         .recall
         .as_ref()
-        .map(crate::composer::recall::Recall::id);
+        .map(crate::composer::recall::Recall::id)
+    {
+        protected_recall_ids.push(id);
+    }
+    if let Some(id) = protected_recall_id
+        && !protected_recall_ids.contains(&id)
+    {
+        protected_recall_ids.push(id);
+    }
     let (active_tab_key, active_session_id, active_backend, active_project_root) =
         active_tab_identity(s);
 
@@ -352,12 +377,12 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
         remaining = remaining.saturating_sub(freed);
     }
     if remaining > limits.global_bytes {
-        let freed = s.saved_outlines.evict_under_pressure(
+        let _ = s.saved_outlines.evict_under_pressure(
             remaining.saturating_sub(limits.global_bytes),
             active_backend.as_ref(),
             active_project_root.as_deref(),
         );
-        remaining = remaining.saturating_sub(freed);
+        remaining = sync_and_total(s, measure(s));
     }
 
     // Tier 1: inactive tabs' reloadable secondary caches (files, git diffs/history, missions,
@@ -385,6 +410,7 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
                 break;
             }
         }
+        remaining = sync_and_total(s, measure(s));
     }
 
     // Tier 2: inactive unprotected tabs' transcript histories in deterministic LRU order.
@@ -399,7 +425,7 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
             .filter_map(|(index, entry)| {
                 let cache = entry.cache_ref()?;
                 let (rows, bytes) = cache.history_weight();
-                let weight = bytes.saturating_add(cache.rendered_bytes());
+                let weight = bytes.saturating_add(cache.evictable_rendered_bytes());
                 (rows > 0 || weight > 0).then_some(Evictable {
                     id: index,
                     tier: 2,
@@ -412,7 +438,7 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
         for index in plan_evictions(remaining, limits.global_bytes, &candidates) {
             if let Some(cache) = ui.entry_cache_mut(index) {
                 let (_, bytes) = cache.history_weight();
-                let weight = bytes.saturating_add(cache.rendered_bytes());
+                let weight = bytes.saturating_add(cache.evictable_rendered_bytes());
                 cache.evict_history();
                 remaining = remaining.saturating_sub(weight);
             }
@@ -420,18 +446,19 @@ pub(crate) fn enforce_with(s: &mut State, limits: Limits) -> PoolUsage {
                 break;
             }
         }
+        remaining = sync_and_total(s, measure(s));
     }
 
     // Tier 3: window-global recall & non-visible active-tab caches (never touches active
     // transcript, visible previews, or any unsaved draft).
     if remaining > limits.global_bytes {
-        let freed = s.prompt_history.evict_under_pressure(
+        let _ = s.prompt_history.evict_under_pressure(
             remaining.saturating_sub(limits.global_bytes),
             active_tab_key.as_deref(),
             active_session_id.as_deref(),
-            active_recall_id,
+            &protected_recall_ids,
         );
-        remaining = remaining.saturating_sub(freed);
+        remaining = sync_and_total(s, measure(s));
     }
     if remaining > limits.global_bytes {
         let freed = s.rail_excerpts.evict_oldest_except(

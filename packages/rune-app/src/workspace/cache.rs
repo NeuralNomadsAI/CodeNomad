@@ -246,6 +246,9 @@ impl Cache {
             )
             .saturating_add(self.git.draft_bytes())
     }
+    pub(super) fn evictable_rendered_bytes(&self) -> usize {
+        self.transcript_display.evictable_rendered_bytes()
+    }
     pub(super) fn evictable_secondary_bytes(&self) -> usize {
         let files = self
             .files
@@ -254,7 +257,7 @@ impl Cache {
         let display = if self.history_protected() {
             self.transcript_display.saved_sessions_bytes()
         } else {
-            self.transcript_display.retained_bytes()
+            self.transcript_display.evictable_rendered_bytes()
         };
         files
             .saturating_add(self.git.retained_bytes())

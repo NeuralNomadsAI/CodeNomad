@@ -137,7 +137,10 @@ impl Cache {
                 .is_some_and(|(backend, project)| self.entries[index].saved_for(backend, project));
             if !is_active {
                 let removed = self.entries.remove(index);
-                freed = freed.saturating_add(removed.saved_weight().unwrap_or_default());
+                // Count freed bytes only when no inactive Timeline still holds a strong Arc clone.
+                if Arc::strong_count(&removed) == 1 {
+                    freed = freed.saturating_add(removed.saved_weight().unwrap_or_default());
+                }
             }
         }
         freed

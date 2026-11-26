@@ -109,6 +109,10 @@ impl Editor {
             return 0;
         }
         let draft_bytes = self.draft.as_ref().map_or(0, |shared| {
+            // Only count the shared Draft buffer as evictable when no other tab shares it.
+            if std::sync::Arc::strong_count(shared) > 1 {
+                return 0;
+            }
             let draft = lock(shared);
             draft.text.len().saturating_add(
                 draft
@@ -129,15 +133,62 @@ impl Editor {
         }
         self.edit = TextEdit::new("");
         if let Some(shared) = &self.draft {
-            let mut draft = lock(shared);
-            draft.original = None;
-            draft.text.clear();
-            draft.version = None;
-            draft.revision += 1;
+            if std::sync::Arc::strong_count(shared) == 1 {
+                let mut draft = lock(shared);
+                draft.original = None;
+                draft.text.clear();
+                draft.version = None;
+                draft.revision += 1;
+                self.revision = draft.revision;
+                self.receipt = 0;
+            } else {
+                // Another tab shares this Draft: leave it intact and force `self.edit` to resync on return.
+                let revision = lock(shared).revision;
+                self.revision = revision.wrapping_sub(1);
+            }
+        } else {
+            self.receipt = 0;
+        }
+        freed
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_attach_shared(
+        &mut self,
+        store: Store,
+        directory: &str,
+        path: &str,
+        text: &str,
+    ) {
+        self.store = store;
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: directory.into(),
+            path: path.into(),
+        };
+        let saved_key = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: directory.into(),
+            path: path.into(),
+        };
+        let shared = self.store.open_saved(&key, Some(&saved_key));
+        {
+            let mut draft = lock(&shared);
+            if draft.original.is_none() {
+                draft.original = Some(Snapshot::loaded(text));
+                draft.text = text.into();
+                draft.revision += 1;
+            }
             self.revision = draft.revision;
         }
-        self.receipt = 0;
-        freed
+        self.edit = TextEdit::new(&lock(&shared).text);
+        self.receipt = 1;
+        self.key = Some(key);
+        self.saved_key = Some(saved_key);
+        self.draft = Some(shared);
     }
     #[cfg(test)]
     pub(crate) fn fixture_load_clean(&mut self, text: &str) {
