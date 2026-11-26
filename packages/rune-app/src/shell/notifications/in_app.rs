@@ -1,6 +1,5 @@
 use super::{Target, activate_notice};
 use crate::{State, settings::notification_routing::Route, strings::t};
-use codenomad_client::runtime::Instant;
 use rune::{El, Tx, text};
 use rune_theme_codenomad::{layout, shell::notices as theme};
 use std::{collections::VecDeque, rc::Rc, time::Duration};
@@ -13,6 +12,12 @@ pub(super) enum BubbleOptions {
     Default,
     Toast(u32),
     Compaction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BubbleDeadline {
+    Remaining(Duration),
+    At(f64),
 }
 
 struct Record {
@@ -29,8 +34,9 @@ struct Record {
 pub(super) struct Inbox {
     next: u64,
     history: VecDeque<(Rc<Record>, bool)>,
-    bubbles: VecDeque<(Rc<Record>, Instant)>,
-    opened: Option<Instant>,
+    bubbles: VecDeque<(Rc<Record>, BubbleDeadline)>,
+    opened: bool,
+    scheduled_wake: Option<f64>,
     viewport: (f32, f32),
     dirty: bool,
     close_control: crate::window_control::WindowCloseState,
@@ -81,7 +87,7 @@ impl Inbox {
                 _ => LIFETIME,
             };
             self.bubbles
-                .push_front((record, self.opened.unwrap_or_else(Instant::now) + duration));
+                .push_front((record, BubbleDeadline::Remaining(duration)));
             if self.bubbles.len() > BUBBLES {
                 self.bubbles.pop_back();
             }
@@ -90,7 +96,7 @@ impl Inbox {
 
     #[cfg(any(test, target_arch = "wasm32"))]
     fn announcement(&self) -> Option<String> {
-        if self.opened.is_some() {
+        if self.opened {
             return None;
         }
         let mut pending = self
@@ -105,8 +111,14 @@ impl Inbox {
         Some(pending.collect::<Vec<_>>().join("\n"))
     }
 
-    fn next_expiration(&self) -> Option<Instant> {
-        self.bubbles.iter().map(|(_, deadline)| *deadline).min()
+    fn next_expiration(&self) -> Option<f64> {
+        self.bubbles
+            .iter()
+            .filter_map(|(_, deadline)| match *deadline {
+                BubbleDeadline::At(at) => Some(at),
+                BubbleDeadline::Remaining(_) => None,
+            })
+            .min_by(f64::total_cmp)
     }
 
     pub(super) fn take_change(&mut self) -> bool {
@@ -114,7 +126,7 @@ impl Inbox {
     }
 
     pub(super) fn is_open(&self) -> bool {
-        self.opened.is_some()
+        self.opened
     }
 
     pub(super) fn forget_tab(&mut self, tab: &str) {
@@ -138,17 +150,34 @@ impl Inbox {
         }
     }
 
-    fn resume_bubbles(&mut self, now: Instant) {
-        if let Some(opened) = self.opened.take() {
-            for (_, deadline) in &mut self.bubbles {
-                *deadline += now.duration_since(opened);
+    fn anchor_bubbles(&mut self, now: f64) {
+        for (_, deadline) in &mut self.bubbles {
+            if let BubbleDeadline::Remaining(duration) = *deadline {
+                *deadline = BubbleDeadline::At(now + duration.as_secs_f64());
             }
+        }
+    }
+
+    fn pause_bubbles(&mut self, now: f64) {
+        self.opened = true;
+        self.scheduled_wake = None;
+        for (_, deadline) in &mut self.bubbles {
+            if let BubbleDeadline::At(at) = *deadline {
+                *deadline = BubbleDeadline::Remaining(Duration::from_secs_f64((at - now).max(0.0)));
+            }
+        }
+    }
+
+    fn resume_bubbles(&mut self, now: f64) {
+        if self.opened {
+            self.opened = false;
+            self.scheduled_wake = None;
+            self.anchor_bubbles(now);
         }
     }
 }
 
 pub(crate) fn tick(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let clock = Instant::now();
     let mut inbox = std::mem::take(&mut s.notifications.in_app);
     let prior = (inbox.history.len(), inbox.bubbles.len());
     let current = |record: &Record| {
@@ -157,12 +186,24 @@ pub(crate) fn tick(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             .as_ref()
             .is_none_or(|target| crate::workspace::owns_notification(s, target))
     };
-    let visible = inbox.opened.is_none();
-    inbox
-        .bubbles
-        .retain(|(record, deadline)| (!visible || *deadline > clock) && current(record));
+    let visible = !inbox.opened;
+    if visible {
+        inbox.anchor_bubbles(now);
+    }
+    inbox.bubbles.retain(|(record, deadline)| {
+        let alive = match *deadline {
+            BubbleDeadline::At(at) => !visible || at > now,
+            BubbleDeadline::Remaining(_) => true,
+        };
+        alive && current(record)
+    });
     if visible && let Some(deadline) = inbox.next_expiration() {
-        tx.wake_at(now + (deadline - clock).as_secs_f64());
+        if inbox.scheduled_wake != Some(deadline) {
+            inbox.scheduled_wake = Some(deadline);
+            tx.wake_at(deadline);
+        }
+    } else {
+        inbox.scheduled_wake = None;
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(announcement) = inbox.announcement() {
@@ -200,15 +241,15 @@ pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
     theme::bell(
         t("toastHistory.title"),
         count,
-        inbox.opened.is_some(),
+        inbox.opened,
         touch,
         skip_tab,
         |s: &mut State, tx| {
             crate::shell::Panels::dismiss_outside(s, tx);
-            if s.notifications.in_app.opened.is_some() {
+            if s.notifications.in_app.opened {
                 close(s, tx);
             } else {
-                s.notifications.in_app.opened = Some(Instant::now());
+                s.notifications.in_app.pause_bubbles(tx.clock());
                 tx.focus_when_shown("notification-history-close", tx.focus_visible());
                 tx.instant();
             }
@@ -217,14 +258,14 @@ pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
 }
 
 fn close(s: &mut State, tx: &mut Tx) {
-    s.notifications.in_app.resume_bubbles(Instant::now());
+    s.notifications.in_app.resume_bubbles(tx.clock());
     tx.return_focus(theme::ANCHOR, tx.focus_visible());
     tx.instant();
 }
 
 pub(crate) fn layers(s: &State, output: &mut Vec<El>) {
     let inbox = &s.notifications.in_app;
-    if !inbox.bubbles.is_empty() && inbox.opened.is_none() {
+    if !inbox.bubbles.is_empty() && !inbox.opened {
         output.push(
             theme::bubbles(
                 inbox
@@ -236,7 +277,7 @@ pub(crate) fn layers(s: &State, output: &mut Vec<El>) {
             .key("notification-bubbles"),
         );
     }
-    if inbox.opened.is_some() {
+    if inbox.opened {
         let toolbar = layout::action_row()
             .child(layout::button(
                 t("toastHistory.markAllRead"),
@@ -317,7 +358,7 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
         };
         toolbar = toolbar.child(
             layout::button_tx(t(label), false, move |s: &mut State, tx| {
-                if s.notifications.in_app.opened.is_some() {
+                if s.notifications.in_app.opened {
                     close(s, tx);
                 }
                 s.notifications.in_app.read(id);

@@ -22,9 +22,10 @@ pub(super) fn on_menu(
     scope: Rc<()>,
     locale: &'static str,
 ) -> impl Fn(&mut State, &str, (f32, f32), &mut Tx) {
+    let look = rune_theme_codenomad::layout::popup_menu_look();
     move |s, href, press, tx| {
         if s.current_scope(&scope) {
-            menu(href, press, &scope, locale, tx);
+            menu(href, press, &scope, locale, look.clone(), tx);
         }
     }
 }
@@ -54,7 +55,14 @@ pub(super) fn open_external(href: &str, tx: &mut Tx) {
     }
 }
 
-fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx: &mut Tx) {
+fn menu(
+    href: &str,
+    point: (f32, f32),
+    scope: &Rc<()>,
+    locale: &'static str,
+    look: rune_theme_codenomad::layout::PopupMenuLook,
+    tx: &mut Tx,
+) {
     use crate::strings::{t, with_locale};
     let Some(url) = openable_http(href) else {
         return;
@@ -73,6 +81,7 @@ fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx:
         open,
         copy,
         help,
+        look,
         move |s: &mut State, picked, tx| {
             if s.current_scope(&scope) {
                 match picked {
@@ -339,4 +348,86 @@ fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
     rt.secondary_up(x, y);
     rt.frame(0.02);
     assert!(rt.popup_menu().is_none());
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn link_context_menu_carries_active_theme_popup_menu_style() {
+    use rune::{Env, Runtime};
+    use rune_theme_codenomad::{layout, palettes};
+
+    let expected_look = |dark: bool, palette: Option<&'static palettes::Palette>| {
+        palettes::with_palette(palette, || {
+            layout::with_appearance(dark, layout::popup_menu_look)
+        })
+    };
+
+    fn view(s: &State, cx: &mut rune::Cx<State>) -> rune::El {
+        crate::settings::render(s, cx, |_| {
+            // Exceed document.rs's 10,000 UTF-16 memo threshold so palette/contrast
+            // switches also prove memoized Markdown callbacks refresh their menu look.
+            let body = format!(
+                "[Local](http://127.0.0.1:8123/view)\n\n{}",
+                "memo ".repeat(2200)
+            );
+            super::document::prose(s, "m1", "links".into(), &body, false)
+        })
+    }
+
+    let light_palette = palettes::built_in()
+        .iter()
+        .find(|p| !p.dark)
+        .expect("built-in light palette");
+    let mut dark_palettes = palettes::built_in().iter().filter(|p| p.dark);
+    let dark_a = dark_palettes.next().expect("first built-in dark palette");
+    let dark_b = dark_palettes.next().expect("second built-in dark palette");
+
+    let mut state = crate::init();
+    crate::settings::fixture_appearance(&mut state, light_palette.id, dark_a.id, "off");
+    let mut rt = Runtime::new(state, view, (600.0, 240.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+
+    let open_and_check = |rt: &mut Runtime<State>, expected: &layout::PopupMenuLook| {
+        let [x, y, w, h] = rt
+            .elements()
+            .into_iter()
+            .find(|node| node.role == "link")
+            .expect("missing accessible link")
+            .rect;
+        let (x, y) = ((x + w / 2.0) as f32, (y + h / 2.0) as f32);
+        rt.secondary_down(x, y);
+        rt.secondary_up(x, y);
+        rt.frame(0.02);
+        let menu = rt.popup_menu().expect("missing link context menu");
+        assert!(expected.matches(menu));
+        rt.resolve_popup(None).unwrap();
+        rt.frame(0.02);
+    };
+
+    let light = expected_look(false, Some(light_palette));
+    let dark = expected_look(true, Some(dark_a));
+    let themed = expected_look(true, Some(dark_b));
+    let high_contrast = palettes::increased_contrast(Some(dark_b), true).unwrap();
+    let contrasted = expected_look(true, Some(high_contrast));
+    assert_ne!(light, dark);
+    assert_ne!(dark, themed);
+    assert_ne!(themed, contrasted);
+
+    open_and_check(&mut rt, &light);
+
+    rt.set_system_dark(true);
+    rt.frame(0.02);
+    open_and_check(&mut rt, &dark);
+
+    rt.update(|s, _| {
+        crate::settings::fixture_appearance(s, light_palette.id, dark_b.id, "off");
+    });
+    rt.frame(0.02);
+    open_and_check(&mut rt, &themed);
+
+    rt.update(|s, _| {
+        crate::settings::fixture_appearance(s, light_palette.id, dark_b.id, "on");
+    });
+    rt.frame(0.02);
+    open_and_check(&mut rt, &contrasted);
 }

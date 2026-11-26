@@ -26,7 +26,10 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
         })
         .on_ready(move |window| {
             let window = window.clone();
-            handle.update(move |s, _| s.notifications.window = Some(window));
+            handle.update(move |s, _| {
+                s.notifications.window = Some(window.clone());
+                crate::platform::launch::attach(s, window);
+            });
         })
     };
     #[cfg(target_arch = "wasm32")]
@@ -77,6 +80,7 @@ pub(crate) fn sync_locale(s: &State, locale: &'static str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn menus(locale: &'static str, skip_tab: bool) -> El {
+    let menu_look = rune_theme_codenomad::layout::popup_menu_look();
     row()
         .role("navigation")
         .label(t("window.menu.ariaLabel"))
@@ -87,6 +91,7 @@ fn menus(locale: &'static str, skip_tab: bool) -> El {
                 ("window.menu.window", Menu::Window),
             ]
             .map(|(key, menu)| {
+                let menu_look = menu_look.clone();
                 shell::titlebar_menu(t(key), move |s: &mut State, tx| {
                     crate::shell::Panels::dismiss_outside(s, tx);
                     let items = match menu {
@@ -122,8 +127,12 @@ fn menus(locale: &'static str, skip_tab: bool) -> El {
                         (id, label, enabled, checked)
                     });
                     let scope = s.input_scope.clone();
-                    shell::open_titlebar_menu(tx, key, items, move |s: &mut State, choice, tx| {
-                        match choice {
+                    shell::open_titlebar_menu(
+                        tx,
+                        key,
+                        menu_look.clone(),
+                        items,
+                        move |s: &mut State, choice, tx| match choice {
                             Some("close") => tx.close_window(),
                             Some("fullscreen") => tx.toggle_full_screen(),
                             Some("minimize") => tx.minimize(),
@@ -137,8 +146,8 @@ fn menus(locale: &'static str, skip_tab: bool) -> El {
                                 );
                             }
                             _ => {}
-                        }
-                    });
+                        },
+                    );
                 })
                 .key(key)
                 .tab_index(if skip_tab { -1 } else { 0 })

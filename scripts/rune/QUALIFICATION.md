@@ -21,6 +21,14 @@ Le mode `--files-state` ouvre un projet privé et sa session synthétique exista
 
 La feature `test-support` active les scènes, la galerie et les sondes de qualification. Avant ces builds, `check-production.mjs` vérifie les artefacts par défaut : refus des arguments de qualification, absence de marqueurs de sondes dans les binaires natif et WASM, et fonctionnement de l'inspection Rune sur le lanceur du produit.
 
+Le binaire séparé `web-focus-fixture` exige `test-support` et importe le vrai Close applicatif ainsi que le menu partagé `action_menu`. `tests/web_focus_probe.rs` compare le Runtime public natif au mode commun ; `parity/web-focus.mjs` s'exécute manuellement sur ce bundle WASM séparé et son miroir DOM sous Chromium headless en clair/sombre, sur un hôte loopback possédé. Les compteurs séparent action unique, défaut explicite, champ submit, focus, modal, menu et Tx ; les phases Espace et la répétition enregistrent des constantes de référence Solid codées en dur pour les écarts connus. Le vrai scope applicatif et le rendu racine produit sont qualifiés par `launcher::view::tests`.
+
+```powershell
+cargo +1.99.1 test --locked -p rune-theme-codenomad --test web_focus_probe -- --nocapture
+cargo +1.99.1 build --locked -p rune-theme-codenomad --example web-focus-fixture --features test-support --target wasm32-unknown-unknown
+node scripts/rune/parity/web-focus.mjs --wasm C:\cn-cargo\files\wasm32-unknown-unknown\debug\examples\web-focus-fixture.wasm --bindgen <chemin-absolu-wasm-bindgen.exe> --rune <checkout-rune-verrouillé>\crates\rune --executable <chemin-absolu-chromium.exe>
+```
+
 Le contrat SSE Préférences/Git s'exécute dans Chromium depuis la sonde WASM du client. Avec `wasm-bindgen` à la version de `Cargo.lock` et Chromium Playwright installé :
 
 ```sh

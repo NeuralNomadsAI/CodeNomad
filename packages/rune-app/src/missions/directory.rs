@@ -169,6 +169,22 @@ impl Panel {
             .or_else(|| self.detail.take_auth_expired())
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_ready_with_lookup(
+        &mut self,
+        header: codenomad_client::missions::MapHeader,
+        task_id: &str,
+        task_key: &str,
+    ) {
+        self.supported = Some(true);
+        self.probe_attempted = true;
+        self.visible = true;
+        self.project = Some(header.root.project_id().to_owned());
+        self.selected = Some(header.root.id.clone());
+        self.detail
+            .fixture_snapshot_and_lookup(header, task_id.to_owned(), task_key.to_owned());
+    }
+
     pub(crate) fn take_reader_copy(&mut self) -> Option<String> {
         self.reader.take_ready_copy()
     }

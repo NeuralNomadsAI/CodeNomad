@@ -25,11 +25,26 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
-/// Install Rune's inherited ink for every render, including unstyled text and editors.
-pub fn render<S, T>(cx: &mut rune::Cx<S>, build: impl FnOnce(&mut rune::Cx<S>) -> T) -> T {
-    let dark = cx.system_dark();
+pub fn appearance_key() -> (bool, bool, Option<(&'static str, bool)>) {
+    let dark = dark();
+    (
+        dark,
+        source_palette(),
+        crate::palettes::active(dark).map(|p| (p.id, p.is_high_contrast())),
+    )
+}
+pub(crate) fn render_with_dark<S, T>(
+    cx: &mut rune::Cx<S>,
+    dark: bool,
+    build: impl FnOnce(&mut rune::Cx<S>) -> T,
+) -> T {
+    cx.web_focus();
     cx.foreground(tokens(dark).color("text-primary"));
     with_appearance(dark, || build(cx))
+}
+/// Install Rune's inherited ink and shared keyboard focus mode for every render.
+pub fn render<S, T>(cx: &mut rune::Cx<S>, build: impl FnOnce(&mut rune::Cx<S>) -> T) -> T {
+    render_with_dark(cx, cx.system_dark(), build)
 }
 /// Bind one render's adapters to Rune's current system/CLI appearance.
 pub fn with_appearance<T>(dark: bool, render: impl FnOnce() -> T) -> T {
@@ -107,17 +122,65 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+pub fn dialog(key: &str, title: &str, close_label: &str) -> rune_kit::Dialog {
+    rune_kit::Dialog::new(key, title).close_label(close_label)
+}
+pub fn combobox<S: 'static>(
+    key: &str,
+    label: &str,
+    search_label: &str,
+    state: &rune_kit::ComboboxState,
+    options: &[rune_kit::ComboboxOption],
+    access: impl for<'a> Fn(&'a mut S) -> &'a mut rune_kit::ComboboxState + 'static,
+) -> rune_kit::Combobox<S> {
+    rune_kit::Combobox::new(key, state, options, access)
+        .label(label)
+        .search_label(search_label)
+        .search_placeholder(search_label)
+}
 pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     base_editor(edit).hint(placeholder)
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct PopupMenuLook(rune::PopupMenuStyle);
+
+impl PopupMenuLook {
+    pub(crate) fn into_style(self) -> rune::PopupMenuStyle {
+        self.0
+    }
+
+    pub fn matches(&self, menu: &rune::PopupMenu) -> bool {
+        menu.menu_style() == Some(&self.0)
+    }
+}
+
+pub fn popup_menu_look() -> PopupMenuLook {
+    let t = tokens(dark());
+    PopupMenuLook(
+        rune::PopupMenuStyle::new()
+            .background(t.color("surface-overlay"))
+            .text(t.color("text-primary"))
+            .muted(t.color("text-muted"))
+            .separator(t.color("border-base"))
+            .highlight(t.color("menu-item-hover-bg"))
+            .font_family(t.string("font-family-sans"))
+            .font_size(t.metric("actionMenuItem", "fontSize").px())
+            .line_height(t.metric("actionMenuItem", "lineHeight").px())
+            .padding(t.metric("actionMenu", "paddingTop").px())
+            .corner_radius(t.metric("actionMenu", "borderRadius").px())
+            .item_corner_radius(t.metric("actionMenuItem", "borderRadius").px()),
+    )
 }
 pub fn editor_menu<S: 'static>(
     tx: &mut rune::Tx,
     point: (f32, f32),
     selected: bool,
+    look: PopupMenuLook,
     pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
 ) {
     use rune::{Label, PopupItem, PopupMenu, labels::label};
     let mut menu = PopupMenu::new()
+        .style(look.into_style())
         .item(PopupItem::new("cut", label(Label::Cut)).enabled(selected))
         .item(PopupItem::new("copy", label(Label::Copy)).enabled(selected))
         .item(PopupItem::new("paste", label(Label::Paste)));
@@ -519,6 +582,157 @@ mod tests {
                 assert_eq!(node.fill, tokens(dark).color("surface-field"));
             }
         }
+    }
+    #[test]
+    fn popup_menu_style_follows_theme_palettes_with_square_corners() {
+        for dark in [false, true] {
+            let look = with_appearance(dark, popup_menu_look);
+            let t = tokens(dark);
+            let expected = rune::PopupMenuStyle::new()
+                .background(t.color("surface-overlay"))
+                .text(t.color("text-primary"))
+                .muted(t.color("text-muted"))
+                .separator(t.color("border-base"))
+                .highlight(t.color("menu-item-hover-bg"))
+                .font_family(t.string("font-family-sans"))
+                .font_size(t.metric("actionMenuItem", "fontSize").px())
+                .line_height(t.metric("actionMenuItem", "lineHeight").px())
+                .padding(t.metric("actionMenu", "paddingTop").px())
+                .corner_radius(0.0)
+                .item_corner_radius(0.0);
+            assert_eq!(look.clone().into_style(), expected);
+
+            let contrast = crate::palettes::increased_contrast(None, dark).unwrap();
+            let high_contrast = crate::palettes::with_palette(Some(contrast), || {
+                with_appearance(dark, popup_menu_look)
+            });
+            assert_ne!(high_contrast, look);
+
+            // Verify every theme popup-menu helper attaches the provided look.
+            let mut rt = rune::Runtime::new(
+                (),
+                |_, _| rune::el().key("anchor").size(40.0, 20.0),
+                (200.0, 120.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+
+            let editor_look = look.clone();
+            rt.update(move |_, tx| {
+                editor_menu(tx, (10.0, 10.0), true, editor_look, |_: &mut (), _, _| {})
+            });
+            rt.frame(0.0);
+            assert!(look.matches(rt.popup_menu().unwrap()));
+            rt.resolve_popup(None).unwrap();
+
+            let link_look = look.clone();
+            rt.update(move |_, tx| {
+                crate::markdown::link_menu(
+                    tx,
+                    (10.0, 10.0),
+                    "Open",
+                    "Copy link",
+                    None,
+                    link_look,
+                    |_: &mut (), _, _| {},
+                )
+            });
+            rt.frame(0.0);
+            assert!(look.matches(rt.popup_menu().unwrap()));
+            rt.resolve_popup(None).unwrap();
+
+            #[cfg(target_os = "windows")]
+            {
+                let title_look = look.clone();
+                rt.update(move |_, tx| {
+                    crate::shell::open_titlebar_menu(
+                        tx,
+                        "anchor",
+                        title_look,
+                        [("close", "Close", true, false)],
+                        |_: &mut (), _, _| {},
+                    )
+                });
+                rt.frame(0.0);
+                assert!(look.matches(rt.popup_menu().unwrap()));
+                rt.resolve_popup(None).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn localized_dialog_and_combobox_forward_accessible_labels() {
+        fn has_node(node: &serde_json::Value, role: &str, name: &str) -> bool {
+            if node["role"].as_str() == Some(role) && node["name"].as_str() == Some(name) {
+                return true;
+            }
+            node["children"]
+                .as_array()
+                .is_some_and(|children| children.iter().any(|child| has_node(child, role, name)))
+        }
+
+        fn dialog_view(open: &bool, cx: &mut rune::Cx<bool>) -> El {
+            render(cx, |_| {
+                let mut layers = Vec::new();
+                dialog("confirm", "Confirmer", "Fermer")
+                    .open(*open)
+                    .on_close(|open: &mut bool| *open = false)
+                    .build(kit(dark()), &mut layers);
+                rune::el().w_full().h_full().children(layers)
+            })
+        }
+        let mut dialog_rt = rune::Runtime::new(
+            true,
+            dialog_view,
+            (480.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        dialog_rt.frame(0.0);
+        let tree = dialog_rt.accessibility_json();
+        assert!(has_node(&tree, "button", "Fermer"), "{tree}");
+        assert!(!has_node(&tree, "button", "Close"), "{tree}");
+
+        fn combo_view(
+            state: &rune_kit::ComboboxState,
+            cx: &mut rune::Cx<rune_kit::ComboboxState>,
+        ) -> El {
+            render(cx, |_| {
+                let mut layers = Vec::new();
+                let options = [
+                    rune_kit::ComboboxOption::new("a", "Alpha"),
+                    rune_kit::ComboboxOption::new("b", "Beta"),
+                ];
+                let trigger = combobox(
+                    "models",
+                    "Modèle",
+                    "Rechercher des modèles",
+                    state,
+                    &options,
+                    |s: &mut rune_kit::ComboboxState| s,
+                )
+                .build(kit(dark()), &mut layers);
+                rune::col()
+                    .w_full()
+                    .h_full()
+                    .child(trigger)
+                    .children(layers)
+            })
+        }
+        let mut combo_rt = rune::Runtime::new(
+            rune_kit::ComboboxState::default(),
+            combo_view,
+            (480.0, 320.0),
+            rune::Env::new(false, 1.0),
+        );
+        combo_rt.frame(0.0);
+        let (x, y) = combo_rt.find("models-trigger").unwrap();
+        combo_rt.pointer_down(x, y);
+        combo_rt.pointer_up(x, y);
+        combo_rt.frame(0.02);
+        let tree = combo_rt.accessibility_json();
+        assert!(
+            has_node(&tree, "text-input", "Rechercher des modèles"),
+            "{tree}"
+        );
     }
 }
 impl Layout for El {

@@ -322,6 +322,9 @@ impl Panels {
     pub fn floating_sessions(&self) -> Option<u64> {
         (self.floating == Some(0)).then_some(self.floating_epoch)
     }
+    pub fn floating_panel(&self) -> Option<u64> {
+        self.floating.map(|_| self.floating_epoch)
+    }
     pub fn has_floating(&self) -> bool {
         self.floating.is_some()
     }

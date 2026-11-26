@@ -30,6 +30,14 @@ pub(super) enum Source {
 #[derive(Debug)]
 pub struct DirectoryChanged;
 
+/// Detects an HTTP 401 returned by Mission reads on both native and WebAssembly targets.
+pub fn is_auth_expired(error: &crate::history::Error) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        == Some(reqwest::StatusCode::UNAUTHORIZED)
+}
+
 impl std::fmt::Display for DirectoryChanged {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Mission directory changed")
@@ -331,6 +339,9 @@ impl PageRead {
             .await?;
         // Known unavailable envelopes can use a non-success HTTP status.
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(response.error_for_status().unwrap_err().into());
+        }
         let budget = RESPONSE.min(TRANSFERS - self.bytes);
         let mut bytes = Vec::new();
         let mut chunks = response.bytes_stream();

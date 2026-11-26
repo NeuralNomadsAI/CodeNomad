@@ -30,7 +30,8 @@ pub(crate) use panel_state::{
     has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
     mission_observation_project, mission_panel, mission_reader, mission_supported,
     missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_missions,
+    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
+    suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;
@@ -89,9 +90,26 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
+    if !s.screen.is_launcher()
+        && super::cache::has_wake_lock_eligible_work(&s.phase, s.agent.as_ref())
+    {
+        return true;
+    }
+    s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries.iter().any(|entry| {
+            entry
+                .cache
+                .as_ref()
+                .is_some_and(Cache::has_wake_lock_eligible_work)
+        })
+    })
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
+    mission_briefing: crate::missions::BriefingRequests,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -134,6 +152,7 @@ impl Ui {
         Self {
             openings: Default::default(),
             mission_lifecycle: Default::default(),
+            mission_briefing: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,

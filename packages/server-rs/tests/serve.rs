@@ -695,7 +695,7 @@ fn local_serve_command_guard_rejects_non_loopback_hosts_and_env() {
     let ok = |configure: &dyn Fn(&mut std::process::Command)| {
         let mut cmd = std::process::Command::new("codenomad-rs");
         configure(&mut cmd);
-        std::panic::catch_unwind(move || assert_loopback_command(&cmd)).is_ok()
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || assert_loopback_command(&cmd))).is_ok()
     };
     assert!(ok(&|c| {
         c.args(["serve", "--host", "127.0.0.1", "--host=[::1]", "--host=LOCALHOST"]);

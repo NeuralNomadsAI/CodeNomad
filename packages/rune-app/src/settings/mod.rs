@@ -118,6 +118,20 @@ pub(crate) fn fixture_transcript(s: &mut State, settings: serde_json::Value) {
 }
 
 #[cfg(test)]
+pub(crate) fn fixture_appearance(
+    s: &mut State,
+    light_scheme: &str,
+    dark_scheme: &str,
+    high_contrast: &str,
+) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .fixture_appearance(light_scheme, dark_scheme, high_contrast);
+    s.revision += 1;
+}
+
+#[cfg(test)]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
     s.revision += 1;
@@ -130,6 +144,7 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
         | s.settings.web.poll_window_actions(
             &s.settings.shared.borrow(),
             s.settings.transcript_filters.is_open(&s.input_scope),
+            !crate::platform::pairing::required(s),
             tx,
         );
     #[cfg(not(target_arch = "wasm32"))]
@@ -372,6 +387,24 @@ pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
         .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn keep_computer_awake(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .general_toggle(preferences::behavior::GeneralToggle::KeepComputerAwake)
+        == Some(true)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn focus_existing_window_on_second_launch(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .advanced_toggle(advanced::Toggle::SecondLaunch)
+        == Some(true)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn locale(s: &State) -> &'static str {
     s.settings
@@ -384,4 +417,92 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn fixture_config(s: &mut State, url: &str, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config(url, settings);
+}
+
+#[derive(Default)]
+pub(super) struct ExternalLink {
+    failed: bool,
+    seq: u64,
+}
+
+impl ExternalLink {
+    pub(super) fn failed(&self) -> bool {
+        self.failed
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.seq = self.seq.wrapping_add(1);
+        self.failed = false;
+    }
+
+    pub(super) fn open<S: 'static>(
+        &mut self,
+        url: &str,
+        tx: &mut rune::Tx,
+        access: impl Fn(&mut S) -> Option<&mut Self> + 'static,
+    ) {
+        self.clear();
+        let seq = self.seq;
+        let launch = tx.open_url_then(url, move |s: &mut S, result, _| {
+            if let Some(link) = access(s)
+                && link.seq == seq
+            {
+                link.failed = result.is_err();
+            }
+        });
+        if launch.is_err() {
+            self.failed = true;
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn external_link_reports_sync_validation_and_fences_stale_launches() {
+    use rune::{Env, Runtime};
+    let mut rt = Runtime::new(
+        ExternalLink::default(),
+        |_, _| rune::el(),
+        (100.0, 100.0),
+        Env::default(),
+    );
+    rt.frame(0.0);
+    rt.update(|link, tx| link.open("javascript:alert(1)", tx, |l| Some(l)));
+    assert!(rt.state.failed());
+    assert!(rt.take_url_requests().is_empty());
+
+    rt.update(|link, tx| {
+        link.open(
+            "https://neuralnomadsai.github.io/CodeNomad/en/settings.html",
+            tx,
+            |l| Some(l),
+        )
+    });
+    assert!(!rt.state.failed());
+    assert_eq!(
+        rt.take_url_requests(),
+        ["https://neuralnomadsai.github.io/CodeNomad/en/settings.html"]
+    );
+    rt.frame(0.02);
+    assert!(!rt.state.failed());
+
+    rt.update(|link, tx| {
+        link.open(
+            "https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html",
+            tx,
+            |l| Some(l),
+        );
+        link.clear();
+        link.failed = true;
+    });
+    rt.frame(0.02);
+    assert!(
+        rt.state.failed(),
+        "stale launch completion after clear must not overwrite newer state"
+    );
 }

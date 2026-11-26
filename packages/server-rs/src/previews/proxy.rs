@@ -179,10 +179,13 @@ fn loopback_host(host: &str) -> bool {
 fn backend_port(app: &Shared, port: u16) -> bool {
     app.port == port || app.meta["remotePort"].as_u64() == Some(u64::from(port))
 }
+fn ingress_port(app: &Shared, port: u16) -> bool {
+    app.remote_control.ingress_port() == Some(port)
+}
 async fn address(app: &Shared, host: &str, port: u16) -> Result<Vec<SocketAddr>, Status> {
     if host.trim_end_matches('.').to_ascii_lowercase().ends_with(".preview.localhost")
         || app.previews.remote.listener_port() == Some(port)
-        || backend_port(app, port) && loopback_host(host)
+        || (backend_port(app, port) || ingress_port(app, port)) && loopback_host(host)
     {
         return Err(Status::NOT_FOUND);
     }
@@ -195,8 +198,15 @@ async fn address(app: &Shared, host: &str, port: u16) -> Result<Vec<SocketAddr>,
     if answers.is_empty() {
         return Err(Status::BAD_GATEWAY);
     }
-    // A checked origin cannot be rebound after DNS. Reserve both server ports, including the non-loopback TLS bind.
-    if backend_port(app, port) {
+    // A checked origin cannot be rebound after DNS. Reserve server ports (including the non-loopback
+    // TLS bind) and block any loopback/unspecified resolution targeting the loopback-only ingress port.
+    if backend_port(app, port)
+        || ingress_port(app, port)
+            && answers.iter().any(|addr| {
+                let ip = addr.ip().to_canonical();
+                ip.is_loopback() || ip.is_unspecified()
+            })
+    {
         return Err(Status::NOT_FOUND);
     }
     Ok(answers)
@@ -282,7 +292,7 @@ pub async fn relay(app: &Shared, mut request: Request, preview: Preview, path: &
     let mut headers = response_headers(response.headers().clone(), &target, base, upgrade, opaque);
     if let Some(on_upgrade) = on_upgrade {
         if status == Status::SWITCHING_PROTOCOLS {
-            return tunnel(response, headers, on_upgrade, preview.until).await;
+            return tunnel(response, headers, on_upgrade, preview.until, preview.relay_done).await;
         }
         hop(&mut headers);
         headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
@@ -343,10 +353,14 @@ pub(super) async fn tunnel(
     headers: HeaderMap,
     upgrade: hyper::upgrade::OnUpgrade,
     until: tokio_util::sync::CancellationToken,
+    on_done: Option<std::sync::Arc<super::CancelOnDrop>>,
 ) -> Response {
     let Ok(mut upstream) = response.upgrade().await else { return stop(Status::BAD_GATEWAY) };
     tokio::spawn(async move {
-        let Ok(peer) = upgrade.await else { return };
+        let _done = on_done;
+        let Ok(peer) = upgrade.await else {
+            return;
+        };
         let mut peer = TokioIo::new(peer);
         tokio::select! {
             biased;

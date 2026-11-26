@@ -1,6 +1,7 @@
 use super::{
     directory::{Kind, Panel, title},
     reader::ReaderTarget,
+    task_rows::OpenTask,
 };
 use crate::strings::{locale, t};
 use codenomad_client::missions::{RunState, Status};
@@ -41,13 +42,14 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el(), |_, _| {})
+    panel_body(ui, owner, rune::el(), None, |_, _| {})
 }
 
 pub(crate) fn panel_body<S: 'static>(
     ui: &Panel,
     owner: Owner<S>,
     actions: El,
+    open_task: Option<OpenTask<S>>,
     on_reader_open: fn(&mut S, &mut Tx),
 ) -> El {
     let heading = t("missions.control.mapLabel");
@@ -130,7 +132,7 @@ pub(crate) fn panel_body<S: 'static>(
         }
         body = body
             .child(actions)
-            .child(detail(ui, scoped.clone(), on_reader_open));
+            .child(detail(ui, scoped.clone(), open_task, on_reader_open));
     }
     if !ui.cleanups.is_empty() {
         body = body.child(
@@ -239,7 +241,12 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     footer
 }
 
-fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S, &mut Tx)) -> El {
+fn detail<S: 'static>(
+    ui: &Panel,
+    owner: Scoped<S>,
+    open_task: Option<OpenTask<S>>,
+    on_reader_open: fn(&mut S, &mut Tx),
+) -> El {
     let detail = &ui.detail;
     let mut result = col()
         .full_width()
@@ -332,11 +339,18 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S, &
                 }
             },
         );
-        result = result.child(
-            snapshot
-                .tasks
-                .view_with_open::<S>(open_task_id, Some(on_open)),
-        );
+        let conversation = open_task.map(|open| {
+            (
+                snapshot.header.root.coordinator_session_id().to_owned(),
+                ui.observation.current_actors(),
+                open,
+            )
+        });
+        result = result.child(snapshot.tasks.view_with_open::<S>(
+            open_task_id,
+            Some(on_open),
+            conversation,
+        ));
     }
     if detail.busy() || detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));
