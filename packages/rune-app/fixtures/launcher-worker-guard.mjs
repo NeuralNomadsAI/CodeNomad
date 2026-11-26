@@ -8,8 +8,10 @@ export function needsOwnedWindowsWorker(argv, platform = process.platform) {
     || argv.includes('--web-sse-7tabs')
 }
 
-export function evaluateWorkerExit({ exit, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
-  const spawnError = exit?.error ?? null
+export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
+  const spawnError = exit?.error ?? (!workerStarted && exit && exit.code !== 86
+    ? new Error(`Owned worker did not start (supervisor exit code=${exit.code}, signal=${exit.signal})`)
+    : null)
   const workerExited = exit !== null && !spawnError && !unconfirmedStop && exit.code !== 86 && exit.signal === null && !stopError
   const workerCode = exit && !spawnError ? (exit.code ?? (exit.signal === 'SIGINT' ? 130 : exit.signal === 'SIGTERM' ? 143 : 1)) : null
   const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError)

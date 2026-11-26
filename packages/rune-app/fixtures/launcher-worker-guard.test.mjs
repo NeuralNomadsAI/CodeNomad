@@ -72,6 +72,24 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   assert.equal(escalated.workerStopError, 'Owned POSIX bridge did not confirm worker exit before escalation')
   assert.equal(escalated.finalResult, 1)
 
+  const supervisorOnlyExit = evaluateWorkerExit({
+    exit: { code: 1, signal: null },
+    workerStarted: false,
+  })
+  assert.equal(supervisorOnlyExit.workerExited, false)
+  assert.equal(supervisorOnlyExit.workerExitCode, null)
+  assert.equal(supervisorOnlyExit.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
+  assert.equal(supervisorOnlyExit.finalResult, 1)
+
+  const unconfirmedOnly = evaluateWorkerExit({
+    exit: { code: 0, signal: null },
+    unconfirmedStop: true,
+    proof: { result: 0 },
+  })
+  assert.equal(unconfirmedOnly.workerExited, false)
+  assert.equal(unconfirmedOnly.workerStopError, 'Owned worker exit was not confirmed after stop')
+  assert.equal(unconfirmedOnly.finalResult, 1)
+
   const clean = evaluateWorkerExit({
     exit: { code: 0, signal: null },
     proof: { result: 0 },
