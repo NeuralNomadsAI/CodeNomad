@@ -578,6 +578,7 @@ async fn move_members(
         return Err(conflict("Worktree changed before the session move"));
     }
     let mut attempted = Vec::new();
+    let mut invalidation = None;
     let operation = async {
         for member in &active_members {
             let id = row_id(member)?;
@@ -589,6 +590,7 @@ async fn move_members(
             if directory(member)? == target.service {
                 continue;
             }
+            invalidation.get_or_insert_with(|| blocking_invalidation(app));
             attempted.push(member);
             native_move(app, id, &target.service).await?;
             let now = crate::opencode::session_record(app, id).await?;
@@ -632,6 +634,9 @@ async fn move_members(
         }
         return Err(e);
     }
+    if let Some(guard) = invalidation {
+        guard.disarm();
+    }
     Ok(MoveOutcome::Moved(verified_root, active_members))
 }
 #[derive(Deserialize)]
@@ -668,7 +673,6 @@ async fn place_owned(
             paths.push(super::fence::identity(tree.registered()));
         }
         let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
-        let _invalidate = blocking_invalidation(&app);
         if let MoveOutcome::Moved(root, moved_members) =
             move_members(&app, &w, &cat, None, Some(&session), &members, target, &principal).await?
         {
