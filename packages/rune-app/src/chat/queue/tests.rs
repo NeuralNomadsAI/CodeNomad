@@ -363,6 +363,7 @@ fn displaced_authoritative_sync_preserves_detached_anchor_and_deduplicates_pendi
                 ),
             ],
             authoritative: true,
+            fence: None,
         })
         .unwrap();
     rt.update(|s, tx| {
@@ -473,6 +474,7 @@ fn edit_preserves_prompt_in_recovery_slot_when_draft_changes_or_tab_suspends() {
             .try_send(Event::Inbox {
                 items: vec![queued("q2", Delivery::Queue, "Second queued")],
                 authoritative: true,
+                fence: None,
             })
             .unwrap();
         rt.update(|s, _| {
@@ -522,7 +524,7 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
         let image_ref = crate::content::Reference {
             message: "q-att".into(),
             ordinal: 0,
-            sha256: "abc123".into(),
+            sha256: "a".repeat(64),
         };
         let attachment_item = QueuedPrompt {
             id: "q-att".into(),
@@ -545,7 +547,12 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
         );
         let mut rt = runtime(s);
 
-        // Deferred queued image renders as a metadata-only chip without firing HTTP attachment fetch.
+        // Deferred queued image renders as a metadata-only chip without an image view or HTTP fetch.
+        assert!(rt.find("f1").is_some(), "metadata chip must render");
+        assert!(
+            rt.find("f1-image").is_none(),
+            "deferred queued image must not mount an image view"
+        );
         rt.update(|s, _| {
             let _ = s.transcript_display.pictures.poll(&s.reads, &s.wake);
         });
@@ -599,6 +606,7 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
             .try_send(Event::Inbox {
                 items: vec![attachment_item],
                 authoritative: false,
+                fence: None,
             })
             .unwrap();
         rt.update(|s, _| {
@@ -615,11 +623,39 @@ fn non_editable_attachment_prompt_disables_edit_and_omits_download_and_committed
             "cached queue actions must remain inert until authoritative GET settles"
         );
 
-        // Authoritative empty Event::Inbox clears cached rows and stale error.
+        // An authoritative Event::Inbox whose fence was invalidated while queued must also be rejected.
+        let inbox_rev = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2));
         ev_tx
             .try_send(Event::Inbox {
                 items: Vec::new(),
                 authoritative: true,
+                fence: Some(codenomad_client::inbox::InboxFence::from_revision(
+                    inbox_rev.clone(),
+                    1,
+                )),
+            })
+            .unwrap();
+        rt.update(|s, _| {
+            let _ = crate::chat::events::poll_chat(s, 4);
+        });
+        settle(&mut rt);
+        assert!(
+            rt.state.transcript_display.queue.is_stale(),
+            "queued authoritative snapshot invalidated by wire revision must be rejected"
+        );
+        assert!(
+            !rt.state.transcript_display.queue.items().is_empty(),
+            "rejected invalidated snapshot must not mutate cached queue"
+        );
+
+        // Authoritative empty Event::Inbox with current fence clears cached rows and stale error.
+        ev_tx
+            .try_send(Event::Inbox {
+                items: Vec::new(),
+                authoritative: true,
+                fence: Some(codenomad_client::inbox::InboxFence::from_revision(
+                    inbox_rev, 2,
+                )),
             })
             .unwrap();
         rt.update(|s, _| {

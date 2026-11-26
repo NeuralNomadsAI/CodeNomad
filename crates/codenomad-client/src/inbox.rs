@@ -7,7 +7,31 @@ use crate::{
     prompt::Delivery,
 };
 use serde_json::{Value, json};
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering::SeqCst},
+    },
+    time::Duration,
+};
+
+/// Live invalidation fence carried by authoritative [`crate::transport::Event::Inbox`] snapshots.
+#[derive(Clone, Debug)]
+pub struct InboxFence {
+    current: Arc<AtomicU64>,
+    captured: u64,
+}
+
+impl InboxFence {
+    pub fn from_revision(current: Arc<AtomicU64>, captured: u64) -> Self {
+        Self { current, captured }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.current.load(SeqCst) == self.captured
+    }
+}
 
 const DEADLINE: Duration = Duration::from_secs(15);
 pub const MAX_ITEMS: usize = 256;

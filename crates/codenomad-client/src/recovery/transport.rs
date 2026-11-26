@@ -96,6 +96,7 @@ pub(crate) async fn run_with_reading(
     let mut attempts = 0u32;
     let mut reader = Reader::new();
     let (inbox_tx, inbox_rx) = crate::bounded::<InboxReply>(8);
+    let mut rx_burst = 0u8;
     loop {
         reader.demand(reading);
         let deadline = [
@@ -106,11 +107,23 @@ pub(crate) async fn run_with_reading(
         .into_iter()
         .flatten()
         .min();
-        let (input, inbox_reply) = if let Ok(input) = rx.try_recv() {
+        let (input, inbox_reply) = if rx_burst >= 8
+            && let Ok(reply) = inbox_rx.try_recv()
+        {
+            rx_burst = 0;
+            (None, Some(reply))
+        } else if let Ok(input) = rx.try_recv() {
+            if !inbox_rx.is_empty() {
+                rx_burst = rx_burst.saturating_add(1);
+            } else {
+                rx_burst = 0;
+            }
             (Some(input), None)
         } else if let Ok(reply) = inbox_rx.try_recv() {
+            rx_burst = 0;
             (None, Some(reply))
         } else {
+            rx_burst = 0;
             futures_lite::future::or(
                 async {
                     (
@@ -238,6 +251,7 @@ pub(crate) async fn run_with_reading(
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
+                wire.inbox_version.fetch_add(1, SeqCst);
                 reader.inbox_published = false;
                 reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {
@@ -450,6 +464,7 @@ pub(crate) async fn run_with_reading(
                                             Event::Inbox {
                                                 items: reader.inbox.clone(),
                                                 authoritative: false,
+                                                fence: None,
                                             },
                                         )
                                         .await;
@@ -483,6 +498,7 @@ pub(crate) async fn run_with_reading(
                                         Event::Inbox {
                                             items: reader.inbox.clone(),
                                             authoritative: false,
+                                            fence: None,
                                         },
                                     )
                                     .await;
@@ -502,6 +518,7 @@ pub(crate) async fn run_with_reading(
                                             Event::Inbox {
                                                 items: reader.inbox.clone(),
                                                 authoritative: false,
+                                                fence: None,
                                             },
                                         )
                                         .await;
@@ -527,6 +544,7 @@ pub(crate) async fn run_with_reading(
                                             Event::Inbox {
                                                 items: reader.inbox.clone(),
                                                 authoritative: false,
+                                                fence: None,
                                             },
                                         )
                                         .await;

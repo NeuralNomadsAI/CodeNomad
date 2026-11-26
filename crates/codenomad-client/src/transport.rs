@@ -154,6 +154,7 @@ pub enum Event {
     Inbox {
         items: Vec<crate::inbox::QueuedPrompt>,
         authoritative: bool,
+        fence: Option<crate::inbox::InboxFence>,
     },
     InboxFailed,
     PromptAcknowledged {

@@ -514,6 +514,7 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
                 Event::Inbox {
                     items,
                     authoritative: true,
+                    ..
                 } => {
                     initial_inbox = items;
                 }
@@ -548,6 +549,7 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
             if let Event::Inbox {
                 items,
                 authoritative: true,
+                ..
             } = event
             {
                 let ids: Vec<_> = items.iter().map(|i| (i.id.clone(), i.delivery)).collect();
@@ -624,6 +626,7 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
                 Event::Inbox {
                     items,
                     authoritative: true,
+                    ..
                 } if items.is_empty() => {
                     reconnected_inbox.clear();
                 }
@@ -828,7 +831,8 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.len() == 1 && items[0].id == "q1"
                 )
         })
@@ -894,6 +898,7 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
                 && let Event::Inbox {
                     items,
                     authoritative: true,
+                    ..
                 } = event
             {
                 assert!(
@@ -924,7 +929,8 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.is_empty()
                 )
         })
@@ -974,7 +980,8 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.len() == 1 && items[0].id == "q2"
                 )
         })
@@ -1009,7 +1016,8 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
                         event,
                         Event::Inbox {
                             items,
-                            authoritative: true
+                            authoritative: true,
+                            ..
                         } if items.len() == 1 && items[0].id == "q2"
                     )
             })
@@ -1081,7 +1089,8 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.len() == 1 && items[0].id == "q1"
                 )
         })
@@ -1105,7 +1114,8 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.len() == 1 && items[0].id == "q1"
                 )
         })
@@ -1119,7 +1129,8 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: true
+                        authoritative: true,
+                        ..
                     } if items.len() == 1 && items[0].id == "q1"
                 )
         })
@@ -1156,7 +1167,8 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                     event,
                     Event::Inbox {
                         items,
-                        authoritative: false
+                        authoritative: false,
+                        ..
                     } if items.is_empty()
                 )
         })
@@ -1169,6 +1181,7 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                 && let Event::Inbox {
                     items,
                     authoritative,
+                    ..
                 } = event
             {
                 assert!(
@@ -1178,6 +1191,84 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
                 return authoritative;
             }
             false
+        })
+        .await;
+
+        let _ = cmd_tx.send(Command::Close).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    });
+}
+
+#[test]
+fn unrelated_sse_text_burst_does_not_starve_completed_inbox_read() {
+    run(async {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let mut initial = FixtureState::new(
+            vec![user_json("u1", "start"), assistant_json("a1", "hi", false)],
+            vec![inbox_json("q-burst", "queue", "ready under burst")],
+        );
+        initial.hold_inbox = Some((entered.clone(), release.clone()));
+        let server = LoopbackServer::start(initial);
+        let backend = server.backend();
+        let (out_tx, _out_rx) = bounded(64);
+        let (cmd_tx, cmd_rx) = bounded(16);
+        let (demand_tx, demand_rx) = demand::open();
+        let gen1 = demand_tx.publish(Some(demand::Target::Latest));
+        let (reader_tx, reader_rx) = bounded(128);
+        let reading = ReadingLane {
+            demand: demand_rx,
+            events: reader_tx,
+            connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let wake: crate::Wake = Arc::new(|| {});
+        let task = tokio::spawn(recovery::run_with_reading(
+            backend,
+            out_tx,
+            cmd_rx,
+            wake,
+            Some(reading),
+        ));
+
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1 && matches!(event, Event::ReaderSync { .. })
+        })
+        .await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !entered.load(SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("held GET /inbox must start");
+
+        // Enqueue a burst of 24 unrelated text deltas while releasing the completed inbox read.
+        {
+            let mut st = server.state.lock().unwrap();
+            for i in 0..24 {
+                st.emit_native(json!({
+                    "type": "session.text.delta",
+                    "data": {
+                        "sessionID": "ses",
+                        "assistantMessageID": "a1",
+                        "ordinal": 0,
+                        "delta": format!(" c{i}")
+                    }
+                }));
+            }
+        }
+        release.store(true, SeqCst);
+
+        recv_reader(&reader_rx, |seen_gen, event| {
+            seen_gen == gen1
+                && matches!(
+                    event,
+                    Event::Inbox {
+                        items,
+                        authoritative: true,
+                        fence: Some(ref fence),
+                    } if items.len() == 1 && items[0].id == "q-burst" && fence.is_valid()
+                )
         })
         .await;
 

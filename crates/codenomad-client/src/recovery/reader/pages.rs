@@ -90,6 +90,7 @@ impl Reader {
                                     Event::Inbox {
                                         items: self.inbox.clone(),
                                         authoritative: false,
+                                        fence: None,
                                     },
                                 )
                                 .await;
@@ -195,6 +196,7 @@ impl Reader {
                     Event::Inbox {
                         items: self.inbox.clone(),
                         authoritative: false,
+                        fence: None,
                     },
                 )
                 .await;

@@ -37,7 +37,7 @@ pub struct State {
     pub running: AtomicBool,
     pub upstream: AtomicBool,
     pub(crate) history_revision: AtomicU64,
-    pub(crate) inbox_version: AtomicU64,
+    pub(crate) inbox_version: Arc<AtomicU64>,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
     open_stream: std::sync::OnceLock<(Arc<std::sync::atomic::AtomicUsize>, Arc<AtomicBool>)>,
@@ -59,7 +59,7 @@ impl Default for State {
             running: AtomicBool::new(false),
             upstream: AtomicBool::new(false),
             history_revision: AtomicU64::new(0),
-            inbox_version: AtomicU64::new(0),
+            inbox_version: Arc::new(AtomicU64::new(0)),
             preferences: None,
             preferences_notices: std::sync::OnceLock::new(),
             open_stream: std::sync::OnceLock::new(),
@@ -119,6 +119,7 @@ impl State {
 
     pub fn cancel(&self) {
         self.cancelled.store(true, SeqCst);
+        self.inbox_version.fetch_add(1, SeqCst);
         self.cancel_signal.0.close();
     }
 
@@ -156,11 +157,13 @@ impl State {
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
+        self.inbox_version.fetch_add(1, SeqCst);
         self.closed.0.close();
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_placement(&self) {
+        self.inbox_version.fetch_add(1, SeqCst);
         if let Some((cancel, _)) = &self.placement {
             cancel.close();
         }
@@ -225,6 +228,7 @@ impl Drop for RunGuard {
         self.0.alive.store(false, SeqCst);
         self.0.closed.0.close();
         self.0.version.fetch_add(1, SeqCst);
+        self.0.inbox_version.fetch_add(1, SeqCst);
         self.0.running.store(false, SeqCst);
         self.0.stopped.0.close();
     }

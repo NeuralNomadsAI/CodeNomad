@@ -498,6 +498,7 @@ impl Reader {
                             Event::Inbox {
                                 items: self.inbox.clone(),
                                 authoritative: false,
+                                fence: None,
                             },
                         )
                         .await
@@ -671,6 +672,10 @@ impl Reader {
                 if !self.inbox_published || self.inbox != items {
                     self.inbox_published = true;
                     self.inbox = items;
+                    let fence = crate::inbox::InboxFence::from_revision(
+                        wire.inbox_version.clone(),
+                        wire_inbox,
+                    );
                     if !reader_event(
                         reading,
                         self.generation,
@@ -679,11 +684,17 @@ impl Reader {
                         Event::Inbox {
                             items: self.inbox.clone(),
                             authoritative: true,
+                            fence: Some(fence),
                         },
                     )
                     .await
                     {
                         return Ok(Turn::Stop);
+                    }
+                    if wire.inbox_version.load(SeqCst) != wire_inbox {
+                        self.inbox_published = false;
+                        self.inbox_dirty = self.active_reader;
+                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
                     }
                 }
             }
@@ -695,6 +706,10 @@ impl Reader {
                 if !self.inbox_published || !self.inbox.is_empty() {
                     self.inbox_published = true;
                     self.inbox.clear();
+                    let fence = crate::inbox::InboxFence::from_revision(
+                        wire.inbox_version.clone(),
+                        wire_inbox,
+                    );
                     if !reader_event(
                         reading,
                         self.generation,
@@ -703,11 +718,18 @@ impl Reader {
                         Event::Inbox {
                             items: Vec::new(),
                             authoritative: true,
+                            fence: Some(fence),
                         },
                     )
                     .await
                     {
                         return Ok(Turn::Stop);
+                    }
+                    if wire.inbox_version.load(SeqCst) != wire_inbox {
+                        self.inbox_supported = true;
+                        self.inbox_published = false;
+                        self.inbox_dirty = self.active_reader;
+                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
                     }
                 }
             }
@@ -1020,6 +1042,122 @@ mod diagnostic_tests {
                 futures_lite::future::poll_once(&mut fut).await,
                 Some(Some(Err(PageFailure::StreamClosed)))
             ));
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wire_inbox_fence_rejects_in_flight_and_blocked_publication_invalidation() {
+        use super::{InboxReply, Lane, Reader, ReadingLane, demand};
+        use crate::{
+            backend::Backend, bounded, inbox::QueuedPrompt, prompt::Delivery, stream,
+            transport::Event,
+        };
+        use std::{
+            sync::{Arc, atomic::Ordering::SeqCst},
+            time::Duration,
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let (out_tx, _out_rx) = bounded(4);
+            let (_in_tx, in_rx) = bounded(4);
+            let (_demand_tx, demand_rx) = demand::open();
+            let (reader_tx, reader_rx) = bounded(1);
+            let reading = ReadingLane {
+                demand: demand_rx,
+                events: reader_tx.clone(),
+                connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            };
+            let wake: crate::Wake = Arc::new(|| {});
+            let wire = Arc::new(stream::State::default());
+            let mut reader = Reader::new();
+            let lane = Lane {
+                backend: &backend,
+                reading: Some(&reading),
+                rx: &in_rx,
+                wire: &wire,
+                out: &out_tx,
+                wake: &wake,
+            };
+            let stale_item = QueuedPrompt {
+                id: "q-stale".into(),
+                delivery: Delivery::Queue,
+                text: "stale".into(),
+                parts: vec![],
+                created: Some(1),
+                editable: true,
+            };
+
+            // 1. Reader seq still matches, but SSE ingress already bumped wire.inbox_version -> rejected.
+            let captured = wire.inbox_version.load(SeqCst);
+            wire.inbox_version.fetch_add(1, SeqCst);
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        wire_inbox: captured,
+                        result: Ok(Some(vec![stale_item.clone()])),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(reader_rx.is_empty());
+            assert!(reader.inbox_dirty && !reader.inbox_published);
+
+            // 2. Reader channel is full while finish_inbox_read awaits send; SSE bumps wire.inbox_version
+            // before the slot drains -> emitted Event::Inbox carries an invalidated fence and reader reschedules.
+            reader_tx.send((0, 0, Event::Done)).await.unwrap();
+            let captured2 = wire.inbox_version.load(SeqCst);
+            let wire_for_bump = wire.clone();
+            let rx_for_drain = reader_rx.clone();
+            let unblocker = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                wire_for_bump.inbox_version.fetch_add(1, SeqCst);
+                let first = rx_for_drain.recv().await.unwrap();
+                assert!(matches!(first.2, Event::Done));
+                rx_for_drain.recv().await.unwrap()
+            });
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        wire_inbox: captured2,
+                        result: Ok(Some(vec![stale_item])),
+                    },
+                )
+                .await
+                .unwrap();
+            let (_, _, queued_event) = tokio::time::timeout(Duration::from_secs(2), unblocker)
+                .await
+                .expect("blocked inbox publication unblocked")
+                .unwrap();
+            match queued_event {
+                Event::Inbox {
+                    authoritative: true,
+                    fence: Some(fence),
+                    ..
+                } => assert!(
+                    !fence.is_valid(),
+                    "snapshot invalidated while blocked on full channel must report invalid fence"
+                ),
+                other => panic!("expected fenced authoritative Event::Inbox, got {other:?}"),
+            }
+            assert!(
+                reader.inbox_dirty && !reader.inbox_published,
+                "invalidated publication must schedule a replacement inbox GET"
+            );
         });
     }
 }
