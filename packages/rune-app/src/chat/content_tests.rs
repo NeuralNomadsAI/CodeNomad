@@ -798,3 +798,235 @@ fn prose_keeps_literal_html_line_breaks_and_copies_undisplayed_source() {
         Some(source.as_str())
     );
 }
+
+#[test]
+fn split_diff_wraps_long_lines_aligns_columns_and_preserves_wrap_across_mode_switches() {
+    let long_left =
+        "let wrapped_token = compute_side_by_side_alignment(alpha, beta, gamma); ".repeat(4);
+    let patch = format!(
+        "--- a/src/align.rs\n+++ b/src/align.rs\n@@ -1,2 +1,2 @@\n-short_old();\n-{long_left}\n+short_new();\n+short_right();"
+    );
+    let row = history::decode_message(&json!({
+        "id": "splitwrap",
+        "type": "assistant",
+        "time": {"completed": 1},
+        "content": [{
+            "type": "tool",
+            "name": "edit",
+            "id": "edit",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "src/align.rs"},
+                "metadata": {"files": [{"file": "src/align.rs", "patch": patch}]}
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![row.into()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (960.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..16 {
+        rt.frame(1.0 / 60.0);
+    }
+    let find_el = |rt: &Runtime<State>, suffix: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|e| !e.exiting && e.path.ends_with(suffix))
+    };
+    fn find_a11y<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+        if node.get("key").and_then(|value| value.as_str()) == Some(key) {
+            return Some(node);
+        }
+        node.get("children")?
+            .as_array()?
+            .iter()
+            .find_map(|child| find_a11y(child, key))
+    }
+    let a11y_state = |rt: &Runtime<State>, key: &str| -> (String, bool, Option<bool>) {
+        let tree = rt.accessibility_json();
+        let node = find_a11y(&tree, key).unwrap();
+        let name = node["name"].as_str().unwrap().to_owned();
+        let has = |state: &str| {
+            node.get("states")
+                .and_then(|s| s.as_array())
+                .is_some_and(|states| states.iter().any(|s| s.as_str() == Some(state)))
+        };
+        let checked = if has("checked") {
+            Some(true)
+        } else if has("unchecked") {
+            Some(false)
+        } else {
+            None
+        };
+        (name, has("disabled"), checked)
+    };
+    let click = |rt: &mut Runtime<State>, key: &str| {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+    };
+    // Wide viewport defaults to Split with wrap active and disabled (Rune #1407).
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-mode"),
+        ("Switch to unified view".into(), false, Some(true))
+    );
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
+        ("Disable word wrap".into(), true, Some(true))
+    );
+    let short_old = find_el(&rt, "/df0.o1/old").unwrap();
+    let short_new = find_el(&rt, "/df0.o1/new").unwrap();
+    let long_old = find_el(&rt, "/df0.o2/old").unwrap();
+    let long_new = find_el(&rt, "/df0.o2/new").unwrap();
+    assert!(short_old.rect[0] + short_old.rect[2] <= short_new.rect[0] + 2.0);
+    assert!((long_old.rect[1] - long_new.rect[1]).abs() < 1.0);
+    assert!((long_old.rect[3] - long_new.rect[3]).abs() < 1.0);
+    assert!(
+        long_old.rect[3] > short_old.rect[3] + 4.0,
+        "long split row must wrap taller than a single-line row: long={} short={}",
+        long_old.rect[3],
+        short_old.rect[3]
+    );
+    // Selecting and copying text from a wrapped split diff copies plain text cleanly.
+    let new_text = find_el(&rt, "/df0.o2/new/code/text").unwrap();
+    let new_text_path = new_text.path.clone();
+    rt.update(|_, tx| tx.select_all_text(&new_text_path));
+    rt.frame(0.0);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Command('c'),
+        mods: rune::Mods {
+            cmd: true,
+            ctrl: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("short_right();")
+    );
+    // Copy patch preserves the complete raw patch verbatim.
+    let (x, y) = rt.find("tool-splitwrap:4:edit-copy-patch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(patch.as_str())
+    );
+    // Switch to Unified -> disable wrap -> switch back to Split -> return to Unified.
+    click(&mut rt, "tool-splitwrap:4:edit-mode");
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
+        ("Disable word wrap".into(), false, Some(true))
+    );
+    let wrapped_unified_h = find_el(&rt, "/df0.o2").unwrap().rect[3];
+    click(&mut rt, "tool-splitwrap:4:edit-wrap");
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
+        ("Enable word wrap".into(), false, Some(false))
+    );
+    let unwrapped_unified_h = find_el(&rt, "/df0.o2").unwrap().rect[3];
+    assert!(
+        wrapped_unified_h > unwrapped_unified_h + 4.0,
+        "unwrapping unified mode must collapse the wrapped line: wrapped={wrapped_unified_h} unwrapped={unwrapped_unified_h}"
+    );
+    click(&mut rt, "tool-splitwrap:4:edit-mode");
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
+        ("Disable word wrap".into(), true, Some(true))
+    );
+    click(&mut rt, "tool-splitwrap:4:edit-mode");
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
+        ("Enable word wrap".into(), false, Some(false))
+    );
+    // Compact viewport defaults to Unified; local Split wraps within the narrow width.
+    rt.set_viewport((500.0, 900.0), 1.0);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        a11y_state(&rt, "tool-splitwrap:4:edit-mode").0,
+        "Switch to split view"
+    );
+    click(&mut rt, "tool-splitwrap:4:edit-mode");
+    let narrow_old = find_el(&rt, "/df0.o2/old").unwrap();
+    let narrow_new = find_el(&rt, "/df0.o2/new").unwrap();
+    assert!(narrow_old.rect[0] + narrow_old.rect[2] <= narrow_new.rect[0] + 2.0);
+    assert!(narrow_new.rect[0] + narrow_new.rect[2] <= 500.5);
+    assert!((narrow_old.rect[3] - narrow_new.rect[3]).abs() < 1.0);
+}
+
+#[test]
+fn shell_dense_ansi_respects_display_bounds_and_copies_raw_native_output() {
+    let dense = format!(
+        "{}\u{1b}[38;5;46;1;3;4;9;53mÉCHEC🦀\u{1b}[0m \u{1b}[38;2;12;34;56;2mDIM\u{1b}[0m \u{1b}[31;44;7mINV\u{1b}[0m\n{}ANSI_TAIL_OUTSIDE_WINDOW",
+        "\u{1b}[31mA\u{1b}[32mB".repeat(600),
+        "x".repeat(12_000)
+    );
+    let row = history::decode_message(&json!({
+        "id": "ansibound",
+        "type": "assistant",
+        "time": {"completed": 1},
+        "content": [{
+            "type": "tool",
+            "id": "sh",
+            "name": "bash",
+            "state": {
+                "status": "completed",
+                "input": {"command": "printf dense"},
+                "content": [{"type": "text", "text": dense}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![row.into()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (960.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    if rt.find("copy-tool-ansibound:2:sh-output").is_none()
+        || !rt.accessibility_json().to_string().contains("ÉCHEC🦀")
+    {
+        if let Some((x, y)) = rt.find("toggle-tool-ansibound:2:sh") {
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            for _ in 0..4 {
+                rt.frame(1.0 / 60.0);
+            }
+        }
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("ÉCHEC🦀") && tree.contains("DIM") && tree.contains("INV"));
+    assert!(!tree.contains("\\u001b["));
+    assert!(!tree.contains("ANSI_TAIL_OUTSIDE_WINDOW"));
+    let (x, y) = rt.find("copy-tool-ansibound:2:sh-output").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(format!("$ printf dense\n{dense}").as_str())
+    );
+}
