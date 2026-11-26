@@ -1176,7 +1176,7 @@ async fn remote_control_origin_csrf_method_and_local_auth_guards() {
 #[test]
 fn meta_declares_websearch_and_image_settings_capabilities() {
     let dir = TempDir::new("cn-meta-caps");
-    let doc = crate::meta::document(Uuid::new_v4(), 3000, &dir.0, None, json!({})).unwrap();
+    let doc = crate::meta::document(Some(Uuid::new_v4()), 3000, &dir.0, None, json!({})).unwrap();
     let caps: Vec<&str> = doc["capabilities"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert!(caps.contains(&"websearch-settings"));
     assert!(caps.contains(&"image-settings"));

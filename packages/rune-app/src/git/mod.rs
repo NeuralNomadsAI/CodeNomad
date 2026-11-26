@@ -98,6 +98,45 @@ struct History {
 }
 
 impl History {
+    fn retained_bytes(&self) -> usize {
+        let page = self.page.as_ref().map_or(0, |page| {
+            page.commits.iter().fold(0usize, |total, commit| {
+                total
+                    .saturating_add(commit.id.len())
+                    .saturating_add(commit.subject.len())
+                    .saturating_add(commit.author.len())
+                    .saturating_add(commit.date.len())
+                    .saturating_add(commit.refs.len())
+            })
+        });
+        let details = self.details.as_ref().map_or(0, |details| {
+            details
+                .id
+                .len()
+                .saturating_add(details.message.len())
+                .saturating_add(details.files.iter().fold(0usize, |total, file| {
+                    total
+                        .saturating_add(file.path.len())
+                        .saturating_add(file.original_path.as_deref().map_or(0, str::len))
+                        .saturating_add(file.kind.len())
+                }))
+        });
+        let dates = self
+            .dates
+            .borrow()
+            .as_ref()
+            .map_or(0, |(_, list)| list.iter().map(String::len).sum());
+        page.saturating_add(details).saturating_add(dates)
+    }
+
+    fn evict_cached(&mut self) -> usize {
+        let before = self.retained_bytes();
+        self.page = None;
+        self.details = None;
+        self.dates.borrow_mut().take();
+        before
+    }
+
     fn dates(&self, locale: &'static str) -> std::cell::Ref<'_, [String]> {
         let mut cache = self.dates.borrow_mut();
         if cache.as_ref().is_none_or(|(cached, _)| *cached != locale) {
@@ -321,6 +360,42 @@ impl Ui {
 
     pub(crate) fn mode(&self) -> Mode {
         self.mode
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.reader
+            .retained_bytes()
+            .saturating_add(self.history.retained_bytes())
+    }
+
+    pub(crate) fn draft_bytes(&self) -> usize {
+        self.changes.draft.text.len()
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        let mut freed = self.reader.retained_bytes();
+        if freed > 0 {
+            self.reader.clear();
+            if self.preview.is_some() {
+                self.dirty(&[Lane::Preview]);
+            }
+        }
+        let history_freed = self.history.evict_cached();
+        if history_freed > 0 {
+            self.dirty(&[Lane::History, Lane::Details]);
+            freed = freed.saturating_add(history_freed);
+        }
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_load_diff(&mut self, path: &str, before: String, after: String) {
+        let _ = self.reader.replace(
+            codenomad_client::git::Diff::Text { before, after },
+            path,
+            false,
+            &self.images,
+        );
     }
     pub(crate) fn set_mode(&mut self, mode: Mode) {
         if self.mode != mode {

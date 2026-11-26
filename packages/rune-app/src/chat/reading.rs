@@ -168,6 +168,10 @@ impl Reading {
         self.scroll_state.get().seq
     }
 
+    pub(super) fn pending_scroll_commit(&self) -> bool {
+        self.scroll_state.get().pending_scroll_commit
+    }
+
     pub(super) fn has_pending_restore_probe(&self) -> bool {
         self.frame_restore.as_ref().is_some_and(|fr| {
             !fr.handled && fr.probe_live && matches!(fr.checked.get(), None | Some(Some(_)))
@@ -291,7 +295,7 @@ impl Reading {
         self.scroll_state.set(cur);
     }
 
-    fn note_pending_manual_scroll(&self) {
+    pub(crate) fn note_pending_manual_scroll(&self) {
         let mut cur = self.scroll_state.get();
         cur.manual_seq += 1;
         cur.ignore_remount_bottom = false;

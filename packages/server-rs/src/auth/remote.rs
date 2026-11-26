@@ -26,7 +26,8 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/workspaces/[^/]+/(?:git-init|worktrees/[^/]+/git-(?:stage|unstage|commit))$"),
     ("POST",r"^/api/workspaces/[^/]+/(?:worktrees|sessions/[^/]+/worktree)$"),
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
-    ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
+    // `instance/api` delegates route and ownership enforcement to `opencode::proxy::relay`.
+    ("GET POST PUT PATCH DELETE",r"^/workspaces/[^/]+/instance/api/.+$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
@@ -53,9 +54,6 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
     ("GET",r"^/api/panel-extensions/[^/]+/panel$"),
-    ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/(?:inbox|permission|form|message(?:/[^/]+)?))?)?|experimental/session/[^/]+/log)$"),
-    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|command|agent|model|interrupt|background))?$"),
-    ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/(?:websearch-settings|image-settings|subagent-depth)$"),
     ("GET POST",r"^/api/sidecars$"),
     ("POST",r"^/api/previews$"),
@@ -63,9 +61,6 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET",r"^/api/usage/[^/]+$"),
     ("PUT DELETE",r"^/api/sidecars/[^/]+$"),
     ("GET",r"^/api/workspaces/[^/]+/service-usage(?:/(?:owner|cache))?$"),
-    // `isMemoryRelayRoute`: browser devices only (`memory::routes` refuses server devices).
-    ("POST",r"^/api/memory$"),
-    ("GET PUT",r"^/api/memory/settings$"),
 ].into_iter().map(|(method,path)|(method,Regex::new(path).unwrap())).collect()
 });
 
@@ -235,22 +230,19 @@ pub async fn admit(
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if server && (!direct || browser_metadata(h)) {
-        return cors(
-            reply(if channel.ingress { Status::FORBIDDEN } else { Status::UNAUTHORIZED }, "This device is not paired"),
-            None,
-        );
+    if !channel.ingress && server && (!direct || browser_metadata(h)) {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), None);
     }
     let method = req.method().clone();
     let ui = bundle
         .as_ref()
         .filter(|_| !server && direct)
         .and_then(|bundle| bundle.path(&method, &path).map(|asset| (bundle, asset)));
-    let form_reply = !server
-        && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
-            !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
-        });
-    let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
+    let has_server_header = h.contains_key("x-codenomad-server-request");
+    let memory_path = path == "/api/memory" || path.starts_with("/api/memory/");
+    let memory_route = memory_relay_route(&path, &method);
+    // Direct HTTPS server-device catalog retains authenticated memory relay; ingress stays closed.
+    let server_memory = server && !channel.ingress && memory_route;
     let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
@@ -277,30 +269,6 @@ pub async fn admit(
         }
         return cors(next.run(req).await, supplied);
     }
-    if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
-        || (path.starts_with("/api/backends/") && !backend_ui)
-        // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
-        || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
-        || path == "/api/remote-control"
-        || path.starts_with("/api/push/")
-    {
-        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
-    }
-    if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
-        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
-    }
-    if !entry
-        && !backend_ui
-        && !form_reply
-        && !remote_logout
-        && ui.is_none()
-        && !CATALOG.iter().any(|(methods, pat)| {
-            methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
-                && pat.is_match(&path)
-        })
-    {
-        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
-    }
     let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
@@ -312,6 +280,45 @@ pub async fn admit(
             tunnel_active,
         )
     });
+    let server_authenticated = server && !browser_metadata(h) && owner.is_some();
+    // Direct HTTPS server-device requests authenticate before origin/catalog checks
+    // (TS `gate.ts:133-138`); ingress unauthenticated mutations fail origin check with 403
+    // even when `x-codenomad-server-request: 1` is sent (`gate.ts:177-183`).
+    if !channel.ingress && server && owner.is_none() {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
+    if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok && !server_authenticated {
+        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
+    }
+    if !channel.ingress && owner.is_none() && memory_path {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
+    let multi_backend = !has_server_header && owner.is_some() && crate::previews::backend::enabled(&app);
+    let preview_ui = multi_backend && preview_control(&path, &method);
+    let memory_ui = multi_backend && memory_route;
+    if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
+        || (path.starts_with("/api/backends/") && !preview_ui)
+        || (memory_path && !memory_ui && !server_memory)
+        // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
+        || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
+        || path == "/api/remote-control"
+        || path.starts_with("/api/push/")
+    {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
+    if !entry
+        && !preview_ui
+        && !memory_ui
+        && !server_memory
+        && !remote_logout
+        && ui.is_none()
+        && !CATALOG.iter().any(|(methods, pat)| {
+            methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
+                && pat.is_match(&path)
+        })
+    {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
     }
@@ -372,7 +379,7 @@ pub async fn admit(
         return cors(status(!principal.is_cancelled()), supplied);
     }
     for name in super::AUTHORITY_HEADERS {
-        if !backend_ui || name != crate::previews::backend::PROOF {
+        if !preview_ui || name != crate::previews::backend::PROOF {
             req.headers_mut().remove(name);
         }
     }
@@ -398,6 +405,11 @@ pub async fn admit(
     cors(Response::from_parts(parts, body), supplied)
 }
 
+fn memory_relay_route(path: &str, method: &Method) -> bool {
+    (path == "/api/memory" && *method == Method::POST)
+        || (path == "/api/memory/settings" && matches!(*method, Method::GET | Method::HEAD | Method::PUT))
+}
+
 fn preview_control(path: &str, method: &Method) -> bool {
     let Some((id, route)) = path.strip_prefix("/api/backends/").and_then(|p| p.split_once('/')) else {
         return false;
@@ -412,6 +424,10 @@ fn preview_control(path: &str, method: &Method) -> bool {
             _ => false,
         }
 }
+
+#[cfg(test)]
+#[path = "remote_tests.rs"]
+mod remote_tests;
 
 #[cfg(test)]
 mod tests {
