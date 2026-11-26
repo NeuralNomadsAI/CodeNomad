@@ -7,14 +7,24 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true)
+    drain_chat(s, limit, true, true, false)
 }
 
 pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
-    drain_chat(s, limit, false, !active_has_stream)
+    drain_chat(s, limit, false, !active_has_stream, false)
 }
 
-fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: bool) -> bool {
+pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_sync: bool) -> bool {
+    drain_chat(s, limit, true, true, defer_reader_sync)
+}
+
+fn drain_chat(
+    s: &mut State,
+    limit: usize,
+    visible: bool,
+    affects_preferences: bool,
+    defer_reader_sync: bool,
+) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -35,7 +45,15 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
     for _ in 0..limit {
         let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
         let content = observation.is_none();
-        let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(defer_reader_sync, reading, history_bounds, cached_gap)
+            })
+        });
         let Some(event) = event else { break };
         crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
@@ -242,14 +260,75 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.conversation_stream_connected = true;
                 settings::invalidate(s, owner);
             }
-            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+            event @ (Event::Sync(_) | Event::ReaderSync { .. }) => {
+                let (page, reader_version) = match event {
+                    Event::Sync(page) => (page, None),
+                    Event::ReaderSync { page, version } => (page, Some(version)),
+                    _ => continue,
+                };
                 s.conversation_stream_connected = true;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
                 }
-                chat::reader::reconcile_bookmark(s, &page.rows);
+                if chat::reader::reconcile_bookmark(s, &page) {
+                    s.revision += 1;
+                    changed = true;
+                    continue;
+                }
+                let sync_undo = if let Some(version) = reader_version
+                    && !s.messages.is_empty()
+                    && s.reader
+                        .as_ref()
+                        .is_some_and(chat::reader::Reader::is_resuming)
+                {
+                    let trimmed_older = page.older.is_some()
+                        && s.messages
+                            .first()
+                            .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
+                    let trimmed_newer = page.newer.is_some()
+                        && s.messages
+                            .last()
+                            .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
+                    (trimmed_older || trimmed_newer).then(|| {
+                        (
+                            version,
+                            page.clone(),
+                            std::mem::take(&mut s.messages),
+                            s.can_older,
+                            s.history_detached,
+                            s.phase,
+                            trimmed_older,
+                            trimmed_newer,
+                        )
+                    })
+                } else {
+                    None
+                };
                 if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                    if let Some((
+                        version,
+                        page_copy,
+                        prev_rows,
+                        prev_can_older,
+                        prev_detached,
+                        prev_phase,
+                        trimmed_older,
+                        trimmed_newer,
+                    )) = sync_undo
+                    {
+                        reader.save_sync_undo(
+                            page_copy,
+                            version,
+                            prev_rows,
+                            prev_can_older,
+                            prev_detached,
+                            prev_phase,
+                            trimmed_older,
+                            trimmed_newer,
+                        );
+                    }
                     reader.install(page.newer.is_some());
                     reader.sync_activity(stale_activity);
                 }
@@ -422,6 +501,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 s.composer.clear_optimistic(None);
                 s.transcript_display.tool_clock.resume();
                 s.conversation_stream_connected = true;
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
                 s.messages = messages;
                 composer::reconcile(s);
                 s.phase = Phase::Ready;
@@ -429,6 +511,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             }
             Event::Message(m) => {
                 s.composer.clear_optimistic(Some(&m.id));
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
                 if let Some(existing) = s.messages.iter_mut().find(|existing| existing.id == m.id) {
                     *existing = m.into();
                 } else {
@@ -443,7 +528,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::Text(id, event) => {
+                let mut touched = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
                         && m.parts
                             .iter()
@@ -461,8 +548,16 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                         crate::timeline::structure_changed(s);
                     }
                 }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
             }
             Event::Reasoning(id, event) => {
+                if s.messages.iter().any(|m| m.id == id)
+                    && let Some(reader) = &mut s.reader
+                {
+                    reader.clear_sync_undo();
+                }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
                 if changed {
@@ -470,15 +565,21 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 }
             }
             Event::StepUsage(id, usage) => {
+                let mut touched = false;
                 if let Some(row) = s
                     .messages
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Tool(id, tool) => {
+                let mut touched = false;
                 if let Some(row) = s.messages.iter_mut().find(|row| {
                     row.id == id
                         && (!row.completed
@@ -495,11 +596,15 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                                     )
                                 })))
                 }) {
+                    touched = true;
                     let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
                     if inserted {
                         crate::timeline::structure_changed(s);
                     }
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Done => s.phase = Phase::Ready,

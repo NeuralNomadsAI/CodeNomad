@@ -99,6 +99,9 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             s.composer
                 .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
         }
+        if s.screen.is_launcher() {
+            s.tool_diff_preferences.reset_history_size();
+        }
         s.renew_scope();
         if s.screen
             .launcher()

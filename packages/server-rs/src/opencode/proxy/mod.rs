@@ -10,6 +10,8 @@ mod mutation;
 mod stack_tests;
 
 pub use guards::verify_mutation;
+use guards::verify_mutation_at;
+pub(crate) use guards::verify_ordinary_session_at;
 
 use std::time::Duration;
 
@@ -25,7 +27,7 @@ use super::{SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, upstr
 use crate::{Error, Shared, error, not_found, unavailable};
 use guards::{
     ALLOWED, carrier_denied, foreign, guarded, is_hop_by_hop_connection_token, parse_location_context,
-    resolve_media_path_async, safe_route, schedule_input, verify_mutation_at,
+    resolve_media_path_async, safe_route, schedule_input,
 };
 
 pub(super) fn before_dispatch_error((status, body): Error) -> Response {

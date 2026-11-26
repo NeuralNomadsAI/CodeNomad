@@ -467,6 +467,9 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     renew_editor(s, tx);
     if !queued {
         s.composer.optimistic_id = Some(id.clone());
+        if let Some(reader) = &mut s.reader {
+            reader.clear_sync_undo();
+        }
         s.messages.push(
             Message {
                 completed: true,
@@ -573,6 +576,11 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
+    if row.is_some()
+        && let Some(reader) = &mut s.reader
+    {
+        reader.clear_sync_undo();
+    }
     if let PromptOutcome::Confirmed(confirmed) = outcome {
         s.composer.clear_optimistic(Some(attempted));
         s.composer.send_error = false;

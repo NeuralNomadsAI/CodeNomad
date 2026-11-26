@@ -141,7 +141,13 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
         return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
-        return s.shell.wrap_floating_focus(event.mods.shift, tx);
+        if s.shell.wrap_floating_focus(event.mods.shift, tx) {
+            return true;
+        }
+        if !s.screen.is_launcher() && s.agent.is_some() {
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        return false;
     }
     if event.key == Key::Function(6) && s.shell.has_floating() {
         return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;
@@ -164,6 +170,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         if crate::git::has_preview(s) {
             crate::git::close_preview(s);
             tx.instant();
+            crate::git::restore_reading_if_closed(s, true, tx);
             return true;
         }
         if crate::files::has_preview(s) && !s.screen.is_launcher() {
