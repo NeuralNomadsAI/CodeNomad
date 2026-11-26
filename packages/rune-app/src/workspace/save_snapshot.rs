@@ -113,25 +113,168 @@ fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
     }
 }
 
-enum TextCandidate {
-    Text { tab: usize, id: String },
-    AttachmentMarker { tab: usize, id: String },
-    WholeBundle { tab: usize, id: String },
+struct TextItem {
+    tab: usize,
+    id: String,
+    priority: u8,
+    text_only_units: usize,
+    whole_units: usize,
+    has_text: bool,
+    has_attachment: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MixedAction {
+    Keep,
+    TextOnly,
+    DropWhole,
+}
+
+const MAX_DP_CELLS: usize = 2_000_000;
+
+fn select_mixed_tier(
+    items: &[TextItem],
+    eligible: &[usize],
+    excess: usize,
+    max_dp_cells: usize,
+) -> Option<Vec<MixedAction>> {
+    let sum_whole: usize = eligible.iter().map(|&idx| items[idx].whole_units).sum();
+    if sum_whole < excess {
+        return None;
+    }
+    let keep_budget = sum_whole - excess;
+    let dp_stride = keep_budget + 1;
+    if eligible.len().saturating_mul(dp_stride) <= max_dp_cells {
+        let mut best: Vec<Option<u128>> = vec![None; dp_stride];
+        best[0] = Some(0);
+        let mut choices = vec![0u8; eligible.len() * dp_stride];
+        for (row, &item_idx) in eligible.iter().enumerate() {
+            let item = &items[item_idx];
+            let mixed = item.has_text && item.has_attachment;
+            let marker_cost = item.whole_units.saturating_sub(item.text_only_units);
+            let full_cost = item.whole_units;
+            // Priority ranks are 0..=6, so 16 bits per tier pack exact lexicographic marker
+            // counts across all priority tiers into one u128.
+            let marker_bonus = if item.has_attachment {
+                1u128 << (usize::from(item.priority.min(7)) * 16)
+            } else {
+                0u128
+            };
+            let row_offset = row * dp_stride;
+            for w in (0..=keep_budget).rev() {
+                let mut current = best[w];
+                let mut chosen = 0u8;
+                if mixed
+                    && marker_cost > 0
+                    && w >= marker_cost
+                    && let Some(prev) = best[w - marker_cost]
+                {
+                    let candidate = prev.saturating_add(marker_bonus);
+                    if current.is_none_or(|cur| candidate > cur) {
+                        current = Some(candidate);
+                        chosen = 1;
+                    }
+                }
+                if full_cost > 0
+                    && w >= full_cost
+                    && let Some(prev) = best[w - full_cost]
+                {
+                    let candidate = prev.saturating_add(marker_bonus);
+                    if current.is_none_or(|cur| candidate > cur) {
+                        current = Some(candidate);
+                        chosen = 2;
+                    }
+                }
+                best[w] = current;
+                choices[row_offset + w] = chosen;
+            }
+        }
+        let mut w = (0..=keep_budget)
+            .filter_map(|weight| best[weight].map(|score| (score, weight)))
+            .max()
+            .map(|(_, weight)| weight)
+            .unwrap_or(0);
+        let mut actions = vec![MixedAction::DropWhole; eligible.len()];
+        for (row, &item_idx) in eligible.iter().enumerate().rev() {
+            let item = &items[item_idx];
+            match choices[row * dp_stride + w] {
+                2 => {
+                    w -= item.whole_units;
+                    actions[row] = MixedAction::Keep;
+                }
+                1 => {
+                    w -= item.whole_units.saturating_sub(item.text_only_units);
+                    actions[row] = MixedAction::TextOnly;
+                }
+                _ => {}
+            }
+        }
+        return Some(actions);
+    }
+
+    // Beyond the DP cell limit, preserve the same objective in O(N log N):
+    // Phase A maximizes retained attachment markers (mixed and attachment-only alike,
+    // highest priority tier first, smallest marker cost first); Phase B restores as much
+    // dropped text as fits in any leftover budget.
+    let mut actions = vec![MixedAction::DropWhole; eligible.len()];
+    let mut remaining = keep_budget;
+    let mut marker_rows: Vec<(usize, usize)> = eligible
+        .iter()
+        .enumerate()
+        .filter_map(|(row, &item_idx)| {
+            let item = &items[item_idx];
+            if !item.has_attachment {
+                return None;
+            }
+            let cost = if item.has_text {
+                item.whole_units.saturating_sub(item.text_only_units)
+            } else {
+                item.whole_units
+            };
+            Some((row, cost))
+        })
+        .collect();
+    marker_rows.sort_by_key(|&(row, cost)| (Reverse(items[eligible[row]].priority), cost));
+    for (row, cost) in marker_rows {
+        if cost <= remaining {
+            remaining -= cost;
+            actions[row] = if items[eligible[row]].has_text {
+                MixedAction::TextOnly
+            } else {
+                MixedAction::Keep
+            };
+        }
+    }
+    let mut text_rows: Vec<(usize, usize)> = eligible
+        .iter()
+        .enumerate()
+        .filter_map(|(row, &item_idx)| {
+            let item = &items[item_idx];
+            if !item.has_text || actions[row] == MixedAction::Keep {
+                return None;
+            }
+            let extra_cost = if actions[row] == MixedAction::TextOnly {
+                item.text_only_units
+            } else {
+                item.whole_units
+            };
+            Some((row, extra_cost))
+        })
+        .collect();
+    text_rows.sort_by_key(|&(row, cost)| (Reverse(items[eligible[row]].priority), cost));
+    for (row, cost) in text_rows {
+        if cost <= remaining {
+            remaining -= cost;
+            actions[row] = MixedAction::Keep;
+        }
+    }
+    Some(actions)
 }
 
 fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
     let excess = snapshot_string_units(snapshot)?.saturating_sub(MAX_STRINGS);
     if excess == 0 {
         return Ok(());
-    }
-    struct TextItem {
-        tab: usize,
-        id: String,
-        priority: u8,
-        text_only_units: usize,
-        whole_units: usize,
-        has_text: bool,
-        has_attachment: bool,
     }
     let mut items = Vec::new();
     for (tab, entry) in snapshot.tabs.iter().enumerate() {
@@ -175,220 +318,65 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
     }
     let max_tier = items.iter().map(|item| item.priority).max().unwrap_or(0);
     for tier in 0..=max_tier {
-        // First try preserving every mixed attachment marker at `tier` (dropping whole bundles
-        // only at strictly lower priority tiers `< tier`).
-        let mut text_weights = Vec::with_capacity(items.len());
-        let mut text_candidates = Vec::with_capacity(items.len());
-        for item in &items {
-            let use_whole = item.priority < tier;
-            let (candidate, units) = if !item.has_text {
+        // First try preserving every attachment marker (mixed and standalone) across all
+        // priorities <= `tier` by shedding only text.
+        let text_weights: Vec<(u8, usize)> = items
+            .iter()
+            .map(|item| {
                 (
-                    TextCandidate::AttachmentMarker {
-                        tab: item.tab,
-                        id: item.id.clone(),
+                    item.priority,
+                    if item.priority > tier || !item.has_text {
+                        0
+                    } else {
+                        item.text_only_units
                     },
-                    item.text_only_units,
                 )
-            } else if item.has_attachment && use_whole {
-                (
-                    TextCandidate::WholeBundle {
-                        tab: item.tab,
-                        id: item.id.clone(),
-                    },
-                    item.whole_units,
-                )
-            } else {
-                (
-                    TextCandidate::Text {
-                        tab: item.tab,
-                        id: item.id.clone(),
-                    },
-                    item.text_only_units,
-                )
-            };
-            text_candidates.push(candidate);
-            text_weights.push((item.priority, if item.priority > tier { 0 } else { units }));
-        }
+            })
+            .collect();
         if let Some(selected) = choose(&text_weights, excess) {
             for index in selected {
-                match &text_candidates[index] {
-                    TextCandidate::Text { tab, id } => {
-                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                            saved.drafts.remove(id);
-                            if let Some(parts) = saved.attachment_parts.get_mut(id) {
-                                parts.mark_incomplete();
-                            }
-                        }
-                    }
-                    TextCandidate::AttachmentMarker { tab, id } => {
-                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                            saved.attachment_drafts.remove(id);
-                            saved.attachment_parts.remove(id);
-                        }
-                    }
-                    TextCandidate::WholeBundle { tab, id } => {
-                        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
-                            saved.drafts.remove(id);
-                            saved.attachment_drafts.remove(id);
-                            saved.attachment_parts.remove(id);
-                        }
+                let item = &items[index];
+                if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
+                    saved.drafts.remove(&item.id);
+                    if let Some(parts) = saved.attachment_parts.get_mut(&item.id) {
+                        parts.mark_incomplete();
                     }
                 }
             }
             return Ok(());
         }
 
-        // Shedding text alone at `tier` cannot cover `excess`: allow whole mixed bundles at `<= tier`.
+        // Shedding text and standalone markers at `<= tier` cannot cover `excess`: choose
+        // Keep / TextOnly / DropWhole per draft across all `priority <= tier`.
         let eligible: Vec<usize> = items
             .iter()
             .enumerate()
             .filter_map(|(idx, item)| (item.priority <= tier).then_some(idx))
             .collect();
-        let sum_whole: usize = eligible.iter().map(|&idx| items[idx].whole_units).sum();
-        if sum_whole < excess {
-            continue;
-        }
-        let keep_budget = sum_whole - excess;
-        // Exact 3-choice DP over `keep_budget` (guaranteed < sum of mixed attachment key lengths):
-        // maximize (tier_markers_saved, total_markers_saved, units_saved) so each mixed draft
-        // independently chooses Keep / TextOnly / WholeBundle.
-        const MAX_DP_CELLS: usize = 2_000_000;
-        let dp_stride = keep_budget + 1;
-        if eligible.len().saturating_mul(dp_stride) <= MAX_DP_CELLS {
-            let mut best: Vec<Option<(u16, u16)>> = vec![None; dp_stride];
-            best[0] = Some((0, 0));
-            let mut choices = vec![0u8; eligible.len() * dp_stride];
-            for (row, &item_idx) in eligible.iter().enumerate() {
-                let item = &items[item_idx];
-                let mixed = item.has_text && item.has_attachment;
-                let marker_cost = item.whole_units.saturating_sub(item.text_only_units);
-                let full_cost = item.whole_units;
-                let marker_bonus = if mixed {
-                    (u16::from(item.priority == tier), 1u16)
-                } else {
-                    (0u16, 0u16)
-                };
-                let row_offset = row * dp_stride;
-                for w in (0..=keep_budget).rev() {
-                    let mut current = best[w];
-                    let mut chosen = 0u8;
-                    if mixed
-                        && marker_cost > 0
-                        && w >= marker_cost
-                        && let Some((hi, tot)) = best[w - marker_cost]
-                    {
-                        let candidate = (hi + marker_bonus.0, tot + marker_bonus.1);
-                        if current.is_none_or(|cur| candidate > cur) {
-                            current = Some(candidate);
-                            chosen = 1;
-                        }
-                    }
-                    if full_cost > 0
-                        && w >= full_cost
-                        && let Some((hi, tot)) = best[w - full_cost]
-                    {
-                        let candidate = (hi + marker_bonus.0, tot + marker_bonus.1);
-                        if current.is_none_or(|cur| candidate > cur) {
-                            current = Some(candidate);
-                            chosen = 2;
-                        }
-                    }
-                    best[w] = current;
-                    choices[row_offset + w] = chosen;
-                }
-            }
-            let mut w = (0..=keep_budget)
-                .filter_map(|weight| best[weight].map(|score| (score, weight)))
-                .max()
-                .map(|(_, weight)| weight)
-                .unwrap_or(0);
-            for (row, &item_idx) in eligible.iter().enumerate().rev() {
-                let item = &items[item_idx];
-                let action = choices[row * dp_stride + w];
-                match action {
-                    2 => {
-                        w -= item.whole_units;
-                    }
-                    1 => {
-                        w -= item.whole_units.saturating_sub(item.text_only_units);
-                        if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
-                            saved.drafts.remove(&item.id);
-                            if let Some(parts) = saved.attachment_parts.get_mut(&item.id) {
-                                parts.mark_incomplete();
-                            }
-                        }
-                    }
-                    _ => {
-                        if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
-                            if item.has_text {
-                                saved.drafts.remove(&item.id);
-                            }
-                            if item.has_attachment {
-                                saved.attachment_drafts.remove(&item.id);
-                                saved.attachment_parts.remove(&item.id);
-                            }
-                        }
-                    }
-                }
-            }
-            return Ok(());
-        }
-
-        let whole_weights: Vec<(u8, usize)> = items
-            .iter()
-            .map(|item| {
-                (
-                    item.priority,
-                    if item.priority > tier {
-                        0
-                    } else {
-                        item.whole_units
-                    },
-                )
-            })
-            .collect();
-        let Some(selected) = choose(&whole_weights, excess) else {
+        let Some(actions) = select_mixed_tier(&items, &eligible, excess, MAX_DP_CELLS) else {
             continue;
         };
-        let total_freed: usize = selected.iter().map(|&index| whole_weights[index].1).sum();
-        let mut slack = total_freed.saturating_sub(excess);
-        let mut downgraded = vec![false; selected.len()];
-        let mut whole_indices: Vec<usize> = selected
-            .iter()
-            .enumerate()
-            .filter_map(|(pos, &index)| {
-                (items[index].has_text && items[index].has_attachment).then_some(pos)
-            })
-            .collect();
-        whole_indices.sort_by_key(|&pos| {
-            let item = &items[selected[pos]];
-            (
-                Reverse(item.priority),
-                item.whole_units.saturating_sub(item.text_only_units),
-            )
-        });
-        for pos in whole_indices {
-            let item = &items[selected[pos]];
-            let marker_units = item.whole_units.saturating_sub(item.text_only_units);
-            if marker_units > 0 && marker_units <= slack {
-                downgraded[pos] = true;
-                slack -= marker_units;
-            }
-        }
-        for (pos, index) in selected.into_iter().enumerate() {
-            let item = &items[index];
-            if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
-                if item.has_text {
-                    saved.drafts.remove(&item.id);
-                }
-                if item.has_attachment {
-                    if item.has_text && downgraded[pos] {
+        for (row, action) in actions.into_iter().enumerate() {
+            let item = &items[eligible[row]];
+            match action {
+                MixedAction::Keep => {}
+                MixedAction::TextOnly => {
+                    if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
+                        saved.drafts.remove(&item.id);
                         if let Some(parts) = saved.attachment_parts.get_mut(&item.id) {
                             parts.mark_incomplete();
                         }
-                    } else {
-                        saved.attachment_drafts.remove(&item.id);
-                        saved.attachment_parts.remove(&item.id);
+                    }
+                }
+                MixedAction::DropWhole => {
+                    if let Tab::Workspace(saved) = &mut snapshot.tabs[item.tab] {
+                        if item.has_text {
+                            saved.drafts.remove(&item.id);
+                        }
+                        if item.has_attachment {
+                            saved.attachment_drafts.remove(&item.id);
+                            saved.attachment_parts.remove(&item.id);
+                        }
                     }
                 }
             }
@@ -472,4 +460,34 @@ fn part_bytes(parts: &SavedParts) -> Result<usize, Error> {
     serde_json::to_vec(&parts.encode())
         .map(|bytes| bytes.len())
         .map_err(|_| Error::Malformed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MixedAction, TextItem, select_mixed_tier};
+
+    #[test]
+    fn mixed_tier_fallback_beyond_dp_limit_maximizes_retained_markers() {
+        // 480 mixed drafts (text_only=101, marker=100, whole=201) -> sum_whole = 96_480.
+        // With keep_budget = 5_000 (excess = 91_480), the O(N log N) fallback beyond MAX_DP_CELLS
+        // sheds text first so all 50 markers fit (instead of keeping only 25 whole bundles).
+        let items: Vec<TextItem> = (0..480)
+            .map(|i| TextItem {
+                tab: i / 24,
+                id: format!("ses_bulk_{i:03}"),
+                priority: 0,
+                text_only_units: 101,
+                whole_units: 201,
+                has_text: true,
+                has_attachment: true,
+            })
+            .collect();
+        let eligible: Vec<usize> = (0..items.len()).collect();
+        let actions = select_mixed_tier(&items, &eligible, 91_480, 0).expect("must fit");
+        let kept_markers = actions
+            .iter()
+            .filter(|&&a| matches!(a, MixedAction::TextOnly | MixedAction::Keep))
+            .count();
+        assert_eq!(kept_markers, 50);
+    }
 }

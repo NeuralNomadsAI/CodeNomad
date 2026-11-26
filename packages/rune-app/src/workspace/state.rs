@@ -250,6 +250,7 @@ impl Ui {
                 }
             }
         }
+        let mut emitted_tombstones: Vec<(usize, String, Vec<usize>)> = Vec::new();
         for (idx, e) in self.entries.iter().enumerate() {
             let Tab::Workspace(w) = &e.saved else {
                 continue;
@@ -303,17 +304,38 @@ impl Ui {
                     }
                 } else if let Tab::Workspace(current) = &mut tabs[idx] {
                     current.drafts.insert(id.clone(), String::new());
+                    emitted_tombstones.push((idx, id.clone(), targeted));
                 }
             }
         }
-        Snapshot {
+        let mut snap = Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
             panel_widths: self.panel_widths,
             file_wrap: self.file_wrap,
             tabs,
             active: Some(self.active),
+        };
+        // If any persisted "" clear tombstone would trigger budget shedding (MAX_DRAFTS,
+        // MAX_STRINGS, or MAX_BYTES), replace tombstones by directly pruning their targeted
+        // sibling copies so shedding can never drop the tombstone while keeping the stale copy.
+        if !emitted_tombstones.is_empty() && super::encode(&snap).is_err() {
+            for (clear_idx, id, targeted) in emitted_tombstones {
+                if let Tab::Workspace(current) = &mut snap.tabs[clear_idx]
+                    && current.drafts.get(&id).is_some_and(String::is_empty)
+                {
+                    current.drafts.remove(&id);
+                }
+                for target_idx in targeted {
+                    if let Tab::Workspace(stale) = &mut snap.tabs[target_idx] {
+                        stale.drafts.remove(&id);
+                        stale.attachment_drafts.remove(&id);
+                        stale.attachment_parts.remove(&id);
+                    }
+                }
+            }
         }
+        snap
     }
     fn hydrate(&mut self, saved: Snapshot) {
         if self.touched {
@@ -664,6 +686,7 @@ pub fn opened(s: &mut State, project: &Project) {
             })
             .cloned()
             .collect();
+        let pending_keys: HashSet<String> = closed_keys.iter().cloned().collect();
         let mut drafts = std::collections::BTreeMap::new();
         let mut attachment_drafts = std::collections::BTreeSet::new();
         let mut attachment_parts = std::collections::BTreeMap::new();
@@ -715,13 +738,7 @@ pub fn opened(s: &mut State, project: &Project) {
             .collect();
         let item = &mut ui.entries[ui.active];
         item.cleared = reopened_cleared;
-        item.pending_drafts = reopened_workspace
-            .drafts
-            .keys()
-            .chain(item.cleared.iter())
-            .chain(reopened_workspace.attachment_drafts.iter())
-            .cloned()
-            .collect();
+        item.pending_drafts = pending_keys;
         item.restored_drafts.clear();
         item.derived_from.clear();
         item.clear_authority.clear();

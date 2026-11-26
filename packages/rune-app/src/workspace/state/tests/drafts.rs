@@ -1916,4 +1916,177 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &mut restarted_full,
         "ses_full_clr"
     ));
+
+    // 10. R7 Bloquant: Tab A closes with text-only, then Tab B closes with attachment-only for the
+    // same session -> reopening / 404 recovery must deliver B's atomic attachment-only bundle
+    // without stitching A's old text onto B's attachments.
+    let mut r7_b = draft_state();
+    let mut tab_a = closed("ses_r7_atomic", "old text from A");
+    tab_a.active_session_id = Some("ses_r7_atomic".into());
+    let mut tab_b = closed("ses_r7_atomic", "");
+    tab_b.drafts.clear();
+    tab_b.occurrence = 1;
+    tab_b.active_session_id = Some("ses_r7_atomic".into());
+    tab_b.attachment_drafts.insert("ses_r7_atomic".into());
+    tab_b.attachment_parts.insert(
+        "ses_r7_atomic".into(),
+        crate::composer::draft_storage::SavedParts::missing(),
+    );
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(tab_a), Tab::Workspace(tab_b)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].binding = Some(backend("ses_r7_atomic"));
+    ui.entries[1].binding = Some(backend("ses_r7_atomic"));
+    r7_b.workspace = Some(ui);
+    r7_b.show_chat();
+    r7_b.draft = TextEdit::new("old text from A");
+    capture(&mut r7_b);
+    close(&mut r7_b, "tab-0", &mut tx);
+    if let Some(l) = r7_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r7_b.draft = TextEdit::new("");
+    r7_b.composer.attachments_missing = true;
+    capture(&mut r7_b);
+    close(&mut r7_b, "tab-1", &mut tx);
+    if let Some(l) = r7_b.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r7_b,
+        &Project {
+            id: "proj-r7b".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let delivered = bound(&mut r7_b, &backend("ses_r7_atomic"));
+    assert_eq!(
+        delivered, "",
+        "must not stitch A's text onto B's attachments"
+    );
+    assert!(r7_b.composer.attachments_missing);
+
+    // 11. R7 Moyen 1: Tab B closes with restored copy, Tab C clears it open, Tab D reopens
+    // (filtering out B's copy), THEN Tab E closes with an independent draft before D binds ->
+    // binding in D still revalidates `ui.closed` and delivers E's independent draft.
+    let mut r7_m1 = draft_state();
+    let mut b7 = closed("ses_r7_pend", "stale restored");
+    b7.active_session_id = None;
+    let mut c7 = closed("ses_r7_pend", "stale restored");
+    c7.occurrence = 1;
+    c7.active_session_id = Some("ses_r7_pend".into());
+    let mut e7 = closed("ses_r7_pend", "");
+    e7.drafts.clear();
+    e7.occurrence = 2;
+    e7.active_session_id = Some("ses_r7_pend".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(b7), Tab::Workspace(c7), Tab::Workspace(e7)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[1].binding = Some(backend("ses_r7_pend"));
+    ui.entries[2].binding = Some(backend("ses_r7_pend"));
+    r7_m1.workspace = Some(ui);
+    r7_m1.show_chat();
+    close(&mut r7_m1, "tab-0", &mut tx);
+    if let Some(l) = r7_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Tab C (now index 0) clears its restored copy without closing.
+    r7_m1.draft = TextEdit::new("");
+    capture(&mut r7_m1);
+    // Open Tab D for the same project (B's closed copy is filtered out by C's clear).
+    new_tab(&mut r7_m1, &mut tx);
+    if let Some(l) = r7_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r7_m1,
+        &Project {
+            id: "proj-r7m1".into(),
+            path: "/fixture".into(),
+        },
+    );
+    // Switch to Tab E (index 1), author an independent draft, and close Tab E before D binds.
+    select(&mut r7_m1, "tab-2", &mut tx);
+    if let Some(l) = r7_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    r7_m1.show_chat();
+    r7_m1.draft = TextEdit::new("independent from E");
+    capture(&mut r7_m1);
+    close(&mut r7_m1, "tab-2", &mut tx);
+    if let Some(l) = r7_m1.screen.launcher_mut() {
+        l.pending = false;
+    }
+    // Now switch to Tab D (the opened tab) and bind `ses_r7_pend`: must receive E's draft.
+    select(&mut r7_m1, "tab-3", &mut tx);
+    assert_eq!(r7_m1.workspace.as_ref().unwrap().entries.len(), 2);
+    assert_eq!(r7_m1.workspace.as_ref().unwrap().active_key(), "tab-3");
+    let delivered = bound(&mut r7_m1, &backend("ses_r7_pend"));
+    assert_eq!(delivered, "independent from E");
+
+    // 12. R7 Moyen 2: Snapshot already at MAX_STRINGS with stale sibling copy in Tab A and a clear
+    // in Tab B (< MAX_DRAFTS) -> Ui::snapshot() prunes Tab A directly instead of emitting a
+    // sheddable "" tombstone, so encode_for_save + restart + 404 cannot resurrect Tab A's copy.
+    let mut r7_m2 = draft_state();
+    let mut a_str = closed("ses_r7_str", "stale copy");
+    a_str.active_session_id = Some("ses_r7_str".into());
+    let mut b_str = closed("ses_r7_str", "stale copy");
+    b_str.occurrence = 1;
+    b_str.active_session_id = Some("ses_r7_str".into());
+    b_str
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), "b".repeat(144));
+    let mut tabs_str = vec![Tab::Workspace(a_str), Tab::Workspace(b_str)];
+    for i in 0..24 {
+        let mut filler = closed("ses_fill", "");
+        filler.drafts.clear();
+        filler.active_session_id = None;
+        filler.occurrence = (i + 2) as u64;
+        filler.folder = format!("/s{i:02}/{}", "m".repeat(4_060));
+        tabs_str.push(Tab::Workspace(filler));
+    }
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: tabs_str,
+        active: Some(1),
+    });
+    ui.ready = true;
+    ui.entries[1].binding = Some(backend("ses_r7_str"));
+    r7_m2.workspace = Some(ui);
+    r7_m2.draft = TextEdit::new("");
+    capture(&mut r7_m2);
+    let snap_m2 = r7_m2.workspace.as_ref().unwrap().snapshot();
+    assert!(
+        matches!(&snap_m2.tabs[0], Tab::Workspace(w) if !w.drafts.contains_key("ses_r7_str")),
+        "tombstone overflow must directly prune Tab A's stale copy"
+    );
+    let (bytes_m2, _) = crate::workspace::encode_for_save(&snap_m2).unwrap();
+    let mut restarted_m2 = draft_state();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes_m2).unwrap());
+    ui.ready = true;
+    restarted_m2.workspace = Some(ui);
+    restarted_m2.show_launcher();
+    assert!(!recover_missing_session_draft(
+        &mut restarted_m2,
+        "ses_r7_str"
+    ));
 }

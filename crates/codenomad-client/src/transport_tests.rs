@@ -425,10 +425,15 @@ data: {\"type\":\"server.connected\"}\n\n",
                     break;
                 }
             }
+            // Deliver ping + two filler frames + session.deleted in ONE chunk so ping stalls
+            // routing, filler-1 fills the 1-slot channel, filler-2 parks on `frames.send().await`,
+            // and session.deleted still fires before cancellation drops the routing queue.
             stream
                 .get_mut()
                 .write_all(
                     b"event: codenomad.client.ping\ndata: {}\n\n\
+data: {\"type\":\"noop\",\"seq\":1}\n\n\
+data: {\"type\":\"noop\",\"seq\":2}\n\n\
 data: {\"type\":\"instance.event\",\"instanceId\":\"project-1\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"ses-del-1\"}}}\n\n",
                 )
                 .await

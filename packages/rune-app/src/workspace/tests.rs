@@ -985,4 +985,94 @@ fn utf16_budget_sheds_attachment_only_markers_before_priority_text_and_without_l
     );
     assert!(!saved.drafts.contains_key(&tri_3));
     assert!(!saved.attachment_drafts.contains(&tri_3));
+
+    // 6. R7 Moyen 4: Cross-tier mixed drafts (tier 0: 101/201, tier 4 recovered: 120/175) with
+    // excess = 209 (201 < 209 <= 101 + 120) must shed text from both and preserve BOTH markers.
+    let mut cross_tabs = Vec::new();
+    let mut cross_tab = workspace();
+    cross_tab.active_session_id = Some("ses_xkeep".into());
+    cross_tab
+        .drafts
+        .insert("ses_xkeep".into(), "a".repeat(25_700));
+    let ord_mix = format!("ses_ord_{}", "x".repeat(92));
+    let rec_mix = format!("{RECOVERED_DRAFT_PREFIX}00000000-1234-4234-8234-123456789abc");
+    assert_eq!((ord_mix.len(), rec_mix.len()), (100, 55));
+    cross_tab.drafts.insert(ord_mix.clone(), "a".into());
+    cross_tab.attachment_drafts.insert(ord_mix.clone());
+    cross_tab.drafts.insert(rec_mix.clone(), "b".repeat(65));
+    cross_tab.attachment_drafts.insert(rec_mix.clone());
+    cross_tabs.push(Tab::Workspace(cross_tab));
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/u{i:02}/{}", "m".repeat(4_018));
+        cross_tabs.push(Tab::Workspace(filler));
+    }
+    let cross_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: cross_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&cross_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&cross_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert!(!saved.drafts.contains_key(&ord_mix));
+    assert!(!saved.drafts.contains_key(&rec_mix));
+    assert!(saved.attachment_drafts.contains(&ord_mix));
+    assert!(saved.attachment_drafts.contains(&rec_mix));
+
+    // 7. R7 Moyen 5: At the same tier, two standalone attachment-only markers (50 each) beat one
+    // mixed marker (100) under keep_budget = 100, retaining 2 markers instead of 1.
+    let mut stand_tabs = Vec::new();
+    let mut stand_tab = workspace();
+    stand_tab.active_session_id = Some("ses_skeep".into());
+    stand_tab
+        .drafts
+        .insert("ses_skeep".into(), "a".repeat(25_713));
+    let mix_1 = format!("ses_m1_{}", "a".repeat(93));
+    let mix_2 = format!("ses_m2_{}", "b".repeat(93));
+    let att_1 = format!("ses_a1_{}", "c".repeat(43));
+    let att_2 = format!("ses_a2_{}", "d".repeat(43));
+    assert_eq!(
+        (mix_1.len(), mix_2.len(), att_1.len(), att_2.len()),
+        (100, 100, 50, 50)
+    );
+    for id in [&mix_1, &mix_2] {
+        stand_tab.drafts.insert(id.clone(), "x".repeat(5));
+        stand_tab.attachment_drafts.insert(id.clone());
+    }
+    for id in [&att_1, &att_2] {
+        stand_tab.attachment_drafts.insert(id.clone());
+    }
+    stand_tabs.push(Tab::Workspace(stand_tab));
+    for i in 0..18 {
+        let mut filler = workspace();
+        filler.folder = format!("/v{i:02}/{}", "m".repeat(4_021));
+        stand_tabs.push(Tab::Workspace(filler));
+    }
+    let stand_snap = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: stand_tabs,
+        active: Some(0),
+    };
+    assert_eq!(encode(&stand_snap), Err(Error::Limit));
+    let (bytes, partial) = encode_for_save(&stand_snap).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let Tab::Workspace(saved) = &decoded.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert!(saved.attachment_drafts.contains(&att_1));
+    assert!(saved.attachment_drafts.contains(&att_2));
+    assert!(!saved.attachment_drafts.contains(&mix_1));
+    assert!(!saved.attachment_drafts.contains(&mix_2));
 }

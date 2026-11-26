@@ -233,24 +233,30 @@ async fn receive_chunk(
     quota: Option<&crate::provider_usage::Ingress>,
     frames: &Sender<Parsed>,
 ) -> Result<()> {
-    // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
+    // Bytes already delivered by HTTP may still contain a session deletion or revocation past
+    // the next queued frame. Observe deletion hooks across the whole chunk before awaiting the
+    // bounded frame queue, while keeping quota ingress aligned with each queued frame.
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
+    let mut parsed = Vec::new();
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
             if let Parsed::Data(kind, data) = &frame {
                 state.observe_frame(b, kind, data);
             }
-            if let Some(quota) = quota {
-                match &frame {
-                    Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
-                        quota.frame(data)
-                    }
-                    Parsed::Skipped => quota.skipped(),
-                    _ => {}
-                }
-            }
-            frames.send(frame).await?;
+            parsed.push(frame);
         }
+    }
+    for frame in parsed {
+        if let Some(quota) = quota {
+            match &frame {
+                Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
+                    quota.frame(data)
+                }
+                Parsed::Skipped => quota.skipped(),
+                _ => {}
+            }
+        }
+        frames.send(frame).await?;
     }
     if let Some(chunk) = unobserved {
         chunk.finish();

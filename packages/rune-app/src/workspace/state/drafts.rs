@@ -717,34 +717,17 @@ pub(super) fn peek_closed_state_for_scope(
                 continue;
             }
         }
-        let mut touched = false;
-        if let Some(entry_text) = w.drafts.get(session_id) {
-            touched = true;
-            attachment_draft = false;
-            attachment_parts = None;
-            if entry_text.is_empty() {
-                text = None;
-                explicitly_cleared = true;
-            } else {
-                text = Some(entry_text.clone());
-                explicitly_cleared = false;
-            }
+        let entry_text = w.drafts.get(session_id);
+        let has_att =
+            w.attachment_drafts.contains(session_id) || w.attachment_parts.contains_key(session_id);
+        if entry_text.is_none() && !has_att {
+            continue;
         }
-        if w.attachment_drafts.contains(session_id) {
-            touched = true;
-            attachment_draft = true;
-            attachment_parts = None;
-            explicitly_cleared = false;
-        }
-        if let Some(parts) = w.attachment_parts.get(session_id) {
-            touched = true;
-            attachment_draft = true;
-            attachment_parts = Some(parts.clone());
-            explicitly_cleared = false;
-        }
-        if touched {
-            from_restored = is_restored;
-        }
+        text = entry_text.filter(|t| !t.is_empty()).cloned();
+        attachment_draft = has_att;
+        attachment_parts = w.attachment_parts.get(session_id).cloned();
+        from_restored = is_restored;
+        explicitly_cleared = entry_text.is_some_and(String::is_empty) && !has_att;
     }
     let bundle = ClosedBundle {
         text,
