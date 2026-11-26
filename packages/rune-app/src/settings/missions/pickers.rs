@@ -36,6 +36,20 @@ pub(super) fn role_label(role: &str) -> &'static str {
     }
 }
 
+pub(super) fn push_unique_label(labels: &mut Vec<String>, candidate: String, disambiguator: &str) {
+    if !labels.contains(&candidate) {
+        labels.push(candidate);
+        return;
+    }
+    let mut unique = format!("{candidate} ({disambiguator})");
+    let mut suffix = 2usize;
+    while labels.contains(&unique) {
+        unique = format!("{candidate} ({disambiguator} #{suffix})");
+        suffix += 1;
+    }
+    labels.push(unique);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_agent_picker<S: 'static>(
     index: usize,
@@ -57,16 +71,16 @@ pub(super) fn build_agent_picker<S: 'static>(
     if let Some(saved) = current_agent
         && !available.iter().any(|a| a.id == saved)
     {
-        labels.push(format!("{saved} · {unavailable}"));
+        push_unique_label(&mut labels, format!("{saved} · {unavailable}"), saved);
         values.push(Some(saved.to_owned()));
     }
     for agent in available {
-        let label = if agent.id == native || labels.contains(&agent.id) {
+        let candidate = if agent.id == native || labels.contains(&agent.id) {
             format!("{} · {}", agent.id, t("missions.control.execution.agent"))
         } else {
             agent.id.clone()
         };
-        labels.push(label);
+        push_unique_label(&mut labels, candidate, &agent.id);
         values.push(Some(agent.id.clone()));
     }
     let current_index = current_agent
@@ -87,9 +101,12 @@ pub(super) fn build_agent_picker<S: 'static>(
         .on_choose(move |s: &mut S, value, _| {
             set_picker(s, None);
             if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
-                let mut next = base.clone();
-                next.agent = values[pos].clone();
-                change_role(s, role, Some(next));
+                let chosen = values[pos].clone();
+                if chosen != base.agent {
+                    let mut next = base.clone();
+                    next.agent = chosen;
+                    change_role(s, role, Some(next));
+                }
             }
         });
     chrome::build_picker(control, layers)
@@ -142,7 +159,11 @@ pub(super) fn build_model_picker<S: 'static>(
             .get(&(saved.provider_id.clone(), saved.id.clone()))
             .cloned()
             .unwrap_or_else(|| format!("{}/{}", saved.provider_id, saved.id));
-        labels.push(format!("{display} · {unavailable}"));
+        push_unique_label(
+            &mut labels,
+            format!("{display} · {unavailable}"),
+            &format!("{}/{}", saved.provider_id, saved.id),
+        );
         values.push(Some(saved.clone()));
     }
     for m in &models {
@@ -152,12 +173,13 @@ pub(super) fn build_model_picker<S: 'static>(
             .copied()
             .unwrap_or(0)
             > 1;
-        let label = if duplicate || base_label == native || labels.contains(&base_label) {
-            format!("{base_label} ({}/{})", m.provider_id, m.id)
+        let disambiguator = format!("{}/{}", m.provider_id, m.id);
+        let candidate = if duplicate || base_label == native || labels.contains(&base_label) {
+            format!("{base_label} ({disambiguator})")
         } else {
             base_label
         };
-        labels.push(label);
+        push_unique_label(&mut labels, candidate, &disambiguator);
         values.push(Some(MissionModelRef {
             provider_id: m.provider_id.clone(),
             id: m.id.clone(),
@@ -233,16 +255,16 @@ pub(super) fn build_variant_picker<S: 'static>(
     if let Some(saved) = current_variant
         && !available.iter().any(|v| v == saved)
     {
-        labels.push(format!("{saved} · {unavailable}"));
+        push_unique_label(&mut labels, format!("{saved} · {unavailable}"), saved);
         values.push(Some(saved.to_owned()));
     }
     for variant in available {
-        let label = if variant == native || labels.contains(variant) {
+        let candidate = if variant == native || labels.contains(variant) {
             format!("{variant} · {}", t("missions.control.execution.variant"))
         } else {
             variant.clone()
         };
-        labels.push(label);
+        push_unique_label(&mut labels, candidate, variant);
         values.push(Some(variant.clone()));
     }
     let current_index = current_variant
@@ -265,10 +287,13 @@ pub(super) fn build_variant_picker<S: 'static>(
             if let Some(pos) = labels_for_choose.iter().position(|label| label == value)
                 && let Some(mut model) = base.model.clone()
             {
-                model.variant = values[pos].clone();
-                let mut next = base.clone();
-                next.model = Some(model);
-                change_role(s, role, Some(next));
+                let chosen = values[pos].clone();
+                if chosen != model.variant {
+                    model.variant = chosen;
+                    let mut next = base.clone();
+                    next.model = Some(model);
+                    change_role(s, role, Some(next));
+                }
             }
         });
     chrome::build_picker(control, layers)

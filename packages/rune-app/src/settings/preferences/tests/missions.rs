@@ -212,8 +212,8 @@ fn missions_loads_catalog_and_depth_lazily_and_handles_save_unsupported_and_disc
         click(&mut rt, "settings-missions");
         tick(&mut rt);
 
-        // Both catalog and depth resolve the captured session Location first, then fetch
-        // agent/model/provider and subagent-depth.
+        // Location resolves once and is shared by both catalog (agent/model/provider) and depth.
+        let mut got_location = 0usize;
         let mut got_agent = false;
         let mut got_model = false;
         let mut got_provider = false;
@@ -223,10 +223,16 @@ fn missions_loads_catalog_and_depth_lazily_and_handles_save_unsupported_and_disc
             let req = request(&listener).await;
             let url = req.first.split_whitespace().nth(1).unwrap();
             if url == "/workspaces/captured/instance/api/session/session" {
+                got_location += 1;
                 req.reply(
                     200,
                     json!({"data":{"id":"session","location":{"directory":"C:/fixture-linked"}}}),
                 )
+                .await;
+                wait_until(|| {
+                    tick(&mut rt);
+                    shared.borrow().missions.pinned_directory().is_some()
+                })
                 .await;
             } else if url.starts_with("/workspaces/captured/instance/api/agent?") {
                 got_agent = true;
@@ -292,6 +298,10 @@ fn missions_loads_catalog_and_depth_lazily_and_handles_save_unsupported_and_disc
                 panic!("unexpected request {url}");
             }
         }
+        assert_eq!(
+            got_location, 1,
+            "location must resolve once and be shared across catalog and depth"
+        );
 
         wait_until(|| {
             tick(&mut rt);
@@ -511,6 +521,11 @@ fn missions_depth_handles_404_501_as_unsupported_without_error_loop() {
                     json!([{"id":"captured","path":"/repo","location":{"directory":"/repo"}}]),
                 )
                 .await;
+                wait_until(|| {
+                    tick(&mut rt);
+                    shared.borrow().missions.pinned_directory().is_some()
+                })
+                .await;
             } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo" {
                 got_depth = true;
                 req.reply(501, json!({"error":"not implemented"})).await;
@@ -585,6 +600,11 @@ fn missions_depth_404_is_unsupported_and_confirm_refuses_stale_models() {
                     200,
                     json!([{"id":"captured","path":"/repo","location":{"directory":"/repo"}}]),
                 )
+                .await;
+                wait_until(|| {
+                    tick(&mut rt);
+                    shared.borrow().missions.pinned_directory().is_some()
+                })
                 .await;
             } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo" {
                 got_depth = true;
@@ -719,6 +739,11 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
                     json!([{"id":"captured","path":"/repo","location":{"directory":"/repo"}}]),
                 )
                 .await;
+                wait_until(|| {
+                    tick(&mut rt);
+                    shared.borrow().missions.pinned_directory().is_some()
+                })
+                .await;
             } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo" {
                 got_depth = true;
                 req.reply(404, json!({"error":"not found"})).await;
@@ -799,40 +824,88 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
             json!("high")
         );
 
-        // Trigger a catalog refresh, switch away to General before replying, and verify the late reply is ignored.
+        // Trigger a catalog refresh, switch away to General while the batch is in flight,
+        // reply with a stale name, then return to Missions and verify the stale name is never shown.
         crate::settings::provider_changed(&root, "captured");
         tick(&mut rt);
-        let late_req = request(&listener).await;
-        assert!(
-            !late_req.first.contains("/api/workspaces"),
-            "refresh must reuse pinned opener Location instead of re-resolving: {}",
-            late_req.first
-        );
+        let mut late_reqs = Vec::new();
+        let mut catalog_reqs = 0;
+        while catalog_reqs < 3 {
+            let req = request(&listener).await;
+            assert!(
+                !req.first.contains("/api/workspaces"),
+                "refresh must reuse pinned opener Location instead of re-resolving: {}",
+                req.first
+            );
+            let url = req.first.split_whitespace().nth(1).unwrap_or("");
+            if url.starts_with("/workspaces/captured/instance/api/") {
+                catalog_reqs += 1;
+            }
+            late_reqs.push(req);
+        }
         click(&mut rt, "settings-general");
         tick(&mut rt);
-        late_req
-            .reply(
-                200,
-                json!({
-                    "location": { "directory": "/repo" },
-                    "data": [{
-                        "providerID": "anthropic",
-                        "id": "claude",
-                        "name": "StaleLateName",
-                        "enabled": true,
-                        "capabilities": { "tools": true },
-                        "variants": [{ "id": "high" }]
-                    }]
-                }),
-            )
-            .await;
+        for req in late_reqs {
+            let url = req.first.split_whitespace().nth(1).unwrap_or("");
+            if url.contains("/instance/api/model") {
+                req.reply(
+                    200,
+                    json!({
+                        "location": { "directory": "/repo" },
+                        "data": [{
+                            "providerID": "anthropic",
+                            "id": "claude",
+                            "name": "StaleLateName",
+                            "enabled": true,
+                            "capabilities": { "tools": true },
+                            "variants": [{ "id": "high" }]
+                        }]
+                    }),
+                )
+                .await;
+            } else if url.contains("/subagent-depth") {
+                req.reply(
+                    200,
+                    json!({
+                        "location": { "directory": "/repo" },
+                        "capability": null,
+                        "effectiveDepth": null,
+                        "nesting": null,
+                        "origin": null,
+                        "project": null
+                    }),
+                )
+                .await;
+            } else {
+                req.reply(200, json!({"location":{"directory":"/repo"},"data":[]}))
+                    .await;
+            }
+        }
+        tick(&mut rt);
+        click(&mut rt, "settings-missions");
         tick(&mut rt);
         assert!(
             !rt.accessibility_json()
                 .to_string()
                 .contains("StaleLateName"),
-            "late reply after leaving Missions must be ignored"
+            "late reply after leaving Missions must never publish when returning to Missions"
         );
+
+        // Opening Preferences with no active project/launcher must not panic on RefCell re-borrow.
+        let mut empty = crate::init();
+        let mut empty_backend = shared.borrow().backend.clone().unwrap();
+        empty_backend.session_directory = Some("/empty-tab-checkout".into());
+        empty.settings.shared.borrow_mut().backend = Some(empty_backend);
+        let opener = crate::settings::missions::opener_directory(&empty);
+        assert_eq!(opener.as_deref(), Some("/empty-tab-checkout"));
+        {
+            let mut prefs = empty.settings.shared.borrow_mut();
+            prefs.missions.capture_opener(opener);
+            assert_eq!(
+                prefs.missions.pinned_directory(),
+                Some("/empty-tab-checkout")
+            );
+        }
 
         // Stale external ACK with older guard does not overwrite a newer snapshot.
         let stale_guard = shared.borrow().config_guard();

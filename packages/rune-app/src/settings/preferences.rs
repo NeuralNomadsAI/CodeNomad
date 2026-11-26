@@ -957,6 +957,7 @@ impl Preferences {
             config_refreshing: self.config.refreshing(),
             config_snapshot: self.config.snapshot.as_ref(),
             config_guard,
+            write_authority: self.config.write_authority(),
             transport_lost: self.transport_lost,
             can_retry,
         };

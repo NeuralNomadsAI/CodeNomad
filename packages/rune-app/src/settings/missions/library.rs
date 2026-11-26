@@ -1,5 +1,5 @@
 //! Saved Mission configurations (`missionModels`) section matching `MissionModelLibrary`.
-use super::{ConfigContext, ConfigEffects, Picker};
+use super::{ConfigContext, ConfigEffects, Picker, pickers::push_unique_label};
 use crate::{
     platform,
     settings::preferences::{Owner, Preferences},
@@ -20,7 +20,7 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::atomic::Ordering};
 
 enum Reply {
     Remove {
@@ -124,6 +124,7 @@ impl State {
         }
         let next = remove_mission_model_value(&models, id);
         let guard = ctx.config_guard;
+        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.pending_label = Some("missions.models.removing");
         self.failed = false;
         self.reconciliation_pending = false;
@@ -132,12 +133,16 @@ impl State {
         self.flight = Some(inbox);
         self.flight_is_reload = false;
         platform::spawn(async move {
-            let outcome = patch_mission_preferences(
-                &backend,
-                json!({ "missionModels": next }),
-                &[confirmed_expected],
-            )
-            .await;
+            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
+                MissionPatchOutcome::Failed
+            } else {
+                patch_mission_preferences(
+                    &backend,
+                    json!({ "missionModels": next }),
+                    &[confirmed_expected],
+                )
+                .await
+            };
             if out.send(Reply::Remove { outcome, guard }).await.is_ok() {
                 wake();
             }
@@ -166,6 +171,7 @@ impl State {
             return false;
         }
         let guard = ctx.config_guard;
+        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.pending_label = Some("missions.models.resetting");
         self.failed = false;
         self.reconciliation_pending = false;
@@ -174,12 +180,16 @@ impl State {
         self.flight = Some(inbox);
         self.flight_is_reload = false;
         platform::spawn(async move {
-            let outcome = patch_mission_preferences(
-                &backend,
-                json!({ "missionModels": [] }),
-                &[confirmed_expected],
-            )
-            .await;
+            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
+                MissionPatchOutcome::Failed
+            } else {
+                patch_mission_preferences(
+                    &backend,
+                    json!({ "missionModels": [] }),
+                    &[confirmed_expected],
+                )
+                .await
+            };
             if out.send(Reply::Reset { outcome, guard }).await.is_ok() {
                 wake();
             }
@@ -291,12 +301,12 @@ impl State {
         let mut ids = vec![String::new()];
         for model in &models {
             let duplicate = name_counts.get(model.name.as_str()).copied().unwrap_or(0) > 1;
-            let label = if duplicate || model.name == none_label {
+            let candidate = if duplicate || model.name == none_label {
                 format!("{} ({})", model.name, model.id)
             } else {
                 model.name.clone()
             };
-            labels.push(label);
+            push_unique_label(&mut labels, candidate, &model.id);
             ids.push(model.id.clone());
         }
         let current_index = selection

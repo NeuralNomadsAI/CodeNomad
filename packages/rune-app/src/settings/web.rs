@@ -261,9 +261,10 @@ pub(super) fn entry(touch: bool) -> El {
 
 fn open(s: &mut State) {
     let target = Target::capture(s);
+    let opener = super::missions::opener_directory(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.provider_target = target;
-    prefs.missions.capture_opener(s);
+    prefs.missions.capture_opener(opener);
     prefs
         .memory
         .show(s.settings.web.section == Section::General);

@@ -20,6 +20,7 @@ use rune_theme_codenomad::{
 use std::{cell::RefCell, rc::Rc};
 
 impl Missions {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn view_defaults_card<S: 'static>(
         &self,
         shared: &Rc<RefCell<Preferences>>,
@@ -295,9 +296,13 @@ impl Missions {
                     });
                 }
             },
-            move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.catalog.request_reload();
+            {
+                let shared_catalog_reload = shared.clone();
+                move |s: &mut S| {
+                    if let Some(m) = access(s) {
+                        shared_catalog_reload.borrow_mut().missions.retry_location();
+                        m.catalog.request_reload();
+                    }
                 }
             },
         );

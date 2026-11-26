@@ -185,6 +185,10 @@ impl Document {
         self.invalidation_seq.load(Ordering::Acquire)
     }
 
+    pub(super) fn write_authority(&self) -> (Arc<AtomicU64>, u64) {
+        (self.epoch_guard.clone(), self.transport_epoch)
+    }
+
     pub(super) fn apply_external_snapshot(
         &mut self,
         snapshot: Value,

@@ -8,7 +8,7 @@ mod library;
 mod pickers;
 mod shared;
 
-pub(super) use shared::{ConfigContext, ConfigEffects, Shared};
+pub(super) use shared::{ConfigContext, ConfigEffects, Shared, opener_directory};
 
 use super::{
     preferences::{Owner, Preferences},
@@ -120,28 +120,28 @@ impl Missions {
                 && !defaults::defaults_valid(prefs.config_loaded(), prefs.saved(Owner::Config)));
         let catalog_demanded = active && !config_disabled;
         let open_epoch = prefs.missions.open_epoch();
-        let (catalog_changed, catalog_dir) = self.catalog.poll(
+        let (location_changed, location_failed) =
+            prefs.missions.poll_location(online_target, active, wake);
+        let catalog_changed = self.catalog.poll(
             online_target,
             prefs.missions.pinned_directory(),
+            location_failed,
             open_epoch,
             catalog_demanded,
             wake,
         );
-        if let Some(dir) = catalog_dir {
-            prefs.missions.pin_directory(dir);
-        }
         let depth_changed = if active {
             let can_retry = prefs.can_retry();
             let transport_lost = prefs.is_transport_lost();
             let depth_target = prefs.provider_target.as_ref().filter(|_| can_retry);
             prefs
                 .missions
-                .poll_depth(depth_target, transport_lost, true, wake)
+                .poll_depth(depth_target, location_failed, transport_lost, true, wake)
         } else {
             prefs.missions.suspend_reads();
             false
         };
-        writes_changed | catalog_changed | depth_changed
+        writes_changed | location_changed | catalog_changed | depth_changed
     }
 
     pub(super) fn resolve_wake(&self, prefs: &Preferences) -> Option<Waker> {
@@ -209,6 +209,7 @@ impl Missions {
                 if prefs.missions.depth.needs_confirm_refresh() {
                     m.confirm = Some(Confirm::RefreshDepth);
                 } else {
+                    prefs.missions.retry_location();
                     prefs.missions.depth.request_refresh();
                 }
             },
@@ -323,6 +324,7 @@ impl Missions {
                             }
                         }
                         Confirm::RefreshDepth => {
+                            prefs.missions.retry_location();
                             prefs.missions.depth.request_refresh();
                         }
                     }

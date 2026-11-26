@@ -11,7 +11,7 @@ use codenomad_client::{
     },
 };
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::atomic::Ordering};
 
 #[derive(Clone, Debug)]
 pub(super) enum DefaultsEdit {
@@ -281,17 +281,22 @@ impl State {
             "missionDeleteSessions",
         );
         let guard = ctx.config_guard;
+        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.delete_failed = false;
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.delete_flight = Some((next, inbox));
         platform::spawn(async move {
-            let outcome = patch_mission_preferences(
-                &backend,
-                json!({ "missionDeleteSessions": next }),
-                &[expected],
-            )
-            .await;
+            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
+                MissionPatchOutcome::Failed
+            } else {
+                patch_mission_preferences(
+                    &backend,
+                    json!({ "missionDeleteSessions": next }),
+                    &[expected],
+                )
+                .await
+            };
             if out
                 .send(Reply::DeleteSessions { outcome, guard })
                 .await
@@ -319,7 +324,7 @@ impl State {
                 if let Some(snapshot) = snapshot {
                     self.needs_reload = false;
                     self.failed = false;
-                    effects.applied = Some((snapshot, guard));
+                    effects.record_applied(snapshot, guard);
                 } else {
                     self.failed = true;
                     self.needs_reload = true;
@@ -338,7 +343,7 @@ impl State {
                 match outcome {
                     MissionPatchOutcome::Applied(snapshot) => {
                         self.delete_failed = false;
-                        effects.applied = Some((snapshot, guard));
+                        effects.record_applied(snapshot, guard);
                     }
                     MissionPatchOutcome::Conflict
                     | MissionPatchOutcome::Unsupported
@@ -367,7 +372,7 @@ impl State {
                         self.in_flight_edit = None;
                         self.failed = false;
                         self.needs_reload = false;
-                        effects.applied = Some((snapshot, guard));
+                        effects.record_applied(snapshot, guard);
                     }
                     MissionPatchOutcome::Conflict
                     | MissionPatchOutcome::Unsupported
@@ -401,7 +406,7 @@ impl State {
                         });
                         self.failed = !stored_matches;
                         self.needs_reload = false;
-                        effects.applied = Some((snapshot, guard));
+                        effects.record_applied(snapshot, guard);
                     } else {
                         // Do not dequeue further edits against an unreloaded snapshot.
                         self.failed = true;
@@ -414,9 +419,10 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
-        // Wait for Preferences to publish any completed ACK/reload before popping the next edit.
+        // Wait for Preferences to publish any completed ACK/reload and confirm loaded config before popping.
         if effects.applied.is_none()
             && !effects.invalidate
+            && ctx.config_loaded
             && !ctx.config_refreshing
             && self.write_flight.is_none()
             && self.in_flight_edit.is_none()
@@ -476,17 +482,22 @@ impl State {
             return;
         }
         let guard = ctx.config_guard;
+        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.in_flight_edit = Some(edit);
         self.write_flight = Some(inbox);
         platform::spawn(async move {
-            let outcome = patch_mission_preferences(
-                &backend,
-                json!({ "missionProfileDefaults": encoded }),
-                &[current_expected],
-            )
-            .await;
+            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
+                MissionPatchOutcome::Failed
+            } else {
+                patch_mission_preferences(
+                    &backend,
+                    json!({ "missionProfileDefaults": encoded }),
+                    &[current_expected],
+                )
+                .await
+            };
             if out
                 .send(Reply::Patch {
                     outcome,

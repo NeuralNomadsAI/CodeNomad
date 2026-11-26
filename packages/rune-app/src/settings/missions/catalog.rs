@@ -68,10 +68,11 @@ impl State {
         &mut self,
         target: Option<&Target>,
         pinned_directory: Option<&str>,
+        location_failed: bool,
         open_epoch: u64,
         demanded: bool,
         wake: &rune::Waker,
-    ) -> (bool, Option<String>) {
+    ) -> bool {
         let Some(target) = target.filter(|target| demanded && target.online()) else {
             let changed = self.flight.is_some() || self.seen.is_some();
             self.flight = None;
@@ -79,15 +80,14 @@ impl State {
             if target.is_none_or(|t| !t.online()) && self.catalog.is_some() {
                 self.catalog = None;
                 self.failed = false;
-                return (true, None);
+                return true;
             }
-            return (changed, None);
+            return changed;
         };
         let (backend, workspace, authority, _) = target.stats_source();
         let (_, session) = target.location();
         let scope = (backend.client_id.clone(), workspace.to_owned(), open_epoch);
         let mut changed = false;
-        let mut resolved_directory = None;
         if self.scope.as_ref() != Some(&scope) || self.authority != authority {
             self.scope = Some(scope);
             self.authority = authority;
@@ -98,6 +98,13 @@ impl State {
             self.failed = false;
             changed = true;
         }
+        let Some(directory) = pinned_directory else {
+            if location_failed && !self.failed {
+                self.failed = true;
+                changed = true;
+            }
+            return changed;
+        };
         let revision = target.revision().wrapping_add(self.manual_epoch);
         if let Some(result) = self
             .flight
@@ -108,7 +115,6 @@ impl State {
             if self.seen == Some(revision) {
                 match result {
                     Some(catalog) => {
-                        resolved_directory = Some(catalog.directory.clone());
                         for (key, name) in &catalog.all_model_names {
                             self.known_names.insert(key.clone(), name.clone());
                         }
@@ -134,7 +140,7 @@ impl State {
             let backend = backend.clone();
             let workspace = workspace.to_owned();
             let session = session.map(str::to_owned);
-            let pinned = pinned_directory.map(str::to_owned);
+            let pinned = directory.to_owned();
             let wake = wake.clone();
             self.seen = Some(revision);
             self.flight = Some((cancel, inbox));
@@ -142,12 +148,7 @@ impl State {
             platform::spawn(async move {
                 if let Some(result) = platform::reads::cancellable(
                     &cancelled,
-                    read_mission_catalog(
-                        &backend,
-                        &workspace,
-                        session.as_deref(),
-                        pinned.as_deref(),
-                    ),
+                    read_mission_catalog(&backend, &workspace, session.as_deref(), Some(&pinned)),
                 )
                 .await
                     && out.send(result.ok()).await.is_ok()
@@ -157,7 +158,7 @@ impl State {
             });
             changed = true;
         }
-        (changed, resolved_directory)
+        changed
     }
 
     pub(super) fn inline_summary(
@@ -196,7 +197,7 @@ impl State {
         set_picker: impl Fn(&mut S, Option<Picker>) + Copy + 'static,
         change_role: impl Fn(&mut S, &'static str, Option<MissionExecution>) + Clone + 'static,
         reset_profiles: impl Fn(&mut S) + Clone + 'static,
-        reload_catalog: impl Fn(&mut S) + Copy + 'static,
+        reload_catalog: impl Fn(&mut S) + Clone + 'static,
     ) -> El {
         let template = scope.template();
         let all_roles: Vec<&'static str> = std::iter::once("coordinator")
