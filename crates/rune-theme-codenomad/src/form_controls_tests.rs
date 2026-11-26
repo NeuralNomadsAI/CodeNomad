@@ -134,10 +134,65 @@ fn assert_palette_controls(label: &str, dark: bool) {
         }
     }
 
-    // Unchecked radio and checkbox indicator outlines meet WCAG 3:1 in linear RGB
-    // against indicator fill, rest card fill, and hover card fill.
+    let decode_instance_color = |rgba: [f32; 4], srgb_blend: bool| -> Color {
+        let a = rgba[3].clamp(0.0, 1.0);
+        let decode = |v: f32| {
+            let straight = if a > 0.0 {
+                (v / a).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if srgb_blend {
+                srgb_decode(straight)
+            } else {
+                straight
+            }
+        };
+        Color {
+            r: decode(rgba[0]),
+            g: decode(rgba[1]),
+            b: decode(rgba[2]),
+            a,
+        }
+    };
+    let painted_card_fill = |rt: &Runtime<Demo>, key: &str| -> Color {
+        let card = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap();
+        let rect = rt
+            .instances
+            .iter()
+            .find(|inst| {
+                inst.params[1] == KIND_RECT
+                    && inst.fill[3] > 0.0
+                    && (0..4).all(|i| (inst.rect[i] - card.rect[i]).abs() <= 1.0)
+            })
+            .unwrap_or_else(|| panic!("{label}/{key}: missing painted card rect {:?}", card.rect));
+        decode_instance_color(rect.fill, rt.srgb_blend())
+    };
+
+    // Inspect actual painted rest, hover, and selected colors across all cards.
     let t = tokens(dark);
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let mut painted_hover_fills: std::collections::HashMap<&str, Color> =
+        std::collections::HashMap::new();
+    let mut now = 0.0;
+    for key in ["opt-b", "chk-a"] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_move(x, y);
+        now += 1.0;
+        rt.frame(now);
+        painted_hover_fills.insert(key, painted_card_fill(&rt, key));
+    }
+    rt.pointer_move(-10.0, -10.0);
+    now += 1.0;
+    rt.frame(now);
+    let els = rt.elements();
+
+    // Unchecked radio and checkbox indicator outlines (>= 3:1) and option copy (>= 4.5:1)
+    // against actual painted indicator fill, rest card fill, and hovered card fill.
     for key in ["opt-b", "chk-a"] {
         let card = els.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
         let indicator = els
@@ -146,14 +201,63 @@ fn assert_palette_controls(label: &str, dark: bool) {
             .unwrap();
         let border = indicator.border_color.expect("unchecked outline border");
         let fill = effective_backgrounds(indicator.fill, base);
-        let rest = effective_backgrounds(card.fill, base);
-        let hover = effective_backgrounds(card_hover_fill(t, card.fill), base);
+        let rest = effective_backgrounds(painted_card_fill(&rt, key), base);
+        let hover = effective_backgrounds(painted_hover_fills[key], base);
         let backgrounds = [fill[0], fill[1], rest[0], rest[1], hover[0], hover[1]];
         let ratio = worst_contrast(border, &backgrounds);
         assert!(
             ratio >= 3.0,
             "{label}/{key} unchecked indicator border contrast below 3:1: {ratio:.2}"
         );
+        let text_bgs = [rest[0], rest[1], hover[0], hover[1]];
+        let label_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("label") && e.path.starts_with(&card.path))
+            .unwrap();
+        let label_color = label_el.text_color.expect("option label text_color");
+        let label_ratio = worst_contrast(label_color, &text_bgs);
+        assert!(
+            label_ratio >= 4.5,
+            "{label}/{key} unchecked label text contrast below 4.5:1: {label_ratio:.2}"
+        );
+        if let Some(desc_el) = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("description") && e.path.starts_with(&card.path))
+        {
+            let desc_color = desc_el.text_color.expect("option description text_color");
+            let desc_ratio = worst_contrast(desc_color, &text_bgs);
+            assert!(
+                desc_ratio >= 4.5,
+                "{label}/{key} unchecked description text contrast below 4.5:1: {desc_ratio:.2}"
+            );
+        }
+    }
+
+    // Checked radio & checkbox text contrast (>= 4.5:1) against actual painted selected card fill.
+    for key in ["opt-a", "chk-b"] {
+        let card = els.iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
+        let rest = effective_backgrounds(painted_card_fill(&rt, key), base);
+        let label_el = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("label") && e.path.starts_with(&card.path))
+            .unwrap();
+        let label_color = label_el.text_color.expect("selected label text_color");
+        let label_ratio = worst_contrast(label_color, &rest);
+        assert!(
+            label_ratio >= 4.5,
+            "{label}/{key} selected label text contrast below 4.5:1: {label_ratio:.2}"
+        );
+        if let Some(desc_el) = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("description") && e.path.starts_with(&card.path))
+        {
+            let desc_color = desc_el.text_color.expect("selected description text_color");
+            let desc_ratio = worst_contrast(desc_color, &rest);
+            assert!(
+                desc_ratio >= 4.5,
+                "{label}/{key} selected description text contrast below 4.5:1: {desc_ratio:.2}"
+            );
+        }
     }
 
     // Checked radio indicator border and inner mark meet WCAG 3:1 in linear RGB.
@@ -195,6 +299,10 @@ fn assert_palette_controls(label: &str, dark: bool) {
             .iter()
             .find(|e| e.key.as_deref() == Some("indicator") && e.path.starts_with(&card.path))
             .unwrap();
+        let mark = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("mark") && e.path.starts_with(&card.path))
+            .unwrap();
         let border = indicator.border_color.expect("checked checkbox border");
         let fill = effective_backgrounds(indicator.fill, base);
         let rest = effective_backgrounds(card.fill, base);
@@ -206,34 +314,15 @@ fn assert_palette_controls(label: &str, dark: bool) {
             box_visible >= 3.0,
             "{label}/chk-b checked checkbox box contrast below 3:1: {box_visible:.2}"
         );
-        let (_, _, mark_color) = checked_checkbox_colors(t, card.fill);
+        let mark_color = mark
+            .text_color
+            .unwrap_or_else(|| checked_checkbox_colors(t, card.fill).2);
         let mark_ratio = worst_contrast(mark_color, &[fill[0], fill[1]]);
         assert!(
             mark_ratio >= 3.0,
             "{label}/chk-b checked checkbox mark contrast below 3:1: {mark_ratio:.2}"
         );
     }
-
-    // Focus ring color meets WCAG 3:1 in linear RGB on both checked and unchecked cards.
-    let checked_fill = t.color("menu-item-selected-bg");
-    let unchecked_fill = t.color("surface-control");
-    let unchecked_hover = card_hover_fill(t, unchecked_fill);
-    let checked_bgs = effective_backgrounds(checked_fill, base);
-    let unchecked_rest = effective_backgrounds(unchecked_fill, base);
-    let hover = effective_backgrounds(unchecked_hover, base);
-    let unchecked_bgs = [unchecked_rest[0], unchecked_rest[1], hover[0], hover[1]];
-    let checked_ring = card_focus_ring_color(t, true, checked_fill, checked_fill);
-    let unchecked_ring = card_focus_ring_color(t, false, unchecked_fill, unchecked_hover);
-    assert!(
-        worst_contrast(checked_ring, &checked_bgs) >= 3.0,
-        "{label}: checked focus ring contrast below 3:1 ({:.2})",
-        worst_contrast(checked_ring, &checked_bgs)
-    );
-    assert!(
-        worst_contrast(unchecked_ring, &unchecked_bgs) >= 3.0,
-        "{label}: unchecked focus ring contrast below 3:1 ({:.2})",
-        worst_contrast(unchecked_ring, &unchecked_bgs)
-    );
 
     // Overlong unbroken option label and description wrap within 240px width.
     let opt_b_card = els
@@ -271,42 +360,76 @@ fn assert_palette_controls(label: &str, dark: bool) {
         opt_b_desc.rect
     );
 
-    // Tabbing into an already-selected radio paints a square 2px focus ring inset inside its 1px border.
+    // Tabbing into an already-selected radio paints a square 2px focus ring inset inside its 1px
+    // border with >= 3:1 linear-RGB contrast against its actual painted fill; arrowing to an
+    // unchecked radio paints a square 2px inset ring with >= 3:1 against both rest and hover fills.
+    let assert_ring = |rt: &Runtime<Demo>, key: &str, backgrounds: &[Color]| {
+        let focused_el = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap();
+        assert!(
+            focused_el.focused && focused_el.focus_visible,
+            "{label}/{key}: control must show visible keyboard focus"
+        );
+        let expected_ring = [
+            focused_el.rect[0] + 2.0,
+            focused_el.rect[1] + 2.0,
+            focused_el.rect[2] - 4.0,
+            focused_el.rect[3] - 4.0,
+        ];
+        let ring = rt.instances.iter().find(|inst| {
+            inst.params[1] == KIND_RECT
+                && (inst.params[0] - 2.0).abs() < 0.01
+                && inst.border[3] > 0.0
+                && inst.radii == [0.0; 4]
+                && inst.rect[0] >= focused_el.rect[0] + 1.5
+                && inst.rect[1] >= focused_el.rect[1] + 1.5
+                && (0..4).all(|i| (inst.rect[i] - expected_ring[i]).abs() <= 1.0)
+        });
+        let ring = ring.unwrap_or_else(|| {
+            panic!(
+                "{label}/{key}: focus ring must be inset and distinct from 1px border: card={:?} expected_ring={:?}",
+                focused_el.rect, expected_ring
+            )
+        });
+        let ring_color = decode_instance_color(ring.border, rt.srgb_blend());
+        let ratio = worst_contrast(ring_color, backgrounds);
+        assert!(
+            ratio >= 3.0,
+            "{label}/{key}: painted focus ring contrast below 3:1: {ratio:.2} (ring={ring_color:?}, raw_border={:?}, bgs={backgrounds:?})",
+            ring.border
+        );
+    };
+
     let tab = KeyEvent {
         key: Key::Tab,
         mods: Mods::default(),
     };
     rt.key(tab.clone());
+    rt.key_up(tab.clone());
+    now += 1.0;
+    rt.frame(now);
+    let checked_bgs = effective_backgrounds(painted_card_fill(&rt, "opt-a"), base);
+    assert_ring(&rt, "opt-a", &checked_bgs);
+
+    // Tabbing again moves focus out of the radio group to the unchecked checkbox without toggling it.
+    rt.key(tab.clone());
     rt.key_up(tab);
-    rt.frame(1.0 / 60.0);
-    let focused_el = rt
-        .elements()
-        .into_iter()
-        .find(|e| e.key.as_deref() == Some("opt-a"))
-        .unwrap();
-    assert!(
-        focused_el.focused && focused_el.focus_visible,
-        "{label}: Tab into radio group must focus selected radio with visible focus ring"
-    );
-    let expected_ring = [
-        focused_el.rect[0] + 2.0,
-        focused_el.rect[1] + 2.0,
-        focused_el.rect[2] - 4.0,
-        focused_el.rect[3] - 4.0,
-    ];
-    let has_distinct_ring = rt.instances.iter().any(|inst| {
-        inst.params[1] == KIND_RECT
-            && (inst.params[0] - 2.0).abs() < 0.01
-            && inst.border[3] > 0.0
-            && inst.radii == [0.0; 4]
-            && inst.rect[0] >= focused_el.rect[0] + 1.5
-            && inst.rect[1] >= focused_el.rect[1] + 1.5
-            && (0..4).all(|i| (inst.rect[i] - expected_ring[i]).abs() <= 1.0)
-    });
-    assert!(
-        has_distinct_ring,
-        "{label}: checked radio focus ring must be inset and distinct from 1px border: card={:?} expected_ring={:?}",
-        focused_el.rect, expected_ring
+    now += 1.0;
+    rt.frame(now);
+    let unchecked_rest = effective_backgrounds(painted_card_fill(&rt, "chk-a"), base);
+    let unchecked_hover = effective_backgrounds(painted_hover_fills["chk-a"], base);
+    assert_ring(
+        &rt,
+        "chk-a",
+        &[
+            unchecked_rest[0],
+            unchecked_rest[1],
+            unchecked_hover[0],
+            unchecked_hover[1],
+        ],
     );
 }
 

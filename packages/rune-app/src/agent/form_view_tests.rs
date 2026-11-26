@@ -649,24 +649,30 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             "custom": false,
             "options": []
         });
-        let mut arbitrary_draft = agent_forms::Draft::default();
-        arbitrary_draft.edit = rune::edit::TextEdit::new("not allowed");
+        let arbitrary_draft = agent_forms::Draft {
+            edit: rune::edit::TextEdit::new("not allowed"),
+            ..Default::default()
+        };
         assert!(
             agent_forms::value(&empty_closed, &arbitrary_draft).is_err(),
             "explicit empty options array on closed string must reject arbitrary text"
         );
-        let mut arbitrary_choice = agent_forms::Draft::default();
-        arbitrary_choice.choice = Some("not allowed".into());
+        let arbitrary_choice = agent_forms::Draft {
+            choice: Some("not allowed".into()),
+            ..Default::default()
+        };
         assert!(
             agent_forms::value(&empty_closed, &arbitrary_choice).is_err(),
             "explicit empty options array on closed string must reject arbitrary choice"
         );
 
-        // Malformed option shapes (missing or non-array multiselect options, non-array string options)
-        // must be rejected by both supported() and value().
+        // Malformed option shapes (missing, null, or non-array options) must be rejected by
+        // both supported() and value().
         for malformed in [
             json!({"key": "bad_multi_missing", "type": "multiselect"}),
+            json!({"key": "bad_multi_null", "type": "multiselect", "options": null}),
             json!({"key": "bad_multi_str", "type": "multiselect", "options": "nope"}),
+            json!({"key": "bad_str_null", "type": "string", "options": null}),
             json!({"key": "bad_str_obj", "type": "string", "options": {"a": 1}}),
         ] {
             let bad_form = Form {
@@ -686,8 +692,59 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             );
         }
 
-        // Custom multiselect with options: [] and default: ["team-local"] preserves custom defaults
-        // (including hidden required fields), and refresh prunes only stale option-backed picks.
+        // Refresh adding closed options to an existing free-text field reconciles retained
+        // draft.edit so incompatible free text is dropped and matching text becomes a choice.
+        let mut transition_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-kind-transition".into(),
+            title: "Kind transition".into(),
+            fields: vec![
+                json!({"key": "dropped_edit", "title": "Drop", "type": "string"}),
+                json!({"key": "promoted_edit", "title": "Promote", "type": "string"}),
+            ],
+        };
+        let mut transition_drafts = agent_forms::Drafts::default();
+        agent_forms::seed(&[transition_form.clone()], &mut transition_drafts);
+        transition_drafts
+            .get_mut(&("form-kind-transition".into(), "dropped_edit".into()))
+            .unwrap()
+            .choose("incompatible free text");
+        transition_drafts
+            .get_mut(&("form-kind-transition".into(), "promoted_edit".into()))
+            .unwrap()
+            .choose("opt_b");
+        transition_form.fields[0]["options"] = json!([{"value": "opt_a", "label": "Opt A"}]);
+        transition_form.fields[1]["options"] = json!([{"value": "opt_b", "label": "Opt B"}]);
+        agent_forms::seed(&[transition_form.clone()], &mut transition_drafts);
+        assert_eq!(
+            transition_drafts[&("form-kind-transition".into(), "dropped_edit".into())]
+                .edit
+                .text,
+            ""
+        );
+        assert_eq!(
+            transition_drafts[&("form-kind-transition".into(), "promoted_edit".into())]
+                .choice
+                .as_deref(),
+            Some("opt_b")
+        );
+        let transitioned_ans = agent_forms::answer(&transition_form, &transition_drafts)
+            .expect("reconciled closed choices must submit cleanly");
+        assert!(transitioned_ans.get("dropped_edit").is_none());
+        assert_eq!(transitioned_ans["promoted_edit"], json!("opt_b"));
+        transition_drafts
+            .get_mut(&("form-kind-transition".into(), "dropped_edit".into()))
+            .unwrap()
+            .choose_option("opt_a");
+        let after_pick = agent_forms::answer(&transition_form, &transition_drafts)
+            .expect("picking a radio after transition must submit cleanly");
+        assert_eq!(after_pick["dropped_edit"], json!("opt_a"));
+
+        // Custom multiselect preserves structured hidden defaults verbatim (including embedded
+        // newlines), keeps custom defaults on option refresh, and promotes custom entries into
+        // checked options when a refresh declares them so they disappear from the custom editor
+        // and can be unchecked cleanly.
         let custom_multi_form = Form {
             tool: None,
             infer_websearch: false,
@@ -701,7 +758,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
                     "hidden": true,
                     "required": true,
                     "options": [],
-                    "default": ["", "team-local"]
+                    "default": ["", "team\nlocal"]
                 }),
                 json!({
                     "key": "mixed_tags",
@@ -709,24 +766,66 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
                     "type": "multiselect",
                     "custom": true,
                     "options": [{"value": "opt_a", "label": "Opt A"}],
-                    "default": ["opt_a", "custom-keep"]
+                    "default": ["opt_a", "team-local", "custom-keep"]
                 }),
             ],
         };
-        let mut custom_drafts = agent_forms::Drafts::default();
-        agent_forms::seed(&[custom_multi_form.clone()], &mut custom_drafts);
-        let ans = agent_forms::answer(&custom_multi_form, &custom_drafts)
-            .expect("custom multiselect defaults must submit cleanly");
-        assert_eq!(ans["hidden_tags"], json!(["team-local"]));
-        assert_eq!(ans["mixed_tags"], json!(["custom-keep", "opt_a"]));
+        let (state, _rx) = state_with_form(custom_multi_form);
+        let mut custom_rt = Runtime::new(state, render_form, (420.0, 680.0), Env::new(false, 1.0));
+        custom_rt.frame(0.0);
+        {
+            let a = custom_rt.state.agent.as_ref().unwrap();
+            let ans = agent_forms::answer(&a.forms[0], &a.drafts)
+                .expect("custom multiselect defaults must submit cleanly");
+            assert_eq!(
+                ans["hidden_tags"],
+                json!(["team\nlocal"]),
+                "hidden structured custom default must round-trip verbatim without splitting on newline"
+            );
+            assert_eq!(
+                ans["mixed_tags"],
+                json!(["custom-keep", "opt_a", "team-local"])
+            );
+        }
 
-        // Refresh removes opt_a from options: stale option-backed pick is pruned while custom-keep survives.
-        let mut refreshed = custom_multi_form;
-        refreshed.fields[1]["options"] = json!([{"value": "opt_b", "label": "Opt B"}]);
-        agent_forms::seed(&[refreshed.clone()], &mut custom_drafts);
-        let refreshed_ans = agent_forms::answer(&refreshed, &custom_drafts)
-            .expect("custom default survives option refresh");
-        assert_eq!(refreshed_ans["hidden_tags"], json!(["team-local"]));
+        // Refresh removes opt_a and promotes team-local into a labeled option.
+        custom_rt.update(|s, _| {
+            let a = s.agent.as_mut().unwrap();
+            a.forms[0].fields[1]["options"] = json!([
+                {"value": "opt_b", "label": "Opt B"},
+                {"value": "team-local", "label": "Team Local"}
+            ]);
+            agent_forms::seed(&a.forms, &mut a.drafts);
+        });
+        custom_rt.frame(1.0 / 60.0);
+        custom_rt.frame(1.0);
+        let promoted_tree = custom_rt.accessibility_json();
+        let promoted_key = agent_forms::multi_option_key("mixed_tags", "team-local");
+        let promoted_box = find_node(&promoted_tree, &promoted_key).expect("promoted checkbox");
+        assert_eq!(promoted_box["name"], "Team Local");
+        assert!(has_state(promoted_box, "checked"));
+        let custom_input = find_input(&promoted_tree, "custom-mixed_tags");
+        assert_eq!(
+            custom_input["value"], "custom-keep",
+            "promoted option must leave the custom editor and preserve unrelated custom entries"
+        );
+        // Toggling Team Local off removes it completely from the submitted answer.
+        let promoted_pos = custom_rt.find(&promoted_key);
+        tap(&mut custom_rt, &promoted_key);
+        let after_tap_tree = custom_rt.accessibility_json();
+        let after_tap_box = find_node(&after_tap_tree, &promoted_key).expect("checkbox after tap");
+        let a = custom_rt.state.agent.as_ref().unwrap();
+        let d = &a.drafts[&("form-custom-multi".into(), "mixed_tags".into())];
+        assert!(
+            has_state(after_tap_box, "unchecked"),
+            "promoted checkbox must uncheck on tap (pos={promoted_pos:?}, selected={:?}, custom_defaults={:?}, custom={:?}, box={after_tap_box})",
+            d.selected,
+            d.custom_defaults,
+            d.custom.text
+        );
+        let refreshed_ans = agent_forms::answer(&a.forms[0], &a.drafts)
+            .expect("custom default survives option refresh and uncheck");
+        assert_eq!(refreshed_ans["hidden_tags"], json!(["team\nlocal"]));
         assert_eq!(refreshed_ans["mixed_tags"], json!(["custom-keep"]));
     });
 }

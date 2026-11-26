@@ -80,7 +80,7 @@ pub fn valid_options_shape(field: &Value) -> bool {
             .and_then(Value::as_array)
             .is_some_and(|v| v.len() <= 64),
         _ => match field.get("options") {
-            None | Some(Value::Null) => true,
+            None => true,
             Some(Value::Array(v)) => v.len() <= 64,
             Some(_) => false,
         },
@@ -96,6 +96,8 @@ pub struct Draft {
     pub custom: TextEdit,
     pub choice: Option<String>,
     pub selected: BTreeSet<String>,
+    pub custom_defaults: Vec<String>,
+    pub seeded_custom_text: Option<String>,
     pub dirty: bool,
 }
 impl Draft {
@@ -130,6 +132,9 @@ impl Draft {
         self.dirty = true;
         &mut self.custom
     }
+    fn custom_matches_seed(&self) -> bool {
+        self.seeded_custom_text.as_deref() == Some(self.custom.text.as_str())
+    }
 }
 impl Default for Draft {
     fn default() -> Self {
@@ -138,6 +143,8 @@ impl Default for Draft {
             custom: TextEdit::new(""),
             choice: None,
             selected: BTreeSet::new(),
+            custom_defaults: Vec::new(),
+            seeded_custom_text: None,
             dirty: false,
         }
     }
@@ -159,7 +166,6 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     if let Some(values) = value.as_array() {
                         let allowed = normalized_options(field);
                         let allow_custom = field["custom"] == true;
-                        let mut custom_defaults = Vec::new();
                         let mut seen_custom = HashSet::new();
                         for raw in values.iter().filter_map(Value::as_str) {
                             if raw.is_empty() {
@@ -167,15 +173,18 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             }
                             if allowed.iter().any(|opt| opt.value == raw) {
                                 d.selected.insert(raw.to_string());
-                            } else if allow_custom {
-                                let trimmed = raw.trim();
-                                if !trimmed.is_empty() && seen_custom.insert(trimmed.to_string()) {
-                                    custom_defaults.push(trimmed.to_string());
-                                }
+                            } else if allow_custom && seen_custom.insert(raw.to_string()) {
+                                d.custom_defaults.push(raw.to_string());
                             }
                         }
-                        if !custom_defaults.is_empty() {
-                            d.custom = TextEdit::new(custom_defaults.join("\n"));
+                        if !d.custom_defaults.is_empty() {
+                            let initial = if field["hidden"] == true {
+                                String::new()
+                            } else {
+                                d.custom_defaults.join("\n")
+                            };
+                            d.custom = TextEdit::new(&initial);
+                            d.seeded_custom_text = Some(initial);
                         }
                     }
                 } else if field["type"] == "string" && has_declared_options(field) {
@@ -199,16 +208,67 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
                 d
             });
-            // Keep seeded and retained option-backed selections aligned with normalized options
-            // so removed or empty-valued entries cannot leave an invisible un-clearable choice,
-            // while leaving custom free-text entries untouched.
-            if field["type"] == "multiselect" && has_declared_options(field) {
+            // Reconcile retained drafts against the field's current schema so kind/option
+            // transitions never leave invisible failing state or duplicate custom/option values.
+            if field["type"] == "multiselect" {
+                draft.edit = TextEdit::new("");
+                draft.choice = None;
                 let allowed = normalized_options(field);
-                draft
-                    .selected
-                    .retain(|selected| allowed.iter().any(|opt| opt.value == selected.as_str()));
+                let allow_custom = field["custom"] == true;
+                if has_declared_options(field) {
+                    draft.selected.retain(|selected| {
+                        allowed.iter().any(|opt| opt.value == selected.as_str())
+                    });
+                }
+                if draft.custom_matches_seed() {
+                    let mut remaining = Vec::new();
+                    for item in std::mem::take(&mut draft.custom_defaults) {
+                        if allowed.iter().any(|opt| opt.value == item.as_str()) {
+                            draft.selected.insert(item);
+                        } else if allow_custom {
+                            remaining.push(item);
+                        }
+                    }
+                    draft.custom_defaults = remaining;
+                    let initial = if !allow_custom || draft.custom_defaults.is_empty() {
+                        String::new()
+                    } else if field["hidden"] == true {
+                        String::new()
+                    } else {
+                        draft.custom_defaults.join("\n")
+                    };
+                    draft.custom = TextEdit::new(&initial);
+                    draft.seeded_custom_text =
+                        (!draft.custom_defaults.is_empty()).then_some(initial);
+                } else {
+                    draft.custom_defaults.clear();
+                    draft.seeded_custom_text = None;
+                    if !draft.custom.text.is_empty() {
+                        let mut kept = Vec::new();
+                        let mut promoted = false;
+                        for line in draft.custom.text.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() && allowed.iter().any(|opt| opt.value == trimmed)
+                            {
+                                draft.selected.insert(trimmed.to_string());
+                                promoted = true;
+                            } else if allow_custom {
+                                kept.push(line);
+                            }
+                        }
+                        if !allow_custom {
+                            draft.custom = TextEdit::new("");
+                        } else if promoted {
+                            draft.custom = TextEdit::new(kept.join("\n"));
+                        }
+                    }
+                }
             } else if field["type"] == "string" && has_declared_options(field) {
+                draft.selected.clear();
+                draft.custom_defaults.clear();
+                draft.seeded_custom_text = None;
                 let allowed = normalized_options(field);
+                let allow_custom = field["custom"] == true;
                 if draft
                     .choice
                     .as_deref()
@@ -216,6 +276,40 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 {
                     draft.choice = None;
                 }
+                if !draft.edit.text.is_empty() {
+                    let prior = std::mem::take(&mut draft.edit.text);
+                    draft.edit = TextEdit::new("");
+                    if allowed.iter().any(|opt| opt.value == prior.as_str()) {
+                        draft.choice = Some(prior);
+                        draft.custom = TextEdit::new("");
+                    } else if allow_custom && draft.custom.text.is_empty() {
+                        draft.custom = TextEdit::new(prior);
+                    }
+                }
+                if !draft.custom.text.is_empty() {
+                    if allowed
+                        .iter()
+                        .any(|opt| opt.value == draft.custom.text.as_str())
+                    {
+                        draft.choice = Some(draft.custom.text.clone());
+                        draft.custom = TextEdit::new("");
+                    } else if !allow_custom {
+                        draft.custom = TextEdit::new("");
+                    }
+                }
+            } else {
+                draft.selected.clear();
+                draft.custom_defaults.clear();
+                draft.seeded_custom_text = None;
+                if field["type"] == "string" && draft.edit.text.is_empty() {
+                    if !draft.custom.text.is_empty() {
+                        draft.edit = TextEdit::new(&draft.custom.text);
+                    } else if let Some(chosen) = draft.choice.take() {
+                        draft.edit = TextEdit::new(chosen);
+                    }
+                }
+                draft.choice = None;
+                draft.custom = TextEdit::new("");
             }
         }
     }
@@ -346,14 +440,25 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
         Some("multiselect") => {
             let mut values = d.selected.clone();
             if field["custom"] == true {
-                values.extend(
-                    d.custom
-                        .text
-                        .lines()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string),
-                );
+                if d.custom_matches_seed() {
+                    for item in &d.custom_defaults {
+                        if item.encode_utf16().count() > 20_000 {
+                            return Err(());
+                        }
+                        if !item.is_empty() {
+                            values.insert(item.clone());
+                        }
+                    }
+                } else {
+                    values.extend(
+                        d.custom
+                            .text
+                            .lines()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .map(str::to_string),
+                    );
+                }
             }
             let count = values.len() as u64;
             if count > 32

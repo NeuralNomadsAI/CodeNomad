@@ -162,13 +162,33 @@ fn effective_backgrounds(surface: Color, base: Color) -> [Color; 2] {
     ]
 }
 
+fn card_fill(t: &Tokens, selected: bool, disabled: bool) -> Color {
+    let raw = if selected && !disabled {
+        t.color("menu-item-selected-bg")
+    } else {
+        t.color("surface-control")
+    };
+    if disabled {
+        return raw;
+    }
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let bgs = effective_backgrounds(raw, base);
+    if try_contrasting_color(t, &["text-primary", "text-secondary"], &bgs, 4.5).is_some() {
+        raw
+    } else {
+        // When a translucent card fill straddles the 4.5:1 luminance boundary across linear
+        // vs sRGB compositing, flatten it once so text always achieves >= 4.5:1.
+        composite_srgb(raw, base)
+    }
+}
+
 fn card_hover_fill(t: &Tokens, card_fill: Color) -> Color {
     let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
     let rest = effective_backgrounds(card_fill, base);
     let raw_hover = t.color("surface-hover");
     let hover = effective_backgrounds(raw_hover, base);
     let backgrounds = [rest[0], rest[1], hover[0], hover[1]];
-    if try_contrasting_color(
+    let focus_ok = try_contrasting_color(
         t,
         &[
             "focus-ring-color",
@@ -179,11 +199,39 @@ fn card_hover_fill(t: &Tokens, card_fill: Color) -> Color {
         &backgrounds,
         3.0,
     )
-    .is_some()
-    {
+    .is_some();
+    let text_ok =
+        try_contrasting_color(t, &["text-primary", "text-secondary"], &backgrounds, 4.5).is_some();
+    if focus_ok && text_ok {
         raw_hover
     } else {
         card_fill
+    }
+}
+
+fn card_text_colors(
+    t: &Tokens,
+    selected: bool,
+    disabled: bool,
+    card_fill: Color,
+    hover_fill: Color,
+) -> (Color, Color) {
+    if disabled {
+        let muted = t.color("text-muted");
+        return (muted, muted);
+    }
+    let base = composite_linear(t.color("surface-overlay"), Color::BLACK);
+    let rest = effective_backgrounds(card_fill, base);
+    if selected {
+        let label = contrasting_color(t, &["text-primary", "text-secondary"], &rest, 4.5);
+        let desc = contrasting_color(t, &["text-secondary", "text-primary"], &rest, 4.5);
+        (label, desc)
+    } else {
+        let hover = effective_backgrounds(hover_fill, base);
+        let backgrounds = [rest[0], rest[1], hover[0], hover[1]];
+        let label = contrasting_color(t, &["text-primary", "text-secondary"], &backgrounds, 4.5);
+        let desc = contrasting_color(t, &["text-secondary", "text-primary"], &backgrounds, 4.5);
+        (label, desc)
     }
 }
 
@@ -383,13 +431,8 @@ pub fn radio_group(
     group.children(items)
 }
 
-fn option_copy(label: &str, desc: Option<&str>, disabled: bool) -> El {
+fn option_copy(label: &str, desc: Option<&str>, label_color: Color, desc_color: Color) -> El {
     let t = tokens(layout::dark());
-    let label_color = if disabled {
-        t.color("text-muted")
-    } else {
-        t.color("text-primary")
-    };
     let mut copy = col()
         .key("copy")
         .shrink()
@@ -404,11 +447,6 @@ fn option_copy(label: &str, desc: Option<&str>, disabled: bool) -> El {
         )
         .a11y_hidden();
     if let Some(d) = desc {
-        let desc_color = if disabled {
-            t.color("text-muted")
-        } else {
-            t.color("text-secondary")
-        };
         copy = copy.child(
             text(d)
                 .key("description")
@@ -433,11 +471,7 @@ fn option_card<S: 'static>(
     press: impl Fn(&mut S) + 'static,
 ) -> El {
     let t = tokens(layout::dark());
-    let card_fill = if selected && !disabled {
-        t.color("menu-item-selected-bg")
-    } else {
-        t.color("surface-control")
-    };
+    let card_fill = card_fill(t, selected, disabled);
     let hover_fill = card_hover_fill(t, card_fill);
     let card_border = if disabled {
         t.color("border-muted")
@@ -447,6 +481,7 @@ fn option_card<S: 'static>(
         t.color("border-base")
     };
     let focus_color = card_focus_ring_color(t, selected, card_fill, hover_fill);
+    let (label_color, desc_color) = card_text_colors(t, selected, disabled, card_fill, hover_fill);
     let mut item = row()
         .key(key.to_string())
         .role(role)
@@ -464,7 +499,7 @@ fn option_card<S: 'static>(
         .focus_ring(2.0, -4.0, focus_color)
         .focus_ring_radius(0.0)
         .child(indicator)
-        .child(option_copy(label, desc, disabled));
+        .child(option_copy(label, desc, label_color, desc_color));
     if desc.is_some() {
         item = item.items_start();
     } else {
@@ -498,11 +533,7 @@ pub fn radio_option<S: 'static>(
 ) -> El {
     let t = tokens(layout::dark());
     let desc = non_empty(description);
-    let card_fill = if selected && !disabled {
-        t.color("menu-item-selected-bg")
-    } else {
-        t.color("surface-control")
-    };
+    let card_fill = card_fill(t, selected, disabled);
     let hover_fill = card_hover_fill(t, card_fill);
     let (indicator_fill, indicator_border, mark_color) = if disabled {
         (
@@ -565,11 +596,7 @@ pub fn checkbox_option<S: 'static>(
     let t = tokens(dark);
     let k = kit(dark);
     let desc = non_empty(description);
-    let card_fill = if checked && !disabled {
-        t.color("menu-item-selected-bg")
-    } else {
-        t.color("surface-control")
-    };
+    let card_fill = card_fill(t, checked, disabled);
     let hover_fill = card_hover_fill(t, card_fill);
     let (indicator_fill, indicator_border, mark_color) = if disabled {
         (
