@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict'
-import path from 'node:path'
 import {maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies} from '../native-fixture-http.mjs'
-import {appendPrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
 
-export async function pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState,realCookieHeader,attestedFetch}) {
-  assert(browser&&typeof attestedFetch==='function','Attested browser and attestedFetch required for pendingBrowser')
-  const allowedRoot=profile??out
+export async function pendingBrowser({values,m,browser,ownedBrowser,storageState,realCookieHeader,attestedFetch,writeOutput,appendOutput}) {
+  assert(browser&&typeof attestedFetch==='function'&&typeof writeOutput==='function'&&typeof appendOutput==='function','Attested browser, attestedFetch, writeOutput, and appendOutput required for pendingBrowser')
   const parsedUrl=new URL(values.url)
   const origin=parsedUrl.origin,isHttp=parsedUrl.protocol==='http:',results=[]
   const authHeaders=realCookieHeader?{cookie:realCookieHeader}:{}
@@ -30,10 +27,11 @@ export async function pendingBrowser({values,m,out,profile,browser,ownedBrowser,
     }
     return {status:res.status,headers:outHeaders,body,json:()=>JSON.parse(body.toString('utf8'))}
   }
+  let primaryError=null
   try {for(const mode of ['post','ack','quota','corrupt']) {
     let held,oldClaim,oldRecord,created=0,heldRoute,heldResponse,heldBody,latePostStatus
     const owned=new Set(),network=[]
-    const stage=async value=>writePrivateFile(path.join(out,`pending-${mode}-stage.json`),JSON.stringify({stage:value,network},null,2),allowedRoot)
+    const stage=async value=>writeOutput(`pending-${mode}-stage.json`,JSON.stringify({stage:value,network},null,2),{overwrite:true})
     const base=origin+'/'
     const context=await browser.newContext({viewport:{width:1100,height:900},storageState})
     await context.route(`${origin}/api/workspaces`,async route=>{
@@ -51,7 +49,7 @@ export async function pendingBrowser({values,m,out,profile,browser,ownedBrowser,
     })
     const page=await context.newPage();page.setDefaultTimeout(20000)
     let errors=0
-    const error=message=>{if(errors++<64)void appendPrivateFile(path.join(out,`pending-${mode}-errors.log`),`${String(message).slice(0,512)}\n`,allowedRoot).catch(()=>{})}
+    const error=message=>{if(errors++<64)void appendOutput(`pending-${mode}-errors.log`,`${String(message).slice(0,512)}\n`).catch(()=>{})}
     page.on('pageerror',error);page.on('console',message=>{if(message.type()==='error')error(message.text())})
     const KEY='codenomad.rune.alpha.client-state.v1',PROOF='codenomad.fixture.rune.pending.v1'
     await page.addInitScript(({KEY,PROOF,corrupt})=>{
@@ -102,10 +100,22 @@ export async function pendingBrowser({values,m,out,profile,browser,ownedBrowser,
       const successor=(await inventory()).filter(id=>!before.includes(id));assert.equal(successor.length,1)
       await page.waitForTimeout(200);assert((await inventory()).includes(successor[0]),'old claim preserves new occurrence')
       results.push({mode,before:before.length,after:after.length,successorProtected:true,oldClaimDispatched:true,receiptUnavailableAtDeparture:true,departedDocumentReceiptDelivered:false,latePostStatus,proof,network})
-    }catch(error){await writePrivateFile(path.join(out,`pending-${mode}-failure.yml`),await page.locator('body').ariaSnapshot().catch(()=>''),allowedRoot);await stage(String(error));throw error}finally {
-      await context.close()
-      for(const id of owned){const r=await attestedFetch(`${origin}/api/workspaces/${id}`,{method:'DELETE',headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok)}
+    }catch(error){primaryError??=error;await writeOutput(`pending-${mode}-failure.yml`,await page.locator('body').ariaSnapshot().catch(()=>'')).catch(()=>{});await stage(String(error)).catch(()=>{});throw error}finally {
+      let modeCleanupError=null
+      try{await context.close()}catch(closeError){console.error(`Failed to close pending-open context: ${closeError.message}`);modeCleanupError??=closeError}
+      for(const id of owned){
+        try{const r=await attestedFetch(`${origin}/api/workspaces/${id}`,{method:'DELETE',headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok)}catch(deleteError){
+          console.error(`Failed to delete pending-open workspace ${id}: ${deleteError.message}`)
+          modeCleanupError??=deleteError
+        }
+      }
+      if(!primaryError&&modeCleanupError)throw modeCleanupError
     }
-  }}finally{await writePrivateFile(path.join(out,'pending-open-proof.json'),JSON.stringify(results,null,2),allowedRoot)}
+  }}catch(error){primaryError=error;throw error}finally{
+    try{await writeOutput('pending-open-proof.json',JSON.stringify(results,null,2))}catch(writeError){
+      console.error(`Failed to write pending-open proof: ${writeError.message}`)
+      if(!primaryError)throw writeError
+    }
+  }
   console.log(JSON.stringify({pendingBrowser:true,cases:results.length,success:true}))
 }

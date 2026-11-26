@@ -42,6 +42,10 @@ export async function createPrivateOutputDir(out,allowedRoot){
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   if(existing){
     assert(!existing.isSymbolicLink()&&existing.isDirectory(),`Output path must be an empty non-symlink directory: ${resolved}`)
+    if(process.platform!=='win32'){
+      assert.equal(existing.uid,process.getuid(),`Output directory must be owned by current user: ${resolved}`)
+      assert.equal(existing.mode&0o077,0,`Existing output directory must not be group/world accessible: ${resolved}`)
+    }
     const entries=await readdir(resolved)
     assert.equal(entries.length,0,`Refusing to write into non-empty output directory: ${resolved}`)
   }else{

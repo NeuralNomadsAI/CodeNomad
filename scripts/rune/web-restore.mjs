@@ -13,7 +13,7 @@ import {mobileDrawersBrowser} from './web-mobile-drawers.mjs'
 import {keyboardViewport} from './web-keyboard-viewport.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writeExclusivePrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,appendPrivateFile,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writeExclusivePrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'mobile-drawers':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
@@ -33,13 +33,22 @@ const outReal=await createPrivateOutputDir(out,profile)
 const anchorPath=path.join(outReal,'.output-anchor')
 let outputAnchor=null
 let outputAuthorized=false
-const ALLOWED_OUTPUT_NAME=/^(?:summary\.json|mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml)$/
-const writeOutput=async(name,content)=>{
+const ALLOWED_OUTPUT_NAME=/^(?:summary\.json|mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml|file-wrap-proof\.json|file-wrap-tab-\d+\.aria\.yml|pending-open-proof\.json|pending-(?:post|ack|quota|corrupt)-(?:stage\.json|failure\.yml|errors\.log)|(?:desktop-light|phone-dark|keyboard-phone-dark)-(?:[a-z0-9-]+\.(?:aria\.yml|png)|snapshot\.json|proof\.json))$/
+const verifyOutputTarget=async name=>{
   assert(outputAnchor&&outputAuthorized,'Output directory anchor is not active')
   assert(typeof name==='string'&&ALLOWED_OUTPUT_NAME.test(name),`Invalid output artifact name: ${name}`)
   const currentOut=await realpath(outReal)
   assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
-  await writeExclusivePrivateFile(path.join(outReal,name),content,profile)
+  return path.join(outReal,name)
+}
+const writeOutput=async(name,content,{overwrite=false}={})=>{
+  const target=await verifyOutputTarget(name)
+  if(overwrite)await writePrivateFile(target,content,profile)
+  else await writeExclusivePrivateFile(target,content,profile)
+}
+const appendOutput=async(name,content)=>{
+  const target=await verifyOutputTarget(name)
+  await appendPrivateFile(target,content,profile)
 }
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
@@ -51,7 +60,7 @@ const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/as
 assert(!values['keyboard-viewport']||(!values['pending-open']&&!values['file-wrap']&&!values['mobile-drawers']&&!values.outline),'Keyboard viewport mode cannot combine with --pending-open, --file-wrap, --mobile-drawers or --outline')
 let attestedFetch,ownedBrowser,primaryError=null
 const results=[]
-let wroteSummary=false
+const runMode=values['pending-open']?'pending-open':values['file-wrap']?'file-wrap':values['mobile-drawers']?'mobile-drawers':'restore'
 const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   const req=route.request()
   const headers={...(await req.allHeaders())}
@@ -89,9 +98,9 @@ try {
     ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
   })
   const browser=ownedBrowser.browser
-  if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch});wroteSummary=true}
-  else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,url,root});wroteSummary=true}
-  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root});wroteSummary=true}
+  if(values['pending-open']){await pendingBrowser({values,m,out,profile,browser,ownedBrowser,storageState:browserStorageState,realCookieHeader,attestedFetch,writeOutput,appendOutput})}
+  else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root})}
+  else if(values['mobile-drawers']){await mobileDrawersBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,writeOutput,url,root})}
   else {
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
@@ -295,8 +304,8 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       return raw
     }
     const capture=async stage=>{
-      record.stages.push(stage);await writePrivateFile(path.join(out,`${spec.name}-${stage}.aria.yml`),await page.locator('body').ariaSnapshot(),profile)
-      if(stage==='failure'){const buf=await page.screenshot();await writePrivateFile(path.join(out,`${spec.name}-${stage}.png`),buf,profile);return}
+      record.stages.push(stage);await writeOutput(`${spec.name}-${stage}.aria.yml`,await page.locator('body').ariaSnapshot())
+      if(stage==='failure'){const buf=await page.screenshot();await writeOutput(`${spec.name}-${stage}.png`,buf);return}
       const attempts=[]
       for(const deadline=Date.now()+5000;;){
       const boxes={}
@@ -328,7 +337,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
         paint=await assertRenderedTextContrast(imagePage,png,regions,palette[spec.colorScheme])
         paintSamples.push(paint.map(region=>({name:region.name,drawnInkPixels:region.drawnInkPixels})))
       }
-      await writePrivateFile(path.join(out,`${spec.name}-${stage}.png`),png,profile)
+      await writeOutput(`${spec.name}-${stage}.png`,png)
       ;(record.viewportProof??=[]).push({stage,viewport:[spec.width,spec.height],boxes,paint,paintSamples,settlementAttempts:attempts})
       break
       }catch(error){
@@ -463,7 +472,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert(record.requests.some(r=>r.pagination),'Second session must be reached through a real catalogue page')
       assert(record.eventSource.length>0,'Real EventSource traffic required')
       assert.equal(record.errors.length,0);assert.equal(record.forbidden.length,0)
-      await writePrivateFile(path.join(out,`${spec.name}-snapshot.json`),await saved([draftA,retryDraft]),profile)
+      await writeOutput(`${spec.name}-snapshot.json`,await saved([draftA,retryDraft]))
       record.result='pass';record.limit='Phone emulated. Forced closure with unsaved edits is outside the restoration guarantee.'
     }catch(error){specError=error;record.result='fail';record.failure=error?.message??String(error);await capture('failure').catch(()=>{});throw error}
     finally{
@@ -472,11 +481,14 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}
       try{await context.close()}catch(closeError){
         console.error(`Failed to close restore context: ${closeError.message}`)
+        ;(record.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
         if(record.result==='pass'){record.result='fail';record.failure=closeError.message}
         specCleanupError??=closeError
       }
-      try{await writePrivateFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2),profile)}catch(writeError){
+      try{await writeOutput(`${spec.name}-proof.json`,JSON.stringify(record,null,2))}catch(writeError){
         console.error(`Failed to write restore proof: ${writeError.message}`)
+        ;(record.cleanupErrors??=[]).push(`proof write: ${writeError.message}`)
+        if(record.result==='pass'){record.result='fail';record.failure=writeError.message}
         specCleanupError??=writeError
       }
       if(!specError&&specCleanupError)throw specCleanupError
@@ -488,23 +500,37 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   throw error
 }finally{
   let cleanupError=null
+  const cleanupErrors=[]
   if(attestedFetch){
     try{await attestedFetch.close()}catch(closeError){
       console.error(`Failed to close attested fetch: ${closeError.message}`)
+      cleanupErrors.push(`attestedFetch.close: ${closeError.message}`)
       cleanupError??=closeError
     }
   }
   if(ownedBrowser){
     try{await ownedBrowser.close()}catch(closeError){
       console.error(`Failed to close browser: ${closeError.message}`)
+      cleanupErrors.push(`ownedBrowser.close: ${closeError.message}`)
       cleanupError??=closeError
     }
   }
-  if(outputAuthorized&&!wroteSummary){
+  if(outputAuthorized){
     try{
-      await writeOutput('summary.json',JSON.stringify({runner:'web-restore',origin:url.origin,...(cleanupError?{cleanupFailure:cleanupError.message}:{}),contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+      const summaryResult=primaryError||cleanupError||results.some(r=>r.result!=='pass')?'fail':'pass'
+      await writeOutput('summary.json',JSON.stringify({
+        runner:'web-restore',
+        mode:runMode,
+        result:summaryResult,
+        origin:url.origin,
+        ...(primaryError?{failure:primaryError?.message??String(primaryError)}:{}),
+        ...(cleanupErrors.length?{cleanupErrors}:{}),
+        contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure,...(r.cleanupErrors?.length?{cleanupErrors:r.cleanupErrors}:{})})),
+        scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions',
+      },null,2))
     }catch(writeError){
       console.error(`Failed to write web-restore summary: ${writeError.message}`)
+      cleanupErrors.push(`summary write: ${writeError.message}`)
       cleanupError??=writeError
     }
   }
@@ -514,10 +540,19 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
     outputAuthorized=false
     try{await handle.close()}catch(closeError){
       console.error(`Failed to close output anchor: ${closeError.message}`)
+      cleanupErrors.push(`output-anchor close: ${closeError.message}`)
       cleanupError??=closeError
     }
-    await unlink(anchorPath).catch(()=>{})
+    try{await unlink(anchorPath)}catch(unlinkError){
+      if(unlinkError?.code!=='ENOENT'){
+        console.error(`Failed to remove output anchor: ${unlinkError.message}`)
+        cleanupErrors.push(`output-anchor unlink: ${unlinkError.message}`)
+        cleanupError??=unlinkError
+      }
+    }
   }
   if(!primaryError&&cleanupError)throw cleanupError
 }
-console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))
+if(runMode==='restore'){
+  console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))
+}
