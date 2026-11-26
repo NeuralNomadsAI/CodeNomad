@@ -8,6 +8,9 @@ pub(crate) use persistence::poll;
 
 use codenomad_client::prompt_history::MAX_ENTRIES;
 const MAX_WINDOW_ENTRIES: usize = 3200;
+#[cfg(target_arch = "wasm32")]
+const MAX_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_BYTES: usize = 80 * 1024 * 1024;
 const MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -104,10 +107,109 @@ pub(crate) struct History {
 }
 
 impl History {
-    fn discard(&mut self, index: usize) {
-        if let Some(entry) = self.entries.remove(index) {
-            self.bytes -= entry.bytes;
+    #[cfg(test)]
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn retained_bytes_dedup(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(entry.edit.text.len())
+                .saturating_add(
+                    entry
+                        .edit
+                        .marks()
+                        .len()
+                        .saturating_mul(size_of::<rune::edit::MarkRange>()),
+                )
+                .saturating_add(entry.resolved.len())
+                .saturating_add(entry.draft.retained_bytes(seen))
+        })
+    }
+
+    pub(crate) fn evict_under_pressure(
+        &mut self,
+        bytes_to_free: usize,
+        active_tab: Option<&str>,
+        active_session: Option<&str>,
+        protected_ids: &[i64],
+    ) -> usize {
+        if bytes_to_free == 0 || self.entries.is_empty() {
+            return 0;
         }
+        let mut freed = 0usize;
+        // Pass 1: evict oldest entries from inactive tabs/sessions first.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            let is_active = active_tab.is_some()
+                && active_session.is_some()
+                && entry.originates_in(
+                    active_tab.unwrap_or_default(),
+                    active_session.unwrap_or_default(),
+                );
+            if !is_active
+                && !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
+            }
+        }
+        // Pass 2: if still over budget, evict oldest remaining entries except protected ones.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            if !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
+            }
+        }
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push(&mut self, tab: &str, session: &str, text: String) -> i64 {
+        self.fixture_push_with_draft(tab, session, text, Draft::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push_with_draft(
+        &mut self,
+        tab: &str,
+        session: &str,
+        text: String,
+        draft: Draft,
+    ) -> i64 {
+        self.next += 1;
+        let bytes = text
+            .len()
+            .saturating_mul(2)
+            .saturating_add(draft.retained_bytes(&mut std::collections::HashSet::new()));
+        let id = self.next;
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.entries.push_front(Entry {
+            project: Project::Unbound,
+            origin: Some((tab.into(), session.into())),
+            edit: TextEdit::new(&text),
+            draft,
+            resolved: text,
+            bytes,
+            id,
+        });
+        id
+    }
+
+    fn discard(&mut self, index: usize) -> Option<Entry> {
+        let entry = self.entries.remove(index)?;
+        self.bytes = self.bytes.saturating_sub(entry.bytes);
+        Some(entry)
     }
 
     fn count(&self, project: &Project) -> usize {
@@ -171,9 +273,59 @@ impl Recall {
         self.draft = Draft::default();
         self.missing = false;
     }
+
+    pub(crate) fn id(&self) -> i64 {
+        self.id
+    }
+
+    pub(crate) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.edit
+            .text
+            .len()
+            .saturating_add(self.draft.retained_bytes(seen))
+    }
 }
 
+fn entry_sole_owner_bytes(entry: &Entry) -> usize {
+    entry
+        .edit
+        .text
+        .len()
+        .saturating_add(
+            entry
+                .edit
+                .marks()
+                .len()
+                .saturating_mul(size_of::<rune::edit::MarkRange>()),
+        )
+        .saturating_add(entry.resolved.len())
+        .saturating_add(entry.draft.sole_owner_bytes())
+}
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
+    record_with_limits(
+        s,
+        resolved,
+        slash,
+        crate::workspace::memory_budget::Limits::DEFAULT,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_record(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
+    record_with_limits(s, resolved, slash, limits)
+}
+
+fn record_with_limits(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
     let Some((project, tab, session)) = scope(s) else {
         return false;
     };
@@ -247,6 +399,7 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     }
     history.next += 1;
     history.bytes += bytes;
+    let recorded_id = history.next;
     history.entries.push_front(Entry {
         project,
         origin: Some((tab, session)),
@@ -254,8 +407,9 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         draft,
         resolved,
         bytes,
-        id: history.next,
+        id: recorded_id,
     });
+    let _ = crate::workspace::memory_budget::enforce_with_recall(s, limits, Some(recorded_id));
     true
 }
 

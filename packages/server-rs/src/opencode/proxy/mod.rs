@@ -103,7 +103,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     }
     let declared =
         head.headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
-    if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH))
+    if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE))
         && declared.is_some_and(|length| length > body_limit)
     {
         let _ = super::proxy_body::read(body, body_limit, declared).await;
@@ -213,6 +213,41 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     // Validate `x-codenomad-location` shape and query selectors before any session lookup
     // (TS `http-server.ts:1133-1136, 1248-1269` & `proxy-locations.ts:27-34`).
     let parsed_location_context = parse_location_context(&head.headers)?;
+    let global_form = controls::is_global_form(route, &head.method);
+    let global_form_directory = if global_form {
+        let invalid_form = || error(Status::BAD_REQUEST, "Invalid Form location");
+        if head.headers.contains_key("x-opencode-workspace") {
+            return Err(invalid_form());
+        }
+        let mut values = head.headers.get_all("x-opencode-directory").iter();
+        let header_dir = if let Some(value) = values.next() {
+            if values.next().is_some() {
+                return Err(invalid_form());
+            }
+            let raw = value.to_str().ok().ok_or_else(invalid_form)?;
+            let decoded = crate::shared::decode_component(raw).ok_or_else(invalid_form)?;
+            if decoded.trim().is_empty() || decoded.contains('\0') {
+                return Err(invalid_form());
+            }
+            Some(decoded)
+        } else {
+            None
+        };
+        if let Some(ctx) = &parsed_location_context {
+            let expected = header_dir.as_deref().unwrap_or(opened);
+            if ctx["directory"].as_str() != Some(expected) {
+                return Err(error(Status::BAD_REQUEST, "Conflicting Form location"));
+            }
+        }
+        if let Some(dir) = &header_dir {
+            if !crate::worktrees::owns(&app, &workspace, dir).await {
+                return Err(foreign());
+            }
+        }
+        header_dir
+    } else {
+        None
+    };
     let (mut dir_count, mut loc_dir_count) = (0usize, 0usize);
     let mut invalid_query = false;
     let mut requested_dirs: Vec<String> = Vec::new();
@@ -438,9 +473,14 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     } else {
         None
     };
-    let directory =
-        if send_input { native_directory.or(requested.as_deref()) } else { requested.as_deref().or(native_directory) }
-            .unwrap_or(opened);
+    let directory = if send_input {
+        native_directory.or(requested.as_deref())
+    } else if global_form_directory.is_some() {
+        global_form_directory.as_deref()
+    } else {
+        requested.as_deref().or(native_directory)
+    }
+    .unwrap_or(opened);
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
@@ -691,7 +731,12 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         explicit = true;
     }
     if session_path.is_some_and(|path| path.split('/').next() == Some("global")) {
-        return Ok(PreparedRelay::Response(unavailable()));
+        if !global_form {
+            return Ok(PreparedRelay::Response(unavailable()));
+        }
+        if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
+            return Ok(PreparedRelay::Response(unavailable()));
+        }
     }
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
@@ -749,7 +794,7 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
             prompt_input: &mut prompt_input,
             prompt_locations: &prompt_locations,
             trace_fence,
-            explicit,
+            explicit: explicit || global_form_directory.is_some(),
             session_list,
             target: &mut target,
         }))
@@ -798,6 +843,10 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         if !blocked {
             upstream = upstream.header(name, value);
         }
+    }
+    if let Some(dir) = &global_form_directory {
+        let encoded = percent_encoding::utf8_percent_encode(dir, percent_encoding::NON_ALPHANUMERIC).to_string();
+        upstream = upstream.header("x-opencode-directory", encoded);
     }
     if let Some(input) = &input {
         upstream = upstream.json(input);

@@ -850,7 +850,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert_eq!(rt.state.composer.optimistic_id(), None);
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
@@ -917,7 +918,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(rt.state.phase == Phase::Ready);
         assert!(!rt.state.stream_offline);
@@ -939,7 +941,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(matches!(
             rt.state.phase,
@@ -957,7 +960,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(rt.state.conversation_stream_connected);
         assert!(can_send(&rt.state));
@@ -967,7 +971,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(rt.state.stream_offline);
         assert!(rt.state.conversation_stream_connected);
@@ -987,7 +992,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(rt.state.stream_offline);
         assert!(rt.state.reader.as_ref().unwrap().is_resuming());
@@ -1015,7 +1021,8 @@ mod tests {
         assert!(crate::chat::events::poll_chat_for_window(
             &mut rt.state,
             64,
-            false
+            false,
+            0.0,
         ));
         assert!(rt.state.phase == Phase::Ready);
         assert!(!rt.state.stream_offline);

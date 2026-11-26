@@ -58,10 +58,20 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background"]
+            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background", "/revert/stage"]
                 .iter()
                 .any(|suffix| route.ends_with(suffix)))
-        || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
+        || (matches!(*method, Method::PATCH | Method::DELETE)
+            && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
+        || (matches!(*method, Method::PATCH | Method::DELETE)
+            && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
+                !sid.is_empty() && !sid.contains('/') && !item.is_empty() && !item.contains('/')
+            }))
+        || (*method == Method::DELETE
+            && route
+                .strip_prefix("/api/session/")
+                .and_then(|r| r.strip_suffix("/revert"))
+                .is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
             && route.contains("/instructions/entries/"))

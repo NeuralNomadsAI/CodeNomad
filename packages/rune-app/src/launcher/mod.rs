@@ -85,6 +85,7 @@ pub struct Launcher {
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
     close_mission_reader_on_bind: bool,
+    rebinding_failed: bool,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
@@ -219,6 +220,7 @@ impl Launcher {
             pending_connection_generation: 0,
             selection_ticket: None,
             close_mission_reader_on_bind: false,
+            rebinding_failed: false,
             boot,
             host: None,
             managed_renewal: None,
@@ -382,16 +384,21 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut relayed = false;
     if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
         let mut stopped = Vec::new();
+        let mut stopped_ids = HashSet::new();
         let mut other = Vec::new();
         for event in events {
-            if matches!(
-                event,
-                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
-            ) {
+            if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = &event {
+                stopped_ids.insert(workspace_id.clone());
                 stopped.push(event);
             } else {
                 other.push(event);
             }
+        }
+        if !stopped_ids.is_empty() {
+            other.retain(|event| {
+                crate::workspace::event_workspace_id(event)
+                    .is_none_or(|id| !stopped_ids.contains(id))
+            });
         }
         if overflow
             && let Some(l) = s.screen.launcher_mut()
@@ -596,6 +603,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
+    #[cfg(target_arch = "wasm32")]
+    let pairing_required = crate::platform::pairing::required(s);
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -615,10 +624,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
     let close_mission_reader = std::mem::take(&mut l.close_mission_reader_on_bind);
+    let rebinding_failed = std::mem::take(&mut l.rebinding_failed);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
+        if rebinding_failed && s.phase == Phase::Reconnecting {
+            s.phase = Phase::Failed;
+        }
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
@@ -635,6 +648,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::AuthenticationExpired(expired)) => {
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             crate::settings::authentication_required(s, &expired);
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
@@ -853,25 +869,29 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
             }
-            if let Some(id) = selected
-                .as_deref()
-                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
-            {
+            if let Some(id) = selected.as_deref().filter(|id| {
+                (s.phase == Phase::Failed || rebinding_failed) && missing.iter().any(|m| m == id)
+            }) {
                 retire_session(s, id);
                 tx.instant();
                 return true;
             }
             let auth_required = l.authentication_required;
+            #[cfg(target_arch = "wasm32")]
+            let auth_required = auth_required || pairing_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
                     && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&b.workspace)
                     && (!selection_blocked
-                        || s.phase == Phase::Failed
+                        || (s.phase == Phase::Failed || rebinding_failed)
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 l.show_title = false;
                 if stale_connection {
+                    if rebinding_failed && s.phase == Phase::Reconnecting {
+                        s.phase = Phase::Failed;
+                    }
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
                         retry_mission_conversation(s, b.session);
@@ -885,15 +905,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     }
                     bind(s, b, title, visit, &slug, tx);
                 }
-            } else if !selection_blocked {
-                l.error = Some("sessionList.reload.error");
-                crate::shell::notifications::emit_outcome(
-                    s,
-                    crate::shell::notifications::Category::Sessions,
-                    None,
-                    crate::strings::t("sessionList.reload.error"),
-                    true,
-                );
+            } else {
+                if rebinding_failed && s.phase == Phase::Reconnecting {
+                    s.phase = Phase::Failed;
+                }
+                if !selection_blocked {
+                    l.error = Some("sessionList.reload.error");
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t("sessionList.reload.error"),
+                        true,
+                    );
+                }
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -992,6 +1017,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Err(error) => {
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             if stale_connection && l.resume_after_job {
                 l.error = None;
             } else {

@@ -250,7 +250,7 @@ fn async_sse_scopes_epochs_and_cancellation_invalidates_the_snapshot_fence() {
             input.try_recv().is_err(),
             "foreign events must not publish or advance the fence"
         );
-        state.cancelled.store(true, SeqCst);
+        state.cancel();
         assert!(matches!(next(&input).await, Input::Closed(7)));
         assert!(!state.valid(version));
         assert!(!state.alive.load(SeqCst));

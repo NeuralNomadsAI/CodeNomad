@@ -754,6 +754,63 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.linked.rows.is_empty());
 }
 
+#[test]
+fn root_creation_uncertain_survives_passive_listings_until_explicit_refresh() {
+    let mut launcher = Launcher::fixture();
+    launcher.sessions = vec![row("root"), row("deleted")];
+    launcher.creation_uncertain = true;
+    launcher.creation_uncertain_linked = None;
+    launcher.error = Some("rune.create_error");
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+        true,
+        false,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root"]
+    );
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root"), row("other")],
+            next: None,
+        },
+        None,
+        true,
+        true,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "other"]
+    );
+    launcher.apply_directory_refresh(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+    );
+    assert!(!launcher.creation_uncertain);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct CatalogueFixture {
     base_url: String,
@@ -1555,4 +1612,86 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
     assert!(!rt.state.composer.attachments_missing);
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
     assert!(rt.state.files.is_some());
+}
+
+#[test]
+fn failed_session_retry_stays_reconnecting_until_sync_and_reverts_on_error() {
+    let mut state = crate::init();
+    crate::gallery::shell::fixture(&mut state);
+    let backend = Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: "http://127.0.0.1:9/".into(),
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        client_id: "fixture".into(),
+        session_directory: Some("/project".into()),
+        fresh_mode: false,
+    };
+    let project = {
+        let launcher = state.screen.launcher_mut().unwrap();
+        launcher.connection = Some(backend.clone());
+        launcher.project.clone().unwrap()
+    };
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::connected(&mut state);
+    crate::workspace::opened(&mut state, &project);
+    crate::workspace::bound(&mut state, &backend);
+    state.draft = TextEdit::new("Draft across device revocation");
+    state.phase = Phase::Failed;
+    state.commands = None;
+    let mut rt = rune::Runtime::new(
+        state,
+        crate::view,
+        (1100.0, 800.0),
+        rune::Env::new(false, 1.0),
+    );
+
+    // Retrying a failed session with no live transport enters Phase::Reconnecting immediately.
+    rt.update(crate::retry_connection);
+    assert!(rt.state.screen.launcher().unwrap().pending);
+    assert!(rt.state.phase == Phase::Reconnecting);
+    assert!(rt.state.incoming.is_none());
+
+    // If the rebind lookup fails, phase reverts to Phase::Failed so Retry stays actionable.
+    let (err_out, err_in) = bounded(1);
+    rt.state.screen.launcher_mut().unwrap().result = Some(err_in);
+    assert!(
+        err_out
+            .try_send(Err("sessionList.reload.error".into()))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(!rt.state.screen.launcher().unwrap().pending);
+    assert!(rt.state.phase == Phase::Failed);
+
+    // A succeeding retry keeps Phase::Reconnecting through Reply::Selected -> bind_at until sync.
+    rt.update(crate::retry_connection);
+    assert!(rt.state.phase == Phase::Reconnecting);
+    let (sel_out, sel_in) = bounded(1);
+    rt.state.screen.launcher_mut().unwrap().result = Some(sel_in);
+    assert!(
+        sel_out
+            .try_send(Ok(Reply::Selected(
+                vec![],
+                Some((
+                    backend,
+                    "Fixture conversation".into(),
+                    None,
+                    Instant::now(),
+                    "root".into()
+                )),
+                None,
+                false,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.phase == Phase::Reconnecting);
+    assert!(rt.state.commands.is_some());
+    assert!(rt.state.incoming.is_some());
+    assert_eq!(rt.state.draft.text, "Draft across device revocation");
 }

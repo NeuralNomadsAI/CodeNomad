@@ -23,7 +23,7 @@ pub(crate) async fn page_offer(
     cancelled: Option<&Receiver<()>>,
     page: &crate::history::Page,
     wire: &Arc<stream::State>,
-    revision: u64,
+    stamp: u64,
     send: impl AsyncFnOnce(Event) -> bool,
 ) -> bool {
     let Some(cancelled) = cancelled else {
@@ -35,7 +35,8 @@ pub(crate) async fn page_offer(
             page: page.clone(),
             admit: Admission {
                 wire: wire.clone(),
-                revision,
+                revision: wire.history_revision.load(SeqCst),
+                live_version: Some(stamp),
                 admit,
             },
             cancelled: cancelled.clone(),
@@ -54,6 +55,7 @@ pub(crate) async fn page_offer(
 pub struct Admission {
     wire: Arc<stream::State>,
     revision: u64,
+    live_version: Option<u64>,
     admit: Sender<()>,
 }
 
@@ -67,7 +69,9 @@ impl std::fmt::Debug for Admission {
 
 impl Admission {
     pub fn accept(self) -> bool {
-        self.wire.history_current(self.revision) && self.admit.try_send(()).is_ok()
+        self.wire.history_current(self.revision)
+            && self.live_version.is_none_or(|stamp| self.wire.valid(stamp))
+            && self.admit.try_send(()).is_ok()
     }
 }
 
@@ -103,7 +107,10 @@ impl Jump {
         let stamp = wire.version.load(SeqCst);
         let request = async {
             match backend.resolve_anchor(&self.message, resident).await {
-                Ok(AnchorWindow::Loaded(page)) if wire.history_current(revision) => {
+                Ok(AnchorWindow::Loaded(page))
+                    if wire.history_current(revision)
+                        && (page.newer.is_some() || wire.valid(stamp)) =>
+                {
                     Fetch::Loaded(page)
                 }
                 Err(error)
@@ -120,15 +127,19 @@ impl Jump {
                 self.cancelled.recv().await.ok();
                 Fetch::Failed
             },
-            futures_lite::future::or(request, async {
-                futures_lite::future::race(wire.placement_changed(), async {
-                    while wire.history_current(revision) {
-                        crate::runtime::sleep(std::time::Duration::from_millis(25)).await;
-                    }
-                })
-                .await;
-                Fetch::Failed
-            }),
+            futures_lite::future::or(
+                futures_lite::future::or(
+                    async {
+                        wire.placement_changed().await;
+                        Fetch::Failed
+                    },
+                    async {
+                        wire.stream_closed().await;
+                        Fetch::Failed
+                    },
+                ),
+                request,
+            ),
         )
         .await;
         let mut page = match fetched {
@@ -153,6 +164,7 @@ impl Jump {
             admit: Admission {
                 wire: wire.clone(),
                 revision,
+                live_version: page.newer.is_none().then_some(stamp),
                 admit,
             },
         })
@@ -284,4 +296,22 @@ fn jump_offer_returns_authentication_expired_on_401_without_anchor_failed() {
             assert!(events.is_empty(), "401 must not emit AnchorFailed");
             server.await.unwrap();
         });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn admission_rejects_after_placement_change_even_before_revision_bumps() {
+    let (ev_tx, _ev_rx) = bounded(1);
+    let wire = Arc::new(stream::State::observing_preferences(ev_tx, Arc::new(|| {})));
+    wire.alive.store(true, SeqCst);
+    wire.upstream.store(true, SeqCst);
+    let (admit, _verdict) = bounded(1);
+    let admission = Admission {
+        wire: wire.clone(),
+        revision: 0,
+        live_version: None,
+        admit,
+    };
+    wire.close_placement();
+    assert!(!admission.accept());
 }

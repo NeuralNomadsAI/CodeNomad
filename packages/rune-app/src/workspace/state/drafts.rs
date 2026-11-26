@@ -61,6 +61,16 @@ impl LiveDraft {
     }
 }
 
+impl LiveDraft {
+    pub(super) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.text.as_ref().map_or(0, String::len).saturating_add(
+            self.parts
+                .as_ref()
+                .map_or(0, |(draft, _)| draft.retained_bytes(seen)),
+        )
+    }
+}
+
 impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
         self.entries

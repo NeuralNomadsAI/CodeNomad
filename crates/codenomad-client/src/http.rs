@@ -24,30 +24,69 @@ struct CapabilityState {
     attested_drop_epoch: AtomicU64,
 }
 
+struct GuardState {
+    opened: bool,
+    closed: bool,
+    recorded: bool,
+    counted: bool,
+}
+
 pub(crate) struct StreamDropGuard {
     drops: DropTable,
     client_id: String,
     open_streams: Arc<AtomicUsize>,
     drop_generation: Arc<AtomicU64>,
-    opened: Arc<AtomicBool>,
+    state: Mutex<GuardState>,
 }
 
 impl StreamDropGuard {
-    pub(crate) fn release_open(&self) -> bool {
-        if self.opened.swap(false, Ordering::SeqCst) {
-            if self.open_streams.fetch_sub(1, Ordering::SeqCst) == 1 {
-                self.drop_generation.fetch_add(1, Ordering::SeqCst);
-            }
-            true
-        } else {
-            false
+    pub(crate) fn try_mark_open(&self, client: &Http, count_open_stream: bool) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || state.opened {
+            return false;
+        }
+        state.opened = true;
+        state.counted = count_open_stream;
+        if count_open_stream {
+            self.open_streams.fetch_add(1, Ordering::SeqCst);
+        }
+        client.mark_stream_opened(&self.client_id);
+        true
+    }
+
+    pub(crate) fn close_and_revoke(
+        &self,
+        client: &Http,
+        _count_open_stream: bool,
+        record_drop: bool,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        let was_open = std::mem::replace(&mut state.opened, false);
+        if std::mem::replace(&mut state.counted, false)
+            && self.open_streams.fetch_sub(1, Ordering::SeqCst) == 1
+        {
+            self.drop_generation.fetch_add(1, Ordering::SeqCst);
+        }
+        if record_drop && !state.recorded {
+            state.recorded = true;
+            client.record_transport_drop(&self.client_id, was_open);
         }
     }
 }
 
 impl Drop for StreamDropGuard {
     fn drop(&mut self) {
-        self.release_open();
+        {
+            let mut state = self.state.lock().unwrap();
+            state.closed = true;
+            state.opened = false;
+            if std::mem::replace(&mut state.counted, false)
+                && self.open_streams.fetch_sub(1, Ordering::SeqCst) == 1
+            {
+                self.drop_generation.fetch_add(1, Ordering::SeqCst);
+            }
+        }
         let mut drops = self.drops.lock().unwrap();
         if let Some((_, _, active, _, _)) = drops
             .iter_mut()
@@ -85,6 +124,7 @@ pub struct Http(
     Arc<[AtomicU64; 3]>,
     DropTable,
     Arc<CapabilityState>,
+    Arc<crate::stream::Hub>,
 );
 struct Identity {
     server: String,
@@ -152,6 +192,7 @@ impl Http {
                 stream_drop_epoch: AtomicU64::new(0),
                 attested_drop_epoch: AtomicU64::new(0),
             }),
+            Arc::default(),
         )
     }
     pub fn new() -> Result<Self> {
@@ -192,12 +233,16 @@ impl Http {
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
     }
+    pub(crate) fn sse_hub(&self) -> &Arc<crate::stream::Hub> {
+        &self.7
+    }
     pub(crate) fn preferences_notices(&self) -> Arc<[AtomicU64; 3]> {
         self.4.clone()
     }
     pub fn preferences_revision(&self, owner: crate::settings::Owner) -> u64 {
         self.4[owner.index()].load(Ordering::SeqCst)
     }
+    #[cfg(test)]
     pub(crate) fn open_streams_counter(&self) -> Arc<AtomicUsize> {
         self.6.open_streams.clone()
     }
@@ -214,7 +259,7 @@ impl Http {
             }
         }
     }
-    pub(crate) fn track_stream(&self, client_id: &str) -> (StreamDropGuard, Arc<AtomicBool>) {
+    pub(crate) fn track_stream(&self, client_id: &str) -> StreamDropGuard {
         let mut drops = self.5.lock().unwrap();
         if let Some((_, _, active, _, _)) =
             drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
@@ -224,17 +269,18 @@ impl Http {
             Self::evict_inactive(&mut drops);
             drops.push((client_id.to_owned(), 0, 1, false, false));
         }
-        let opened = Arc::new(AtomicBool::new(false));
-        (
-            StreamDropGuard {
-                drops: self.5.clone(),
-                client_id: client_id.to_owned(),
-                open_streams: self.6.open_streams.clone(),
-                drop_generation: self.6.drop_generation.clone(),
-                opened: opened.clone(),
-            },
-            opened,
-        )
+        StreamDropGuard {
+            drops: self.5.clone(),
+            client_id: client_id.to_owned(),
+            open_streams: self.6.open_streams.clone(),
+            drop_generation: self.6.drop_generation.clone(),
+            state: Mutex::new(GuardState {
+                opened: false,
+                closed: false,
+                recorded: false,
+                counted: false,
+            }),
+        }
     }
     pub fn watch_drops(&self, client_ids: &[String]) -> ClientDropWatch {
         let mut pinned = Vec::new();
@@ -529,25 +575,13 @@ pub async fn pairing_required() -> Result<Option<bool>> {
     })
 }
 
-#[derive(Debug)]
-pub(crate) struct AuthenticationExpiredError;
-
-impl std::fmt::Display for AuthenticationExpiredError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("authentication expired")
-    }
-}
-
-impl std::error::Error for AuthenticationExpiredError {}
-
 pub fn authentication_expired(error: &crate::history::Error) -> bool {
-    if error.downcast_ref::<AuthenticationExpiredError>().is_some() {
-        return true;
-    }
-    error
-        .downcast_ref::<reqwest::Error>()
-        .and_then(reqwest::Error::status)
-        == Some(reqwest::StatusCode::UNAUTHORIZED)
+    cfg!(not(target_arch = "wasm32"))
+        && (error.is::<crate::stream::hub::AuthenticationExpired>()
+            || error
+                .downcast_ref::<reqwest::Error>()
+                .and_then(reqwest::Error::status)
+                == Some(reqwest::StatusCode::UNAUTHORIZED))
 }
 
 pub fn endpoint(address: &str) -> Result<String> {
@@ -815,21 +849,20 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     let (gen_re, seq_re, _) = http.begin_meta_probe();
     assert!(http.observe_capabilities_at(gen_re, seq_re, true, true));
     assert!(http.supports_atomic_settings_patches());
-    let (guard_a, open_a) = http.track_stream("stream-a");
-    let (guard_b, open_b) = http.track_stream("stream-b");
+    let guard_a = http.track_stream("stream-a");
+    let guard_b = http.track_stream("stream-b");
     let watch_a = http.watch_drops(&["stream-a".to_owned()]);
     let watch_healthy = http.watch_drops(&["stream-healthy".to_owned()]);
     // Closing one of two open streams keeps attestation valid; closing the last open stream
     // (even voluntarily during SSE handoff) bumps drop_generation and revokes attestation.
-    open_a.store(true, Ordering::SeqCst);
-    open_b.store(true, Ordering::SeqCst);
-    http.open_streams_counter().fetch_add(2, Ordering::SeqCst);
-    assert!(guard_b.release_open());
+    assert!(guard_a.try_mark_open(&http, true));
+    assert!(guard_b.try_mark_open(&http, true));
+    guard_b.close_and_revoke(&http, true, false);
     assert!(http.supports_atomic_settings_patches());
     assert!(!http.needs_capability_recheck());
     // Start a probe with an admissible sequence (>= seq_re) right before the last stream drops.
     let (gen_before_drop, seq_before_drop, _) = http.begin_meta_probe();
-    assert!(guard_a.release_open());
+    guard_a.close_and_revoke(&http, true, false);
     let gen_after_drop = http.drop_generation();
     assert_ne!(gen_after_drop, gen_before_drop);
     assert!(!http.supports_atomic_settings_patches());

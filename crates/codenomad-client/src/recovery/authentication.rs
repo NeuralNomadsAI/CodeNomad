@@ -3,16 +3,13 @@ use super::ReadingLane;
 use crate::{
     Sender,
     backend::Backend,
-    runtime, stream,
+    stream,
     transport::{Event, PromptOutcome, publish},
 };
-use std::{sync::atomic::Ordering::SeqCst, time::Duration};
 
-async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
-    wire.cancelled.store(true, SeqCst);
-    while wire.running.load(SeqCst) && !out.is_closed() {
-        runtime::sleep(Duration::from_millis(25)).await;
-    }
+pub(super) async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
+    wire.cancel();
+    futures_lite::future::or(out.closed(), wire.wait_stopped()).await;
 }
 
 pub(super) async fn expire_reading(

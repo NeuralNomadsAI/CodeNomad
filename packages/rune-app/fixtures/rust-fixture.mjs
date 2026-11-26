@@ -1,8 +1,9 @@
 // Real, unmodified CodeNomad Rust server; only its upstream OpenCode service is synthetic.
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
-import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {execFileSync} from 'node:child_process'
+import {fixtureChildPid,spawnFixtureChild as spawn,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
@@ -22,8 +23,9 @@ const history = process.argv.includes('--prompt-history')
 const linked = process.argv.includes('--history-worktree') ? path.join(path.dirname(project),'linked checkout') : null
 if(linked) {
   assert(history)
-  const git = (...args) => execFileSync('git',args,{cwd:project,env,windowsHide:true})
-  git('init','--quiet')
+  const gitEnv={...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig'),GIT_TEMPLATE_DIR:''}
+  const git = (...args) => execFileSync('git',['-c','core.hooksPath=',...args],{cwd:project,env:gitEnv,windowsHide:true,timeout:30000})
+  git('init','--quiet','--template=')
   git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','fixture')
   git('worktree','add','--quiet','--detach',linked,'HEAD')
 }
@@ -49,10 +51,11 @@ const requests = []
 const commands = []
 let attachmentPrompts=0, attachmentReads=0, projectionReads=0
 let turn = 0
+const backendPassword=randomUUID(),nativePassword=randomUUID()
 const upstream = createServer(async(req,res)=>{
   const url = new URL(req.url,'http://127.0.0.1')
   requests.push(`${req.method} ${url.pathname}`)
-  assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
+  assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${nativePassword}`).toString('base64')}`)
   let raw=''; for await(const chunk of req) { raw+=chunk; assert(raw.length<262144) }
   const json = value => { res.setHeader('content-type','application/json');res.end(JSON.stringify(value)) }
   if(url.pathname==='/api/event') {
@@ -155,41 +158,47 @@ const upstream = createServer(async(req,res)=>{
 })
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 // Build a minimal child environment: user config, credentials and daemon overrides never inherit.
-Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
-  CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,
+Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
+  CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,
   CODENOMAD_REMOTE_CONTROL:'disabled',RUST_BACKTRACE:'1'})
 const server=spawn(serverBinary,
   [path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='';server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
-let child
+const serverClosed=new Promise(r=>server.once('close',r))
+let log='',stdoutLog='';server.stdout.on('data',d=>{stdoutLog+=d;log+=d});server.stderr.on('data',d=>log+=d)
+let child,childClosed,rustFetch,rustRelay
 let result=1
 try {
   let origin
   for(const end=Date.now()+20000;!origin;){
     assert(Date.now()<end && server.exitCode===null,`Rust startup: ${log}`)
-    origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
+    origin=stdoutLog.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
   }
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-backend'})})
+  const serverPid=await fixtureChildPid(server)
+  assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Owned fixture server PID unavailable')
+  const serverPort=Number(new URL(origin).port)
+  await verifyLoopbackListenerOwner(serverPort,serverPid)
+  rustFetch=createAttestedFetch(origin,serverPort,serverPid)
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:backendPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
+  const opened=await rustFetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project}),signal:AbortSignal.timeout(15000)})
   const workspace=await opened.json();assert.equal(opened.status,201,JSON.stringify(workspace))
   const rootInstance = `${origin}/api/storage/instances/${workspace.id}`
   const instance = `${origin}/api/storage/instances/${encodeURIComponent(directory)}`
   const agentModelSelections = { build: { providerId: 'fixture', modelId: 'fixture' } }
   const prior = Array.from({length:100}, (_, i) => `older ${i}`)
   if(history) {
-    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections})})
+    const seed = await rustFetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections}),signal:AbortSignal.timeout(15000)})
     assert.equal(seed.status,204)
     if(linked) {
-      const inventory = await fetch(`${origin}/api/workspaces`, {headers:{cookie}})
+      const inventory = await rustFetch(`${origin}/api/workspaces`, {headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual((await inventory.json()).map(w=>w.id),[workspace.id])
-      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      const rootData = await rustFetch(rootInstance,{headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
       const foreign = path.join(path.dirname(project), 'unregistered')
       await mkdir(foreign)
-      assert.equal((await fetch(`${origin}/api/storage/instances/${encodeURIComponent(foreign)}`, {headers:{cookie}})).status,404)
-      const client = (route, init={}) => fetch(`${origin}${route}`, {...init,headers:{...init.headers,cookie}})
+      assert.equal((await rustFetch(`${origin}/api/storage/instances/${encodeURIComponent(foreign)}`, {headers:{cookie},signal:AbortSignal.timeout(15000)})).status,404)
+      const client = (route, init={}) => rustFetch(`${origin}${route}`, {...init,headers:{...init.headers,cookie},signal:AbortSignal.timeout(15000)})
       const prefix = `/workspaces/${workspace.id}/instance/api`
       const sessionData = await (await client(`${prefix}/session/${session}`)).json()
       assert.equal(sessionData.data?.location?.directory, linked, JSON.stringify(sessionData))
@@ -201,34 +210,49 @@ try {
     }
   }
   for(const end=Date.now()+10000;upstreamStreams.size===0;){assert(Date.now()<end,'Rust event bridge');await new Promise(r=>setTimeout(r,50))}
+  rustRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
   const args=process.argv.slice(2)
   const runeArgs=history?['--probe-slash']:fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
+  const clientEnv=stripFixtureServerSecrets(env)
   const run = (stage = {}) => {
     child=spawn(clientBinary,runeArgs,{
-      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
+      cwd:profile,windowsHide:true,stdio:['ignore','inherit','pipe'],env:{...clientEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,
+        RUNE_SESSION:session,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
     })
-    return new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    let awaitPidLine=process.platform==='win32',stderrBuf=''
+    child.stderr.on('data',chunk=>{
+      if(awaitPidLine){
+        stderrBuf+=chunk
+        const nl=stderrBuf.indexOf('\n')
+        if(nl<0)return
+        awaitPidLine=false
+        const first=stderrBuf.slice(0,nl+1),rest=stderrBuf.slice(nl+1)
+        if(!/^CODENOMAD_FIXTURE_PID=\d+\r?\n$/.test(first))process.stderr.write(first)
+        if(rest)process.stderr.write(rest)
+        stderrBuf=''
+        return
+      }
+      process.stderr.write(chunk)
+    })
+    childClosed=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    rustRelay.allowClientPid(fixtureChildPid(child),childClosed)
+    return childClosed
   }
   result=await run(history?{RUNE_PROMPT_HISTORY_STAGE:'write'}:{})
   if(history) {
     assert.equal(result,0)
-    const stored = await fetch(instance, {headers:{cookie}})
+    const stored = await rustFetch(instance, {headers:{cookie},signal:AbortSignal.timeout(15000)})
     assert.equal(stored.status,200)
     assert.deepEqual(await stored.json(), {messageHistory:[historyText, ...prior.slice(0,99)],agentModelSelections})
     if(linked) {
-      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      const rootData = await rustFetch(rootInstance,{headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
     }
     result=await run({RUNE_PROMPT_HISTORY_STAGE:'read'})
     if(linked) assert.equal(requests.filter(request=>request===`POST /api/session/${session}/prompt`).length,1)
   }
   if(attachments&&result===0) {
-    child=spawn(clientBinary,runeArgs,{
-      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_ATTACHMENT_STAGE:'reopen'},
-    })
-    result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    result=await run({RUNE_ATTACHMENT_STAGE:'reopen'})
   }
   if(slash) {
     assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
@@ -243,13 +267,19 @@ try {
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
 } finally {
-  if(child?.exitCode===null)child.kill()
-  server.stdin.write('shutdown\n')
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,5000))])
-  if(server.exitCode===null)server.kill()
+  let cleanupError
+  if(child)await stopFixtureChild(child,childClosed).catch(error=>{cleanupError??=error})
+  await rustRelay?.close().catch(error=>{cleanupError??=error})
+  await rustFetch?.close().catch(error=>{cleanupError??=error})
+  try{server.stdin.write('shutdown\n')}catch{}
+  await stopFixtureChild(server,serverClosed,5000).catch(error=>{cleanupError??=error})
   for(const stream of upstreamStreams)stream.end()
   upstream.closeAllConnections();upstream.close()
   await writeFile(path.join(profile,'server.log'),log)
   await writeFile(path.join(profile,'upstream-requests.json'),JSON.stringify(requests,null,2))
+  if(cleanupError){
+    result=1
+    console.error(cleanupError.message)
+  }
 }
 process.exitCode=result??1

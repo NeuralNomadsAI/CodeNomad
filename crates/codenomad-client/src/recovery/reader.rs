@@ -91,10 +91,11 @@ impl Reader {
     pub(super) fn demand(&mut self, reading: Option<&ReadingLane>) {
         if let Some(reading) = reading {
             let want = reading.demand.current();
-            if want.generation != self.generation {
+            let closed = reading.demand.is_closed();
+            if want.generation != self.generation || (closed && self.active_reader) {
                 self.generation = want.generation;
-                self.active_reader = want.target.is_some();
-                self.anchored = want.target;
+                self.active_reader = !closed && want.target.is_some();
+                self.anchored = if closed { None } else { want.target };
                 self.historical = false;
                 self.resident = Vec::new();
                 self.known = HashSet::new();
@@ -148,6 +149,24 @@ impl Reader {
         self.execution_ended_at = None;
     }
 
+    pub(super) fn next_sync_at(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
+        (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
+            && self.dirty
+            && !self.parked
+            && opened
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
+            && !self.historical)
+            .then_some(self.quiet)
+    }
+
     pub(super) async fn sync(
         &mut self,
         lane: &Lane<'_>,
@@ -162,13 +181,9 @@ impl Reader {
             out,
             wake,
         } = *lane;
-        if self.active_reader
-            && self.dirty
-            && !self.parked
-            && opened
-            && wire.upstream.load(SeqCst)
-            && !self.historical
-            && Instant::now() >= self.quiet
+        if self
+            .next_sync_at(opened, wire, reading)
+            .is_some_and(|quiet| Instant::now() >= quiet)
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
@@ -440,7 +455,7 @@ impl Reader {
                             Ok(true)
                         )
                     {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         publish(out, wake, Event::WorkspaceMissing).await;
                         return Ok(Turn::Stop);
                     }
@@ -538,6 +553,14 @@ async fn read_page(
     fence: Fence,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
     let page = async {
         match page.await {
             Err(error)
@@ -589,17 +612,21 @@ async fn read_page(
         ),
     )
     .await;
-    let result = match result {
-        Some(Err(PageFailure::Read(_))) if wire.is_stream_closed() || !wire.alive.load(SeqCst) => {
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
+    match result {
+        Some(Err(PageFailure::Read(_))) if !wire.alive.load(SeqCst) => {
             Some(Err(PageFailure::StreamClosed))
         }
         Some(Err(PageFailure::Read(_))) if !fence.valid(wire) => None,
         other => other,
-    };
-    result.filter(|_| {
-        !wire.is_placement_changed()
-            && reading.is_none_or(|reading| reading.demand.current().generation == generation)
-    })
+    }
 }
 
 pub(super) async fn reader_event(

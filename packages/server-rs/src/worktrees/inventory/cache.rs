@@ -373,7 +373,7 @@ async fn run_http_scan(
     let started = Instant::now();
     let out = match probe_root_checkout(w).await {
         Err(err) => Err((err, None)),
-        Ok(RootCheckout::NonGit) => Ok((HttpSnapshot::NonGit, None)),
+        Ok(RootCheckout::NonGit | RootCheckout::FallbackNonGit) => Ok((HttpSnapshot::NonGit, None)),
         Ok(RootCheckout::MissingGit) => Ok((HttpSnapshot::MissingGit, None)),
         Ok(RootCheckout::Git(Err(err))) => Err((err, None)),
         Ok(RootCheckout::Git(Ok(local))) => {
@@ -828,8 +828,17 @@ pub(in crate::worktrees) async fn history_catalogue(
         .and_then(|hit| hit.snapshot.catalogue())
 }
 
+#[cfg(test)]
 pub async fn event_catalogue(app: &Shared, w: &Workspace) -> Option<Arc<Catalogue>> {
     sse_catalogue(app, w, &app.native.endpoint()?, true).await
+}
+
+pub async fn event_catalogue_at(
+    app: &Shared,
+    w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+) -> Option<Arc<Catalogue>> {
+    sse_catalogue(app, w, endpoint, true).await
 }
 
 pub(in crate::worktrees) async fn receipt_catalogue(
