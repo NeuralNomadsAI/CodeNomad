@@ -125,13 +125,35 @@ test("deferToolMediaStream pauses mid-chunk on backpressure without pinning 64 K
   // Trigger one read cycle without draining the stream.
   stream.read(0)
   await new Promise(resolve => setImmediate(resolve))
+  const maxQueued = stream.readableHighWaterMark + 16 * 1024
   assert.ok(
-    stream.readableLength < 64 * 1024,
-    `expected backpressure to stop near highWaterMark, got ${stream.readableLength} bytes queued`,
+    stream.readableLength <= maxQueued,
+    `expected backpressure to stop near highWaterMark (${stream.readableHighWaterMark}), got ${stream.readableLength} bytes queued`,
   )
   // Drain the rest and verify the full 200-message JSON still arrives intact.
   const out = await collect(stream)
   assert.equal(out, bigChunk.toString("utf8"))
+})
+
+test("deferToolMediaStream does not re-scan a > 64 KiB metadata prefix split before data messages", async () => {
+  const bigUri = `data:image/png;base64,${"E".repeat(INLINE_MEDIA_LIMIT + 512)}`
+  const digest = mediaDigest(bigUri)
+  const metaPrefix = `{"meta":"${"x".repeat(70 * 1024)}","data":[`
+  const messageBody = `${JSON.stringify(makeMessage("after_meta", bigUri))}]}`
+  const stream = deferToolMediaStream(
+    makeStream([Buffer.from(metaPrefix, "utf8"), Buffer.from(messageBody, "utf8")]),
+    { workspaceId: "w", sessionId: "s" },
+  )
+  const out = await collect(stream)
+  const parsed = JSON.parse(out) as {
+    meta: string
+    data: Array<{ content: Array<{ state?: { content: Array<{ uri: string }> } }> }>
+  }
+  assert.equal(parsed.meta.length, 70 * 1024)
+  assert.equal(
+    parsed.data[0]!.content[1]!.state!.content[0]!.uri,
+    `/api/workspaces/w/session-media/s/after_meta/1/0/${digest}`,
+  )
 })
 
 test("deferToolMediaStream immediately cancels a stalled upstream reader and closes even if cancel stays pending", async () => {
