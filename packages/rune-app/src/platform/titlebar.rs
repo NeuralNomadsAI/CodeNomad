@@ -14,7 +14,13 @@ pub fn available() -> bool {
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
     #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
     let init = spec.init;
-    let app = shell::app(spec, closing, available(), locale());
+    let app = shell::app(
+        spec,
+        crate::settings::close_request,
+        closing,
+        available(),
+        locale(),
+    );
     #[cfg(target_os = "windows")]
     let app = {
         let delivery = crate::shell::notifications::native_delivery();
@@ -133,7 +139,14 @@ fn menus(locale: &'static str, skip_tab: bool) -> El {
                         menu_look.clone(),
                         items,
                         move |s: &mut State, choice, tx| match choice {
-                            Some("close") => tx.close_window(),
+                            Some("close") => {
+                                if matches!(
+                                    crate::settings::close_request(s, tx),
+                                    shell::CloseResponse::Close
+                                ) {
+                                    tx.close_window();
+                                }
+                            }
                             Some("fullscreen") => tx.toggle_full_screen(),
                             Some("minimize") => tx.minimize(),
                             Some("maximize") => tx.toggle_maximized(),

@@ -251,6 +251,21 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
+        let records: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                Some((
+                    e.binding.as_ref()?.base.clone(),
+                    e.project.as_ref()?.id.clone(),
+                ))
+            })
+            .collect();
+        if self.persistence.suppresses_snapshot(self.revision) {
+            store.stage(&[], &records);
+            self.staged_revision = Some(self.revision);
+            return;
+        }
         let bytes = match super::encode_for_save(&self.snapshot()) {
             Ok((bytes, partial)) => {
                 self.persistence.partial = partial;
@@ -262,18 +277,80 @@ impl Ui {
                 return;
             }
         };
-        let records: Vec<_> = self
-            .entries
-            .iter()
-            .filter_map(|e| {
-                Some((
-                    e.binding.as_ref()?.base.clone(),
-                    e.project.as_ref()?.id.clone(),
-                ))
-            })
-            .collect();
         store.stage(&bytes, &records);
         self.staged_revision = Some(self.revision);
+    }
+    pub(crate) fn persistence_store(&self) -> Option<platform::storage::Store> {
+        self.persistence.store.clone()
+    }
+    pub(crate) fn is_primary_startup(&self) -> bool {
+        self.ready && self.persistence.store.is_some()
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_primary_store(&mut self, store: platform::storage::Store) {
+        self.ready = true;
+        self.persistence.store = Some(store);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_unreadable_restore(&mut self) {
+        self.touched = false;
+        self.persistence.restore_enabled = false;
+        self.persistence.restore_read_error = true;
+        self.persistence.read_error = true;
+        self.persistence.file_draft_read_error = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn persistence_loading(&self) -> bool {
+        self.persistence.loading
+    }
+    #[cfg(test)]
+    pub(crate) fn workspace_revision(&self) -> u64 {
+        self.revision
+    }
+    pub(crate) fn restore_enabled(&self) -> bool {
+        self.persistence.restore_enabled
+    }
+    pub(crate) fn begin_startup_mutation(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .begin_startup_mutation(self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+        self.persistence.cancel_startup_mutation(outlines);
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_restore_enabled(
+        &mut self,
+        enabled: bool,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+        wake: rune::Waker,
+    ) {
+        if self
+            .persistence
+            .apply_restore_enabled(enabled, self.revision, documents, outlines, wake)
+        {
+            self.changed();
+        }
+        self.staged_revision = None;
+        self.stage();
+    }
+    pub(crate) fn apply_startup_cleared(
+        &mut self,
+        outcome: platform::storage::ClearOutcome,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .apply_cleared(outcome, self.revision, documents, outlines);
+        self.staged_revision = None;
+        self.stage();
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
