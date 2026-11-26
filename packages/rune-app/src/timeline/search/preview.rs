@@ -5,8 +5,12 @@ use crate::{
     platform,
     strings::{locale, t},
 };
-use codenomad_client::{Receiver, Sender, bounded, search::Hit};
-use rune_theme_codenomad::catalogue;
+use codenomad_client::{
+    Receiver, Sender, bounded,
+    search::{Hit, Kind},
+};
+use rune_theme_codenomad::{ansi, catalogue};
+use std::borrow::Cow;
 
 #[derive(Default)]
 pub(super) struct Preview {
@@ -39,12 +43,64 @@ pub(super) fn age(at: u64, now: u64) -> String {
     catalogue::format(locale(), key, &[("count", &count.to_string())])
 }
 
-pub(super) fn blocks<'a>(hit: &'a Hit, body: &'a [String]) -> impl Iterator<Item = &'a str> {
-    std::iter::once(hit.excerpt.as_str()).chain(
+pub(super) fn hit_excerpt(hit: &Hit) -> Cow<'_, str> {
+    if hit.kind == Kind::Tool && ansi::present(&hit.excerpt) {
+        Cow::Owned(ansi::plain_text(&hit.excerpt))
+    } else {
+        Cow::Borrowed(hit.excerpt.as_str())
+    }
+}
+
+pub(super) fn blocks<'a>(hit: &'a Hit, body: &'a [String]) -> impl Iterator<Item = Cow<'a, str>> {
+    let excerpt = hit_excerpt(hit);
+    let head = excerpt.clone();
+    std::iter::once(head).chain(
         body.iter()
-            .map(String::as_str)
-            .filter(|text| *text != hit.excerpt),
+            .filter(move |text| text.as_str() != excerpt.as_ref())
+            .map(|text| Cow::Borrowed(text.as_str())),
     )
+}
+
+pub(super) fn collect_blocks(
+    role: &str,
+    body: &str,
+    parts: &[Part],
+    mut left: usize,
+) -> Vec<String> {
+    fn push(blocks: &mut Vec<String>, left: &mut usize, text: &str) {
+        if *left == 0 || text.is_empty() || blocks.len() == 32 {
+            return;
+        }
+        let cut = text.floor_char_boundary(text.len().min(*left));
+        if cut == 0 {
+            return;
+        }
+        *left -= cut;
+        blocks.push(text[..cut].to_owned());
+    }
+    let mut blocks = Vec::new();
+    if role != "assistant" || parts.is_empty() {
+        push(&mut blocks, &mut left, body);
+    }
+    for part in parts {
+        match part {
+            Part::Text(text) => push(&mut blocks, &mut left, &text.text),
+            Part::Reasoning(part) => push(&mut blocks, &mut left, &part.text),
+            Part::Tool(tool) => {
+                push(&mut blocks, &mut left, &tool.name);
+                for text in [&tool.output, &tool.error] {
+                    if ansi::present(text) {
+                        let masked = ansi::plain_text_bounded(text, left);
+                        push(&mut blocks, &mut left, &masked);
+                    } else {
+                        push(&mut blocks, &mut left, text);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    blocks
 }
 
 pub(super) fn start(s: &mut State, hit: Hit, tx: &mut rune::Tx) {
@@ -76,34 +132,7 @@ pub(super) fn start(s: &mut State, hit: Hit, tx: &mut rune::Tx) {
                 .await?;
             let entry = backend.history_search_preview(&hit.message).await?;
             let row = entry.row;
-            let mut left = 4096;
-            let mut blocks = Vec::new();
-            let mut add = |text: &str| {
-                if left == 0 || text.is_empty() || blocks.len() == 32 {
-                    return;
-                }
-                let cut = text.floor_char_boundary(text.len().min(left));
-                if cut == 0 {
-                    return;
-                }
-                left -= cut;
-                blocks.push(text[..cut].to_owned());
-            };
-            if row.role != "assistant" || row.parts.is_empty() {
-                add(&row.body);
-            }
-            for part in &row.parts {
-                match part {
-                    Part::Text(text) => add(&text.text),
-                    Part::Reasoning(part) => add(&part.text),
-                    Part::Tool(tool) => {
-                        add(&tool.name);
-                        add(&tool.output);
-                        add(&tool.error);
-                    }
-                    _ => {}
-                }
-            }
+            let blocks = collect_blocks(&row.role, &row.body, &row.parts, 4096);
             Ok(Body {
                 title: session.title,
                 slug,

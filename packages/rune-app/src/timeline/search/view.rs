@@ -345,17 +345,17 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     };
                     let click = screen::action_tx(&s.input_scope, activate.clone());
                     let keyboard = screen::action_tx(&s.input_scope, activate);
-                    let result =
-                        search::result_button(&hit.excerpt, &terms, model.selected == Some(i))
-                            .on_press_tx(click)
-                            .on_key(move |s, event, tx| {
-                                if event.key != rune::Key::Enter {
-                                    return false;
-                                }
-                                keyboard(s, tx);
-                                true
-                            })
-                            .key(key);
+                    let excerpt = super::preview::hit_excerpt(hit);
+                    let result = search::result_button(&excerpt, &terms, model.selected == Some(i))
+                        .on_press_tx(click)
+                        .on_key(move |s, event, tx| {
+                            if event.key != rune::Key::Enter {
+                                return false;
+                            }
+                            keyboard(s, tx);
+                            true
+                        })
+                        .key(key);
                     header.into_iter().chain(std::iter::once(if model.ranked {
                         result.described_by(group)
                     } else {
@@ -454,7 +454,7 @@ fn preview(
         )
         .children(
             super::preview::blocks(hit, data.map_or(&[], |data| data.blocks.as_slice()))
-                .map(|block| search::excerpt(block, terms)),
+                .map(|block| search::excerpt(&block, terms)),
         );
     let disabled = model.destination.is_some();
     let keyboard = screen::action_tx(&s.input_scope, super::open_result);

@@ -354,3 +354,70 @@ fn keyboard_opens_the_search_and_query_edits_revoke_obsolete_results() {
         assert!(!is_open(s));
     });
 }
+
+#[test]
+fn technical_history_search_and_preview_mask_concealed_ansi_text() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "here".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend));
+    let raw = "start \u{1b}[8mTOPSECRET\u{1b}[0m finish";
+    let mut tool_hit = hit("other", "m1", Kind::Tool, 0);
+    tool_hit.excerpt = raw.into();
+    let row = crate::history::decode_message(&serde_json::json!({
+        "id": "m1",
+        "type": "assistant",
+        "content": [{
+            "id": "p1",
+            "type": "tool",
+            "name": "bash",
+            "state": {
+                "status": "error",
+                "content": [{"type": "text", "text": raw}],
+                "error": {"message": "err \u{1b}[8mERRSECRET\u{1b}[0m ok"}
+            }
+        }]
+    }))
+    .unwrap();
+    let blocks = super::preview::collect_blocks(&row.role, &row.body, &row.parts, 4096);
+    assert!(blocks.iter().any(|b| b.contains("finish")));
+    assert!(
+        blocks
+            .iter()
+            .any(|b| b.contains("err ") && b.contains(" ok"))
+    );
+    assert!(
+        blocks
+            .iter()
+            .all(|b| !b.contains("TOPSECRET") && !b.contains("ERRSECRET"))
+    );
+
+    let mut rt = Runtime::new(s, view, (900.0, 600.0), Env::new(false, 1.0));
+    rt.update(|s, _| {
+        let m = state(s);
+        m.open = true;
+        m.text = "finish".into();
+        m.selected = Some(0);
+        m.preview.body = Some(super::preview::Body {
+            title: "Other session".into(),
+            slug: String::new(),
+            created: None,
+            blocks,
+        });
+        m.results = Some(Ranked::Ranked {
+            version: 1,
+            capped: false,
+            examined_before: 0,
+            exclusions: vec![],
+            page: Page {
+                hits: vec![tool_hit],
+                ..Page::default()
+            },
+        });
+    });
+    rt.frame(0.016);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("finish"));
+    assert!(!tree.contains("TOPSECRET"));
+    assert!(!tree.contains("ERRSECRET"));
+}

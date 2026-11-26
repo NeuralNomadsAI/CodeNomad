@@ -954,6 +954,17 @@ fn split_diff_wraps_long_lines_aligns_columns_and_preserves_wrap_across_mode_swi
         a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),
         ("Disable word wrap".into(), true, Some(true))
     );
+    let reentered_short = find_el(&rt, "/df0.o1/old").unwrap();
+    let reentered_old = find_el(&rt, "/df0.o2/old").unwrap();
+    let reentered_new = find_el(&rt, "/df0.o3/new").unwrap();
+    assert!(
+        reentered_old.rect[3] > reentered_short.rect[3] + 4.0
+            && reentered_new.rect[3] > reentered_short.rect[3] + 4.0,
+        "re-entering Split with unified wrap off must still force wrapping on both columns: short={} old={} new={}",
+        reentered_short.rect[3],
+        reentered_old.rect[3],
+        reentered_new.rect[3]
+    );
     click(&mut rt, "tool-splitwrap:4:edit-mode");
     assert_eq!(
         a11y_state(&rt, "tool-splitwrap:4:edit-wrap"),

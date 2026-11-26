@@ -16,6 +16,9 @@ fn feed(out: &mut Log, mut source: &str, streaming: bool) -> usize {
     // unsupported or truncated escapes retain their printable text.
     while let Some(index) = source.find(['\u{1b}', '\\']) {
         out.literal(&source[..index]);
+        if out.at_limit() {
+            return total;
+        }
         let rest = &source[index..];
         let escape_len = if rest.starts_with('\u{1b}') {
             1
@@ -40,7 +43,7 @@ fn feed(out: &mut Log, mut source: &str, streaming: bool) -> usize {
                 .iter()
                 .position(|&byte| !byte.is_ascii_digit() && !matches!(byte, b';' | b':'))
                 .map(|index| index + 1);
-            if streaming && end.is_none() && rest.len() <= 256 {
+            if streaming && end.is_none() {
                 return total - rest.len();
             }
             if let Some(end) = end.filter(|&index| tail.as_bytes()[index] == b'm') {
@@ -53,7 +56,9 @@ fn feed(out: &mut Log, mut source: &str, streaming: bool) -> usize {
         out.literal(&rest[..escape_len]);
         source = tail;
     }
-    out.literal(source);
+    if !out.at_limit() {
+        out.literal(source);
+    }
     total
 }
 
@@ -66,7 +71,14 @@ fn finish(mut out: Log, streaming: bool) -> Log {
 }
 
 pub(super) fn parse(source: &str) -> Log {
-    let mut out = Log::default();
+    parse_bounded(source, None)
+}
+
+pub(super) fn parse_bounded(source: &str, max_bytes: Option<usize>) -> Log {
+    let mut out = Log {
+        text_limit: max_bytes,
+        ..Log::default()
+    };
     feed(&mut out, source, false);
     finish(out, false)
 }
@@ -120,4 +132,16 @@ fn an_incremental_preview_keeps_sgr_across_chunks_and_resets_on_replacement() {
     let (text, spans, _, _) = styled(stream.update("replaced"));
     assert_eq!(text, "replaced");
     assert!(spans.is_empty());
+
+    // Long split SGR sequences (> 256 bytes) wait for their terminator just like batch parse.
+    let prefix = format!("\u{1b}[{}8", "0".repeat(254));
+    let full = format!("{prefix}mSECRET\u{1b}[0m ok");
+    let mut split_stream = Stream::default();
+    let (partial_text, _, _, _) = styled(split_stream.update(&prefix));
+    assert!(partial_text.is_empty());
+    let (final_text, _, _, _) = styled(split_stream.update(&full));
+    let (batch_text, _, _, _) = styled(parse(&full));
+    assert_eq!(final_text, batch_text);
+    assert_eq!(final_text, "       ok");
+    assert!(!final_text.contains("SECRET"));
 }

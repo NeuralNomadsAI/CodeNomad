@@ -4,8 +4,8 @@ use std::ops::Range;
 use vte::{Params, Perform};
 
 mod stream;
-use stream::parse;
 pub use stream::{Stream, present};
+use stream::{parse, parse_bounded};
 
 // Ink spans use Rune's u32 ink tables and skip HTML copy; layout-affecting spans
 // (background, underline, bold, italic) and non-ASCII font routes consume Parley's u16
@@ -69,6 +69,26 @@ struct Style {
     overline: bool,
 }
 
+fn is_regional_indicator(c: char) -> bool {
+    matches!(c, '\u{1F1E6}'..='\u{1F1FF}')
+}
+
+fn is_grapheme_extender(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0300}'..='\u{036F}'
+            | '\u{1AB0}'..='\u{1AFF}'
+            | '\u{1DC0}'..='\u{1DFF}'
+            | '\u{200C}'..='\u{200D}'
+            | '\u{20D0}'..='\u{20FF}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FE20}'..='\u{FE2F}'
+            | '\u{1F3FB}'..='\u{1F3FF}'
+            | '\u{E0020}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
 #[derive(Clone, Default)]
 struct Log {
     text: String,
@@ -78,9 +98,17 @@ struct Log {
     pending_cr: bool,
     column: usize,
     line_non_ascii: usize,
+    prev_char: char,
+    regional_indicator_odd: bool,
+    text_limit: Option<usize>,
 }
 
 impl Log {
+    fn at_limit(&self) -> bool {
+        self.text_limit
+            .is_some_and(|limit| self.text.len() >= limit)
+    }
+
     fn finish_run(&mut self) {
         let mut style = self.style;
         if style.inverse {
@@ -94,40 +122,79 @@ impl Log {
     }
 
     fn push(&mut self, c: char) {
+        if self.at_limit() {
+            return;
+        }
         if std::mem::take(&mut self.pending_cr) && c != '\n' {
             self.newline();
+            if self.at_limit() {
+                return;
+            }
         }
         match c {
             '\t' => {
                 // Expand terminal tabs to 4-column stops.
-                self.text
-                    .extend(std::iter::repeat_n(' ', 4 - self.column % 4));
+                let spaces = 4 - self.column % 4;
+                let spaces = self.text_limit.map_or(spaces, |limit| {
+                    spaces.min(limit.saturating_sub(self.text.len()))
+                });
+                self.text.extend(std::iter::repeat_n(' ', spaces));
                 self.column = 0;
+                self.prev_char = '\t';
+                self.regional_indicator_odd = false;
             }
             '\n' => self.newline(),
             _ => {
-                // Split display lines before non-ASCII font routing can exhaust Parley's u16
-                // per-paragraph style table; raw tool Copy retains the original native output.
-                if self.line_non_ascii >= MAX_LINE_NON_ASCII
-                    && (c.is_ascii() || self.line_non_ascii >= MAX_LINE_NON_ASCII + 64)
+                if self.style.hidden {
+                    // Mask concealed characters with one ASCII space per character so tab
+                    // alignment holds and concealed text never enters display, search, or copy.
+                    self.text.push(' ');
+                    self.column += 1;
+                    self.prev_char = ' ';
+                    self.regional_indicator_odd = false;
+                    return;
+                }
+                let ri = is_regional_indicator(c);
+                let safe_break = self.prev_char != '\u{200D}'
+                    && !is_grapheme_extender(c)
+                    && !(ri && self.regional_indicator_odd);
+                // Split display lines at grapheme boundaries before non-ASCII font routing
+                // can exhaust Parley's u16 per-paragraph style table.
+                if self.text_limit.is_none()
+                    && self.line_non_ascii >= MAX_LINE_NON_ASCII
+                    && (c.is_ascii()
+                        || (safe_break && self.line_non_ascii >= MAX_LINE_NON_ASCII + 64))
                 {
                     self.newline();
                 }
+                if let Some(limit) = self.text_limit
+                    && self.text.len() + c.len_utf8() > limit
+                {
+                    self.text_limit = Some(self.text.len());
+                    return;
+                }
                 self.text.push(c);
                 self.column += 1;
-                if !c.is_ascii() {
+                if !c.is_ascii() && safe_break {
                     self.line_non_ascii += 1;
                 }
+                self.prev_char = c;
+                self.regional_indicator_odd = ri && !self.regional_indicator_odd;
             }
         }
     }
 
     fn newline(&mut self) {
+        if self.at_limit() {
+            return;
+        }
         self.finish_run();
         self.text.push('\n');
         self.start = self.text.len();
         self.column = 0;
         self.line_non_ascii = 0;
+        self.prev_char = '\n';
+        self.regional_indicator_odd = false;
     }
 
     fn literal(&mut self, text: &str) {
@@ -251,6 +318,23 @@ fn color(mode: u16, mut values: impl Iterator<Item = u16>) -> Option<Color> {
     }
 }
 
+pub fn plain_text(source: &str) -> String {
+    if present(source) {
+        parse(source).text
+    } else {
+        source.to_owned()
+    }
+}
+
+pub fn plain_text_bounded(source: &str, max_bytes: usize) -> String {
+    if present(source) {
+        parse_bounded(source, Some(max_bytes)).text
+    } else {
+        let cut = source.floor_char_boundary(source.len().min(max_bytes));
+        source[..cut].to_owned()
+    }
+}
+
 pub fn code(source: &str, wrap: bool) -> El {
     search_code(source, wrap, None)
 }
@@ -290,10 +374,53 @@ fn style_affects_layout(style: &Style) -> bool {
     !style.hidden && (style.bg.is_some() || style.underline || style.bold || style.italic)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn flush_decoration(
+    pending: &mut Option<Strike>,
+    list: &mut Vec<Strike>,
+    other_len: usize,
+    text: &[u8],
+    line: &Range<usize>,
+    line_content_end: usize,
+    line_shaped_runs: usize,
+    line_budget: &mut usize,
+    window_budget: &mut usize,
+) {
+    let Some((start, end, ink)) = pending.take() else {
+        return;
+    };
+    // Full-line ranges take range_boxes's per-visual-row fast path (linear in line length);
+    // partial-line ranges walk shaped runs with O(R^2) visual_offset cost plus cluster scan.
+    let cost = if start == line.start && end == line_content_end {
+        line.len().max(1)
+    } else {
+        line_shaped_runs
+            .saturating_mul(line_shaped_runs)
+            .saturating_add(line.len())
+    };
+    if cost > *line_budget || cost > *window_budget {
+        return;
+    }
+    if let Some(last) = list
+        .last_mut()
+        .filter(|last| last.2 == ink && matches!(text.get(last.1..start), Some(b"" | b"\n")))
+    {
+        *line_budget -= cost;
+        *window_budget -= cost;
+        last.1 = end;
+    } else if list.len() + other_len < DECORATION_RUN_LIMIT {
+        *line_budget -= cost;
+        *window_budget -= cost;
+        list.push((start, end, ink));
+    }
+}
+
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(INK_SPAN_LIMIT));
     let mut strikes: Vec<Strike> = vec![];
     let mut overlines: Vec<Strike> = vec![];
+    let mut pending_strike: Option<Strike> = None;
+    let mut pending_overline: Option<Strike> = None;
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     let mut layout_spans = 0_usize;
@@ -305,11 +432,33 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
     let mut line = 0..0;
     let mut line_content_end = 0;
     let mut previous_content_end = 0;
-    let mut text = log.text.into_bytes();
+    let text = log.text.as_bytes();
     let mut runs = log.runs.as_slice();
     while let Some(((range, style), tail)) = runs.split_first() {
         let mut range = range.clone();
         if range.start >= line.end {
+            flush_decoration(
+                &mut pending_strike,
+                &mut strikes,
+                overlines.len(),
+                text,
+                &line,
+                line_content_end,
+                line_shaped_runs,
+                &mut decoration_line_budget,
+                &mut decoration_window_budget,
+            );
+            flush_decoration(
+                &mut pending_overline,
+                &mut overlines,
+                strikes.len(),
+                text,
+                &line,
+                line_content_end,
+                line_shaped_runs,
+                &mut decoration_line_budget,
+                &mut decoration_window_budget,
+            );
             while range.start >= line.end {
                 // Remember the last nonempty line's end, excluding its newline.
                 if line.len() > 1 {
@@ -359,9 +508,6 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
             runs = tail;
         }
         if style.hidden {
-            // Mask concealed bytes in the display projection so active search, accessibility,
-            // and selection copy cannot reveal them; the tool Copy action retains native output.
-            text[range.clone()].fill(b' ');
             continue;
         }
         let dim = |color: Color| if style.dim { color.alpha(0.7) } else { color };
@@ -431,49 +577,74 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
                 }
             }
         }
-        let mut add_decoration = |list: &mut Vec<Strike>, used: usize| {
-            // Full-line ranges take range_boxes's O(1) fast path; partial ranges walk shaped runs
-            // with O(R^2) visual_offset cost plus cluster scanning.
-            let cost = if range.start == line.start && range.end == line_content_end {
-                1
-            } else {
-                line_shaped_runs
-                    .saturating_mul(line_shaped_runs)
-                    .saturating_add(line.len())
-            };
-            let ink = Some(dim(style.fg.unwrap_or(default)));
-            if let Some(last) = list.last_mut().filter(|last| {
-                last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
-            }) {
-                if cost <= decoration_line_budget && cost <= decoration_window_budget {
-                    decoration_line_budget -= cost;
-                    decoration_window_budget -= cost;
-                    last.1 = range.end;
-                }
-            } else if used < DECORATION_RUN_LIMIT
-                && cost <= decoration_line_budget
-                && cost <= decoration_window_budget
-            {
-                decoration_line_budget -= cost;
-                decoration_window_budget -= cost;
-                list.push((range.start, range.end, ink));
-            }
-        };
         if style.strike {
-            let used = strikes.len() + overlines.len();
-            add_decoration(&mut strikes, used);
+            let ink = Some(dim(style.fg.unwrap_or(default)));
+            if let Some(pending) = pending_strike
+                .as_mut()
+                .filter(|pending| pending.1 == range.start && pending.2 == ink)
+            {
+                pending.1 = range.end;
+            } else {
+                flush_decoration(
+                    &mut pending_strike,
+                    &mut strikes,
+                    overlines.len(),
+                    text,
+                    &line,
+                    line_content_end,
+                    line_shaped_runs,
+                    &mut decoration_line_budget,
+                    &mut decoration_window_budget,
+                );
+                pending_strike = Some((range.start, range.end, ink));
+            }
         }
         if style.overline {
-            let used = strikes.len() + overlines.len();
-            add_decoration(&mut overlines, used);
+            let ink = Some(dim(style.fg.unwrap_or(default)));
+            if let Some(pending) = pending_overline
+                .as_mut()
+                .filter(|pending| pending.1 == range.start && pending.2 == ink)
+            {
+                pending.1 = range.end;
+            } else {
+                flush_decoration(
+                    &mut pending_overline,
+                    &mut overlines,
+                    strikes.len(),
+                    text,
+                    &line,
+                    line_content_end,
+                    line_shaped_runs,
+                    &mut decoration_line_budget,
+                    &mut decoration_window_budget,
+                );
+                pending_overline = Some((range.start, range.end, ink));
+            }
         }
     }
-    (
-        String::from_utf8(text).unwrap_or_default(),
-        spans,
-        strikes,
-        overlines,
-    )
+    flush_decoration(
+        &mut pending_strike,
+        &mut strikes,
+        overlines.len(),
+        text,
+        &line,
+        line_content_end,
+        line_shaped_runs,
+        &mut decoration_line_budget,
+        &mut decoration_window_budget,
+    );
+    flush_decoration(
+        &mut pending_overline,
+        &mut overlines,
+        strikes.len(),
+        text,
+        &line,
+        line_content_end,
+        line_shaped_runs,
+        &mut decoration_line_budget,
+        &mut decoration_window_budget,
+    );
+    (log.text, spans, strikes, overlines)
 }
 
 #[cfg(test)]
@@ -542,7 +713,7 @@ mod tests {
             "\u{1b}[8mhidden\u{1b}[{}0mvisible",
             "0;".repeat(32)
         ));
-        assert_eq!(log.text, "hiddenvisible");
+        assert_eq!(log.text, "      visible");
         assert_eq!(log.runs.len(), 1);
         assert_eq!(log.runs[0].0, 0..6);
         assert!(log.runs[0].1.hidden);
@@ -560,7 +731,7 @@ mod tests {
     #[test]
     fn empty_sgr_resets_including_conceal() {
         let empty = parse("\u{1b}[8;31mA\u{1b}[mB");
-        assert_eq!(empty.text, "AB");
+        assert_eq!(empty.text, " B");
         assert_eq!(empty.runs.len(), 1);
         assert_eq!(empty.runs[0].0, 0..1);
     }
@@ -593,7 +764,7 @@ mod tests {
         assert!(spans.len() > 65_536);
         assert_eq!(spans.last().unwrap().color, Some(rgb(0, 187, 0)));
         assert!(!text.contains("SECRET"));
-        assert!(text.ends_with("          END"));
+        assert!(text.ends_with("       END"));
         let mut rt = rune::Runtime::new(
             above_u16,
             |source, _| code(source, false),
@@ -605,7 +776,7 @@ mod tests {
         assert!(tree.contains("END"));
         assert!(!tree.contains("SECRET"));
 
-        // Beyond INK_SPAN_LIMIT: concealed text remains masked with spaces.
+        // Beyond INK_SPAN_LIMIT: concealed text remains masked with one space per character.
         let over_cap = format!(
             "{}\u{1b}[8m🦀SECRET\u{1b}[0mEND",
             "\u{1b}[31mA\u{1b}[32mB\n".repeat(INK_SPAN_LIMIT / 2 + 1)
@@ -613,7 +784,7 @@ mod tests {
         let (capped_text, capped_spans, _, _) = styled(parse(&over_cap));
         assert_eq!(capped_spans.len(), INK_SPAN_LIMIT);
         assert!(!capped_text.contains("SECRET"));
-        assert!(capped_text.ends_with("\n          END"));
+        assert!(capped_text.ends_with("\n       END"));
     }
 
     #[test]
@@ -696,6 +867,25 @@ mod tests {
     fn tab_stops_expand_without_costing_a_styled_rune_lookup() {
         let log = parse("A\u{1b}[41m\tB\t\r\nC\tD");
         assert_eq!(log.text, "A   B   \nC   D");
+        // Concealed multi-byte characters mask to one space each so tab alignment holds.
+        let concealed_tab = parse("\u{1b}[8mé\u{1b}[0m\tX");
+        assert_eq!(concealed_tab.text, "    X");
+    }
+
+    #[test]
+    fn dense_non_ascii_line_breaks_never_split_zwj_or_combining_graphemes() {
+        let zwj = format!("{}👩\u{200d}💻after", "é".repeat(MAX_LINE_NON_ASCII + 63));
+        let zwj_text = parse(&zwj).text;
+        assert!(
+            zwj_text.contains("👩\u{200d}💻"),
+            "ZWJ emoji sequence must stay intact across paragraph splits"
+        );
+        let combining = format!("e{}", "\u{0301}".repeat(MAX_LINE_NON_ASCII + 65));
+        let combining_text = parse(&combining).text;
+        assert!(
+            !combining_text.contains('\n'),
+            "a single combining grapheme must not be split by synthetic line breaks"
+        );
     }
 
     #[test]
@@ -1114,6 +1304,27 @@ mod tests {
         let (ff_text, _, ff_strikes, _) = styled(parse(&fragmented_full));
         assert_eq!(ff_strikes.len(), 1);
         assert_eq!(&ff_text[ff_strikes[0].0..ff_strikes[0].1], ff_text);
+
+        // Contiguous same-color strike/overline across many alternating bg runs coalesces into
+        // one full-line range per decoration before budgeting.
+        let coalesced_bg = format!("\u{1b}[9;53m{}", "\u{1b}[44mA\u{1b}[45mB".repeat(500));
+        let (cb_text, _, cb_strikes, cb_overlines) = styled(parse(&coalesced_bg));
+        assert_eq!(cb_strikes.len(), 1);
+        assert_eq!(cb_overlines.len(), 1);
+        assert_eq!(&cb_text[cb_strikes[0].0..cb_strikes[0].1], cb_text);
+        assert_eq!(&cb_text[cb_overlines[0].0..cb_overlines[0].1], cb_text);
+
+        // Full-line decorations still charge linear line length so huge wrapped paragraphs
+        // cannot bypass DECORATION_WINDOW_WORK_LIMIT.
+        let huge_line = format!("\u{1b}[9m{}\u{1b}[0m\n", "x".repeat(100_000));
+        let huge_source = huge_line.repeat(200);
+        let (_, _, huge_strikes, _) = styled(parse(&huge_source));
+        assert_eq!(huge_strikes.len(), 1);
+        assert!(
+            huge_strikes[0].1 <= DECORATION_WINDOW_WORK_LIMIT,
+            "full-line wrapped strikes must respect linear window work budget: end={}",
+            huge_strikes[0].1
+        );
     }
 
     #[test]
