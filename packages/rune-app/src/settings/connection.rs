@@ -135,6 +135,30 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
+        Event::Workspace(WorkspaceEvent::NativeStreamStatus {
+            workspace_id,
+            connected,
+        }) => {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
+            {
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            if prefs.provider_target.as_mut().is_some_and(|target| {
+                if !target.is_workspace(workspace_id) {
+                    return false;
+                }
+                if !target.native_transport(*connected) {
+                    target.invalidate_location();
+                }
+                true
+            }) && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
         Event::Workspace(WorkspaceEvent::IntegrationsChanged {
             workspace_id,
             session_id,

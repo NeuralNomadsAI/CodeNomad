@@ -101,6 +101,16 @@ pub(super) async fn dispatch(
             },
         ))
         .await?;
+        if value["event"]["type"] == "server.connected" {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::NativeStreamStatus {
+                    workspace_id: id.into(),
+                    connected: true,
+                },
+            ))
+            .await?;
+        }
     }
     if value["type"] == "instance.event"
         && let Some((id, session_id)) = crate::settings::integrations::session_stream_event(&value)

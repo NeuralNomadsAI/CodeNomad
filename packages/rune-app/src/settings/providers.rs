@@ -25,6 +25,7 @@ pub(super) struct Target {
     observed: Option<u64>,
     authority: u64,
     online: bool,
+    native_online: bool,
     stats: [u64; 2],
     stats_status: Option<(bool, Option<u64>)>,
     integrations: u64,
@@ -58,6 +59,7 @@ impl Target {
             observed: None,
             authority: 0,
             online: true,
+            native_online: true,
             stats: [0; 2],
             stats_status: None,
             integrations: 0,
@@ -88,6 +90,7 @@ impl Target {
         if !self.backend.client.same_connection(&current.client) {
             self.backend = current.clone();
             self.observed = None;
+            self.native_online = true;
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
@@ -105,13 +108,31 @@ impl Target {
     pub fn transport(&mut self, online: bool) {
         if self.online != online {
             self.online = online;
+            if online {
+                self.native_online = true;
+            }
             self.authority = self.authority.wrapping_add(1);
-            self.invalidate();
+            self.invalidate_location();
         }
     }
 
+    pub fn native_transport(&mut self, connected: bool) -> bool {
+        if self.native_online != connected {
+            self.native_online = connected;
+            self.authority = self.authority.wrapping_add(1);
+            self.invalidate_location();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn observe_native_status(&mut self, status: Option<(bool, Option<u64>)>) -> bool {
+        status.is_some_and(|(connected, _)| self.native_transport(connected))
+    }
+
     pub fn online(&self) -> bool {
-        self.online
+        self.online && self.native_online
     }
 
     pub(super) fn stats_source(&self) -> (&Backend, &str, u64, [u64; 2]) {
@@ -261,6 +282,7 @@ impl Target {
             observed: None,
             authority: 0,
             online: true,
+            native_online: true,
             stats: [0; 2],
             stats_status: None,
             integrations: 0,
@@ -326,7 +348,7 @@ impl Catalog {
 
         let Some((target, wake)) = target
             .zip(wake)
-            .filter(|(target, _)| self.expanded && target.online)
+            .filter(|(target, _)| self.expanded && target.online())
         else {
             return self.clear_models() | changed;
         };

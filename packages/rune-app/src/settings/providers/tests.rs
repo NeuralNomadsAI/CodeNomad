@@ -166,6 +166,7 @@ fn new_runtime(base: &str) -> Runtime<Harness> {
         observed: None,
         authority: 0,
         online: true,
+        native_online: true,
         stats: [0; 2],
         stats_status: None,
         integrations: 0,
@@ -1428,5 +1429,213 @@ fn session_move_revokes_write_authority_and_barrier_tracks_exact_write_id() {
             .2
             .clone();
         assert!(put_body.contains("/repo/b"));
+    });
+}
+
+#[test]
+fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_read() {
+    platform::block_on(async {
+        let state = Arc::new(Mutex::new(("/repo/a".to_owned(), false)));
+        let srv = state.clone();
+        let server = MockServer::start(move |method, path, _| {
+            let (current_dir, fail_reads) = srv.lock().unwrap().clone();
+            match (method, path) {
+                ("GET", "/workspaces/ws1/instance/api/provider")
+                | ("GET", "/workspaces/ws1/instance/api/model") => (
+                    200,
+                    "application/json",
+                    json!({"location": {"directory": current_dir}, "data": []}).to_string(),
+                ),
+                ("GET", "/workspaces/ws1/instance/api/integration") => (
+                    200,
+                    "application/json",
+                    json!({"location": {"directory": current_dir}, "data": []}).to_string(),
+                ),
+                ("GET", "/workspaces/ws1/instance/api/websearch/provider") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "location": {"directory": current_dir},
+                        "data": [{"id": "tavily", "name": "Tavily"}]
+                    })
+                    .to_string(),
+                ),
+                ("GET", p) if p.starts_with("/api/workspaces/ws1/websearch-settings") => {
+                    if fail_reads {
+                        return (
+                            503,
+                            "application/json",
+                            json!({"error": "Unavailable"}).to_string(),
+                        );
+                    }
+                    (
+                        200,
+                        "application/json",
+                        json!({
+                            "location": {"directory": current_dir},
+                            "effective": null,
+                            "scopes": [
+                                {"scope": "global", "path": "/home/opencode.jsonc", "selection": null},
+                                {"scope": "project", "path": format!("{current_dir}/opencode.jsonc"), "selection": null}
+                            ]
+                        })
+                        .to_string(),
+                    )
+                }
+                ("PUT", "/api/workspaces/ws1/websearch-settings") => {
+                    (204, "application/json", String::new())
+                }
+                _ => (
+                    404,
+                    "application/json",
+                    json!({"message": "Not Found"}).to_string(),
+                ),
+            }
+        })
+        .await;
+
+        let mut rt = new_runtime(&server.base);
+        pump(&mut rt, "models-load", |h| {
+            h.catalog.flight.is_none() && h.catalog.rows.is_some()
+        })
+        .await;
+        click_disclosure(&mut rt, 1);
+        pump(&mut rt, "websearch-load-a", |h| {
+            let ws = h.catalog.websearch.borrow();
+            ws.has_snapshot() && ws.is_idle()
+        })
+        .await;
+
+        // 1. Native OpenCode stream drops while /api/events remains open: snapshot clears and
+        //    writes stay unavailable even if the session moves from /repo/a to /repo/b.
+        *state.lock().unwrap() = ("/repo/b".into(), true);
+        rt.update(|s, _| {
+            let target = s.target.as_mut().unwrap();
+            assert!(target.observe_native_status(Some((false, Some(1)))));
+            assert!(!target.online());
+        });
+        pump(&mut rt, "native-disconnected", |h| {
+            let ws = h.catalog.websearch.borrow();
+            !ws.has_snapshot() && ws.is_idle()
+        })
+        .await;
+        assert!(rt.find("websearch-scope-project").is_none());
+
+        // 2. Native stream reconnects while the fresh location read fails: no write with /repo/a.
+        rt.update(|s, _| {
+            let target = s.target.as_mut().unwrap();
+            assert!(target.observe_native_status(Some((true, Some(2)))));
+            target.invalidate_location();
+            assert!(target.online());
+        });
+        pump(&mut rt, "reconnect-read-failed", |h| {
+            let ws = h.catalog.websearch.borrow();
+            !ws.has_snapshot() && ws.is_idle()
+        })
+        .await;
+        assert_eq!(
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+                .count(),
+            0
+        );
+
+        // 3. Once the fresh read confirms /repo/b, saving the project default targets /repo/b.
+        state.lock().unwrap().1 = false;
+        click(&mut rt, "websearch-refresh");
+        pump(&mut rt, "reconnect-read-confirmed-b", |h| {
+            let ws = h.catalog.websearch.borrow();
+            ws.has_snapshot() && ws.is_idle()
+        })
+        .await;
+        click(&mut rt, "websearch-scope-project");
+        click(&mut rt, "websearch-scope-project-off");
+        pump(&mut rt, "write-on-b", |h| {
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+                && h.catalog.websearch.borrow().is_idle()
+        })
+        .await;
+        let first_put = server
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+            .unwrap()
+            .2
+            .clone();
+        assert!(
+            first_put.contains("/repo/b"),
+            "unexpected body: {first_put}"
+        );
+        assert!(!first_put.contains("/repo/a"));
+
+        // 4. Coalesced disconnect+reconnect between polls (location_epoch invalidated without
+        //    observing native_online == false): writes stay locked until fresh read confirms /repo/c.
+        *state.lock().unwrap() = ("/repo/c".into(), true);
+        rt.update(|s, _| {
+            s.target.as_mut().unwrap().invalidate_location();
+        });
+        pump(&mut rt, "coalesced-reconnect-failed", |h| {
+            h.catalog.websearch.borrow().is_idle()
+        })
+        .await;
+        click(&mut rt, "websearch-scope-project");
+        rt.frame(0.02);
+        assert!(rt.find("websearch-scope-project-default").is_none());
+        assert_eq!(
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+                .count(),
+            1
+        );
+
+        state.lock().unwrap().1 = false;
+        click(&mut rt, "websearch-refresh");
+        pump(&mut rt, "coalesced-reconnect-confirmed-c", |h| {
+            h.catalog.websearch.borrow().is_idle()
+        })
+        .await;
+        click(&mut rt, "websearch-scope-project");
+        click(&mut rt, "websearch-scope-project-off");
+        pump(&mut rt, "write-on-c", |h| {
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+                .count()
+                == 2
+                && h.catalog.websearch.borrow().is_idle()
+        })
+        .await;
+        let second_put = server
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, p, _)| m == "PUT" && p == "/api/workspaces/ws1/websearch-settings")
+            .nth(1)
+            .unwrap()
+            .2
+            .clone();
+        assert!(
+            second_put.contains("/repo/c"),
+            "unexpected body: {second_put}"
+        );
     });
 }

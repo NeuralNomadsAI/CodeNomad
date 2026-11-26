@@ -320,11 +320,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .provider_target
                 .as_ref()
                 .map(|target| target.revision());
+            let mut native_changed = false;
             if let Some(target) = &mut shared.provider_target {
                 if !target.validate(s, backend.as_ref(), &changes, &stopped, generation) {
                     shared.provider_target = None;
-                } else if target.matches(&location_changes) {
-                    target.invalidate_location();
+                } else {
+                    if let Some((_, status)) = stats_changes.as_ref() {
+                        native_changed = target.observe_native_status(*status);
+                    }
+                    if target.matches(&location_changes) {
+                        target.invalidate_location();
+                    }
                 }
             }
             let stats_changed = shared
@@ -347,6 +353,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .as_ref()
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
+                || native_changed
                 || bound
                 || stats_changed
                 || integrations_changed)

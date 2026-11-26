@@ -246,11 +246,21 @@ impl Signals {
             });
         let provider_changed = crate::settings::provider_change(frame).is_some_and(|id| {
             let mut marked = self.mark(&self.providers, Some(id));
-            if frame["type"] == "instance.event" && frame["event"]["type"] == "session.moved" {
+            if frame["type"] == "instance.eventStatus"
+                || (frame["type"] == "instance.event"
+                    && matches!(
+                        frame["event"]["type"].as_str(),
+                        Some("session.moved" | "server.connected")
+                    ))
+            {
                 marked |= self.mark(&self.provider_locations, Some(id));
             }
             marked
-        });
+        }) || (frame["type"] == "instance.eventStatus"
+            && frame["instanceId"]
+                .as_str()
+                .filter(|id| valid_id(id))
+                .is_some_and(|id| self.mark(&self.provider_locations, Some(id))));
         let integration_changed = match crate::settings::integrations::change_event(frame) {
             Some((ws, None)) => self.mark(&self.integrations, Some(ws)),
             Some((ws, Some(ses))) => mark_session_changes(
@@ -808,6 +818,27 @@ mod tests {
         ));
         signals.observe(
             &json!({"type":"instance.event","instanceId":"first","event":{"type":"session.moved"}}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"disconnected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"connected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"server.connected"}}),
         );
         assert!(
             matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))

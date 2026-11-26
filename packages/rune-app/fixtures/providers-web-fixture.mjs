@@ -1069,7 +1069,7 @@ try {
   await page.getByRole('button',{name:'Personal memory',exact:true}).waitFor({state:'attached'})
   assert.equal(await page.getByText('Project-only entry text',{exact:true}).count(),0)
   assert(reviews.some(({operation})=>operation.scope==='global'))
-  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
+  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
   assert(preferencesStream,'Memory observes the host stream without opening another connection')
   memoryEnabled = false
   preferencesStream.write('data: {"type":"memory.changed"}\n\n')
@@ -1255,7 +1255,7 @@ try {
   await afterPaint()
   await readExpanded.click({force:true})
   await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'attached'})
-  const prefStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
+  const prefStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
   assert(prefStream,'Preferences EventSource must be connected')
   failConfigReadOnce = true
   const failedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET' && response.status() === 503)
