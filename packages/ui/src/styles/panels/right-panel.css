@@ -436,15 +436,24 @@
   transition: color 150ms, opacity 150ms, transform 150ms ease;
 }
 
+/* The Status section drag handle: the sole drag-sort trigger, sized for touch. */
 .right-panel-section-grip {
-  width: 14px;
-  height: 14px;
+  @apply inline-flex items-center justify-center;
   flex: 0 0 auto;
-  margin-inline-end: 0.75rem;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  margin-inline-end: 0.25rem;
   color: var(--text-muted);
   opacity: var(--icon-button-idle-opacity);
   cursor: grab;
+  touch-action: none;
+  user-select: none;
   transition: color 150ms, opacity 150ms;
+}
+
+.right-panel-section-grip svg {
+  width: 14px;
+  height: 14px;
 }
 
 .right-panel-accordion-trigger:hover .right-panel-accordion-chevron,
@@ -464,6 +473,8 @@
 }
 
 .right-panel-section-draggable-active {
+  position: relative;
+  z-index: 1;
   opacity: 0.75;
 }
 

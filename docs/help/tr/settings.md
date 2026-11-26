@@ -76,7 +76,7 @@ Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyi
 2. Sağ panelde **Sağ paneli özelleştir** öğesini açın. Yerleşik sekmeleri ve Durum bölümlerini seçmek için onay kutularını kullanın; en az bir Durum bölümü görünür durumda kalır. Birkaçını tek seferde ayarlamak için bu onay kutularının üzerinde sürükleyin.
 3. Yeniden sıralamak için sağ panel sekmelerini sürükleyin. Yerleşik düzen seçeneklerini geri yüklemek için **Sıfırla** öğesini kullanın.
 
-Tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde korunur.
+Tüm Durum bölümlerini tutamacından sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde korunur.
 
 Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
 
