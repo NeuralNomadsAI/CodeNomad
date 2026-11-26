@@ -2,7 +2,7 @@
 // plain OpenCode Automation? Runs every experiment on an isolated OpenCode service and writes
 // the observations to <root>/observations.json.
 // Usage: node --import tsx scripts/proto/native-scheduling.mjs <absolute-opencode-cli> [experiments]
-//   experiments: comma-separated subset of detect,tools,github,shell,subagent,rejected,busy,gate,restart (default: all)
+//   experiments: comma-separated subset of detect,tools,github,shell,subagent,rejected,busy,gate,restart,mission (default: all)
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -12,17 +12,21 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
+import { build } from "esbuild"
+import { fileURLToPath } from "node:url"
+import { nativePluginBuild } from "../../packages/server/scripts/native-plugin-build.mjs"
+import { CODENOMAD_MISSIONS_RPC } from "../../packages/server/src/missions/rpc.ts"
 import { fixtureEnvironment, fixtureParent } from "../native-product-fixture.mjs"
 import { stopFixtureChild } from "../native-fixture-guards.mjs"
 
-const cli = process.argv[2], wanted = new Set((process.argv[3] ?? "detect,tools,github,shell,subagent,rejected,busy,gate,restart").split(","))
+const cli = process.argv[2], wanted = new Set((process.argv[3] ?? "detect,tools,github,shell,subagent,rejected,busy,gate,restart,mission").split(","))
 assert(cli && path.isAbsolute(cli), "Pass the absolute OpenCode CLI path")
 const root = await mkdtemp(path.join(await fixtureParent(), "proto-native-scheduling-"))
 const observations = { root, experiments: {} }
 const note = (name, value) => { observations.experiments[name] = value; console.log(`[${name}]`, JSON.stringify(value, null, 1).slice(0, 1800)) }
 
 // A scripted model: records every request and can hold a turn open.
-const turns = []
+const turns = [], reported = new Set()
 let holdMs = 0
 const provider = createServer(async (req, res) => {
   let raw = ""
@@ -36,6 +40,20 @@ const provider = createServer(async (req, res) => {
     res.end("data: [DONE]\n\n")
   }
   if (!tools.length) return reply("Fixture title")
+  // A Mission coordinator: one held turn, then the final report through the real Mission tool.
+  const mission = text.match(/MISSION [0-9a-f]{6,40}/g)?.at(-1), report = tools.map(tool => tool?.function?.name).find(name => /report$/.test(name ?? ""))
+  if (mission && report && !reported.has(mission)) {
+    reported.add(mission)
+    const turn = { at: Date.now(), marker: mission, held: holdMs, tool: report }
+    turns.push(turn)
+    if (holdMs) await delay(holdMs)
+    turn.endedAt = Date.now()
+    const chunk = (delta, finish_reason) => res.write(`data: ${JSON.stringify({ id: "m", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta, finish_reason }] })}\n\n`)
+    chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_" + randomUUID().slice(0, 8), type: "function",
+      function: { name: report, arguments: JSON.stringify({ outcome: "completed", summary: "Reviewed " + mission, final: true }) } }] }, null)
+    chunk({}, "tool_calls")
+    return res.end("data: [DONE]\n\n")
+  }
   const turn = { at: Date.now(), marker: text.match(/PASSAGE [0-9a-f]{6,40}/g)?.at(-1) ?? null, held: holdMs }
   turns.push(turn)
   if (holdMs) await delay(holdMs)
@@ -78,8 +96,17 @@ export default { id: "proto.gate", setup: async ctx => {
 } }
 `)
 
+// The Missions core, loaded without CodeNomad: no presence directory, no bridge.
+const missionPluginDir = path.join(env.OPENCODE_CONFIG_DIR, "plugins", "proto-missions")
+if (wanted.has("mission")) {
+  await mkdir(missionPluginDir, { recursive: true })
+  await build({ ...nativePluginBuild, outfile: path.join(missionPluginDir, "index.mjs"), logLevel: "silent",
+    entryPoints: [fileURLToPath(new URL("./native-scheduling-mission-plugin.ts", import.meta.url))] })
+  await writeFile(path.join(missionPluginDir, "package.json"), JSON.stringify({ name: "proto-missions", type: "module", exports: { ".": "./index.mjs" }, opencode: { server: "./index.mjs" } }))
+}
+
 env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-  automations: true, plugins: [pluginDir], model: "fixture/fixture",
+  automations: true, plugins: [pluginDir, ...(wanted.has("mission") ? [missionPluginDir] : [])], model: "fixture/fixture",
   providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
     settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} } } },
 })
@@ -294,6 +321,60 @@ return { state: { sha, passages: state.passages + 1, deferred: state.deferred, g
     const after = await until("detection after restart", () => automation(daemon.client, id), info => info.state?.passages === before.state.passages + 1, 90_000)
     await until("turn after restart", async () => turns.length, count => count > turnsBefore, 30_000).catch(() => undefined)
     note("restart", { before: row(before), after: row(after), detectedAfterMs: Date.now() - stoppedAt, missedRunsCounted: after.runCount - before.runCount, newTurns: turns.slice(turnsBefore) })
+  }
+
+  if (wanted.has("mission")) {
+    // Option B: the Automation is only the alarm clock; a plugin tool starts an ordinary one-time Mission.
+    let api = daemon.client
+    const missions = async () => (await api.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location, headers: { "x-opencode-directory": root } })).missions
+      .map(mission => ({ id: mission.id, title: mission.title, status: mission.status, coordinator: mission.coordinatorSessionId, summary: mission.summary, tasks: mission.tasks.length }))
+    const code = `
+const response = await fetch(args.url, { headers: { accept: "application/vnd.github.sha", "user-agent": "codenomad-proto" } })
+if (!response.ok) throw new Error("forge " + response.status)
+const sha = (await response.text()).trim()
+if (!state) return { state: { sha, missions: [], deferred: 0 } }
+if (sha === state.sha) return
+const answer = await tools.proto.mission_launch({ calendar: args.calendar, key: sha, title: "Commits on dev", objective: "MISSION " + sha + " Review the new commits on dev." })
+const launch = JSON.parse(typeof answer === "string" ? answer : answer.content ?? JSON.stringify(answer))
+if (launch.busy) return { state: { ...state, deferred: state.deferred + 1 } }
+return { state: { sha, missions: [...state.missions, launch.missionID], deferred: state.deferred } }
+`
+    if (observations.detectID) await api.experimental.automation.pause({ automationID: observations.detectID })
+    const carrier = await api.session.create({ location, title: "Calendar: commits on dev", permissions: [
+      { action: "execute", resource: "*", effect: "allow" }, { action: "proto_mission_launch", resource: "*", effect: "allow" }] })
+    const created = await attempt(() => api.experimental.automation.create({ sessionID: carrier.id, name: "mission-commits-on-dev", trigger: every,
+      action: { type: "code", code, args: { url: forgeURL, calendar: "commits_dev" } } }))
+    if (created.error) note("mission", created)
+    else {
+      const launched = count => info => info.state?.missions?.length === count || info.lastOutcome === "failed"
+      const settled = id => until("mission " + id + " completes", missions, list => list.find(mission => mission.id === id)?.status === "completed", 90_000)
+      await until("mission baseline", () => automation(api, created.id), ran)
+      holdMs = 45_000
+      head = randomHead()
+      const first = await until("first Mission", () => automation(api, created.id), launched(1), 40_000)
+      if (first.lastOutcome === "failed") note("mission", { failed: row(first) })
+      else {
+        const running = await missions()
+        await until("held coordinator turn", async () => turns.some(turn => turn.tool), Boolean, 30_000).catch(() => undefined)
+        holdMs = 0
+        head = randomHead()
+        const deferred = await until("deferral while the Mission runs", () => automation(api, created.id), info => info.state?.deferred >= 1 || info.state?.missions?.length === 2, 45_000)
+        const whileBusy = await missions()
+        await settled(first.state.missions[0])
+        const second = await until("second Mission", () => automation(api, created.id), launched(2), 45_000)
+        await settled(second.state.missions[1])
+        const beforeRestart = await missions()
+        // Service restart with a commit landing meanwhile: still nothing but OpenCode.
+        await daemon.stop()
+        head = randomHead()
+        daemon = await startDaemon("mission-restart"); api = daemon.client
+        const third = await until("third Mission after restart", () => automation(api, created.id), launched(3), 120_000)
+        await settled(third.state.missions[2])
+        note("mission", { firstRun: row(first), running, deferred: row(deferred), whileBusy, second: row(second), beforeRestart, third: row(third), afterRestart: await missions(),
+          coordinatorTurns: turns.filter(turn => turn.tool) })
+      }
+      await api.experimental.automation.delete({ automationID: created.id }).catch(() => undefined)
+    }
   }
 
   note("list", (await daemon.client.experimental.automation.list({})).map(info => ({ id: info.id, name: info.name, trigger: info.trigger, ...row(info) })))
