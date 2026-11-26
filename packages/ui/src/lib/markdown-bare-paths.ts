@@ -17,8 +17,8 @@ export interface BarePathCandidate {
   end: number
   /** The whole token read as one path whose non-ASCII letters belong to the
    * file name (`docs/…-算法工作台MVP-design.md`). Probed first; undefined when
-   * both token edges are letter runs, which is prose wrapping the token
-   * (`看看src/app.ts吧`), never one file name. */
+   * the token's edges are letter runs wrapping a path-shaped core, which is
+   * prose around the token (`看看src/app.ts吧`), never one file name. */
   integral?: BarePathPiece
   /** The boundary reading: edge letter runs trim and interior letter runs
    * split the token, exactly as the ASCII-only grammar did; each piece is
@@ -29,10 +29,12 @@ export interface BarePathCandidate {
 export const BARE_PATH_MAX_CANDIDATES = 64
 
 // A token is a contiguous run of path characters plus every script's letters,
-// marks and digits, optionally starting at a Windows drive prefix. Boundaries
-// are the charset itself — whitespace and punctuation, CJK text included, end
-// a token — never `\b`.
-const CANDIDATE = /(?:[A-Za-z]:)?[\p{L}\p{M}\p{Nd}._~+=@%\-/\\]+/gu
+// marks and digits, optionally starting at a Windows drive prefix. The
+// drive-shaped alternative also matches mid-token, so prose glued ahead of a
+// drive path (`打开C:\repo\src\app.ts`) keeps the prefix in one token for the
+// boundary reading to recover. Boundaries are the charset itself — whitespace
+// and punctuation, CJK text included, end a token — never `\b`.
+const CANDIDATE = /(?:[A-Za-z]:)?(?:[A-Za-z]:[\\/]|[\p{L}\p{M}\p{Nd}._~+=@%\-/\\])+/gu
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/
 // A drive prefix followed by a doubled separator is a scheme-shaped URL
 // (`s://host/path`), not a path.
@@ -54,40 +56,58 @@ const gated = (href: string): boolean => {
 }
 
 /** Non-overlapping leftmost-longest bare-path candidates in `text`, capped at
- * `BARE_PATH_MAX_CANDIDATES`. A token carrying non-ASCII letters offers the
+ * `BARE_PATH_MAX_CANDIDATES` readings — the integral probe and every boundary
+ * piece each name one file lookup, so one glued run of paths cannot multiply
+ * directory reads past the cap. A token carrying non-ASCII letters offers the
  * integral reading first and the boundary pieces as fallback; existence gates
  * conversion downstream, and separator-bearing false positives (`and/or`)
  * stay legal candidates. */
 export function barePathCandidates(text: string): BarePathCandidate[] {
   const candidates: BarePathCandidate[] = []
+  let budget = BARE_PATH_MAX_CANDIDATES
   for (const match of text.matchAll(CANDIDATE)) {
-    if (candidates.length >= BARE_PATH_MAX_CANDIDATES) break
+    if (budget <= 0) break
     const trimmed = match[0].replace(TRAILING_PUNCTUATION, "")
     if (!trimmed) continue
     const start = match.index!
     const end = start + trimmed.length
     const runs = [...trimmed.matchAll(SCRIPT_RUN)].map(run => [run.index!, run.index! + run[0].length] as const)
     if (runs.length === 0) {
-      if (gated(trimmed)) candidates.push({ start, end, pieces: [{ start, end, href: trimmed }] })
+      if (gated(trimmed)) {
+        candidates.push({ start, end, pieces: [{ start, end, href: trimmed }] })
+        budget -= 1
+      }
       continue
     }
     const leading = runs[0][0] === 0 ? runs[0] : undefined
     const trailing = runs[runs.length - 1][1] === trimmed.length ? runs[runs.length - 1] : undefined
-    const integral = leading && trailing ? undefined
-      : gated(trimmed) ? { start, end, href: trimmed } : undefined
+    // Edge letter runs are prose around the token — unless trimming them
+    // leaves nothing path-shaped, in which case the runs are the path's own
+    // segments (`脚本/启动`) and the integral reading applies.
+    const core = trimmed.slice(leading ? leading[1] : 0, trailing ? trailing[0] : trimmed.length)
+    const wrapsProse = Boolean(leading && trailing) && /[\p{L}\p{M}\p{Nd}]/u.test(core)
+    let integral: BarePathPiece | undefined
+    if (!wrapsProse && gated(trimmed)) integral = { start, end, href: trimmed }
     const pieces: BarePathPiece[] = []
+    // A trimmed edge run can expose punctuation the token-level trim never
+    // saw (`看看README.md.吧`); trim it off each piece the same way.
+    const pushPiece = (from: number, to: number) => {
+      const href = trimmed.slice(from, to).replace(TRAILING_PUNCTUATION, "")
+      if (href && gated(href)) pieces.push({ start: start + from, end: start + from + href.length, href })
+    }
     let cursor = leading ? leading[1] : 0
     for (const run of runs) {
       if (run === leading || run === trailing) continue
-      if (run[0] > cursor && gated(trimmed.slice(cursor, run[0]))) {
-        pieces.push({ start: start + cursor, end: start + run[0], href: trimmed.slice(cursor, run[0]) })
-      }
+      if (run[0] > cursor) pushPiece(cursor, run[0])
       cursor = run[1]
     }
-    const tailEnd = trailing ? trailing[0] : trimmed.length
-    if (tailEnd > cursor && gated(trimmed.slice(cursor, tailEnd))) {
-      pieces.push({ start: start + cursor, end: start + tailEnd, href: trimmed.slice(cursor, tailEnd) })
+    if ((trailing ? trailing[0] : trimmed.length) > cursor) pushPiece(cursor, trailing ? trailing[0] : trimmed.length)
+    if (integral) {
+      if (budget > 0) budget -= 1
+      else integral = undefined
     }
+    if (pieces.length > budget) pieces.length = budget
+    budget -= pieces.length
     if (integral || pieces.length > 0) {
       candidates.push(integral ? { start, end, integral, pieces } : { start, end, pieces })
     }

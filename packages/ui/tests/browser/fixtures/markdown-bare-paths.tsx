@@ -33,6 +33,7 @@ serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", director
   if (relativePath === "src") return entries([["app.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
   if (relativePath === "docs") return entries([["算法工作台MVP-design.md", "file"]])
+  if (relativePath === "脚本") return entries([["启动", "file"]])
   if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"], ["设计.md", "file"]])
   if (relativePath === "and") throw new Error("no such directory")
   return []
@@ -54,6 +55,8 @@ const initialText = [
   "规格写入 docs/算法工作台MVP-design.md，待确认两项。",
   "根目录的 设计.md 也是；对比 src/app.ts和README.md 的差异。",
   "也寫進 `docs/算法工作台MVP-design.md` 了。",
+  "看看README.md.吧。",
+  "跑 脚本/启动 前先读。",
   "```\nsrc/app.ts\n```",
 ].join("\n\n")
 

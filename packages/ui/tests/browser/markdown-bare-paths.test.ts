@@ -29,15 +29,18 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
 
     // Existing files convert: prose, bare file name, absolute-inside-root and CJK-adjacent.
     await page.waitForFunction(() => (window as any).fixture.count("src/app.ts") === 4)
-    await page.waitForFunction(() => (window as any).fixture.count("README.md") === 2)
+    await page.waitForFunction(() => (window as any).fixture.count("README.md") === 3)
     await page.waitForFunction(() => (window as any).fixture.count("/fixture-root/README.md") === 1)
 
     // A path whose file name contains CJK letters links as one integral path,
     // and a bare CJK file name converts too; a connector glued between two
     // paths falls back to linking both. Backticked paths link inside inline
-    // code, and fenced code blocks stay literal.
+    // code, and fenced code blocks stay literal. Exposed trailing punctuation
+    // trims off a recovered piece, and a degenerate boundary reading falls
+    // back to the token's own segments.
     await page.waitForFunction(() => (window as any).fixture.count("docs/算法工作台MVP-design.md") === 2)
     await page.waitForFunction(() => (window as any).fixture.count("设计.md") === 1)
+    await page.waitForFunction(() => (window as any).fixture.count("脚本/启动") === 1)
 
     // Missing files, directories, worktree escapes and prose false positives never convert.
     assert.equal(await page.evaluate(() => (window as any).fixture.count("src/gone.ts")), 0)

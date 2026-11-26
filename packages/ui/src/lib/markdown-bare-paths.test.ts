@@ -58,6 +58,32 @@ describe("bare path candidates", () => {
     assert.deepEqual(hrefs("mail 用户@例子.com now"), [])
   })
 
+  it("keeps a Windows drive prefix glued to preceding prose", () => {
+    const [candidate] = barePathCandidates("打开C:\\repo\\src\\app.ts")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["C:\\repo\\src\\app.ts"])
+    const [wrapped] = barePathCandidates("看看C:\\repo\\src\\app.ts吧")
+    assert.equal(wrapped.integral, undefined)
+    assert.deepEqual(wrapped.pieces.map(piece => piece.href), ["C:\\repo\\src\\app.ts"])
+  })
+
+  it("caps readings, not tokens", () => {
+    const text = Array.from({ length: BARE_PATH_MAX_CANDIDATES * 3 }, (_, index) => `d${index}/x.md`).join("和")
+    const candidates = barePathCandidates(text)
+    assert.equal(candidates.length, 1)
+    const [token] = candidates
+    assert.equal((token.integral ? 1 : 0) + token.pieces.length, BARE_PATH_MAX_CANDIDATES)
+  })
+
+  it("trims exposed trailing punctuation once edge letter runs are trimmed", () => {
+    const [candidate] = barePathCandidates("看看README.md.吧")
+    assert.deepEqual(candidate.pieces.map(piece => piece.href), ["README.md"])
+  })
+
+  it("probes a both-edges token whose boundary reading is degenerate", () => {
+    const [candidate] = barePathCandidates("脚本/启动")
+    assert.equal(candidate.integral?.href, "脚本/启动")
+  })
+
   it("extracts Windows drive and backslash paths whole", () => {
     assert.deepEqual(hrefs("open C:\\repo\\src\\app.ts there"), ["C:\\repo\\src\\app.ts"])
     assert.deepEqual(hrefs("open C:/repo/src/app.ts there"), ["C:/repo/src/app.ts"])
