@@ -244,14 +244,14 @@ impl Prepared {
         self.commit_checked(|e| e, || Ok(()))
     }
 
-    pub(crate) fn commit_checked<E>(
+    pub(crate) fn commit_checked<E, G>(
         mut self,
         map: impl Fn(DocError) -> E,
-        before_rename: impl FnOnce() -> Result<(), E>,
+        before_rename: impl FnOnce() -> Result<G, E>,
     ) -> Result<(), E> {
         self.verify().map_err(&map)?;
-        before_rename()?;
-        match std::fs::rename(&self.temporary, &self.source.write) {
+        let guard = before_rename()?;
+        let result = match std::fs::rename(&self.temporary, &self.source.write) {
             Ok(()) => {
                 self.temporary.clear();
                 Ok(())
@@ -268,7 +268,9 @@ impl Prepared {
                 Err(map(DocError::Conflict("OpenCode configuration changed during the update")))
             }
             Err(_) => Err(map(DocError::Filesystem("Unable to atomically replace OpenCode configuration"))),
-        }
+        };
+        drop(guard);
+        result
     }
 }
 

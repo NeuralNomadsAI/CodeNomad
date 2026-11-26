@@ -594,6 +594,21 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
         .await
         .unwrap();
     assert_eq!(bad_ct.status(), Status::UNSUPPORTED_MEDIA_TYPE);
+    assert!(bad_ct.headers().get(header::CONNECTION).is_none(), "415 must not force Connection: close");
+
+    // Without Content-Type, Content-Length: 00 is not literally "0" and must return 415 like Fastify 5.
+    let zero_zero_no_ct = send_raw_http(
+        h.server_addr,
+        &format!(
+            "PUT {} HTTP/1.1\r\nHost: {}\r\nContent-Length: 00\r\nConnection: close\r\n\r\n",
+            h.path("/websearch-settings"),
+            h.server_addr
+        ),
+        false,
+    )
+    .await;
+    assert!(zero_zero_no_ct.starts_with("HTTP/1.1 415 "), "got: {zero_zero_no_ct}");
+    assert!(zero_zero_no_ct.contains("FST_ERR_CTP_INVALID_MEDIA_TYPE"), "got: {zero_zero_no_ct}");
 
     // Unsupported Content-Type with Content-Length > 1 MiB must return 415 immediately (not 413).
     let bad_ct_large = send_raw_http(
@@ -622,7 +637,7 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     .await;
     assert!(chunked_no_ct.starts_with("HTTP/1.1 415 "), "got: {chunked_no_ct}");
 
-    // Truncated body stream (premature EOF) returns transport 400 without route schema error or 413.
+    // Truncated body stream (premature EOF) returns empty transport 400 with Connection: close.
     let truncated = send_raw_http(
         h.server_addr,
         &format!(
@@ -634,7 +649,9 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     )
     .await;
     assert!(truncated.starts_with("HTTP/1.1 400 "), "got: {truncated}");
-    assert!(!truncated.contains("Invalid web search settings request"), "got: {truncated}");
+    assert!(truncated.to_ascii_lowercase().contains("\r\nconnection: close\r\n"), "got: {truncated}");
+    let (_, truncated_body) = truncated.split_once("\r\n\r\n").unwrap();
+    assert!(truncated_body.is_empty(), "truncated EOF 400 body must be empty, got: {truncated}");
 
     let oversized = send_raw_http(
         h.server_addr,
@@ -654,6 +671,39 @@ async fn websearch_settings_preserves_jsonc_enforces_scopes_fences_and_fastify_p
     let post_404 = h.client.post(h.url("/websearch-settings")).send().await.unwrap();
     assert_eq!(post_404.status(), Status::NOT_FOUND);
     assert_eq!(post_404.json::<Value>().await.unwrap(), json!({ "message": "Not Found" }));
+
+    // 9. Cached NonGit root replaced by a link/junction to another folder under app.scope must be refused.
+    let redirected_target = h._dir.0.join("redirected_target");
+    fs::create_dir_all(&redirected_target).unwrap();
+    fs::remove_dir_all(&h.project_dir).unwrap();
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&h.project_dir)
+            .arg(&redirected_target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "mklink /J failed: {:?}", out);
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&redirected_target, &h.project_dir).unwrap();
+    }
+    let missing_sub = redirected_target.join("missing_sub");
+    let redirected_put = h
+        .client
+        .put(h.url("/websearch-settings"))
+        .json(&json!({
+            "location": { "directory": missing_sub.to_string_lossy() },
+            "scope": "project",
+            "provider": "exa"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(redirected_put.status(), Status::FORBIDDEN);
+    assert!(!missing_sub.exists(), "redirected NonGit root must never admit external writes");
 }
 
 #[tokio::test]
@@ -916,18 +966,36 @@ async fn image_settings_edits_jsonc_handles_overrides_masking_retarget_and_catal
     fs::write(&h.project_file, "{}").unwrap();
     h.mock.lock().unwrap().project_file = h.project_file.clone();
 
-    // 12. Endpoint replaced right before commit fails closed in `commit_checked` and leaves the file intact.
+    // 12. Connection invalidation or replacement AFTER `fs::prepare` aborts `commit_checked`
+    // before `std::fs::rename`, leaves the target file intact, and cleans up the temp file.
     let before_replace = fs::read_to_string(&h.global_file).unwrap();
-    let app_replace = h.app.clone();
-    let native_addr = h.native_addr;
-    let commit_err =
-        super::edit_config_document(&h.app, &h.workspace_id, &project, super::Scope::Global, None, None, move |_doc| {
-            app_replace.native.replace_test_endpoint(native_addr);
-            Ok(jsonc::utf16("{\"replaced\":true}\n"))
-        })
-        .await;
-    assert!(commit_err.is_err(), "endpoint replacement before commit must abort atomic rename");
+    let workspace_snap = h.app.workspace(&h.workspace_id).unwrap();
+    let live_endpoint = h.app.native.endpoint().unwrap();
+    let loaded_doc = crate::subagent_depth::fs::load(&h.global_file.to_string_lossy()).unwrap();
+    let prepared_inv =
+        crate::subagent_depth::fs::prepare(&loaded_doc, &jsonc::utf16("{\"invalidated\":true}\n")).unwrap();
+    h.app.native.invalidate_test_endpoint(&live_endpoint);
+    let inv_err = prepared_inv
+        .commit_checked(super::mapped, || super::guard_current(&h.app, &live_endpoint, None, &workspace_snap, None));
+    assert_eq!(inv_err, Err(super::fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed")));
     assert_eq!(fs::read_to_string(&h.global_file).unwrap(), before_replace);
+
+    h.app.native.replace_test_endpoint(h.native_addr);
+    let second_endpoint = h.app.native.endpoint().unwrap();
+    let loaded_doc2 = crate::subagent_depth::fs::load(&h.global_file.to_string_lossy()).unwrap();
+    let prepared_rep =
+        crate::subagent_depth::fs::prepare(&loaded_doc2, &jsonc::utf16("{\"replaced\":true}\n")).unwrap();
+    h.app.native.replace_test_endpoint(h.native_addr);
+    let rep_err = prepared_rep
+        .commit_checked(super::mapped, || super::guard_current(&h.app, &second_endpoint, None, &workspace_snap, None));
+    assert_eq!(rep_err, Err(super::fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed")));
+    assert_eq!(fs::read_to_string(&h.global_file).unwrap(), before_replace);
+    let leftover_tmps: Vec<_> = fs::read_dir(h.global_file.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftover_tmps.is_empty(), "aborted commit_checked must remove temp files: {leftover_tmps:?}");
 
     // 13. Endpoint replaced while model catalog fails still fences the entire read with 503.
     {

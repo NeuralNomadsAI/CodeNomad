@@ -149,23 +149,25 @@ pub(super) async fn read_json_body(
     invalid_message: &'static str,
 ) -> Result<Value, Box<Response>> {
     let media_error = || {
-        Box::new(close_response(
+        Box::new(
             fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type")
                 .into_response(),
-        ))
+        )
     };
 
     // Fastify selects the content-type parser before checking body size or draining the stream.
-    let declared_len =
-        headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok());
+    // Without `Content-Type`, Fastify 5 only skips the parser when `Transfer-Encoding` is absent
+    // and `Content-Length` is absent or literally `"0"`.
+    let raw_content_length = headers.get(header::CONTENT_LENGTH);
+    let declared_len = raw_content_length.and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok());
     let has_transfer_encoding = headers.contains_key(header::TRANSFER_ENCODING);
 
     match headers.get(header::CONTENT_TYPE) {
         None => {
-            if has_transfer_encoding || declared_len.is_some_and(|n| n > 0) {
+            if has_transfer_encoding || raw_content_length.is_some_and(|v| v.as_bytes() != b"0") {
                 return Err(media_error());
             }
-            if declared_len == Some(0) {
+            if raw_content_length.is_some() {
                 return Err(Box::new(bad_request(invalid_message)));
             }
         }
@@ -200,18 +202,47 @@ pub(super) async fn read_json_body(
     match fastify::body(headers, &bytes) {
         Ok(Some(fastify::Body::Json(value))) => Ok(value),
         Ok(_) => Err(Box::new(bad_request(invalid_message))),
-        Err(err) => {
-            let close = err.0 == Status::BAD_REQUEST;
-            let response = err.into_response();
-            Err(Box::new(if close { close_response(response) } else { response }))
-        }
+        Err(err) => Err(Box::new(err.into_response())),
     }
 }
 
-pub(super) fn workspace_current(app: &App, workspace: &Workspace) -> bool {
-    app.workspace(&workspace.id.to_string()).is_ok_and(|current| {
-        current.status == "ready" && current.created_at == workspace.created_at && current.path == workspace.path
-    })
+pub(super) struct CommitGuard<'a> {
+    _connection: crate::opencode::ConnectionGuard<'a>,
+    _workspaces: std::sync::MutexGuard<'a, crate::app::Inventory>,
+}
+
+/// Acquires workspace and connection locks in canonical order (`app.inner` -> `native.endpoint` ->
+/// `native.validated`) and confirms both remain live for the duration of the returned guard.
+pub(super) fn guard_current<'a>(
+    app: &'a App,
+    endpoint: &Arc<Endpoint>,
+    pinned_endpoint: Option<&Arc<Endpoint>>,
+    workspace: &Workspace,
+    principal: Option<&CancellationToken>,
+) -> Result<CommitGuard<'a>, Fail> {
+    if principal.is_some_and(CancellationToken::is_cancelled) {
+        return Err(fail(Status::UNAUTHORIZED, "Authentication required"));
+    }
+    if pinned_endpoint.is_some_and(|pinned| !Arc::ptr_eq(pinned, endpoint)) {
+        return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"));
+    }
+    let workspaces = app.inner.lock().unwrap();
+    let workspace_live = workspaces.workspaces.iter().any(|current| {
+        current.id == workspace.id
+            && current.status == "ready"
+            && current.created_at == workspace.created_at
+            && current.path == workspace.path
+    });
+    if !workspace_live {
+        return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"));
+    }
+    let Some(connection) = app.native.guard_current(endpoint) else {
+        return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"));
+    };
+    if principal.is_some_and(CancellationToken::is_cancelled) {
+        return Err(fail(Status::UNAUTHORIZED, "Authentication required"));
+    }
+    Ok(CommitGuard { _connection: connection, _workspaces: workspaces })
 }
 
 pub(super) fn assert_current(
@@ -220,13 +251,7 @@ pub(super) fn assert_current(
     workspace: &Workspace,
     principal: Option<&CancellationToken>,
 ) -> Result<(), Fail> {
-    if principal.is_some_and(CancellationToken::is_cancelled) {
-        return Err(fail(Status::UNAUTHORIZED, "Authentication required"));
-    }
-    if !app.native.current(endpoint) || !workspace_current(app, workspace) {
-        return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode service connection changed"));
-    }
-    Ok(())
+    guard_current(app, endpoint, None, workspace, principal).map(|_| ())
 }
 
 pub(super) async fn acquire_ready_connection(
@@ -244,7 +269,7 @@ pub(super) async fn acquire_ready_connection(
         .acquire(Instant::now() + ACQUIRE_TIMEOUT)
         .await
         .map_err(|_| fail(Status::SERVICE_UNAVAILABLE, unavailable_message))?;
-    if !app.native.current(&endpoint) || !workspace_current(app, &workspace) {
+    if guard_current(app, &endpoint, None, &workspace, None).is_err() {
         return Err(fail(Status::SERVICE_UNAVAILABLE, unavailable_message));
     }
     Ok((workspace, endpoint))
@@ -433,13 +458,10 @@ where
         assert_current(&app_commit, &endpoint, &workspace, principal.as_ref())?;
         let updated = edit(&document)?;
         let prepared = fs::prepare(&document, &updated).map_err(mapped)?;
-        // `beforeCommit`: re-check connection, workspace, and caller authority after `verify()`
-        // and immediately before `std::fs::rename` under the file lock.
+        // `beforeCommit`: verify and hold workspace + connection locks across `std::fs::rename`
+        // under the file lock so an invalidation or workspace closure cannot race the commit.
         prepared.commit_checked(mapped, || {
-            if let Some(ref pinned) = pinned_endpoint {
-                assert_current(&app_commit, pinned, &workspace, principal.as_ref())?;
-            }
-            assert_current(&app_commit, &endpoint, &workspace, principal.as_ref())
+            guard_current(&app_commit, &endpoint, pinned_endpoint.as_ref(), &workspace, principal.as_ref())
         })
     })
     .await
