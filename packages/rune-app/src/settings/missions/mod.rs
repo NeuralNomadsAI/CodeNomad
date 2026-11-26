@@ -1,23 +1,25 @@
 //! Preferences → Missions: defaults, native profiles, subagent depth, and saved configurations.
 mod catalog;
 mod defaults;
+mod defaults_view;
 mod depth;
+mod depth_view;
 mod library;
+mod pickers;
+mod shared;
+
+pub(super) use shared::{ConfigContext, ConfigEffects, Shared};
 
 use super::{
     preferences::{Owner, Preferences},
     providers::Target,
 };
 use crate::strings::{locale, t};
-use codenomad_client::settings::missions::{
-    MissionDefaultScope, MissionExecution, MissionTaskMode, global_task_mode, mission_defaults_for,
-    task_mode_for,
-};
-use rune::{El, Waker, col, text};
+use codenomad_client::settings::missions::{MissionDefaultScope, MissionPreferenceExpectation};
+use rune::{El, Waker, col};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, catalogue,
     layout::{self, Layout},
-    settings as chrome,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -39,22 +41,34 @@ pub(super) enum InfoTip {
     Depth,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Confirm {
-    ResetProfiles(MissionDefaultScope),
-    RepairDefaults,
-    RemoveModel { id: String, name: String },
-    ResetModels,
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Confirm {
+    ResetProfiles {
+        scope: MissionDefaultScope,
+        owner: String,
+        expected: MissionPreferenceExpectation,
+    },
+    RepairDefaults {
+        owner: String,
+        expected: MissionPreferenceExpectation,
+    },
+    RemoveModel {
+        id: String,
+        name: String,
+        owner: String,
+        expected: MissionPreferenceExpectation,
+    },
+    ResetModels {
+        owner: String,
+        expected: MissionPreferenceExpectation,
+    },
     RefreshDepth,
 }
 
 pub(super) struct Missions {
     scope: MissionDefaultScope,
     profiles_open: bool,
-    defaults: defaults::State,
     catalog: catalog::State,
-    depth: depth::State,
-    library: library::State,
     open_picker: Option<Picker>,
     info_open: Option<InfoTip>,
     confirm: Option<Confirm>,
@@ -66,10 +80,7 @@ impl Default for Missions {
         Self {
             scope: MissionDefaultScope::All,
             profiles_open: false,
-            defaults: defaults::State::default(),
             catalog: catalog::State::default(),
-            depth: depth::State::default(),
-            library: library::State::default(),
             open_picker: None,
             info_open: None,
             confirm: None,
@@ -84,10 +95,8 @@ impl Missions {
         self.info_open = None;
         self.confirm = None;
         self.catalog.suspend();
-        self.depth.suspend();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn cancel_confirm(&mut self) -> bool {
         if self.confirm.take().is_some() {
             return true;
@@ -100,18 +109,32 @@ impl Missions {
 
     pub fn poll(&mut self, prefs: &mut Preferences, wake: &Waker, active: bool) -> bool {
         self.wake = Some(wake.clone());
-        let defaults_changed = self.defaults.poll(prefs, wake);
-        let library_changed = self.library.poll(prefs);
-        let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-        let config_disabled = self.defaults.reloading
-            || (!self.defaults.writing() && !defaults::defaults_valid(prefs));
+        let writes_changed = prefs.poll_missions_writes(wake);
+        let online_target = prefs
+            .provider_target
+            .as_ref()
+            .filter(|t| prefs.can_retry() && !prefs.is_transport_lost() && t.online());
+        let config_disabled = prefs.missions.defaults.reloading
+            || prefs.missions.defaults.needs_reload
+            || (!prefs.missions.defaults.writing()
+                && !defaults::defaults_valid(prefs.config_loaded(), prefs.saved(Owner::Config)));
         let catalog_demanded = active && !config_disabled;
-        let catalog_changed = self.catalog.poll(target, catalog_demanded, wake);
-        let depth_changed = self.depth.poll(target, active, wake);
-        defaults_changed | library_changed | catalog_changed | depth_changed
+        let catalog_changed = self.catalog.poll(online_target, catalog_demanded, wake);
+        let depth_changed = if active {
+            let can_retry = prefs.can_retry();
+            let transport_lost = prefs.is_transport_lost();
+            let depth_target = prefs.provider_target.as_ref().filter(|_| can_retry);
+            prefs
+                .missions
+                .poll_depth(depth_target, transport_lost, true, wake)
+        } else {
+            prefs.missions.suspend_reads();
+            false
+        };
+        writes_changed | catalog_changed | depth_changed
     }
 
-    fn resolve_wake(&self, prefs: &Preferences) -> Option<Waker> {
+    pub(super) fn resolve_wake(&self, prefs: &Preferences) -> Option<Waker> {
         self.wake
             .clone()
             .or_else(|| prefs.window_wake.clone())
@@ -126,20 +149,9 @@ impl Missions {
         access: fn(&mut S) -> Option<&mut Self>,
     ) -> El {
         let prefs = shared.borrow();
-        let loaded = prefs.config_loaded();
-        let read_failed = prefs.config_read_failed();
-        let valid = defaults::defaults_valid(&prefs);
-        let writing = self.defaults.writing();
-        let disabled = !active || self.defaults.reloading || (!writing && (!loaded || !valid));
-        let shown = self.defaults.shown(&prefs);
-        let scope = self.scope;
-        let exception = scope.exception();
-        let entry = shown.iter().find(|item| item.template == scope);
-        let global_mode = global_task_mode(&shown);
-        let target = prefs.provider_target.as_ref().filter(|_| {
-            prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online)
-        });
-        let has_target = target.is_some();
+        let has_target = prefs.can_retry()
+            && !prefs.is_transport_lost()
+            && prefs.provider_target.as_ref().is_some_and(Target::online);
 
         let toggle_info = move |s: &mut S, tip: InfoTip| {
             if let Some(m) = access(s) {
@@ -152,283 +164,19 @@ impl Missions {
             }
         };
 
-        let header = layout::action_row()
-            .child(
-                text(t("missions.defaults.title"))
-                    .text_role(TextRole::Title)
-                    .role("heading"),
-            )
-            .child(
-                chrome::info_tip(
-                    t("missions.defaults.title"),
-                    t("missions.defaults.hint"),
-                    self.info_open == Some(InfoTip::Defaults),
-                    move |s: &mut S| toggle_info(s, InfoTip::Defaults),
-                )
-                .key("mission-defaults-info"),
-            );
-
-        let mut defaults_card = col().full_width().separate(Space::Sm).child(header);
-
-        let shared_reload = shared.clone();
-        let do_reload_defaults = move |s: &mut S| {
-            let Some(m) = access(s) else {
-                return;
-            };
-            let mut prefs = shared_reload.borrow_mut();
-            if let Some(wake) = m.resolve_wake(&prefs) {
-                m.defaults.start_reload(&mut prefs, &wake);
-            }
-        };
-
-        if !loaded && !writing {
-            let label = if read_failed {
-                t("missions.defaults.unavailable")
-            } else {
-                t("missions.defaults.loading")
-            };
-            defaults_card = defaults_card.child(text(label).wrap().role(if read_failed {
-                "alert"
-            } else {
-                "status"
-            }));
-            if read_failed {
-                defaults_card = defaults_card.child(
-                    layout::action_row().child(
-                        layout::button(
-                            t("missions.preferences.reload"),
-                            self.defaults.reloading || !active,
-                            do_reload_defaults.clone(),
-                        )
-                        .key("mission-defaults-reload-unavailable")
-                        .label(t("missions.defaults.reload"))
-                        .help(t("missions.defaults.reload")),
-                    ),
-                );
-            }
-        }
-
-        if loaded && !valid && !writing {
-            defaults_card = defaults_card
-                .child(text(t("missions.defaults.invalid")).wrap().role("alert"))
-                .child(
-                    layout::action_row()
-                        .child(
-                            layout::button(
-                                t("missions.defaults.reset"),
-                                !active || self.defaults.reloading,
-                                move |s: &mut S| {
-                                    if let Some(m) = access(s) {
-                                        m.confirm = Some(Confirm::RepairDefaults);
-                                    }
-                                },
-                            )
-                            .key("mission-defaults-repair"),
-                        )
-                        .child(
-                            layout::button(
-                                t("missions.preferences.reload"),
-                                !active || self.defaults.reloading,
-                                do_reload_defaults.clone(),
-                            )
-                            .key("mission-defaults-reload-invalid")
-                            .label(t("missions.defaults.reload"))
-                            .help(t("missions.defaults.reload")),
-                        ),
-                );
-        }
-
-        let scope_labels: Vec<&str> = MissionDefaultScope::ALL
-            .iter()
-            .map(|item| t(item.label_key()))
-            .collect();
-        let scope_index = MissionDefaultScope::ALL
-            .iter()
-            .position(|item| *item == scope)
-            .unwrap_or(0);
-        let scope_open = self.open_picker == Some(Picker::Scope) && !disabled;
-        let scope_picker =
-            chrome::picker("mission-scope", t("missions.defaults.scope"), &scope_labels)
-                .current(Some(scope_labels[scope_index]))
-                .disabled(disabled)
-                .open(scope_open)
-                .on_toggle(move |s: &mut S| set_picker(s, (!scope_open).then_some(Picker::Scope)))
-                .on_close(move |s: &mut S| set_picker(s, None))
-                .on_choose(move |s: &mut S, value, _| {
-                    set_picker(s, None);
-                    if let Some(m) = access(s)
-                        && let Some(pos) = MissionDefaultScope::ALL
-                            .iter()
-                            .position(|item| t(item.label_key()) == value)
-                    {
-                        m.scope = MissionDefaultScope::ALL[pos];
-                    }
-                });
-        defaults_card = defaults_card.child(chrome::setting_row(
-            t("missions.defaults.scope"),
-            chrome::build_picker(scope_picker, layers),
-        ));
-
-        let mut mode_labels = Vec::new();
-        let mut mode_values: Vec<Option<MissionTaskMode>> = Vec::new();
-        if exception.is_some() {
-            mode_labels.push(catalogue::format(
-                locale(),
-                "missions.defaults.inheritGlobal",
-                &[("value", t(global_mode.label_key()))],
-            ));
-            mode_values.push(None);
-        }
-        mode_labels.push(t(MissionTaskMode::Native.label_key()).to_owned());
-        mode_values.push(Some(MissionTaskMode::Native));
-        mode_labels.push(t(MissionTaskMode::Independent.label_key()).to_owned());
-        mode_values.push(Some(MissionTaskMode::Independent));
-        let current_mode = if exception.is_some() {
-            entry.and_then(|item| item.task_mode)
-        } else {
-            Some(global_mode)
-        };
-        let mode_index = mode_values
-            .iter()
-            .position(|v| *v == current_mode)
-            .unwrap_or(0);
-        let mode_refs: Vec<&str> = mode_labels.iter().map(String::as_str).collect();
-        let mode_open = self.open_picker == Some(Picker::TaskMode) && !disabled;
-        let mode_labels_choose = mode_labels.clone();
-        let mode_basis = entry.and_then(|item| item.task_mode);
-        let mode_picker = chrome::picker(
-            "mission-task-mode",
-            t("missions.taskMode.label"),
-            &mode_refs,
-        )
-        .current(Some(mode_refs[mode_index]))
-        .disabled(disabled)
-        .open(mode_open)
-        .on_toggle(move |s: &mut S| set_picker(s, (!mode_open).then_some(Picker::TaskMode)))
-        .on_close(move |s: &mut S| set_picker(s, None))
-        .on_choose(move |s: &mut S, value, _| {
-            set_picker(s, None);
-            if let Some(m) = access(s)
-                && let Some(pos) = mode_labels_choose.iter().position(|label| label == value)
-            {
-                let next = mode_values[pos];
-                if next != mode_basis {
-                    m.defaults.queue(defaults::DefaultsEdit::TaskMode {
-                        scope,
-                        basis: mode_basis,
-                        next,
-                    });
-                }
-            }
-        });
-        let task_mode_info = chrome::info_tip(
-            t("missions.taskMode.label"),
-            t("missions.taskMode.hint"),
-            self.info_open == Some(InfoTip::TaskMode),
-            move |s: &mut S| toggle_info(s, InfoTip::TaskMode),
-        )
-        .key("mission-task-mode-info");
-        defaults_card = defaults_card.child(chrome::setting_row_with_info(
-            t("missions.taskMode.label"),
-            Some(task_mode_info),
-            chrome::build_picker(mode_picker, layers),
-        ));
-
-        let own_profiles = entry.map(|item| &item.profiles);
-        let summary_profiles = exception
-            .map(|tpl| mission_defaults_for(&shown, tpl, true))
-            .unwrap_or_else(|| own_profiles.cloned());
-        let inherited_profiles =
-            exception.map(|tpl| mission_defaults_for(&shown, tpl, false).unwrap_or_default());
-        let effective_mode = exception
-            .map(|tpl| task_mode_for(&shown, tpl))
-            .unwrap_or(global_mode);
-        let disclosure_label = match self
-            .catalog
-            .inline_summary(summary_profiles.as_ref(), scope.template())
-        {
-            Some(summary) => format!("{} · {summary}", t("missions.create.agents")),
-            None => t("missions.create.agents").to_owned(),
-        };
-        let shown_profiles = own_profiles.cloned();
-        let profiles_body = self.catalog.view_profiles(
+        let defaults_card = self.view_defaults_card(
+            shared,
             &prefs,
-            scope,
-            own_profiles,
-            inherited_profiles.as_ref(),
-            effective_mode,
-            disabled || !has_target,
-            self.open_picker,
+            active,
             layers,
+            access,
+            toggle_info,
             set_picker,
-            move |s: &mut S, role, execution: Option<MissionExecution>| {
-                if let Some(m) = access(s) {
-                    let basis = shown_profiles.as_ref().and_then(|p| p.role(role)).cloned();
-                    m.defaults.queue(defaults::DefaultsEdit::Role {
-                        scope,
-                        role,
-                        basis,
-                        next: execution,
-                    });
-                }
-            },
-            move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.confirm = Some(Confirm::ResetProfiles(scope));
-                }
-            },
-            move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.catalog.request_reload();
-                }
-            },
         );
-        defaults_card = defaults_card.child(chrome::disclosure(
-            &disclosure_label,
-            self.profiles_open,
-            profiles_body,
-            move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.profiles_open = !m.profiles_open;
-                }
-            },
-        ));
 
-        if self.defaults.failed {
-            defaults_card =
-                defaults_card.child(text(t("missions.defaults.error")).wrap().role("alert"));
-        }
-
-        let delete_checked = self.defaults.delete_sessions_shown(&prefs);
-        let shared_delete = shared.clone();
-        defaults_card = defaults_card.child(chrome::setting_row(
-            t("missions.preferences.deleteSessions"),
-            chrome::setting_switch(
-                t("missions.preferences.deleteSessions"),
-                delete_checked,
-                !active || !loaded || self.defaults.busy_delete(),
-                move |s: &mut S| {
-                    let Some(m) = access(s) else {
-                        return;
-                    };
-                    let prefs = shared_delete.borrow();
-                    if let Some(wake) = m.resolve_wake(&prefs) {
-                        m.defaults
-                            .toggle_delete_sessions(&prefs, !delete_checked, &wake);
-                    }
-                },
-            )
-            .key("mission-delete-sessions"),
-        ));
-        if self.defaults.delete_failed {
-            defaults_card = defaults_card.child(
-                text(t("settings.preferenceSaveFailed"))
-                    .wrap()
-                    .role("alert"),
-            );
-        }
-
-        let depth_card = self.depth.view(
+        let shared_depth_choose = shared.clone();
+        let shared_depth_refresh = shared.clone();
+        let depth_card = prefs.missions.depth.view(
             active,
             has_target,
             self.info_open,
@@ -437,140 +185,180 @@ impl Missions {
             toggle_info,
             set_picker,
             move |s: &mut S, value| {
-                if let Some(m) = access(s) {
-                    m.depth.choose(value, active, has_target);
+                if access(s).is_some() {
+                    shared_depth_choose
+                        .borrow_mut()
+                        .missions
+                        .depth
+                        .choose(value, active, has_target);
                 }
             },
             move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    if m.depth.needs_confirm_refresh() {
-                        m.confirm = Some(Confirm::RefreshDepth);
-                    } else {
-                        m.depth.request_refresh();
-                    }
+                let Some(m) = access(s) else { return };
+                let mut prefs = shared_depth_refresh.borrow_mut();
+                if prefs.missions.depth.needs_confirm_refresh() {
+                    m.confirm = Some(Confirm::RefreshDepth);
+                } else {
+                    prefs.missions.depth.request_refresh();
                 }
             },
         );
 
+        let shared_lib_select = shared.clone();
         let shared_remove = shared.clone();
+        let shared_reset = shared.clone();
         let shared_lib_reload = shared.clone();
-        let library_card = self.library.view(
+        let library_card = prefs.missions.library.view(
             &prefs,
             active,
             self.open_picker,
             layers,
             set_picker,
             move |s: &mut S, id| {
-                if let Some(m) = access(s) {
-                    m.library.select(id);
+                if access(s).is_some() {
+                    shared_lib_select.borrow_mut().missions.library.select(id);
                 }
             },
             move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    let prefs = shared_remove.borrow();
-                    if let Some(model) = m.library.selected_model(&prefs) {
-                        m.confirm = Some(Confirm::RemoveModel {
-                            id: model.id,
-                            name: model.name,
-                        });
-                    }
+                let Some(m) = access(s) else { return };
+                let prefs = shared_remove.borrow();
+                if let Some(backend) = prefs.backend.as_ref()
+                    && let Some(model) = prefs
+                        .missions
+                        .library
+                        .selected_model(prefs.saved(Owner::Config))
+                {
+                    m.confirm = Some(Confirm::RemoveModel {
+                        id: model.id,
+                        name: model.name,
+                        owner: backend.client_id.clone(),
+                        expected: MissionPreferenceExpectation::from_ui_config(
+                            prefs.saved(Owner::Config),
+                            "missionModels",
+                        ),
+                    });
                 }
             },
             move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.confirm = Some(Confirm::ResetModels);
+                let Some(m) = access(s) else { return };
+                let prefs = shared_reset.borrow();
+                if let Some(backend) = prefs.backend.as_ref() {
+                    m.confirm = Some(Confirm::ResetModels {
+                        owner: backend.client_id.clone(),
+                        expected: MissionPreferenceExpectation::from_ui_config(
+                            prefs.saved(Owner::Config),
+                            "missionModels",
+                        ),
+                    });
                 }
             },
             move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    let mut prefs = shared_lib_reload.borrow_mut();
-                    if let Some(wake) = m.resolve_wake(&prefs) {
-                        m.library.start_reload(&mut prefs, &wake);
-                    }
+                let Some(m) = access(s) else { return };
+                let mut prefs = shared_lib_reload.borrow_mut();
+                if let Some(wake) = m.resolve_wake(&prefs) {
+                    prefs.start_mission_library_reload(&wake);
                 }
             },
         );
 
         if let Some(confirm) = self.confirm.clone() {
             let shared_confirm = shared.clone();
-            let (message, cancel_label, confirm_label) = match &confirm {
-                Confirm::ResetProfiles(scope) => (
-                    catalogue::format(
-                        locale(),
-                        "missions.defaults.resetProfilesConfirm",
-                        &[("scope", t(scope.label_key()))],
-                    ),
-                    t("missions.control.cancel").to_owned(),
-                    t("missions.preferences.reset").to_owned(),
-                ),
-                Confirm::RepairDefaults => (
-                    t("missions.defaults.repairConfirm").to_owned(),
-                    t("missions.control.cancel").to_owned(),
-                    t("missions.defaults.reset").to_owned(),
-                ),
-                Confirm::RemoveModel { name, .. } => (
-                    catalogue::format(locale(), "missions.models.removeConfirm", &[("name", name)]),
-                    t("missions.control.cancel").to_owned(),
-                    t("missions.models.remove").to_owned(),
-                ),
-                Confirm::ResetModels => (
-                    t("missions.models.resetConfirm").to_owned(),
-                    t("missions.control.cancel").to_owned(),
-                    t("missions.models.reset").to_owned(),
-                ),
-                Confirm::RefreshDepth => (
-                    t("settings.configFiles.confirmDiscard.message").to_owned(),
-                    t("settings.configFiles.confirmDiscard.cancelLabel").to_owned(),
-                    t("settings.configFiles.confirmDiscard.confirmLabel").to_owned(),
-                ),
-            };
+            let (message, cancel_label, confirm_label) = confirm_copy(&confirm);
             layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
                 layout::dark(),
                 &message,
                 &cancel_label,
                 &confirm_label,
                 move |s: &mut S, accept, _| {
-                    let Some(m) = access(s) else {
-                        return;
-                    };
+                    let Some(m) = access(s) else { return };
                     let taken = m.confirm.take();
                     if !accept || taken.as_ref() != Some(&confirm) {
                         return;
                     }
+                    let mut prefs = shared_confirm.borrow_mut();
                     match confirm.clone() {
-                        Confirm::ResetProfiles(scope) => {
-                            m.defaults
-                                .queue(defaults::DefaultsEdit::ResetProfiles { scope });
+                        Confirm::ResetProfiles {
+                            scope,
+                            owner,
+                            expected,
+                        } => {
+                            prefs
+                                .missions
+                                .defaults
+                                .queue(defaults::DefaultsEdit::ResetProfiles {
+                                    scope,
+                                    owner,
+                                    expected,
+                                });
                         }
-                        Confirm::RepairDefaults => {
-                            m.defaults.queue(defaults::DefaultsEdit::Repair);
+                        Confirm::RepairDefaults { owner, expected } => {
+                            prefs
+                                .missions
+                                .defaults
+                                .queue(defaults::DefaultsEdit::Repair { owner, expected });
                         }
-                        Confirm::RemoveModel { id, .. } => {
-                            let prefs = shared_confirm.borrow();
+                        Confirm::RemoveModel {
+                            id,
+                            owner,
+                            expected,
+                            ..
+                        } => {
                             if let Some(wake) = m.resolve_wake(&prefs) {
-                                m.library.start_remove(&prefs, &id, &wake);
+                                prefs.start_mission_model_remove(&id, &owner, expected, &wake);
                             }
                         }
-                        Confirm::ResetModels => {
-                            let prefs = shared_confirm.borrow();
+                        Confirm::ResetModels { owner, expected } => {
                             if let Some(wake) = m.resolve_wake(&prefs) {
-                                m.library.start_reset(&prefs, &wake);
+                                prefs.start_mission_models_reset(&owner, expected, &wake);
                             }
                         }
                         Confirm::RefreshDepth => {
-                            m.depth.request_refresh();
+                            prefs.missions.depth.request_refresh();
                         }
                     }
                 },
             ));
         }
 
-        let _ = Owner::Config;
         col()
             .full_width()
             .separate(Space::Sm)
-            .child(chrome::card(defaults_card))
+            .child(defaults_card)
             .child(depth_card)
             .child(library_card)
+    }
+}
+
+fn confirm_copy(confirm: &Confirm) -> (String, String, String) {
+    match confirm {
+        Confirm::ResetProfiles { scope, .. } => (
+            catalogue::format(
+                locale(),
+                "missions.defaults.resetProfilesConfirm",
+                &[("scope", t(scope.label_key()))],
+            ),
+            t("missions.control.cancel").to_owned(),
+            t("missions.preferences.reset").to_owned(),
+        ),
+        Confirm::RepairDefaults { .. } => (
+            t("missions.defaults.repairConfirm").to_owned(),
+            t("missions.control.cancel").to_owned(),
+            t("missions.defaults.reset").to_owned(),
+        ),
+        Confirm::RemoveModel { name, .. } => (
+            catalogue::format(locale(), "missions.models.removeConfirm", &[("name", name)]),
+            t("missions.control.cancel").to_owned(),
+            t("missions.models.remove").to_owned(),
+        ),
+        Confirm::ResetModels { .. } => (
+            t("missions.models.resetConfirm").to_owned(),
+            t("missions.control.cancel").to_owned(),
+            t("missions.models.reset").to_owned(),
+        ),
+        Confirm::RefreshDepth => (
+            t("settings.configFiles.confirmDiscard.message").to_owned(),
+            t("settings.configFiles.confirmDiscard.cancelLabel").to_owned(),
+            t("settings.configFiles.confirmDiscard.confirmLabel").to_owned(),
+        ),
     }
 }

@@ -670,7 +670,11 @@ pub(super) fn view(
                 screen::action(&s.input_scope, close),
             )
             .key("close-preferences"),
-            close,
+            |s: &mut State| {
+                if !s.settings.web.missions.cancel_confirm() {
+                    close(s);
+                }
+            },
         )
         .children(layers),
     )

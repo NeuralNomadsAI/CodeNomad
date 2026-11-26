@@ -181,11 +181,26 @@ impl Document {
         self.read.failed
     }
 
-    pub(super) fn apply_external_snapshot(&mut self, snapshot: Value) {
-        if !self.read.reattach {
-            self.snapshot = Some(snapshot);
-            self.read.failed = false;
+    pub(super) fn invalidation_seq(&self) -> u64 {
+        self.invalidation_seq.load(Ordering::Acquire)
+    }
+
+    pub(super) fn apply_external_snapshot(
+        &mut self,
+        snapshot: Value,
+        expected_seq: Option<u64>,
+    ) -> bool {
+        if self.read.reattach
+            || self.read.queued
+            || self.flight.is_some()
+            || expected_seq.is_some_and(|seq| seq != self.invalidation_seq.load(Ordering::Acquire))
+        {
+            self.invalidate();
+            return false;
         }
+        self.snapshot = Some(snapshot);
+        self.read.failed = false;
+        true
     }
 
     pub(super) fn awaiting_initial_read(&self) -> bool {

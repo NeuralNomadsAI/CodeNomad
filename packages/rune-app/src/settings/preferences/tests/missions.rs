@@ -325,19 +325,32 @@ fn missions_loads_catalog_and_depth_lazily_and_handles_save_unsupported_and_disc
 
         // Reconnect without explicit Refresh keeps Uncertain (no automatic write replay).
         crate::settings::connection_event(&root, &crate::transport::Event::AgentHint(true), true);
+        shared.borrow_mut().revalidate_transport();
         tick(&mut rt);
-        // Handle any catalog re-read triggered by reconnect, verify no PUT is sent.
+        // Handle config revalidation and catalog re-read triggered by reconnect, verify no PUT or depth GET is sent.
         while let Ok(accepted) = timeout(Duration::from_millis(120), listener.accept()).await {
             let (socket, _) = accepted.unwrap();
             let req = read_request(socket, Duration::from_secs(2)).await;
             assert!(
-                !req.first.starts_with("PUT "),
-                "must not replay PUT: {}",
+                !req.first.starts_with("PUT ") && !req.first.contains("/subagent-depth"),
+                "must not replay PUT or auto-read depth while Uncertain: {}",
                 req.first
             );
-            req.reply(404, json!({"error":"not found"})).await;
+            let url = req.first.split_whitespace().nth(1).unwrap();
+            if url.starts_with("/api/storage/config/ui") {
+                req.reply(200, json!({"settings":{"locale":"en"}})).await;
+            } else if url.starts_with("/api/storage/state") {
+                req.reply(200, json!({})).await;
+            } else {
+                req.reply(404, json!({"error":"not found"})).await;
+            }
+            tick(&mut rt);
         }
-        tick(&mut rt);
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().is_transport_lost()
+        })
+        .await;
         // Refreshing an uncertain depth requires confirmation first.
         click(&mut rt, "mission-depth-refresh");
         tick(&mut rt);
@@ -521,5 +534,269 @@ fn missions_depth_handles_404_501_as_unsupported_without_error_loop() {
                 .await
                 .is_err()
         );
+    });
+}
+
+#[test]
+fn missions_depth_404_is_unsupported_and_confirm_refuses_stale_models() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let model_id = "004633fb-53c4-477c-8b01-4cc5c177724b";
+        prefs.apply_mission_config(json!({
+            "settings": {
+                "locale": "en",
+                "missionModels": [{
+                    "version": 1,
+                    "id": model_id,
+                    "name": "Nightly Audit",
+                    "objective": "Check build",
+                    "notes": "",
+                    "template": "custom"
+                }]
+            }
+        }));
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        shared.borrow_mut().provider_target = Some(target);
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let mut got_depth = false;
+        let mut got_catalog = 0usize;
+        while !(got_depth && got_catalog == 3) {
+            let req = request(&listener).await;
+            let url = req.first.split_whitespace().nth(1).unwrap();
+            if url == "/api/workspaces" {
+                req.reply(
+                    200,
+                    json!([{"id":"captured","path":"/repo","location":{"directory":"/repo"}}]),
+                )
+                .await;
+            } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo" {
+                got_depth = true;
+                req.reply(404, json!({"error":"not found"})).await;
+            } else if url.starts_with("/workspaces/captured/instance/api/") {
+                got_catalog += 1;
+                req.reply(200, json!({"location":{"directory":"/repo"},"data":[]}))
+                    .await;
+            } else {
+                panic!("unexpected request {url}");
+            }
+        }
+        wait_until(|| {
+            tick(&mut rt);
+            rt.accessibility_json()
+                .to_string()
+                .contains("Depth cannot be changed here.")
+        })
+        .await;
+
+        // Open Remove confirmation, then mutate missionModels before confirming: must refuse PATCH.
+        click(&mut rt, "mission-model-library-trigger");
+        click_option(&mut rt, "mission-model-library", "Nightly Audit");
+        click(&mut rt, "mission-models-remove");
+        tick(&mut rt);
+        shared.borrow_mut().apply_mission_config(json!({
+            "settings": {
+                "locale": "en",
+                "missionModels": [{
+                    "version": 1,
+                    "id": model_id,
+                    "name": "Nightly Audit",
+                    "objective": "Replaced externally",
+                    "notes": "",
+                    "template": "custom"
+                }]
+            }
+        }));
+        tick(&mut rt);
+        click(&mut rt, "file-decision-confirm");
+        tick(&mut rt);
+        assert!(
+            timeout(Duration::from_millis(120), listener.accept())
+                .await
+                .is_err(),
+            "stale confirmation must not send PATCH"
+        );
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("Reload saved configurations, then try again.")
+        );
+        // Reload restores library controls.
+        click(&mut rt, "mission-models-reload");
+        tick(&mut rt);
+        let reload = request(&listener).await;
+        assert!(reload.first.starts_with("GET /api/storage/config/ui"));
+        reload
+            .reply(
+                200,
+                json!({
+                    "settings": {
+                        "locale": "en",
+                        "missionModels": [{
+                            "version": 1,
+                            "id": model_id,
+                            "name": "Nightly Audit",
+                            "objective": "Replaced externally",
+                            "notes": "",
+                            "template": "custom"
+                        }]
+                    }
+                }),
+            )
+            .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !rt.accessibility_json()
+                .to_string()
+                .contains("Reload saved configurations, then try again.")
+        })
+        .await;
+    });
+}
+
+#[test]
+fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_reads() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        prefs.apply_mission_config(json!({
+            "settings": {
+                "locale": "fr",
+                "missionProfileDefaults": [{
+                    "template": "all",
+                    "profiles": {
+                        "coordinator": {
+                            "model": { "providerID": "anthropic", "id": "claude", "variant": "high" }
+                        }
+                    }
+                }]
+            }
+        }));
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        shared.borrow_mut().provider_target = Some(target);
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // Drain initial reads with one catalog model supporting variant "high".
+        let mut got_depth = false;
+        let mut got_catalog = 0usize;
+        while !(got_depth && got_catalog == 3) {
+            let req = request(&listener).await;
+            let url = req.first.split_whitespace().nth(1).unwrap();
+            if url == "/api/workspaces" {
+                req.reply(
+                    200,
+                    json!([{"id":"captured","path":"/repo","location":{"directory":"/repo"}}]),
+                )
+                .await;
+            } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo" {
+                got_depth = true;
+                req.reply(404, json!({"error":"not found"})).await;
+            } else if url.contains("/instance/api/provider") {
+                got_catalog += 1;
+                req.reply(
+                    200,
+                    json!({
+                        "location": { "directory": "/repo" },
+                        "data": [{ "id": "anthropic", "name": "Anthropic" }]
+                    }),
+                )
+                .await;
+            } else if url.contains("/instance/api/model") {
+                got_catalog += 1;
+                req.reply(
+                    200,
+                    json!({
+                        "location": { "directory": "/repo" },
+                        "data": [{
+                            "providerID": "anthropic",
+                            "id": "claude",
+                            "name": "Claude",
+                            "enabled": true,
+                            "capabilities": { "tools": true },
+                            "variants": [{ "id": "high" }]
+                        }]
+                    }),
+                )
+                .await;
+            } else if url.starts_with("/workspaces/captured/instance/api/") {
+                got_catalog += 1;
+                req.reply(200, json!({"location":{"directory":"/repo"},"data":[]}))
+                    .await;
+            } else {
+                panic!("unexpected request {url}");
+            }
+        }
+        wait_until(|| {
+            tick(&mut rt);
+            rt.accessibility_json()
+                .to_string()
+                .contains("Claude / high")
+        })
+        .await;
+
+        // Switch scope to "Débogage" while locale is French.
+        click(&mut rt, "mission-scope-trigger");
+        click_option(&mut rt, "mission-scope", "Débogage");
+        tick(&mut rt);
+        assert!(rt.accessibility_json().to_string().contains("Global : "));
+
+        // Switch back to "Toutes les missions", verify summary includes variant "high".
+        click(&mut rt, "mission-scope-trigger");
+        click_option(&mut rt, "mission-scope", "Toutes les missions");
+        tick(&mut rt);
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("Claude / high")
+        );
+
+        // Stale external ACK with older guard does not overwrite a newer snapshot.
+        let stale_guard = shared.borrow().config_guard();
+        shared.borrow_mut().invalidate_config_for_missions();
+        shared.borrow_mut().apply_mission_config_checked(
+            json!({"settings": {"locale": "fr", "missionDeleteSessions": true}}),
+            stale_guard,
+        );
+        assert!(
+            shared
+                .borrow()
+                .saved(Owner::Config)
+                .is_some_and(|doc| doc["settings"]["missionDeleteSessions"].is_null())
+        );
+
+        // Switching away to General cancels pending reads without leaking errors.
+        click(&mut rt, "settings-general");
+        tick(&mut rt);
     });
 }

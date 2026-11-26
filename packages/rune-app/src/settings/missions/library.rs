@@ -1,5 +1,5 @@
 //! Saved Mission configurations (`missionModels`) section matching `MissionModelLibrary`.
-use super::Picker;
+use super::{ConfigContext, ConfigEffects, Picker};
 use crate::{
     platform,
     settings::preferences::{Owner, Preferences},
@@ -23,42 +23,62 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 enum Reply {
-    Remove(MissionPatchOutcome),
-    Reset(MissionPatchOutcome),
-    Reload(Option<Value>),
+    Remove {
+        outcome: MissionPatchOutcome,
+        guard: Option<(u64, u64)>,
+    },
+    Reset {
+        outcome: MissionPatchOutcome,
+        guard: Option<(u64, u64)>,
+    },
+    Reload {
+        snapshot: Option<Value>,
+        guard: Option<(u64, u64)>,
+    },
 }
 
 #[derive(Default)]
 pub(super) struct State {
-    owner: Option<String>,
     selected_id: String,
     pending_label: Option<&'static str>,
     failed: bool,
+    needs_reload: bool,
     reconciliation_pending: bool,
     flight: Option<Receiver<Reply>>,
 }
 
-fn raw_models(snapshot: Option<&Value>) -> Option<&Value> {
+pub(super) fn raw_models(snapshot: Option<&Value>) -> Option<&Value> {
     snapshot
         .and_then(|doc| doc.get("settings"))
         .and_then(|settings| settings.get("missionModels"))
 }
 
-pub(super) fn models_valid(prefs: &Preferences) -> bool {
-    prefs.config_loaded() && valid_mission_models(raw_models(prefs.saved(Owner::Config)))
+pub(super) fn models_valid(config_loaded: bool, snapshot: Option<&Value>) -> bool {
+    config_loaded && valid_mission_models(raw_models(snapshot))
 }
 
 impl State {
+    pub(super) fn rebind(&mut self, same_address: bool) {
+        if !same_address {
+            *self = Self::default();
+        }
+    }
+
     pub(super) fn pending(&self) -> bool {
         self.flight.is_some()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn has_unconfirmed(&self) -> bool {
+        self.flight.is_some() || self.failed || self.needs_reload || self.reconciliation_pending
     }
 
     pub(super) fn select(&mut self, id: String) {
         self.selected_id = id;
     }
 
-    pub(super) fn selected_model(&self, prefs: &Preferences) -> Option<UserMissionModel> {
-        let models = normalize_mission_models(raw_models(prefs.saved(Owner::Config)));
+    pub(super) fn selected_model(&self, snapshot: Option<&Value>) -> Option<UserMissionModel> {
+        let models = normalize_mission_models(raw_models(snapshot));
         models
             .into_iter()
             .find(|model| model.id == self.selected_id)
@@ -66,21 +86,36 @@ impl State {
 
     pub(super) fn start_remove(
         &mut self,
-        prefs: &Preferences,
+        ctx: &ConfigContext<'_>,
         id: &str,
+        confirmed_owner: &str,
+        confirmed_expected: MissionPreferenceExpectation,
         wake: &rune::Waker,
     ) -> bool {
-        if self.pending() || !models_valid(prefs) {
+        if self.pending()
+            || self.needs_reload
+            || !models_valid(ctx.config_loaded, ctx.config_snapshot)
+        {
             return false;
         }
-        let Some(backend) = prefs.backend.clone() else {
+        let Some(backend) = ctx.backend.cloned() else {
             return false;
         };
-        let saved = prefs.saved(Owner::Config);
-        let models = normalize_mission_models(raw_models(saved));
+        let current_expected =
+            MissionPreferenceExpectation::from_ui_config(ctx.config_snapshot, "missionModels");
+        if backend.client_id != confirmed_owner || current_expected != confirmed_expected {
+            self.failed = true;
+            self.needs_reload = true;
+            return false;
+        }
+        let models = normalize_mission_models(raw_models(ctx.config_snapshot));
+        if !models.iter().any(|model| model.id == id) {
+            self.failed = true;
+            self.needs_reload = true;
+            return false;
+        }
         let next = remove_mission_model_value(&models, id);
-        let expected = MissionPreferenceExpectation::from_ui_config(saved, "missionModels");
-        self.owner = Some(backend.client_id.clone());
+        let guard = ctx.config_guard;
         self.pending_label = Some("missions.models.removing");
         self.failed = false;
         self.reconciliation_pending = false;
@@ -88,28 +123,40 @@ impl State {
         let wake = wake.clone();
         self.flight = Some(inbox);
         platform::spawn(async move {
-            let outcome =
-                patch_mission_preferences(&backend, json!({ "missionModels": next }), &[expected])
-                    .await;
-            if out.send(Reply::Remove(outcome)).await.is_ok() {
+            let outcome = patch_mission_preferences(
+                &backend,
+                json!({ "missionModels": next }),
+                &[confirmed_expected],
+            )
+            .await;
+            if out.send(Reply::Remove { outcome, guard }).await.is_ok() {
                 wake();
             }
         });
         true
     }
 
-    pub(super) fn start_reset(&mut self, prefs: &Preferences, wake: &rune::Waker) -> bool {
-        if self.pending() || !prefs.config_loaded() {
+    pub(super) fn start_reset(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        confirmed_owner: &str,
+        confirmed_expected: MissionPreferenceExpectation,
+        wake: &rune::Waker,
+    ) -> bool {
+        if self.pending() || self.needs_reload || !ctx.config_loaded {
             return false;
         }
-        let Some(backend) = prefs.backend.clone() else {
+        let Some(backend) = ctx.backend.cloned() else {
             return false;
         };
-        let expected = MissionPreferenceExpectation::from_ui_config(
-            prefs.saved(Owner::Config),
-            "missionModels",
-        );
-        self.owner = Some(backend.client_id.clone());
+        let current_expected =
+            MissionPreferenceExpectation::from_ui_config(ctx.config_snapshot, "missionModels");
+        if backend.client_id != confirmed_owner || current_expected != confirmed_expected {
+            self.failed = true;
+            self.needs_reload = true;
+            return false;
+        }
+        let guard = ctx.config_guard;
         self.pending_label = Some("missions.models.resetting");
         self.failed = false;
         self.reconciliation_pending = false;
@@ -117,27 +164,35 @@ impl State {
         let wake = wake.clone();
         self.flight = Some(inbox);
         platform::spawn(async move {
-            let outcome =
-                patch_mission_preferences(&backend, json!({ "missionModels": [] }), &[expected])
-                    .await;
-            if out.send(Reply::Reset(outcome)).await.is_ok() {
+            let outcome = patch_mission_preferences(
+                &backend,
+                json!({ "missionModels": [] }),
+                &[confirmed_expected],
+            )
+            .await;
+            if out.send(Reply::Reset { outcome, guard }).await.is_ok() {
                 wake();
             }
         });
         true
     }
 
-    pub(super) fn start_reload(&mut self, prefs: &mut Preferences, wake: &rune::Waker) -> bool {
-        if self.pending() || !prefs.can_retry() {
-            return false;
+    pub(super) fn start_reload(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        wake: &rune::Waker,
+    ) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
+        if self.pending() || !ctx.can_retry {
+            return effects;
         }
-        let Some(backend) = prefs.backend.clone() else {
-            return false;
+        let Some(backend) = ctx.backend.cloned() else {
+            return effects;
         };
-        if prefs.is_transport_lost() {
-            prefs.revalidate_transport();
+        if ctx.transport_lost {
+            effects.revalidate_transport = true;
         }
-        self.owner = Some(backend.client_id.clone());
+        let guard = ctx.config_guard;
         self.pending_label = Some("missions.models.reloading");
         self.failed = false;
         self.reconciliation_pending = false;
@@ -146,61 +201,53 @@ impl State {
         self.flight = Some(inbox);
         platform::spawn(async move {
             let snapshot = Owner::Config.read(&backend).await.ok();
-            if out.send(Reply::Reload(snapshot)).await.is_ok() {
+            if out.send(Reply::Reload { snapshot, guard }).await.is_ok() {
                 wake();
             }
         });
-        true
+        effects.changed = true;
+        effects
     }
 
-    pub(super) fn poll(&mut self, prefs: &mut Preferences) -> bool {
-        let current_owner = prefs.backend.as_ref().map(|b| b.client_id.as_str());
-        if self.owner.as_deref().is_some() && self.owner.as_deref() != current_owner {
-            *self = Self::default();
-            return true;
-        }
+    pub(super) fn poll(&mut self) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
         let Some(reply) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) else {
-            return false;
+            return effects;
         };
         self.flight = None;
         self.pending_label = None;
         match reply {
-            Reply::Remove(outcome) => match outcome {
+            Reply::Remove { outcome, guard } | Reply::Reset { outcome, guard } => match outcome {
                 MissionPatchOutcome::Applied(snapshot) => {
                     self.selected_id.clear();
                     self.failed = false;
+                    self.needs_reload = false;
                     self.reconciliation_pending = false;
-                    prefs.apply_mission_config(snapshot);
+                    effects.applied = Some((snapshot, guard));
                 }
                 MissionPatchOutcome::Conflict
                 | MissionPatchOutcome::Unsupported
                 | MissionPatchOutcome::Failed => {
                     self.failed = true;
+                    self.needs_reload = true;
                 }
             },
-            Reply::Reset(outcome) => match outcome {
-                MissionPatchOutcome::Applied(snapshot) => {
-                    self.selected_id.clear();
+            Reply::Reload { snapshot, guard } => match snapshot {
+                Some(snapshot) => {
                     self.failed = false;
+                    self.needs_reload = false;
                     self.reconciliation_pending = false;
-                    prefs.apply_mission_config(snapshot);
+                    effects.applied = Some((snapshot, guard));
                 }
-                MissionPatchOutcome::Conflict
-                | MissionPatchOutcome::Unsupported
-                | MissionPatchOutcome::Failed => {
+                None => {
                     self.failed = true;
+                    self.needs_reload = true;
                 }
             },
-            Reply::Reload(Some(snapshot)) => {
-                self.failed = false;
-                self.reconciliation_pending = false;
-                prefs.apply_mission_config(snapshot);
-            }
-            Reply::Reload(None) => {
-                self.failed = true;
-            }
         }
-        true
+        effects.changed = true;
+        effects.settled = true;
+        effects
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -211,15 +258,16 @@ impl State {
         open_picker: Option<Picker>,
         layers: &mut Vec<El>,
         set_picker: impl Fn(&mut S, Option<Picker>) + Copy + 'static,
-        select: impl Fn(&mut S, String) + Copy + 'static,
+        select: impl Fn(&mut S, String) + Clone + 'static,
         remove: impl Fn(&mut S) + Clone + 'static,
         reset: impl Fn(&mut S) + Clone + 'static,
         reload: impl Fn(&mut S) + Clone + 'static,
     ) -> El {
         let loaded = prefs.config_loaded();
-        let valid = models_valid(prefs);
-        let disabled = !active || self.pending() || !valid;
-        let models = normalize_mission_models(raw_models(prefs.saved(Owner::Config)));
+        let snapshot = prefs.saved(Owner::Config);
+        let valid = models_valid(loaded, snapshot);
+        let disabled = !active || self.pending() || self.needs_reload || !valid;
+        let models = normalize_mission_models(raw_models(snapshot));
         let selection = models.iter().find(|m| m.id == self.selected_id);
 
         let mut name_counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -230,8 +278,7 @@ impl State {
         let mut ids = vec![String::new()];
         for model in &models {
             let label = if name_counts.get(model.name.as_str()).copied().unwrap_or(0) > 1 {
-                let short: String = model.id.chars().take(8).collect();
-                format!("{} ({short})", model.name)
+                format!("{} ({})", model.name, model.id)
             } else {
                 model.name.clone()
             };
@@ -279,7 +326,7 @@ impl State {
                         .child(
                             layout::button(
                                 t("missions.models.reset"),
-                                self.pending() || !active,
+                                self.pending() || self.needs_reload || !active,
                                 reset,
                             )
                             .key("mission-models-reset"),
@@ -321,7 +368,7 @@ impl State {
                     .role("alert"),
             );
         }
-        if (self.failed || self.reconciliation_pending) && !invalid_loaded {
+        if (self.failed || self.needs_reload || self.reconciliation_pending) && !invalid_loaded {
             card = card.child(
                 layout::action_row().child(
                     layout::button(
