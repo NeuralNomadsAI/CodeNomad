@@ -299,6 +299,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
         let observation = watch.map(|watch| watch.take_provider_changes());
+        let moves = watch
+            .map(|watch| watch.take_provider_moves())
+            .unwrap_or_default();
         let stats_changes = watch.map(|watch| {
             watch.take_stats_changes(
                 shared
@@ -319,7 +322,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .as_ref()
                 .map(|target| target.revision());
             if let Some(target) = &mut shared.provider_target
-                && !target.validate(s, backend.as_ref(), &changes, &stopped, generation)
+                && !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation)
             {
                 shared.provider_target = None;
             }

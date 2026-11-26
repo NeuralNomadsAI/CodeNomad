@@ -104,6 +104,23 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
+fn provider_session_moved(s: &State, workspace: &str, session: &str) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.catalogue_watch.is_some())
+    {
+        return;
+    }
+    let mut prefs = s.settings.shared.borrow_mut();
+    if prefs.provider_target.as_mut().is_some_and(|target| {
+        target.session_moved(workspace, session)
+            | target.integrations_hint(workspace, Some(session))
+    }) && let Some(wake) = &prefs.window_wake
+    {
+        wake();
+    }
+}
+
 pub(crate) fn connection_event(
     s: &State,
     event: &crate::transport::Event,
@@ -158,23 +175,7 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::SessionMoved {
             workspace_id,
             session_id,
-        }) => {
-            if s.screen
-                .launcher()
-                .is_some_and(|l| l.catalogue_watch.is_some())
-            {
-                return;
-            }
-            let mut prefs = s.settings.shared.borrow_mut();
-            if prefs
-                .provider_target
-                .as_mut()
-                .is_some_and(|target| target.integrations_hint(workspace_id, Some(session_id)))
-                && let Some(wake) = &prefs.window_wake
-            {
-                wake();
-            }
-        }
+        }) => provider_session_moved(s, workspace_id, session_id),
         Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
             provider_stopped(s, workspace_id)
         }
