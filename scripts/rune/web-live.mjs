@@ -109,9 +109,9 @@ async function verifySseAuthenticated503Recovery({
       const releaseHeldSse=Promise.withResolvers()
       const recoveredCaptured=Promise.withResolvers()
       const forbiddenRejected=Promise.withResolvers()
+      const forbiddenDone=forbiddenRejected.promise.catch(()=>{})
       void first503Served.promise.catch(()=>{})
       void recoveredCaptured.promise.catch(()=>{})
-      void forbiddenRejected.promise.catch(()=>{})
       const failForbidden=err=>{
         forbiddenError??=err
         forbiddenRejected.reject(err)
@@ -218,7 +218,7 @@ async function verifySseAuthenticated503Recovery({
         sseGate='pass'
         releaseRecovered.resolve()
         releaseHeldSse.resolve()
-        await page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{})
+        await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),forbiddenDone)
         await page.unroute(eventsUrl,routeEvents).catch(()=>{})
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
       }
@@ -508,7 +508,6 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           await settleFollowUp()
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
-          await page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{})
           await page.unroute(eventsUrl,holdEvents).catch(()=>{})
           await page.unroute(authStatusUrl,holdStaleStatus).catch(()=>{})
         }
