@@ -1,5 +1,5 @@
 //! View rendering for Preferences → Voice (Dictation card + Playback & API credentials card).
-use super::{Capabilities, InfoTip, Picker, Speech};
+use super::{CapState, Direction, InfoTip, Picker, Speech, TextField};
 use crate::{
     settings::preferences::{Owner, Preferences, behavior::GeneralToggle},
     strings::t,
@@ -59,41 +59,40 @@ impl Speech {
         if !prompt_voice_enabled {
             return t("settings.voice.dictation.off");
         }
-        match self.capabilities() {
-            Capabilities::Idle | Capabilities::Loading => t("settings.speech.status.loading"),
-            Capabilities::Error => t("settings.speech.status.error"),
-            Capabilities::Unsupported => t("settings.voice.unavailable"),
-            Capabilities::Loaded(caps) => {
-                if !caps.available || !caps.supports_stt {
-                    t("settings.voice.unavailable")
-                } else if !caps.stt_configured {
-                    t("settings.voice.notConfigured")
-                } else {
+        if self.cap_failed() {
+            return t("settings.speech.status.error");
+        }
+        match self.cap_state() {
+            CapState::Idle | CapState::Loading => t("settings.speech.status.loading"),
+            CapState::Unsupported => t("settings.voice.unavailable"),
+            CapState::Loaded => match self.loaded_capabilities() {
+                Some(caps) if caps.available && caps.supports_stt && caps.stt_configured => {
                     t("settings.voice.ready")
                 }
-            }
+                Some(caps) if caps.available && caps.supports_stt => {
+                    t("settings.voice.notConfigured")
+                }
+                _ => t("settings.voice.unavailable"),
+            },
         }
     }
 
     fn playback_status(&self, server_loaded: bool, server_failed: bool) -> &'static str {
-        if server_failed {
+        if server_failed || self.cap_failed() {
             return t("settings.speech.status.error");
         }
-        match self.capabilities() {
-            Capabilities::Error => t("settings.speech.status.error"),
-            Capabilities::Idle | Capabilities::Loading => t("settings.speech.status.loading"),
-            Capabilities::Unsupported => t("settings.voice.unavailable"),
-            Capabilities::Loaded(caps) => {
-                if !server_loaded {
-                    t("settings.speech.status.loading")
-                } else if !caps.available || !caps.supports_tts {
+        match self.cap_state() {
+            CapState::Idle | CapState::Loading => t("settings.speech.status.loading"),
+            CapState::Unsupported => t("settings.voice.unavailable"),
+            CapState::Loaded => match self.loaded_capabilities() {
+                _ if !server_loaded => t("settings.speech.status.loading"),
+                Some(caps) if !caps.available || !caps.supports_tts => {
                     t("settings.voice.unavailable")
-                } else if !caps.tts_configured {
-                    t("settings.voice.notConfigured")
-                } else {
-                    t("settings.speech.status.configured")
                 }
-            }
+                Some(caps) if !caps.tts_configured => t("settings.voice.notConfigured"),
+                Some(_) => t("settings.speech.status.configured"),
+                None => t("settings.speech.status.loading"),
+            },
         }
     }
 
@@ -128,6 +127,7 @@ impl Speech {
             .general_toggle(toggle)
             .unwrap_or_else(|| toggle.default_value());
         let pending = prefs.general_toggle_pending(toggle);
+        let toggle_failed = prefs.general_toggle_failed(toggle);
         let status = self.dictation_status(checked);
         let title = t(toggle.title_key());
         let info_text = t("settings.behavior.promptVoiceInput.subtitle");
@@ -157,26 +157,55 @@ impl Speech {
         .busy(pending)
         .key("behavior-showPromptVoiceInput");
 
-        let card = col()
+        let mut actions = layout::action_row().child(
+            layout::button_tx(
+                t("settings.voice.credentials.title"),
+                false,
+                move |s: &mut S, tx| {
+                    let sp = access(s);
+                    sp.credentials_open = true;
+                    let target = if sp.separate_supported() {
+                        "speech-separate-providers"
+                    } else {
+                        "speech-shared-api-key"
+                    };
+                    tx.scroll_into_view("speech-credentials");
+                    if tx.focus_visible() {
+                        tx.focus(target, true);
+                    }
+                },
+            )
+            .key("speech-open-credentials"),
+        );
+        if toggle_failed {
+            let retry_owner = shared.clone();
+            actions = actions.child(
+                layout::button(
+                    t("settings.voice.retry"),
+                    !prefs.can_retry() || pending,
+                    move |_: &mut S| {
+                        retry_owner.borrow_mut().retry_general_toggle(toggle);
+                    },
+                )
+                .key("speech-dictation-retry"),
+            );
+        }
+
+        let mut card = col()
             .role("region")
             .label(t("settings.voice.dictation.title"))
             .full_width()
             .separate(Space::Sm)
             .child(card_header(t("settings.voice.dictation.title"), status))
-            .child(chrome::setting_row_with_info(title, Some(info), control))
-            .child(
-                layout::action_row().child(
-                    layout::button(
-                        t("settings.voice.credentials.title"),
-                        false,
-                        move |s: &mut S| {
-                            access(s).credentials_open = true;
-                        },
-                    )
-                    .key("speech-open-credentials"),
-                ),
+            .child(chrome::setting_row_with_info(title, Some(info), control));
+        if toggle_failed {
+            card = card.child(
+                text(t("settings.preferenceSaveFailed"))
+                    .wrap()
+                    .role("alert"),
             );
-        chrome::card(card)
+        }
+        chrome::card(card.child(actions))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -203,6 +232,10 @@ impl Speech {
                 .separate_providers
                 .unwrap_or(saved.separate_providers);
         let dirty = self.pending_patch(saved).is_some();
+        let has_local_draft = dirty
+            || self
+                .drafts
+                .has_any_local_draft(saved, self.capabilities_voice());
 
         let mode_labels = SpeechPlaybackMode::ALL.map(|m| t(m.label_key()));
         let mode_index = SpeechPlaybackMode::ALL
@@ -252,6 +285,7 @@ impl Speech {
             fields_disabled,
             "speech-tts-voice",
             move |s| &mut access(s).drafts.tts_voice.edit,
+            move |s| access(s).drafts.on_text_change(TextField::TtsVoice),
         );
 
         let fmt_labels: Vec<&str> = SpeechTtsFormat::ALL.iter().map(|f| f.label()).collect();
@@ -316,19 +350,20 @@ impl Speech {
                         access(s).save(&mut save_shared.borrow_mut());
                     },
                 )
+                .busy(saving)
                 .key("speech-save"),
             )
             .child(
                 layout::button(
                     t("alertDialog.actions.cancel"),
-                    !active || !dirty || saving,
+                    !active || saving || (!has_local_draft && !prefs.speech.failed),
                     move |s: &mut S| {
                         access(s).cancel_drafts(&mut cancel_shared.borrow_mut());
                     },
                 )
                 .key("speech-cancel"),
             );
-        if server_failed || prefs.speech.failed || self.capabilities() == &Capabilities::Error {
+        if prefs.speech.failed || server_failed || self.cap_failed() {
             actions = actions.child(
                 layout::button(
                     t("settings.voice.retry"),
@@ -376,15 +411,18 @@ impl Speech {
             );
         }
 
-        card = card.child(chrome::disclosure(
-            t("settings.voice.credentials.title"),
-            self.credentials_open,
-            credentials_body,
-            move |s: &mut S| {
-                let sp = access(s);
-                sp.credentials_open = !sp.credentials_open;
-            },
-        ));
+        card = card.child(
+            chrome::disclosure(
+                t("settings.voice.credentials.title"),
+                self.credentials_open,
+                credentials_body,
+                move |s: &mut S| {
+                    let sp = access(s);
+                    sp.credentials_open = !sp.credentials_open;
+                },
+            )
+            .key("speech-credentials"),
+        );
 
         if prefs.speech.failed {
             card = card.child(text(t("settings.speech.save.error")).wrap().role("alert"));
@@ -432,30 +470,35 @@ impl Speech {
                 key_tip: InfoTip::SharedApiKey,
                 url_tip: InfoTip::SharedBaseUrl,
                 has_api_key: saved.has_api_key,
-                clear_key: self.drafts.shared_clear_key,
-                api_key_edit: &self.drafts.shared_api_key,
+                clear_key: self.drafts.shared_key.clear_key,
+                api_key_edit: &self.drafts.shared_key.edit,
                 base_url_edit: &self.drafts.shared_base_url.edit,
                 model_edit: &self.drafts.stt_model.edit,
             },
             disabled,
-            move |s| &mut access(s).drafts.shared_api_key,
-            move |s| access(s).drafts.shared_clear_key = true,
+            move |s| &mut access(s).drafts.shared_key.edit,
+            move |s| access(s).drafts.on_key_change(Direction::Shared),
+            move |s| access(s).drafts.shared_key.clear_key = true,
             move |s| &mut access(s).drafts.shared_base_url.edit,
+            move |s| access(s).drafts.on_text_change(TextField::SharedBaseUrl),
             move |s| &mut access(s).drafts.stt_model.edit,
+            move |s| access(s).drafts.on_text_change(TextField::SttModel),
             access,
         );
 
+        let shared_tts_model = text_field(
+            &self.drafts.tts_model.edit,
+            t("settings.speech.ttsModel.title"),
+            None,
+            false,
+            disabled,
+            "speech-shared-tts-model",
+            move |s| &mut access(s).drafts.tts_model.edit,
+            move |s| access(s).drafts.on_text_change(TextField::TtsModel),
+        );
         body = body.child(chrome::setting_row(
             t("settings.speech.ttsModel.title"),
-            text_field(
-                &self.drafts.tts_model.edit,
-                t("settings.speech.ttsModel.title"),
-                None,
-                false,
-                disabled,
-                "speech-shared-tts-model",
-                move |s| &mut access(s).drafts.tts_model.edit,
-            ),
+            shared_tts_model,
         ));
 
         if separate {
@@ -475,16 +518,19 @@ impl Speech {
                     key_tip: InfoTip::SttApiKey,
                     url_tip: InfoTip::SttBaseUrl,
                     has_api_key: saved.stt.has_api_key,
-                    clear_key: self.drafts.stt_clear_key,
-                    api_key_edit: &self.drafts.stt_api_key,
+                    clear_key: self.drafts.stt_key.clear_key,
+                    api_key_edit: &self.drafts.stt_key.edit,
                     base_url_edit: &self.drafts.stt_base_url.edit,
                     model_edit: &self.drafts.stt_model_dir.edit,
                 },
                 disabled,
-                move |s| &mut access(s).drafts.stt_api_key,
-                move |s| access(s).drafts.stt_clear_key = true,
+                move |s| &mut access(s).drafts.stt_key.edit,
+                move |s| access(s).drafts.on_key_change(Direction::Stt),
+                move |s| access(s).drafts.stt_key.clear_key = true,
                 move |s| &mut access(s).drafts.stt_base_url.edit,
+                move |s| access(s).drafts.on_text_change(TextField::SttBaseUrl),
                 move |s| &mut access(s).drafts.stt_model_dir.edit,
+                move |s| access(s).drafts.on_text_change(TextField::SttModelDir),
                 access,
             );
 
@@ -504,16 +550,19 @@ impl Speech {
                     key_tip: InfoTip::TtsApiKey,
                     url_tip: InfoTip::TtsBaseUrl,
                     has_api_key: saved.tts.has_api_key,
-                    clear_key: self.drafts.tts_clear_key,
-                    api_key_edit: &self.drafts.tts_api_key,
+                    clear_key: self.drafts.tts_key.clear_key,
+                    api_key_edit: &self.drafts.tts_key.edit,
                     base_url_edit: &self.drafts.tts_base_url.edit,
                     model_edit: &self.drafts.tts_model_dir.edit,
                 },
                 disabled,
-                move |s| &mut access(s).drafts.tts_api_key,
-                move |s| access(s).drafts.tts_clear_key = true,
+                move |s| &mut access(s).drafts.tts_key.edit,
+                move |s| access(s).drafts.on_key_change(Direction::Tts),
+                move |s| access(s).drafts.tts_key.clear_key = true,
                 move |s| &mut access(s).drafts.tts_base_url.edit,
+                move |s| access(s).drafts.on_text_change(TextField::TtsBaseUrl),
                 move |s| &mut access(s).drafts.tts_model_dir.edit,
+                move |s| access(s).drafts.on_text_change(TextField::TtsModelDir),
                 access,
             );
         }
@@ -528,9 +577,12 @@ impl Speech {
         spec: DirectionSpec<'_>,
         disabled: bool,
         edit_key: impl Fn(&mut S) -> &mut TextEdit + 'static,
+        change_key: impl Fn(&mut S) + 'static,
         clear_key_action: impl Fn(&mut S) + 'static,
         edit_url: impl Fn(&mut S) -> &mut TextEdit + 'static,
+        change_url: impl Fn(&mut S) + 'static,
         edit_model: impl Fn(&mut S) -> &mut TextEdit + 'static,
+        change_model: impl Fn(&mut S) + 'static,
         access: fn(&mut S) -> &mut Self,
     ) -> El {
         if let Some(title) = spec.section_title {
@@ -560,6 +612,7 @@ impl Speech {
             disabled,
             &format!("{}-api-key", spec.key_prefix),
             edit_key,
+            change_key,
         );
         body = body.child(chrome::setting_row_with_info(
             spec.api_key_label,
@@ -599,6 +652,7 @@ impl Speech {
             disabled,
             &format!("{}-base-url", spec.key_prefix),
             edit_url,
+            change_url,
         );
         body = body.child(chrome::setting_row_with_info(
             spec.base_url_label,
@@ -614,6 +668,7 @@ impl Speech {
             disabled,
             &format!("{}-model", spec.key_prefix),
             edit_model,
+            change_model,
         );
         body.child(chrome::setting_row(spec.model_label, model_field))
     }
@@ -643,6 +698,7 @@ fn card_header(title: &'static str, status: &'static str) -> El {
     chrome::setting_row_with_info(title, None, text(status).role("status"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn text_field<S: 'static>(
     edit: &TextEdit,
     label: &str,
@@ -651,6 +707,7 @@ fn text_field<S: 'static>(
     disabled: bool,
     key: &str,
     on_edit: impl Fn(&mut S) -> &mut TextEdit + 'static,
+    on_change: impl Fn(&mut S) + 'static,
 ) -> El {
     let input = match placeholder {
         Some(hint) => layout::hinted_field(edit, hint),
@@ -658,7 +715,8 @@ fn text_field<S: 'static>(
     }
     .label(label)
     .disabled(disabled)
-    .on_edit(on_edit);
+    .on_edit(on_edit)
+    .on_change(move |s, _| on_change(s));
     let input = if secret {
         input.secure().revealed(false)
     } else {

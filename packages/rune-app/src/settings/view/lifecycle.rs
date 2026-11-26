@@ -210,7 +210,12 @@ pub(in crate::settings) fn closed(s: &mut Window, _: &mut rune::Tx) {
     s.focused.set(false);
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.shared.borrow_mut().hide_opencode();
+    {
+        let mut prefs = s.shared.borrow_mut();
+        prefs.hide_opencode();
+        prefs.show_speech(false);
+    }
+    s.speech.close();
     if !s.retain_editor_on_native_close() {
         s.close(crate::settings::warn_save_failed);
     }

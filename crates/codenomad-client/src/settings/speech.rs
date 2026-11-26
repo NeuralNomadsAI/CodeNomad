@@ -132,10 +132,18 @@ impl Default for SpeechSettings {
     }
 }
 
+/// An explicit API key entry paired with the endpoint displayed beside it at entry time,
+/// preventing concurrent server refreshes from re-pairing the typed key with another URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeechKeyWrite {
+    pub api_key: String,
+    pub base_url: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SpeechDirectionDraft {
     pub clear_key: bool,
-    pub api_key: String,
+    pub key_write: Option<SpeechKeyWrite>,
     pub base_url: Option<String>,
     pub model: Option<String>,
 }
@@ -144,7 +152,7 @@ pub struct SpeechDirectionDraft {
 pub struct SpeechDraft {
     pub separate_providers: Option<bool>,
     pub shared_clear_key: bool,
-    pub shared_api_key: String,
+    pub shared_key_write: Option<SpeechKeyWrite>,
     pub shared_base_url: Option<String>,
     pub stt_model: Option<String>,
     pub tts_model: Option<String>,
@@ -341,14 +349,19 @@ pub fn build_speech_patch(
         speech.insert("separateProviders".into(), json!(effective_separate));
     }
 
+    let shared_key_write = draft
+        .shared_key_write
+        .as_ref()
+        .filter(|kw| !js_trim(&kw.api_key).is_empty());
+    let shared_new_key = shared_key_write.map_or("", |kw| js_trim(&kw.api_key));
     let shared_url = js_trim(
         draft
             .shared_base_url
             .as_deref()
+            .or_else(|| shared_key_write.map(|kw| kw.base_url.as_str()))
             .unwrap_or(saved.base_url.as_deref().unwrap_or("")),
     );
     let shared_url_changed = shared_url != saved.base_url.as_deref().unwrap_or("");
-    let shared_new_key = js_trim(&draft.shared_api_key);
     if draft.shared_clear_key || shared_url_changed || !shared_new_key.is_empty() {
         speech.insert(
             "apiKey".into(),
@@ -406,11 +419,16 @@ pub fn build_speech_patch(
             ("tts", &draft.tts, &saved.tts, effective_tts_model),
         ];
         for (name, dir_draft, dir_saved, shared_model) in dirs {
-            let new_key = js_trim(&dir_draft.api_key);
+            let dir_key_write = dir_draft
+                .key_write
+                .as_ref()
+                .filter(|kw| !js_trim(&kw.api_key).is_empty());
+            let new_key = dir_key_write.map_or("", |kw| js_trim(&kw.api_key));
             let url = js_trim(
                 dir_draft
                     .base_url
                     .as_deref()
+                    .or_else(|| dir_key_write.map(|kw| kw.base_url.as_str()))
                     .unwrap_or(dir_saved.base_url.as_deref().unwrap_or("")),
             );
             let model = js_trim(
@@ -424,7 +442,7 @@ pub fn build_speech_patch(
             if dir_draft.clear_key || !new_key.is_empty() || url_changed || model_changed {
                 let dir_patch = build_dir_save(
                     dir_draft.clear_key,
-                    &dir_draft.api_key,
+                    new_key,
                     url,
                     model,
                     dir_saved.base_url.as_deref(),
@@ -438,6 +456,87 @@ pub fn build_speech_patch(
     }
 
     (!speech.is_empty()).then(|| json!({ "speech": Value::Object(speech) }))
+}
+
+/// Checks whether a fresh authoritative server config snapshot confirms every field in a
+/// previously submitted `speech` patch. Returns `false` if the patch included any non-null
+/// `apiKey` write, because `hasApiKey: true` cannot prove which secret value is stored.
+pub fn speech_patch_confirmed(patch: &Value, snapshot: &Value) -> bool {
+    let Some(speech) = patch.get("speech").and_then(Value::as_object) else {
+        return false;
+    };
+    let saved = normalize_speech_settings(Some(snapshot));
+    for (key, value) in speech {
+        let ok = match key.as_str() {
+            "playbackMode" => value.as_str() == Some(saved.playback_mode.as_str()),
+            "ttsFormat" => value.as_str() == Some(saved.tts_format.as_str()),
+            "ttsVoice" => {
+                let expected = value
+                    .as_str()
+                    .map(js_trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(DEFAULT_TTS_VOICE);
+                saved.tts_voice == expected
+            }
+            "separateProviders" => value.as_bool() == Some(saved.separate_providers),
+            "baseUrl" => {
+                let expected = value.as_str().map(js_trim).filter(|v| !v.is_empty());
+                saved.base_url.as_deref() == expected
+            }
+            "sttModel" => {
+                let expected = value
+                    .as_str()
+                    .map(js_trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(DEFAULT_STT_MODEL);
+                saved.stt_model == expected
+            }
+            "ttsModel" => {
+                let expected = value
+                    .as_str()
+                    .map(js_trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(DEFAULT_TTS_MODEL);
+                saved.tts_model == expected
+            }
+            "apiKey" => value.is_null() && !saved.has_api_key,
+            "stt" => dir_patch_confirmed(value, &saved.stt, &saved.stt_model),
+            "tts" => dir_patch_confirmed(value, &saved.tts, &saved.tts_model),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn dir_patch_confirmed(patch: &Value, saved: &SpeechDirectionConfig, shared_model: &str) -> bool {
+    let Some(map) = patch.as_object() else {
+        return false;
+    };
+    for (key, value) in map {
+        let ok = match key.as_str() {
+            "apiKey" => value.is_null() && !saved.has_api_key,
+            "baseUrl" => {
+                let expected = value.as_str().map(js_trim).filter(|v| !v.is_empty());
+                saved.base_url.as_deref() == expected
+            }
+            "model" => {
+                let expected = value
+                    .as_str()
+                    .map(js_trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(shared_model);
+                saved.model == expected
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn parse_speech_capabilities(value: &Value) -> Option<SpeechCapabilities> {
@@ -694,10 +793,13 @@ mod tests {
             }))
         );
 
-        // Directional explicit key write always carries its shown baseUrl.
+        // Directional explicit key write always carries its captured baseUrl, even if saved changed.
         let dir_key = SpeechDraft {
             stt: SpeechDirectionDraft {
-                api_key: "  sk-stt-new ".into(),
+                key_write: Some(SpeechKeyWrite {
+                    api_key: "  sk-stt-new ".into(),
+                    base_url: "https://stt-old.example/v1".into(),
+                }),
                 ..SpeechDirectionDraft::default()
             },
             ..SpeechDraft::default()
@@ -714,6 +816,98 @@ mod tests {
                 }
             }))
         );
+
+        // Concurrent server URL change to B cannot re-pair a key typed against A (shared, STT, TTS).
+        let saved_rotated = normalize_speech_settings(Some(&json!({
+            "speech": {
+                "hasApiKey": true,
+                "baseUrl": "https://b.example/v1",
+                "sttModel": "whisper-1",
+                "ttsModel": "tts-1",
+                "separateProviders": true,
+                "stt": { "hasApiKey": true, "baseUrl": "https://stt-b.example/v1", "model": "whisper-1" },
+                "tts": { "hasApiKey": true, "baseUrl": "https://tts-b.example/v1", "model": "tts-1" }
+            }
+        })));
+        let pinned_keys = SpeechDraft {
+            shared_key_write: Some(SpeechKeyWrite {
+                api_key: "sk-for-a".into(),
+                base_url: "https://a.example/v1".into(),
+            }),
+            stt: SpeechDirectionDraft {
+                key_write: Some(SpeechKeyWrite {
+                    api_key: "sk-stt-a".into(),
+                    base_url: "https://stt-a.example/v1".into(),
+                }),
+                ..SpeechDirectionDraft::default()
+            },
+            tts: SpeechDirectionDraft {
+                key_write: Some(SpeechKeyWrite {
+                    api_key: "sk-tts-a".into(),
+                    base_url: "https://tts-a.example/v1".into(),
+                }),
+                // Explicit URL edit overrides the earlier captured URL.
+                base_url: Some("https://tts-c.example/v1".into()),
+                ..SpeechDirectionDraft::default()
+            },
+            ..SpeechDraft::default()
+        };
+        assert_eq!(
+            build_speech_patch(&saved_rotated, &pinned_keys, true, None),
+            Some(json!({
+                "speech": {
+                    "apiKey": "sk-for-a",
+                    "baseUrl": "https://a.example/v1",
+                    "stt": {
+                        "apiKey": "sk-stt-a",
+                        "baseUrl": "https://stt-a.example/v1",
+                        "model": null
+                    },
+                    "tts": {
+                        "apiKey": "sk-tts-a",
+                        "baseUrl": "https://tts-c.example/v1",
+                        "model": null
+                    }
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn speech_patch_confirmed_verifies_public_fields_and_null_clears_but_never_secret_writes() {
+        let snapshot = json!({
+            "speech": {
+                "hasApiKey": true,
+                "baseUrl": "https://a.example/v1",
+                "sttModel": "whisper-1",
+                "playbackMode": "buffered",
+                "ttsFormat": "wav",
+                "ttsVoice": "nova",
+                "separateProviders": true,
+                "stt": { "hasApiKey": false, "baseUrl": null, "model": "whisper-1" },
+                "tts": { "hasApiKey": true, "baseUrl": "https://tts.example/v1", "model": "tts-hd" }
+            }
+        });
+        assert!(speech_patch_confirmed(
+            &json!({"speech": {"playbackMode": "buffered", "ttsFormat": "wav", "ttsVoice": "nova"}}),
+            &snapshot
+        ));
+        assert!(speech_patch_confirmed(
+            &json!({"speech": {"stt": {"apiKey": null, "baseUrl": null, "model": null}}}),
+            &snapshot
+        ));
+        assert!(!speech_patch_confirmed(
+            &json!({"speech": {"apiKey": "sk-new", "baseUrl": "https://a.example/v1"}}),
+            &snapshot
+        ));
+        assert!(!speech_patch_confirmed(
+            &json!({"speech": {"tts": {"apiKey": "sk-tts", "baseUrl": "https://tts.example/v1", "model": "tts-hd"}}}),
+            &snapshot
+        ));
+        assert!(!speech_patch_confirmed(
+            &json!({"speech": {"playbackMode": "streaming"}}),
+            &snapshot
+        ));
     }
 
     #[test]

@@ -105,6 +105,21 @@ impl Preferences {
         self.config.choice_pending(Choice::GeneralBehavior(toggle))
     }
 
+    pub(in crate::settings) fn general_toggle_failed(&self, toggle: GeneralToggle) -> bool {
+        self.config.choice_failed(Choice::GeneralBehavior(toggle))
+    }
+
+    pub(in crate::settings) fn retry_general_toggle(&mut self, toggle: GeneralToggle) {
+        if self.can_retry() {
+            self.config
+                .retry(|choice| choice == Choice::GeneralBehavior(toggle));
+            self.revision += 1;
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
+    }
+
     pub(in crate::settings) fn set_general_toggle(&mut self, toggle: GeneralToggle, value: bool) {
         if self.locale_ready()
             && self.can_retry()

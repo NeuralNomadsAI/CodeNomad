@@ -595,6 +595,9 @@ impl Preferences {
             || self.server.draining()
             || self.missions.draining(self.config.read_failed())
             || self.speech.draining()
+            || (self.speech.needs_reconciliation()
+                && !self.server.read_failed()
+                && self.server.refreshing())
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -919,7 +922,7 @@ impl Preferences {
         }
         if self
             .config
-            .apply_external_snapshot(snapshot, guard.map(|(seq, _)| seq))
+            .apply_external_snapshot(snapshot, guard.map(|(seq, _)| seq), None)
         {
             self.revision += 1;
             for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
@@ -1019,8 +1022,9 @@ impl Preferences {
 
     fn apply_speech_effects(&mut self, effects: super::speech::ServerEffects) -> (bool, bool) {
         if let Some((snapshot, guard)) = effects.applied {
-            let expected_seq = guard.map(|(seq, _)| seq);
-            let rev_stale = guard.is_some_and(|(_, rev)| {
+            let expected_seq = guard.map(|(seq, _, _)| seq);
+            let expected_pub = guard.map(|(_, pub_seq, _)| pub_seq);
+            let rev_stale = guard.is_some_and(|(_, _, rev)| {
                 self.backend
                     .as_ref()
                     .is_some_and(|b| b.client.preferences_revision(Owner::Server) != rev)
@@ -1028,7 +1032,9 @@ impl Preferences {
             if rev_stale {
                 self.server.invalidate();
             } else {
-                let _ = self.server.apply_external_snapshot(snapshot, expected_seq);
+                let _ = self
+                    .server
+                    .apply_external_snapshot(snapshot, expected_seq, expected_pub);
             }
         }
         if effects.invalidate {
@@ -1049,6 +1055,7 @@ impl Preferences {
         let server_guard = self.backend.as_ref().map(|b| {
             (
                 self.server.invalidation_seq(),
+                self.server.publish_seq(),
                 b.client.preferences_revision(Owner::Server),
             )
         });
@@ -1056,6 +1063,7 @@ impl Preferences {
             backend: self.backend.as_ref(),
             server_ready,
             server_guard,
+            invalidation_guard: self.server.invalidation_seq_guard(),
             write_authority: self.server.write_authority(),
             transport_lost: self.transport_lost,
             can_retry,
@@ -1162,10 +1170,16 @@ impl Preferences {
                 || self.config.has_unconfirmed()
                 || self.missions.needs_config_revalidation(),
             revalidate_idle || self.state.has_unconfirmed(),
-            (self.server_active()) && (revalidate_idle || self.server.has_unconfirmed()),
+            (self.server_active() && revalidate_idle)
+                || self.server.has_unconfirmed()
+                || self.speech.needs_reconciliation(),
         );
         #[cfg(target_arch = "wasm32")]
-        let (poll_config, poll_state, poll_server) = (true, true, self.server_active());
+        let (poll_config, poll_state, poll_server) = (
+            true,
+            true,
+            self.server_active() || self.speech.needs_reconciliation(),
+        );
         let (config_changed, config_settled) = if poll_config {
             self.config.poll(
                 &backend,
@@ -1221,10 +1235,21 @@ impl Preferences {
             } else {
                 (false, false)
             };
-        let (speech_changed, speech_settled) = {
+        let (mut speech_changed, mut speech_settled) = {
             let effects = self.run_speech_op(|speech, ctx| speech.poll(ctx));
             self.apply_speech_effects(effects)
         };
+        if self.speech.needs_reconciliation() {
+            if let Some(snapshot) = self.server.confirmed().cloned() {
+                if self.speech.reconcile_snapshot(&snapshot) {
+                    speech_changed = true;
+                }
+                speech_settled = true;
+            } else if self.server.read_failed() {
+                self.speech.note_readback_failed();
+                speech_settled = true;
+            }
+        }
         let changed = config_changed
             | state_changed
             | server_changed
