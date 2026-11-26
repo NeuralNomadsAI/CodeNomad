@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {closeSync,constants,fstatSync,lstatSync,openSync,readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
+import {readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
 import {lstat,realpath} from 'node:fs/promises'
 import path from 'node:path'
 
@@ -13,8 +13,7 @@ export function needsOwnedWindowsWorker(argv, platform = process.platform) {
     || argv.includes('--web-sse-7tabs')
 }
 
-export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, token, pid = process.pid) {
-  assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
+export async function validateOwnedWorkerProfile(workerProfilePath, testsReal) {
   const canonicalRoot = await realpath(testsReal)
   const resolvedProfile = path.resolve(workerProfilePath)
   assert.equal(path.dirname(resolvedProfile), canonicalRoot, `Worker profile must reside under ${canonicalRoot}`)
@@ -23,29 +22,64 @@ export async function claimOwnedWorkerProfile(workerProfilePath, testsReal, toke
   assert(!stat.isSymbolicLink() && stat.isDirectory(), `Worker profile must be a real directory: ${resolvedProfile}`)
   const profileReal = await realpath(resolvedProfile)
   assert.equal(path.dirname(profileReal), canonicalRoot, `Worker profile canonical path must reside under ${canonicalRoot}`)
-  writeFileSync(path.join(profileReal, '.worker-started'), `${token}\n${pid}\n`, { flag: 'wx' })
   return profileReal
 }
 
-export function readOwnedWorkerStarted(workerProfile, token) {
-  if (typeof token !== 'string' || !token.length) return false
-  const markerPath = path.join(workerProfile, '.worker-started')
-  let fd = null
-  try {
-    const linkStat = lstatSync(markerPath)
-    if (!linkStat.isFile() || linkStat.isSymbolicLink()) return false
-    const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0)
-    fd = openSync(markerPath, flags)
-    const fdStat = fstatSync(fd)
-    if (!fdStat.isFile() || fdStat.dev !== linkStat.dev || fdStat.ino !== linkStat.ino) return false
-    const [firstLine] = readFileSync(fd, 'utf8').split(/\r?\n/)
-    return firstLine === token
-  } catch {
-    return false
-  } finally {
-    if (fd !== null) {
-      try { closeSync(fd) } catch {}
-    }
+export function createWorkerStdoutTap(token, write) {
+  assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
+  const expected = Buffer.from(`CODENOMAD_WORKER_STARTED=${token}`)
+  let started = false
+  let headerPending = true
+  let chunks = []
+  let bufferedBytes = 0
+  return {
+    push(chunk) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      if (!headerPending) {
+        write(buf)
+        return
+      }
+      chunks.push(buf)
+      bufferedBytes += buf.length
+      const combined = Buffer.concat(chunks, bufferedBytes)
+      const nl = combined.indexOf(0x0a)
+      if (nl >= 0) {
+        const lineEnd = nl > 0 && combined[nl - 1] === 0x0d ? nl - 1 : nl
+        const line = combined.subarray(0, lineEnd)
+        const rest = combined.subarray(nl + 1)
+        headerPending = false
+        chunks = []
+        bufferedBytes = 0
+        if (line.equals(expected)) {
+          started = true
+        } else {
+          write(combined.subarray(0, nl + 1))
+        }
+        if (rest.length > 0) write(rest)
+      } else if (bufferedBytes > expected.length + 2) {
+        headerPending = false
+        chunks = []
+        bufferedBytes = 0
+        write(combined)
+      }
+    },
+    flush() {
+      if (headerPending && bufferedBytes > 0) {
+        const combined = Buffer.concat(chunks, bufferedBytes)
+        headerPending = false
+        chunks = []
+        bufferedBytes = 0
+        const end = combined.length > 0 && combined[combined.length - 1] === 0x0d ? combined.length - 1 : combined.length
+        if (combined.subarray(0, end).equals(expected)) {
+          started = true
+        } else {
+          write(combined)
+        }
+      }
+    },
+    hasStarted() {
+      return started
+    },
   }
 }
 
@@ -76,12 +110,11 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
   }
 }
 
-export function publishWorkerProof({ workerProfile, workerToken, exit, unconfirmedStop = false, stopError = null, outerSignal = null }) {
-  assert(typeof workerToken === 'string' && workerToken.length > 0, 'Worker start token is required')
+export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+  assert.equal(typeof workerStarted, 'boolean', 'workerStarted must be a boolean')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
-  const workerStarted = readOwnedWorkerStarted(workerProfile, workerToken)
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
   const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })

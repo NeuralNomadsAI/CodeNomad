@@ -5,7 +5,7 @@ import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
 import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {renameSync,writeFileSync} from 'node:fs'
+import {renameSync,writeFileSync,writeSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -22,7 +22,7 @@ import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {rustOrigin,signInFixture,until} from './fixture-host.mjs'
 import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
-import {claimOwnedWorkerProfile,needsOwnedWindowsWorker,publishWorkerProof} from './launcher-worker-guard.mjs'
+import {createWorkerStdoutTap,needsOwnedWindowsWorker,publishWorkerProof,validateOwnedWorkerProfile} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
@@ -43,8 +43,9 @@ if(ownedWorker){
   assert(workerProfileEnv&&workerTokenEnv,'--owned-mobile-worker requires CODENOMAD_LAUNCHER_WORKER_PROFILE and CODENOMAD_LAUNCHER_WORKER_TOKEN')
 }
 const validatedWorkerProfile=ownedWorker
-  ?await claimOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal,workerTokenEnv)
+  ?await validateOwnedWorkerProfile(workerProfileEnv,(await assertWorktreeTestRoot(root)).testsReal)
   :undefined
+if(ownedWorker)writeSync(1,`CODENOMAD_WORKER_STARTED=${workerTokenEnv}\n`)
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
   const testsReal=(await assertWorktreeTestRoot(root)).testsReal
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
@@ -108,7 +109,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       cwd:root,
       detached:true,
       windowsHide:true,
-      stdio:['pipe','inherit','inherit'],
+      stdio:['pipe','pipe','inherit'],
       env:{
         ...workerEnv,
         CODENOMAD_POSIX_WORKER_ARGS:JSON.stringify([...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker']),
@@ -119,14 +120,17 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   let worker
   try{
     worker=process.platform==='win32'
-      ?spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
+      ?spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','pipe','inherit'],env:workerEnv})
       :spawnPosixBridge()
   }catch(spawnError){
     console.error(spawnError?.message??spawnError)
-    const finalResult=publishWorkerProof({workerProfile,workerToken,exit:{code:null,signal:null,error:spawnError}})
+    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false})
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
+  const stdoutTap=createWorkerStdoutTap(workerToken,chunk=>{process.stdout.write(chunk)})
+  worker.stdout?.on('data',chunk=>{stdoutTap.push(chunk)})
+  worker.stdout?.once('end',()=>{stdoutTap.flush()})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
     worker.once('error',error=>resolve({code:null,signal:null,error}))
@@ -176,7 +180,8 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   }
   process.off('SIGINT',stop)
   process.off('SIGTERM',stop)
-  const finalResult=publishWorkerProof({workerProfile,workerToken,exit,unconfirmedStop,stopError,outerSignal})
+  stdoutTap.flush()
+  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:stdoutTap.hasStarted(),unconfirmedStop,stopError,outerSignal})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
