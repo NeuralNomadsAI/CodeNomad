@@ -149,6 +149,7 @@ pub(crate) struct Schedules {
     visible: bool,
     pub(crate) generation: u64,
     view_epoch: u64,
+    req_seq: u64,
     page_limit: u8,
     pub(crate) project_id: Option<String>,
     pub(crate) rows: Vec<UnifiedSchedule>,
@@ -158,9 +159,9 @@ pub(crate) struct Schedules {
     failed_append: bool,
     pub(crate) selection_error: Option<SelectionError>,
     pub(crate) selected: Option<String>,
-    list_flight: Option<Flight<Fetch<ScheduleListPage>, (bool, u8, u64)>>,
+    list_flight: Option<Flight<Fetch<ScheduleListPage>, (bool, u8, u64, u64)>>,
     list_owed: bool,
-    point_flight: Option<Flight<ReadOut, (String, u64)>>,
+    point_flight: Option<Flight<ReadOut, (String, u64, u64)>>,
     pub(crate) capability: Option<Cap>,
     pub(crate) refusal: Option<ActivationRefusal>,
     cap_flight: Option<Flight<Fetch<ScheduleCapability>, u64>>,
@@ -181,6 +182,7 @@ impl Default for Schedules {
             visible: false,
             generation: 0,
             view_epoch: 0,
+            req_seq: 0,
             page_limit: SCHEDULE_PAGE_LIMIT,
             project_id: None,
             rows: Vec::new(),
@@ -296,6 +298,7 @@ impl Schedules {
             .iter()
             .fold(0usize, |acc, doc| acc.saturating_add(schedule_bytes(doc)))
             .saturating_add(self.next.as_deref().map_or(0, str::len))
+            .saturating_add(set_bytes(&self.fresh))
             .saturating_add(set_bytes(&self.instructions_open))
             .saturating_add(set_bytes(&self.diagnostics_open))
             .saturating_add(set_bytes(&self.diagnostics_info_open))
@@ -303,7 +306,12 @@ impl Schedules {
 
     pub(crate) fn evict_cache(&mut self) -> usize {
         let before = self.retained_bytes();
-        if before == 0 {
+        let has_capacity = self.rows.capacity() > 0
+            || self.fresh.capacity() > 0
+            || self.instructions_open.capacity() > 0
+            || self.diagnostics_open.capacity() > 0
+            || self.diagnostics_info_open.capacity() > 0;
+        if before == 0 && !has_capacity {
             return 0;
         }
         self.generation = self.generation.wrapping_add(1);
@@ -311,7 +319,7 @@ impl Schedules {
         self.cancel_flights();
         self.rows = Vec::new();
         self.next = None;
-        self.fresh.clear();
+        self.fresh = HashSet::new();
         self.instructions_open = HashSet::new();
         self.diagnostics_open = HashSet::new();
         self.diagnostics_info_open = HashSet::new();
@@ -481,12 +489,12 @@ impl Schedules {
         self.page_limit = SCHEDULE_PAGE_LIMIT;
         self.failed_append = false;
         self.cancel_flights();
-        self.fresh.clear();
+        self.fresh = HashSet::new();
         self.capability = None;
         self.refusal = None;
-        self.instructions_open.clear();
-        self.diagnostics_open.clear();
-        self.diagnostics_info_open.clear();
+        self.instructions_open = HashSet::new();
+        self.diagnostics_open = HashSet::new();
+        self.diagnostics_info_open = HashSet::new();
         self.refusal_info_open = false;
         self.activatable_info_open = false;
     }
@@ -505,7 +513,7 @@ impl Schedules {
         if self.list_flight.is_some() {
             self.list_owed = true;
         }
-        self.fresh.clear();
+        self.fresh = HashSet::new();
     }
     pub(crate) fn cancel_pre(&mut self) {
         self.pending_pre = None;
@@ -737,7 +745,15 @@ impl Schedules {
 
     pub(crate) fn poll(&mut self, holds: &mut ScheduleHolds, ctx: ScheduleCtx<'_>) -> bool {
         let mut changed = self.drain_auth_sink();
-        if let Some(((append, _limit, epoch), b, res)) = ready(&mut self.list_flight) {
+        if let Some(((sid, epoch, _seq), b, res)) = ready(&mut self.point_flight) {
+            changed = true;
+            if matches!(res, Some(ReadOut::AuthExpired)) {
+                push_auth_expired(&mut self.auth_expired, b);
+            } else if epoch == self.generation && self.selected.as_deref() == Some(sid.as_str()) {
+                self.finish_point_read(sid, res, holds, ctx);
+            }
+        }
+        if let Some(((append, _limit, epoch, seq), b, res)) = ready(&mut self.list_flight) {
             changed = true;
             let owed = std::mem::take(&mut self.list_owed);
             if matches!(res, Some(Fetch::AuthExpired)) {
@@ -746,7 +762,7 @@ impl Schedules {
                 match res {
                     Some(Fetch::Ready(page)) => {
                         self.failed_append = false;
-                        self.accept_page(append, page, holds, ctx);
+                        self.accept_page(append, seq, page, holds, ctx);
                     }
                     _ => {
                         self.error = true;
@@ -760,14 +776,6 @@ impl Schedules {
             } else if owed && self.visible {
                 self.failed_append = false;
                 self.start_list(false, ctx);
-            }
-        }
-        if let Some(((sid, epoch), b, res)) = ready(&mut self.point_flight) {
-            changed = true;
-            if matches!(res, Some(ReadOut::AuthExpired)) {
-                push_auth_expired(&mut self.auth_expired, b);
-            } else if epoch == self.generation && self.selected.as_deref() == Some(sid.as_str()) {
-                self.finish_point_read(sid, res, holds, ctx);
             }
         }
         if let Some((epoch, b, res)) = ready(&mut self.cap_flight) {
@@ -853,6 +861,9 @@ impl Schedules {
                 Some(doc) => {
                     let id = doc.id.clone();
                     if let Some(s) = self.rows.iter_mut().find(|x| x.id == id) {
+                        if s.revision > doc.revision && self.fresh.contains(&id) {
+                            return;
+                        }
                         *s = doc.clone();
                     } else {
                         self.rows.push(doc.clone());
@@ -868,11 +879,30 @@ impl Schedules {
                         self.selection_error = None;
                     }
                 }
+                None if r.pending => {
+                    self.fresh.remove(&sid);
+                    self.selection_error = Some(SelectionError::Pending);
+                }
                 None => {
                     self.rows.retain(|x| x.id != sid);
                     self.fresh.remove(&sid);
                     self.forget_disclosures(&sid);
-                    self.selection_error = None;
+                    if self.selected.as_deref() == Some(sid.as_str())
+                        && self.hold_for(holds, ctx, &sid).is_none()
+                    {
+                        self.view_epoch = self.view_epoch.wrapping_add(1);
+                        self.selected = None;
+                        self.selection_error = None;
+                        if self.feedback.as_ref().is_some_and(|(t, _)| t == &sid) {
+                            self.feedback = None;
+                        }
+                        self.refusal = None;
+                        self.refusal_info_open = false;
+                        self.activatable_info_open = false;
+                        self.cancel_pre();
+                    } else {
+                        self.selection_error = None;
+                    }
                 }
             },
             Some(ReadOut::Pending(r)) => {
@@ -1083,9 +1113,25 @@ impl Schedules {
         std::mem::take(&mut self.auth_expired)
     }
 
+    fn next_seq(&mut self) -> u64 {
+        self.req_seq = self.req_seq.wrapping_add(1);
+        self.req_seq
+    }
+
+    fn cancel_older_point_flight(&mut self, sid: &str, list_seq: u64) {
+        if self
+            .point_flight
+            .as_ref()
+            .is_some_and(|f| f.0.1 != self.generation || (f.0.0 == sid && f.0.2 < list_seq))
+        {
+            cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
+        }
+    }
+
     fn accept_page(
         &mut self,
         append: bool,
+        list_seq: u64,
         page: ScheduleListPage,
         holds: &mut ScheduleHolds,
         ctx: ScheduleCtx<'_>,
@@ -1103,16 +1149,21 @@ impl Schedules {
                 if self.selected.as_deref() == Some(doc.id.as_str()) {
                     loaded_selected = true;
                 }
-                self.fresh.insert(doc.id.clone());
                 if let Some(slot) = self.rows.iter_mut().find(|r| r.id == doc.id) {
-                    *slot = doc;
+                    if slot.revision > doc.revision && self.fresh.contains(&doc.id) {
+                        continue;
+                    }
+                    *slot = doc.clone();
                 } else {
-                    self.rows.push(doc);
+                    self.rows.push(doc.clone());
                 }
+                self.fresh.insert(doc.id);
             }
             if loaded_selected {
+                if let Some(sid) = self.selected.clone() {
+                    self.cancel_older_point_flight(&sid, list_seq);
+                }
                 self.selection_error = None;
-                cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
             }
             self.next = page.next;
         } else {
@@ -1125,19 +1176,34 @@ impl Schedules {
                 .as_deref()
                 .is_some_and(|id| page.schedules.iter().any(|d| d.id == id));
             self.rows = page.schedules;
+            if in_page
+                && prev_fresh
+                && let Some(p) = prev.as_ref()
+                && let Some(slot) = self.rows.iter_mut().find(|r| r.id == p.id)
+                && p.revision > slot.revision
+            {
+                *slot = p.clone();
+            }
             self.fresh = self.rows.iter().map(|d| d.id.clone()).collect();
             self.next = page.next;
-            if let Some(id) = sel
-                && !in_page
-            {
+            if !in_page && let Some(id) = sel {
                 if let Some(p) = prev {
                     self.rows.push(p);
                     if prev_fresh {
                         self.fresh.insert(id.clone());
                     }
                 }
-                self.start_point(id, ctx);
+                let newer_point_in_flight = self
+                    .point_flight
+                    .as_ref()
+                    .is_some_and(|f| f.0.0 == id && f.0.1 == self.generation && f.0.2 > list_seq);
+                if !newer_point_in_flight {
+                    self.start_point(id, ctx);
+                }
             } else {
+                if let Some(id) = sel {
+                    self.cancel_older_point_flight(&id, list_seq);
+                }
                 self.selection_error = None;
             }
             self.prune_disclosures();
@@ -1146,10 +1212,11 @@ impl Schedules {
     }
 
     fn start_point(&mut self, id: String, ctx: ScheduleCtx<'_>) {
+        let seq = self.next_seq();
         cancel(&mut self.point_flight, &mut self.auth_expired, is_read_auth);
         let mid = id.clone();
         self.point_flight = Some(Flight::bg(
-            (id, self.generation),
+            (id, self.generation, seq),
             ctx,
             self.auth_sink.clone(),
             is_read_auth,
@@ -1166,9 +1233,10 @@ impl Schedules {
             return;
         }
         let lim = limit.clamp(1, SCHEDULE_PAGE_LIMIT);
+        let seq = self.next_seq();
         cancel(&mut self.list_flight, &mut self.auth_expired, is_fetch_auth);
         self.list_flight = Some(Flight::bg(
-            (append, lim, self.generation),
+            (append, lim, self.generation, seq),
             ctx,
             self.auth_sink.clone(),
             is_fetch_auth,

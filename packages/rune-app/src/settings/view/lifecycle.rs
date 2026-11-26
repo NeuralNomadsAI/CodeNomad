@@ -213,6 +213,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     Some(super::CloseConfirm::Memory) if !s.memory_editor.has_unsaved()
                 ) {
                     s.confirm_close = None;
+                    s.cancel_close_main();
                 }
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);

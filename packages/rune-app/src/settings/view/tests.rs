@@ -1142,4 +1142,18 @@ fn config_file_jump_during_palette_save_cancels_deferred_main_window_close() {
         !request.close_main_after.get(),
         "refusing close during busy config_files must clear close_main_after"
     );
+
+    // If a close confirmation auto-clears in poll (e.g. server switch cleared the draft),
+    // close_main_after must also be cancelled so closing Preferences later does not close main.
+    let poll = super::lifecycle::spec().poll.expect("settings poll");
+    rt.update(|w, tx| {
+        w.confirm_close = Some(CloseConfirm::Palette);
+        request.close_main_after.set(true);
+        let _ = poll(w, 0.0, tx);
+    });
+    assert!(rt.state.confirm_close.is_none());
+    assert!(
+        !request.close_main_after.get(),
+        "auto-clearing confirm_close in poll must also cancel close_main_after"
+    );
 }

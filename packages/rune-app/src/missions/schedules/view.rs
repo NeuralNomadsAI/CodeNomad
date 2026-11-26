@@ -95,18 +95,18 @@ pub(crate) fn detail_section<S: 'static>(
             "status"
         };
         reg = reg.child(note(k, role));
+        if err == SelErr::Failed {
+            reg = reg.child(tbtn(
+                "missionsPanel.reader.retry",
+                "mission-schedule-retry-selection",
+                G::RetrySelection,
+                act,
+            ));
+        }
     }
 
     let Some(doc) = ui.schedules.selected_document(holds, ctx) else {
-        if let Some(err) = ui.schedules.selection_error {
-            if err == SelErr::Failed {
-                reg = reg.child(tbtn(
-                    "missionsPanel.reader.retry",
-                    "mission-schedule-retry-selection",
-                    G::RetrySelection,
-                    act,
-                ));
-            }
+        if ui.schedules.selection_error.is_some() {
             return Some(reg.label(t("missionsPanel.overview")));
         }
         return None;

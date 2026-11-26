@@ -1523,6 +1523,7 @@ fn evicted_offpage_selection_shows_retry_and_clears_error_on_more_and_prunes_dis
         let evicted = h.panel.evict_inactive_caches();
         assert!(evicted > 0);
         assert_eq!(h.panel.schedules.retained_bytes(), 0);
+        assert_eq!(h.panel.schedules.fresh.capacity(), 0);
         assert!(h.panel.schedules.instructions_open.is_empty());
         assert!(h.panel.schedules.diagnostics_open.is_empty());
         assert_eq!(h.panel.schedules.selected.as_deref(), Some("msn_2"));
@@ -1590,5 +1591,153 @@ fn evicted_offpage_selection_shows_retry_and_clears_error_on_more_and_prunes_dis
             .await;
         assert_eq!(h.panel.schedules.selection_error, None);
         assert!(h.panel.schedules.is_fresh("msn_2"));
+    });
+}
+
+#[test]
+fn point_read_race_cached_retry_and_external_delete_clear_selection() {
+    crate::platform::block_on(async {
+        let mut h = H::new().await;
+        let s1 = row("msn_1", "Page One", "paused", 1, "null");
+        let s2_r1 = row("msn_2", "Page Two", "paused", 1, "null");
+        let s2_r2 = row("msn_2", "Page Two", "paused", 2, "null");
+        let s2_r3 = row("msn_2", "Page Two", "paused", 3, "null");
+        let (s, c) = h.panel.schedule_parts();
+        s.show(true);
+        s.refresh(c);
+        h.http
+            .accept()
+            .await
+            .reply(200, list(vec![s1.clone()], Some("msn_1")))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 1)
+            .await;
+
+        assert!(h.act(G::More));
+        h.http
+            .accept()
+            .await
+            .reply(200, list(vec![s2_r1.clone()], None))
+            .await;
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.rows.len() == 2)
+            .await;
+
+        // Select msn_2 (off-page on refresh), keep cached copy when point-read fails with 503.
+        assert!(h.act(G::Select("msn_2".into())));
+        let (r1, r2) = (h.http.accept().await, h.http.accept().await);
+        for req in [r1, r2] {
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], Some("msn_1"))).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.capability.is_some())
+            .await;
+        let pt_fail = h.http.accept().await;
+        assert!(pt_fail.header.contains("/missions/msn_2/schedule"));
+        pt_fail.reply(503, json!({"error": "unavailable"})).await;
+        h.pump(|p, _| p.schedules.selection_error == Some(super::list::SelectionError::Failed))
+            .await;
+
+        // Cached copy is still present, yet RetrySelection must still be rendered alongside alert.
+        assert!(h.panel.schedules.rows.iter().any(|r| r.id == "msn_2"));
+        let mut rt = rune::Runtime::new(
+            h,
+            |h, _| {
+                super::view::detail_section(&h.panel, &h.holds, |_: &mut H, _, _| {})
+                    .expect("expected detail_section with cached copy and Retry")
+            },
+            (480.0, 400.0),
+            rune::Env::default(),
+        );
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|n| n.key.as_deref() == Some("mission-schedule-retry-selection")),
+            "RetrySelection button must appear even when a cached copy is displayed"
+        );
+        let mut h = rt.state;
+
+        // Race: fire More (rev 2) and RetrySelection (rev 3); both arrive before poll.
+        assert!(h.act(G::More));
+        let more_req = h.http.accept().await;
+        assert!(h.act(G::RetrySelection));
+        let pt_req = h.http.accept().await;
+        assert!(pt_req.header.contains("/missions/msn_2/schedule"));
+        pt_req.reply(200, rdoc(s2_r3.clone())).await;
+        more_req.reply(200, list(vec![s2_r2.clone()], None)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        h.pump(|p, _| {
+            !p.schedules.loading()
+                && p.schedules.is_fresh("msn_2")
+                && p.schedules
+                    .rows
+                    .iter()
+                    .any(|r| r.id == "msn_2" && r.revision == 3)
+        })
+        .await;
+        let cur = h
+            .panel
+            .schedules
+            .rows
+            .iter()
+            .find(|r| r.id == "msn_2")
+            .expect("msn_2 retained");
+        assert_eq!(
+            cur.revision, 3,
+            "pagination rev 2 must not overwrite newer point-read rev 3"
+        );
+        assert_eq!(h.panel.schedules.selection_error, None);
+
+        // Older point-read must be cancelled when a newer page-1 refresh includes msn_2.
+        assert!(h.act(G::RetrySelection));
+        let old_pt = h.http.accept().await;
+        assert!(old_pt.header.contains("/missions/msn_2/schedule"));
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        // Reads::background permits 2 concurrent reads (old_pt holds 1), so reply sequentially.
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone(), s2_r3.clone()], None))
+                    .await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading() && p.schedules.is_fresh("msn_2"))
+            .await;
+        let _ = old_pt.try_reply(503, json!({"error": "late error"})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let (s, ctx) = h.panel.schedule_parts();
+        let _ = s.poll(&mut h.holds, ctx);
+        assert_eq!(
+            h.panel.schedules.selection_error, None,
+            "late 503 from superseded point-read must not clobber fresh page-1 selection"
+        );
+        assert!(h.panel.schedules.is_fresh("msn_2"));
+
+        // External deletion (document: null, pending: false) must clear selected ghost ID.
+        let (s, c) = h.panel.schedule_parts();
+        s.refresh(c);
+        for _ in 0..2 {
+            let req = h.http.accept().await;
+            if req.header.contains("/capabilities") {
+                req.reply(200, cap_body(true)).await;
+            } else {
+                req.reply(200, list(vec![s1.clone()], None)).await;
+            }
+        }
+        h.pump(|p, _| !p.schedules.loading()).await;
+        let pt_del = h.http.accept().await;
+        assert!(pt_del.header.contains("/missions/msn_2/schedule"));
+        pt_del
+            .reply(200, json!({"pending": false, "document": null}))
+            .await;
+        h.pump(|p, _| p.schedules.selected.is_none()).await;
+        assert!(!h.panel.schedules.rows.iter().any(|r| r.id == "msn_2"));
+        assert_eq!(h.panel.schedules.selection_error, None);
     });
 }
