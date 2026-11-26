@@ -782,8 +782,8 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
                 .expect("custom multiselect defaults must submit cleanly");
             assert_eq!(
                 ans["hidden_tags"],
-                json!(["team\nlocal"]),
-                "hidden structured custom default must round-trip verbatim without splitting on newline"
+                json!(["", "team\nlocal"]),
+                "hidden structured custom default must round-trip verbatim without dropping items or splitting on newline"
             );
             assert_eq!(
                 ans["mixed_tags"],
@@ -828,7 +828,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         );
         let refreshed_ans = agent_forms::answer(&a.forms[0], &a.drafts)
             .expect("custom default survives option refresh and uncheck");
-        assert_eq!(refreshed_ans["hidden_tags"], json!(["team\nlocal"]));
+        assert_eq!(refreshed_ans["hidden_tags"], json!(["", "team\nlocal"]));
         assert_eq!(refreshed_ans["mixed_tags"], json!(["custom-keep"]));
     });
 }
@@ -3577,5 +3577,156 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
                 assert_eq!(ans["tags"], json!(["alpha", "beta", "with, comma"]));
             });
         }
+
+        // Round-13 regressions:
+        // (a) ECMAScript UTF-16 pattern semantics: `^.$` rejects `🦀` (2 UTF-16 units) while `^..$`
+        //     and `^🦀$` accept it.
+        // (b) Internationalized email (`élodie@example.com`) accepted, invalid IPv6 URI
+        //     (`https://[bad]`) rejected, valid IPv6 URI (`https://[::1]:8080/x`) accepted.
+        // (c) Large character class under bounded repeat hits byte/AST/class budgets immediately.
+        // (d) Required hidden custom multiselect with `default: [""]` submits `[""]` cleanly.
+        // (e) Literal commas in custom multiselect with `maxItems: 1` via quoting (`"Doe, Jane"`)
+        //     or backslash escaping (`Doe\, Jane`) submit as a single item and promote cleanly.
+        let r13_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r13".into(),
+            title: "Round 13 parity".into(),
+            fields: vec![
+                json!({"key": "one_unit", "title": "One unit", "type": "string", "required": true, "pattern": "^.$"}),
+                json!({"key": "two_units", "title": "Two units", "type": "string", "required": true, "pattern": "^..$"}),
+                json!({"key": "mail", "title": "Mail", "type": "string", "required": true, "format": "email"}),
+                json!({"key": "url", "title": "URL", "type": "string", "required": true, "format": "uri"}),
+                json!({
+                    "key": "hidden_empty_custom",
+                    "type": "multiselect",
+                    "hidden": true,
+                    "required": true,
+                    "custom": true,
+                    "options": [],
+                    "default": [""]
+                }),
+                json!({
+                    "key": "single_custom",
+                    "title": "Name",
+                    "type": "multiselect",
+                    "custom": true,
+                    "maxItems": 1,
+                    "options": []
+                }),
+            ],
+        };
+        let mut r13_drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&r13_form), &mut r13_drafts);
+        // `^.$` must reject 🦀 (surrogate pair = 2 UTF-16 code units).
+        r13_drafts
+            .get_mut(&("form-r13".into(), "one_unit".into()))
+            .unwrap()
+            .editor()
+            .text = "🦀".into();
+        r13_drafts
+            .get_mut(&("form-r13".into(), "two_units".into()))
+            .unwrap()
+            .editor()
+            .text = "🦀".into();
+        r13_drafts
+            .get_mut(&("form-r13".into(), "mail".into()))
+            .unwrap()
+            .editor()
+            .text = "élodie@example.com".into();
+        r13_drafts
+            .get_mut(&("form-r13".into(), "url".into()))
+            .unwrap()
+            .editor()
+            .text = "https://[bad]".into();
+        r13_drafts
+            .get_mut(&("form-r13".into(), "single_custom".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "\"Doe, Jane\"".into();
+        assert!(
+            agent_forms::validate(
+                &r13_form.fields[0],
+                &r13_drafts[&("form-r13".into(), "one_unit".into())]
+            )
+            .is_err(),
+            "^.$ must reject 🦀 under ECMAScript UTF-16 semantics"
+        );
+        assert!(
+            agent_forms::validate(
+                &r13_form.fields[1],
+                &r13_drafts[&("form-r13".into(), "two_units".into())]
+            )
+            .is_ok(),
+            "^..$ must accept 🦀 under ECMAScript UTF-16 semantics"
+        );
+        assert!(
+            agent_forms::validate(
+                &r13_form.fields[2],
+                &r13_drafts[&("form-r13".into(), "mail".into())]
+            )
+            .is_ok(),
+            "internationalized email élodie@example.com must be accepted"
+        );
+        assert!(
+            agent_forms::validate(
+                &r13_form.fields[3],
+                &r13_drafts[&("form-r13".into(), "url".into())]
+            )
+            .is_err(),
+            "invalid IPv6 URI https://[bad] must be rejected"
+        );
+        r13_drafts
+            .get_mut(&("form-r13".into(), "one_unit".into()))
+            .unwrap()
+            .editor()
+            .text = "a".into();
+        r13_drafts
+            .get_mut(&("form-r13".into(), "url".into()))
+            .unwrap()
+            .editor()
+            .text = "https://[::1]:8080/ok".into();
+        let r13_ans = agent_forms::answer(&r13_form, &r13_drafts)
+            .expect("quoted literal comma, hidden [''], UTF-16 parity, unicode email, and valid IPv6 URL must submit");
+        assert_eq!(r13_ans["hidden_empty_custom"], json!([""]));
+        assert_eq!(r13_ans["single_custom"], json!(["Doe, Jane"]));
+        // Backslash-escaped comma also submits as a single item under maxItems=1.
+        r13_drafts
+            .get_mut(&("form-r13".into(), "single_custom".into()))
+            .unwrap()
+            .custom_editor()
+            .text = r"Doe\, Jane".into();
+        let r13_esc = agent_forms::answer(&r13_form, &r13_drafts)
+            .expect("escaped literal comma must submit as one item under maxItems=1");
+        assert_eq!(r13_esc["single_custom"], json!(["Doe, Jane"]));
+        // Oversized character class under bounded repeat fails closed immediately.
+        let huge_class = format!("[{}]{{256}}", "a".repeat(2500));
+        let huge_class_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r13-class-dos".into(),
+            title: "Huge class".into(),
+            fields: vec![json!({
+                "key": "re",
+                "title": "Regex",
+                "type": "string",
+                "pattern": huge_class
+            })],
+        };
+        assert!(!agent_forms::supported(&huge_class_form));
+        let dense_class = format!("[{}]{{256}}", "a".repeat(1200));
+        let dense_class_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r13-class-ast".into(),
+            title: "Dense class".into(),
+            fields: vec![json!({
+                "key": "re",
+                "title": "Regex",
+                "type": "string",
+                "pattern": dense_class
+            })],
+        };
+        assert!(!agent_forms::supported(&dense_class_form));
     });
 }

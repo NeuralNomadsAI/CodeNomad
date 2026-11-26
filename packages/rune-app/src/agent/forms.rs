@@ -138,7 +138,7 @@ fn field_kind(field: &Value) -> FieldKind {
 }
 
 fn is_line_editable_custom(value: &str) -> bool {
-    !value.contains(['\n', '\r', ',']) && value.trim() == value
+    !value.contains(['\n', '\r', ',', '"', '\\']) && value.trim() == value
 }
 
 fn parse_u64_bound(field: &Value, key: &str) -> Result<Option<u64>, ()> {
@@ -300,36 +300,109 @@ pub enum ValidationError {
     TooManyItems { max: u64 },
 }
 
-fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str) -> bool) -> bool {
-    let text = edit.text.as_str();
+struct CustomEntry {
+    start: usize,
+    content_end: usize,
+    full_end: usize,
+    value: String,
+}
+
+fn decode_custom_entry(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut chars = trimmed.chars().peekable();
+    let mut in_quotes = false;
+    while let Some(c) = chars.next() {
+        if c == '\\'
+            && let Some(&next) = chars.peek()
+            && matches!(next, ',' | '"' | '\\')
+        {
+            out.push(chars.next().unwrap());
+        } else if c == '"' {
+            if in_quotes && chars.peek() == Some(&'"') {
+                chars.next();
+                out.push('"');
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
     let bytes = text.as_bytes();
-    let mut entries: Vec<(usize, usize, usize, bool)> = Vec::new();
+    let mut entries = Vec::new();
     let mut pos = 0;
     while pos < bytes.len() {
         let start = pos;
-        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b',' {
-            pos += 1;
+        let mut i = pos;
+        let mut in_quotes = false;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\n' {
+                break;
+            }
+            if b == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b',' | b'"' | b'\\') {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                if in_quotes && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                in_quotes = !in_quotes;
+                i += 1;
+                continue;
+            }
+            if b == b',' && !in_quotes {
+                break;
+            }
+            i += 1;
         }
-        let content_end = if pos > start && bytes[pos - 1] == b'\r' {
-            pos - 1
+        let content_end = if i > start && bytes[i - 1] == b'\r' {
+            i - 1
         } else {
-            pos
+            i
         };
-        let mut full_end = if pos < bytes.len() && (bytes[pos] == b'\n' || bytes[pos] == b',') {
-            pos + 1
+        let mut full_end = if i < bytes.len() && (bytes[i] == b'\n' || bytes[i] == b',') {
+            i + 1
         } else {
-            pos
+            i
         };
-        if pos < bytes.len() && bytes[pos] == b',' {
+        if i < bytes.len() && bytes[i] == b',' {
             while full_end < bytes.len() && bytes[full_end] == b' ' {
                 full_end += 1;
             }
         }
-        let trimmed = text[start..content_end].trim();
-        let remove = !trimmed.is_empty() && should_remove(trimmed);
-        entries.push((start, content_end, full_end, remove));
+        let value = decode_custom_entry(&text[start..content_end]);
+        entries.push(CustomEntry {
+            start,
+            content_end,
+            full_end,
+            value,
+        });
         pos = full_end;
     }
+    entries
+}
+
+fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str) -> bool) -> bool {
+    let text = edit.text.as_str();
+    let parsed = parse_custom_entries(text);
+    let entries: Vec<(usize, usize, usize, bool)> = parsed
+        .into_iter()
+        .map(|entry| {
+            let remove = !entry.value.is_empty() && should_remove(entry.value.as_str());
+            (entry.start, entry.content_end, entry.full_end, remove)
+        })
+        .collect();
     if !entries.iter().any(|&(_, _, _, remove)| remove) {
         return false;
     }
@@ -1199,12 +1272,8 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     if item.encode_utf16().count() > 20_000 {
                         return Err(ValidationError::TooLong { max: 20_000 });
                     }
-                    if is_declared(item) {
+                    if is_declared(item) || allow_custom {
                         hidden_items.push(item.clone());
-                    } else if allow_custom {
-                        if !item.is_empty() {
-                            hidden_items.push(item.clone());
-                        }
                     } else {
                         return Err(ValidationError::SelectDeclaredOption);
                     }
@@ -1241,15 +1310,14 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                         values.insert(item.clone());
                     }
                 }
-                for entry in d.custom.text.split(['\n', ',']) {
-                    let trimmed = entry.trim();
-                    if trimmed.is_empty() {
+                for entry in parse_custom_entries(&d.custom.text) {
+                    if entry.value.is_empty() {
                         continue;
                     }
-                    if is_declared(trimmed) {
+                    if is_declared(&entry.value) {
                         return Err(ValidationError::DuplicateCustomOption);
                     }
-                    values.insert(trimmed.to_string());
+                    values.insert(entry.value);
                 }
             }
             if values

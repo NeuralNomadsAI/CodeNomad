@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+const MAX_PATTERN_BYTES: usize = 2048;
 const MAX_REPEAT: usize = 256;
 const MAX_STATES: usize = 2048;
 const MAX_NESTING: usize = 32;
@@ -99,7 +100,11 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
 }
 
 fn is_valid_email(value: &str) -> bool {
-    if value.is_empty() || !value.is_ascii() {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_ascii_control())
+    {
         return false;
     }
     let mut parts = value.split('@');
@@ -115,30 +120,34 @@ fn is_valid_email(value: &str) -> bool {
     if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
         return false;
     }
-    if !local.bytes().all(|b| {
-        b.is_ascii_alphanumeric()
-            || matches!(
-                b,
-                b'.' | b'_'
-                    | b'\''
-                    | b'+'
-                    | b'-'
-                    | b'!'
-                    | b'#'
-                    | b'$'
-                    | b'%'
-                    | b'&'
-                    | b'*'
-                    | b'/'
-                    | b'='
-                    | b'?'
-                    | b'^'
-                    | b'`'
-                    | b'{'
-                    | b'|'
-                    | b'}'
-                    | b'~'
-            )
+    if !local.chars().all(|c| {
+        if !c.is_ascii() {
+            !c.is_control() && !c.is_whitespace()
+        } else {
+            c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    '.' | '_'
+                        | '\''
+                        | '+'
+                        | '-'
+                        | '!'
+                        | '#'
+                        | '$'
+                        | '%'
+                        | '&'
+                        | '*'
+                        | '/'
+                        | '='
+                        | '?'
+                        | '^'
+                        | '`'
+                        | '{'
+                        | '|'
+                        | '}'
+                        | '~'
+                )
+        }
     }) {
         return false;
     }
@@ -147,16 +156,20 @@ fn is_valid_email(value: &str) -> bool {
         return false;
     }
     let tld = labels.last().copied().unwrap_or_default();
-    if tld.len() < 2 || !tld.bytes().all(|b| b.is_ascii_alphabetic()) {
+    if tld.chars().count() < 2 || tld.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
     labels.iter().all(|label| {
         !label.is_empty()
             && !label.starts_with('-')
             && !label.ends_with('-')
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && label.chars().all(|c| {
+                if !c.is_ascii() {
+                    !c.is_control() && !c.is_whitespace()
+                } else {
+                    c.is_ascii_alphanumeric() || c == '-'
+                }
+            })
     })
 }
 
@@ -168,69 +181,14 @@ fn is_valid_uri(value: &str) -> bool {
     {
         return false;
     }
-    let Some((scheme, rest)) = value.split_once(':') else {
-        return false;
-    };
-    let mut scheme_bytes = scheme.bytes();
-    let Some(first) = scheme_bytes.next() else {
-        return false;
-    };
-    if !first.is_ascii_alphabetic()
-        || !scheme_bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return false;
+        reqwest::Url::parse(value).is_ok()
     }
-    if let Some(after_slashes) = rest.strip_prefix("//") {
-        let end = after_slashes
-            .find(['/', '?', '#'])
-            .unwrap_or(after_slashes.len());
-        let authority = &after_slashes[..end];
-        if authority.is_empty() {
-            return scheme.eq_ignore_ascii_case("file");
-        }
-        let hostport = authority
-            .rsplit_once('@')
-            .map(|(_, hp)| hp)
-            .unwrap_or(authority);
-        if hostport.is_empty() {
-            return false;
-        }
-        if let Some(rest_v6) = hostport.strip_prefix('[') {
-            let Some((addr, after_bracket)) = rest_v6.split_once(']') else {
-                return false;
-            };
-            if addr.is_empty()
-                || !addr
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.' | b'%'))
-            {
-                return false;
-            }
-            if after_bracket.is_empty() {
-                return true;
-            }
-            let Some(port) = after_bracket.strip_prefix(':') else {
-                return false;
-            };
-            return valid_port(port);
-        }
-        if hostport.contains(['[', ']']) {
-            return false;
-        }
-        if let Some((host, port)) = hostport.rsplit_once(':') {
-            return !host.is_empty() && valid_port(port);
-        }
-        true
-    } else {
-        !rest.is_empty()
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::Url::new(value).is_ok()
     }
-}
-
-fn valid_port(port: &str) -> bool {
-    !port.is_empty()
-        && port.len() <= 5
-        && port.bytes().all(|b| b.is_ascii_digit())
-        && port.parse::<u16>().is_ok()
 }
 
 fn parse_ascii_digits(s: &str) -> Option<u32> {
@@ -329,10 +287,10 @@ fn is_valid_date_time(value: &str) -> bool {
     tz_h <= 23 && tz_m <= 59
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 enum ClassItem {
-    Single(char),
-    Range(char, char),
+    Single(u16),
+    Range(u16, u16),
     Digit,
     NonDigit,
     Word,
@@ -342,36 +300,62 @@ enum ClassItem {
 }
 
 impl ClassItem {
-    fn matches(&self, c: char) -> bool {
+    fn matches(&self, u: u16) -> bool {
         match *self {
-            Self::Single(x) => c == x,
-            Self::Range(lo, hi) => c >= lo && c <= hi,
-            Self::Digit => c.is_ascii_digit(),
-            Self::NonDigit => !c.is_ascii_digit(),
-            Self::Word => is_word_char(c),
-            Self::NonWord => !is_word_char(c),
-            Self::Space => is_space_char(c),
-            Self::NonSpace => !is_space_char(c),
+            Self::Single(x) => u == x,
+            Self::Range(lo, hi) => u >= lo && u <= hi,
+            Self::Digit => is_digit_u16(u),
+            Self::NonDigit => !is_digit_u16(u),
+            Self::Word => is_word_u16(u),
+            Self::NonWord => !is_word_u16(u),
+            Self::Space => is_space_u16(u),
+            Self::NonSpace => !is_space_u16(u),
         }
     }
 }
 
-fn is_word_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
+fn is_digit_u16(u: u16) -> bool {
+    (0x0030..=0x0039).contains(&u)
 }
 
-fn is_space_char(c: char) -> bool {
-    c.is_whitespace() || c == '\u{FEFF}'
+fn is_word_u16(u: u16) -> bool {
+    matches!(u, 0x0030..=0x0039 | 0x0041..=0x005A | 0x0061..=0x007A | 0x005F)
+}
+
+fn is_space_u16(u: u16) -> bool {
+    matches!(
+        u,
+        0x0009..=0x000D
+            | 0x0020
+            | 0x00A0
+            | 0x1680
+            | 0x2000..=0x200A
+            | 0x2028
+            | 0x2029
+            | 0x202F
+            | 0x205F
+            | 0x3000
+            | 0xFEFF
+    )
+}
+
+fn hex_nibble_u16(u: u16) -> Option<u16> {
+    match u {
+        0x0030..=0x0039 => Some(u - 0x0030),
+        0x0041..=0x0046 => Some(u - 0x0041 + 10),
+        0x0061..=0x0066 => Some(u - 0x0061 + 10),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug)]
 enum Expr {
     Empty,
-    Literal(char),
+    Literal(u16),
     Any,
     Class {
         negated: bool,
-        items: Vec<ClassItem>,
+        items: Arc<[ClassItem]>,
     },
     AssertStart,
     AssertEnd,
@@ -386,7 +370,7 @@ enum Expr {
 }
 
 struct Parser {
-    chars: Vec<char>,
+    units: Vec<u16>,
     pos: usize,
     depth: usize,
     nodes: usize,
@@ -395,7 +379,7 @@ struct Parser {
 impl Parser {
     fn new(src: &str) -> Self {
         Self {
-            chars: src.chars().collect(),
+            units: src.encode_utf16().collect(),
             pos: 0,
             depth: 0,
             nodes: 0,
@@ -411,19 +395,19 @@ impl Parser {
         }
     }
 
-    fn peek(&self) -> Option<char> {
-        self.chars.get(self.pos).copied()
+    fn peek(&self) -> Option<u16> {
+        self.units.get(self.pos).copied()
     }
 
-    fn next(&mut self) -> Option<char> {
-        let c = self.peek()?;
+    fn next(&mut self) -> Option<u16> {
+        let u = self.peek()?;
         self.pos += 1;
-        Some(c)
+        Some(u)
     }
 
     fn parse(mut self) -> Result<Expr, ()> {
         let expr = self.parse_alt()?;
-        if self.pos != self.chars.len() {
+        if self.pos != self.units.len() {
             return Err(());
         }
         Ok(expr)
@@ -431,7 +415,7 @@ impl Parser {
 
     fn parse_alt(&mut self) -> Result<Expr, ()> {
         let mut branches = vec![self.parse_seq()?];
-        while self.peek() == Some('|') {
+        while self.peek() == Some(b'|' as u16) {
             self.pos += 1;
             branches.push(self.parse_seq()?);
         }
@@ -444,8 +428,8 @@ impl Parser {
 
     fn parse_seq(&mut self) -> Result<Expr, ()> {
         let mut items = Vec::new();
-        while let Some(c) = self.peek() {
-            if matches!(c, ')' | '|') {
+        while let Some(u) = self.peek() {
+            if u == b')' as u16 || u == b'|' as u16 {
                 break;
             }
             items.push(self.parse_quantified()?);
@@ -459,27 +443,23 @@ impl Parser {
 
     fn parse_quantified(&mut self) -> Result<Expr, ()> {
         let mut expr = self.parse_atom()?;
-        while let Some(c) = self.peek() {
-            let (min, max) = match c {
-                '*' => {
-                    self.pos += 1;
-                    (0, None)
-                }
-                '+' => {
-                    self.pos += 1;
-                    (1, None)
-                }
-                '?' => {
-                    self.pos += 1;
-                    (0, Some(1))
-                }
-                '{' => {
-                    let Some(bounds) = self.try_parse_brace_quantifier()? else {
-                        break;
-                    };
-                    bounds
-                }
-                _ => break,
+        while let Some(u) = self.peek() {
+            let (min, max) = if u == b'*' as u16 {
+                self.pos += 1;
+                (0, None)
+            } else if u == b'+' as u16 {
+                self.pos += 1;
+                (1, None)
+            } else if u == b'?' as u16 {
+                self.pos += 1;
+                (0, Some(1))
+            } else if u == b'{' as u16 {
+                let Some(bounds) = self.try_parse_brace_quantifier()? else {
+                    break;
+                };
+                bounds
+            } else {
+                break;
             };
             if matches!(
                 expr,
@@ -488,7 +468,7 @@ impl Parser {
                 return Err(());
             }
             // Optional lazy `?` suffix does not change boolean match acceptance.
-            if self.peek() == Some('?') {
+            if self.peek() == Some(b'?' as u16) {
                 self.pos += 1;
             }
             self.charge_node()?;
@@ -513,13 +493,13 @@ impl Parser {
             return Ok(None);
         };
         let max = match self.peek() {
-            Some('}') => {
+            Some(u) if u == b'}' as u16 => {
                 self.pos += 1;
                 Some(min)
             }
-            Some(',') => {
+            Some(u) if u == b',' as u16 => {
                 self.pos += 1;
-                if self.peek() == Some('}') {
+                if self.peek() == Some(b'}' as u16) {
                     self.pos += 1;
                     None
                 } else {
@@ -527,7 +507,7 @@ impl Parser {
                         self.pos = saved;
                         return Ok(None);
                     };
-                    if self.peek() != Some('}') {
+                    if self.peek() != Some(b'}' as u16) {
                         self.pos = saved;
                         return Ok(None);
                     }
@@ -549,142 +529,135 @@ impl Parser {
     fn parse_usize(&mut self) -> Option<usize> {
         let start = self.pos;
         let mut val: usize = 0;
-        while let Some(c) = self.peek().filter(|c| c.is_ascii_digit()) {
+        while let Some(u) = self.peek().filter(|&u| is_digit_u16(u)) {
             self.pos += 1;
-            val = val
-                .saturating_mul(10)
-                .saturating_add((c as u8 - b'0') as usize);
+            val = val.saturating_mul(10).saturating_add((u - 0x0030) as usize);
         }
         (self.pos > start).then_some(val)
     }
 
     fn parse_atom(&mut self) -> Result<Expr, ()> {
         self.charge_node()?;
-        let c = self.next().ok_or(())?;
-        match c {
-            '^' => Ok(Expr::AssertStart),
-            '$' => Ok(Expr::AssertEnd),
-            '.' => Ok(Expr::Any),
-            '*' | '+' | '?' => Err(()),
-            '(' => {
+        let u = self.next().ok_or(())?;
+        match u {
+            x if x == b'^' as u16 => Ok(Expr::AssertStart),
+            x if x == b'$' as u16 => Ok(Expr::AssertEnd),
+            x if x == b'.' as u16 => Ok(Expr::Any),
+            x if x == b'*' as u16 || x == b'+' as u16 || x == b'?' as u16 => Err(()),
+            x if x == b'(' as u16 => {
                 self.depth += 1;
                 if self.depth > MAX_NESTING {
                     return Err(());
                 }
-                if self.peek() == Some('?') {
+                if self.peek() == Some(b'?' as u16) {
                     self.pos += 1;
-                    if self.next() != Some(':') {
+                    if self.next() != Some(b':' as u16) {
                         // Lookarounds and unknown group modifiers fail closed.
                         return Err(());
                     }
                 }
                 let inner = self.parse_alt()?;
                 self.depth -= 1;
-                if self.next() != Some(')') {
+                if self.next() != Some(b')' as u16) {
                     return Err(());
                 }
                 Ok(inner)
             }
-            '[' => self.parse_class(),
-            '\\' => self.parse_escape(),
+            x if x == b'[' as u16 => self.parse_class(),
+            x if x == b'\\' as u16 => self.parse_escape(),
             other => Ok(Expr::Literal(other)),
         }
     }
 
     fn parse_escape(&mut self) -> Result<Expr, ()> {
-        let c = self.next().ok_or(())?;
-        match c {
-            'd' => Ok(Expr::Class {
+        let u = self.next().ok_or(())?;
+        match u {
+            x if x == b'd' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::Digit],
+                items: Arc::from([ClassItem::Digit]),
             }),
-            'D' => Ok(Expr::Class {
+            x if x == b'D' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::NonDigit],
+                items: Arc::from([ClassItem::NonDigit]),
             }),
-            'w' => Ok(Expr::Class {
+            x if x == b'w' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::Word],
+                items: Arc::from([ClassItem::Word]),
             }),
-            'W' => Ok(Expr::Class {
+            x if x == b'W' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::NonWord],
+                items: Arc::from([ClassItem::NonWord]),
             }),
-            's' => Ok(Expr::Class {
+            x if x == b's' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::Space],
+                items: Arc::from([ClassItem::Space]),
             }),
-            'S' => Ok(Expr::Class {
+            x if x == b'S' as u16 => Ok(Expr::Class {
                 negated: false,
-                items: vec![ClassItem::NonSpace],
+                items: Arc::from([ClassItem::NonSpace]),
             }),
-            'b' => Ok(Expr::AssertWord(true)),
-            'B' => Ok(Expr::AssertWord(false)),
-            '1'..='9' => Err(()), // backreferences fail closed
-            other => Ok(Expr::Literal(self.decode_char_escape(other)?)),
+            x if x == b'b' as u16 => Ok(Expr::AssertWord(true)),
+            x if x == b'B' as u16 => Ok(Expr::AssertWord(false)),
+            0x0031..=0x0039 => Err(()), // backreferences fail closed
+            other => Ok(Expr::Literal(self.decode_u16_escape(other)?)),
         }
     }
 
-    fn decode_char_escape(&mut self, c: char) -> Result<char, ()> {
-        match c {
-            'n' => Ok('\n'),
-            'r' => Ok('\r'),
-            't' => Ok('\t'),
-            'f' => Ok('\u{000C}'),
-            'v' => Ok('\u{000B}'),
-            '0' => Ok('\0'),
-            'x' => self.parse_hex_char(2),
-            'u' => {
-                if self.peek() == Some('{') {
-                    self.pos += 1;
-                    let mut val: u32 = 0;
-                    let mut digits = 0usize;
-                    while let Some(h) = self.peek().filter(|c| c.is_ascii_hexdigit()) {
-                        self.pos += 1;
-                        digits += 1;
-                        if digits > 6 {
-                            return Err(());
-                        }
-                        val = (val << 4) | h.to_digit(16).ok_or(())?;
-                    }
-                    if digits == 0 || self.next() != Some('}') {
-                        return Err(());
-                    }
-                    char::from_u32(val).ok_or(())
-                } else {
-                    self.parse_hex_char(4)
+    fn decode_u16_escape(&mut self, u: u16) -> Result<u16, ()> {
+        match u {
+            x if x == b'n' as u16 => Ok(0x000A),
+            x if x == b'r' as u16 => Ok(0x000D),
+            x if x == b't' as u16 => Ok(0x0009),
+            x if x == b'f' as u16 => Ok(0x000C),
+            x if x == b'v' as u16 => Ok(0x000B),
+            x if x == b'0' as u16 => Ok(0x0000),
+            x if x == b'x' as u16 => self.parse_hex_u16(2),
+            x if x == b'u' as u16 => {
+                if self.peek() == Some(b'{' as u16) {
+                    // Unicode-flag `\u{...}` escapes fail closed in non-/u mode.
+                    return Err(());
                 }
+                self.parse_hex_u16(4)
             }
-            'p' | 'P' | 'k' | 'c' => Err(()),
+            x if x == b'p' as u16 || x == b'P' as u16 || x == b'k' as u16 || x == b'c' as u16 => {
+                Err(())
+            }
             other => Ok(other),
         }
     }
 
-    fn parse_hex_char(&mut self, count: usize) -> Result<char, ()> {
-        let mut val: u32 = 0;
+    fn parse_hex_u16(&mut self, count: usize) -> Result<u16, ()> {
+        let mut val: u16 = 0;
         for _ in 0..count {
             let h = self.next().ok_or(())?;
-            val = (val << 4) | h.to_digit(16).ok_or(())?;
+            val = (val << 4) | hex_nibble_u16(h).ok_or(())?;
         }
-        char::from_u32(val).ok_or(())
+        Ok(val)
     }
 
     fn parse_class(&mut self) -> Result<Expr, ()> {
-        let negated = if self.peek() == Some('^') {
+        let negated = if self.peek() == Some(b'^' as u16) {
             self.pos += 1;
             true
         } else {
             false
         };
         let mut items = Vec::new();
-        while let Some(c) = self.peek() {
-            if c == ']' {
+        while let Some(u) = self.peek() {
+            if u == b']' as u16 {
                 self.pos += 1;
-                return Ok(Expr::Class { negated, items });
+                return Ok(Expr::Class {
+                    negated,
+                    items: Arc::from(items),
+                });
             }
+            self.charge_node()?;
             let item = self.parse_class_atom()?;
-            if self.peek() == Some('-') && self.chars.get(self.pos + 1).copied() != Some(']') {
+            if self.peek() == Some(b'-' as u16)
+                && self.units.get(self.pos + 1).copied() != Some(b']' as u16)
+            {
                 self.pos += 1; // consume '-'
+                self.charge_node()?;
                 let end = self.parse_class_atom()?;
                 match (item, end) {
                     (ClassItem::Single(lo), ClassItem::Single(hi)) if lo <= hi => {
@@ -700,31 +673,31 @@ impl Parser {
     }
 
     fn parse_class_atom(&mut self) -> Result<ClassItem, ()> {
-        let c = self.next().ok_or(())?;
-        if c != '\\' {
-            return Ok(ClassItem::Single(c));
+        let u = self.next().ok_or(())?;
+        if u != b'\\' as u16 {
+            return Ok(ClassItem::Single(u));
         }
         let esc = self.next().ok_or(())?;
         match esc {
-            'd' => Ok(ClassItem::Digit),
-            'D' => Ok(ClassItem::NonDigit),
-            'w' => Ok(ClassItem::Word),
-            'W' => Ok(ClassItem::NonWord),
-            's' => Ok(ClassItem::Space),
-            'S' => Ok(ClassItem::NonSpace),
-            'b' => Ok(ClassItem::Single('\u{0008}')),
-            other => Ok(ClassItem::Single(self.decode_char_escape(other)?)),
+            x if x == b'd' as u16 => Ok(ClassItem::Digit),
+            x if x == b'D' as u16 => Ok(ClassItem::NonDigit),
+            x if x == b'w' as u16 => Ok(ClassItem::Word),
+            x if x == b'W' as u16 => Ok(ClassItem::NonWord),
+            x if x == b's' as u16 => Ok(ClassItem::Space),
+            x if x == b'S' as u16 => Ok(ClassItem::NonSpace),
+            x if x == b'b' as u16 => Ok(ClassItem::Single(0x0008)),
+            other => Ok(ClassItem::Single(self.decode_u16_escape(other)?)),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 enum Inst {
-    Literal(char),
+    Literal(u16),
     Any,
     Class {
         negated: bool,
-        items: Vec<ClassItem>,
+        items: Arc<[ClassItem]>,
     },
     AssertStart,
     AssertEnd,
@@ -740,6 +713,9 @@ pub struct Pattern {
 
 impl Pattern {
     pub fn compile(src: &str) -> Result<Self, ()> {
+        if src.len() > MAX_PATTERN_BYTES {
+            return Err(());
+        }
         let expr = Parser::new(src).parse()?;
         let mut insts = Vec::new();
         let mut work = 0usize;
@@ -749,20 +725,20 @@ impl Pattern {
     }
 
     pub fn is_match(&self, text: &str) -> bool {
-        let chars: Vec<char> = text.chars().collect();
+        let units: Vec<u16> = text.encode_utf16().collect();
         let n = self.insts.len();
         let mut visited = vec![0u32; n];
         let mut stamp = 1u32;
         let mut current = Vec::new();
         let mut next = Vec::new();
-        self.add_state(0, 0, &chars, &mut visited, stamp, &mut current);
+        self.add_state(0, 0, &units, &mut visited, stamp, &mut current);
         if current
             .iter()
             .any(|&pc| matches!(self.insts[pc], Inst::Match))
         {
             return true;
         }
-        for (pos, &ch) in chars.iter().enumerate() {
+        for (pos, &unit) in units.iter().enumerate() {
             stamp = stamp.wrapping_add(1);
             if stamp == 0 {
                 for slot in &mut visited {
@@ -773,20 +749,20 @@ impl Pattern {
             next.clear();
             for &pc in &current {
                 let matched = match &self.insts[pc] {
-                    Inst::Literal(c) => ch == *c,
-                    Inst::Any => !matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}'),
+                    Inst::Literal(u) => unit == *u,
+                    Inst::Any => !matches!(unit, 0x000A | 0x000D | 0x2028 | 0x2029),
                     Inst::Class { negated, items } => {
-                        let hit = items.iter().any(|item| item.matches(ch));
+                        let hit = items.iter().any(|item| item.matches(unit));
                         if *negated { !hit } else { hit }
                     }
                     _ => false,
                 };
                 if matched {
-                    self.add_state(pc + 1, pos + 1, &chars, &mut visited, stamp, &mut next);
+                    self.add_state(pc + 1, pos + 1, &units, &mut visited, stamp, &mut next);
                 }
             }
-            // Unanchored ECMAScript RegExp.test semantics: a match may start at any position.
-            self.add_state(0, pos + 1, &chars, &mut visited, stamp, &mut next);
+            // Unanchored ECMAScript RegExp.test semantics: a match may start at any UTF-16 offset.
+            self.add_state(0, pos + 1, &units, &mut visited, stamp, &mut next);
             std::mem::swap(&mut current, &mut next);
             if current
                 .iter()
@@ -802,7 +778,7 @@ impl Pattern {
         &self,
         start: usize,
         pos: usize,
-        chars: &[char],
+        units: &[u16],
         visited: &mut [u32],
         stamp: u32,
         out: &mut Vec<usize>,
@@ -825,15 +801,15 @@ impl Pattern {
                     }
                 }
                 Inst::AssertEnd => {
-                    if pos == chars.len() {
+                    if pos == units.len() {
                         stack.push(pc + 1);
                     }
                 }
                 Inst::AssertWord(want_boundary) => {
-                    let prev = pos.checked_sub(1).and_then(|i| chars.get(i).copied());
-                    let curr = chars.get(pos).copied();
+                    let prev = pos.checked_sub(1).and_then(|i| units.get(i).copied());
+                    let curr = units.get(pos).copied();
                     let is_boundary =
-                        prev.is_some_and(is_word_char) != curr.is_some_and(is_word_char);
+                        prev.is_some_and(is_word_u16) != curr.is_some_and(is_word_u16);
                     if is_boundary == want_boundary {
                         stack.push(pc + 1);
                     }
@@ -854,7 +830,11 @@ fn push_inst(insts: &mut Vec<Inst>, inst: Inst) -> Result<usize, ()> {
 }
 
 fn charge_work(work: &mut usize) -> Result<(), ()> {
-    *work += 1;
+    charge_work_n(work, 1)
+}
+
+fn charge_work_n(work: &mut usize, cost: usize) -> Result<(), ()> {
+    *work = work.saturating_add(cost);
     if *work > MAX_COMPILE_WORK {
         Err(())
     } else {
@@ -875,11 +855,12 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<
             Ok(())
         }
         Expr::Class { negated, items } => {
+            charge_work_n(work, items.len())?;
             push_inst(
                 insts,
                 Inst::Class {
                     negated: *negated,
-                    items: items.clone(),
+                    items: Arc::clone(items),
                 },
             )?;
             Ok(())
