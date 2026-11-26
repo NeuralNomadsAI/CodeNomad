@@ -85,7 +85,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                {
                     if catalog {
                         a.online = true;
                     }
@@ -239,6 +241,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                         agent.attention.disconnected();
                     }
                 }
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                    &event
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.workspace_stopped(workspace_id);
+                }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
@@ -279,12 +287,13 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
-                    if !a.online || a.running != page.running {
-                        a.online = true;
-                        s.composer.picker.refresh_commands(&s.reads, &s.wake);
-                        a.refresh(false);
-                    }
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                    && (!a.online || a.running != page.running)
+                {
+                    a.online = true;
+                    s.composer.picker.refresh_commands(&s.reads, &s.wake);
+                    a.refresh(false);
                 }
                 s.messages = page.rows;
                 s.history_detached = s.reader.is_some() && page.newer.is_some();

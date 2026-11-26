@@ -425,7 +425,25 @@ mod tests {
         assert_eq!(state.settle(None), Settled::Recheck);
         assert!(state.in_flight);
         // A transient failure on Launcher(2)'s follow-up check still gets its bounded retry
-        // budget and recovers cleanly without stranding the dialog.
+        // budget and exhausts cleanly after 2 retries.
+        assert_eq!(state.settle(None), Settled::RetryAfter(1_000));
+        assert_eq!(state.on_retry_timer(), Action::StartCheck);
+        assert_eq!(state.settle(None), Settled::RetryAfter(2_000));
+        assert_eq!(state.on_retry_timer(), Action::StartCheck);
+        assert_eq!(state.auth_retries, 0);
+        // Same-slot reconnection (Launcher(3)) arriving during Launcher(2)'s last retry
+        // also receives a fresh bounded budget and recovers after a transient failure.
+        assert_eq!(
+            state.on_authenticated_signal(AuthSignal::Launcher(3)),
+            Action::None
+        );
+        assert!(state.recheck);
+        assert_eq!(state.auth_retries, AUTH_SIGNAL_RETRIES);
+        assert_eq!(
+            state.on_authenticated_signal(AuthSignal::Launcher(3)),
+            Action::None
+        );
+        assert_eq!(state.settle(None), Settled::Recheck);
         assert_eq!(state.settle(None), Settled::RetryAfter(1_000));
         assert_eq!(state.on_retry_timer(), Action::StartCheck);
         assert_eq!(state.settle(Some(false)), Settled::Recovered);

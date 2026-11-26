@@ -295,12 +295,22 @@ impl Ui {
         self.sync_pending_known();
     }
 
+    pub(crate) fn is_scope_missing(&self) -> bool {
+        self.scope_missing
+    }
+
     pub(crate) fn mark_scope_missing(&mut self) {
         self.scope_missing = true;
         self.online = false;
+        self.known = false;
+        self.trailing = None;
+        self.catalog_trailing = None;
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.permissions_lane.bump();
         self.permissions_lane.known = false;
         self.permissions_lane.reconciling = false;
         self.permissions_lane.trailing = false;
+        self.forms_lane.bump();
         self.forms_lane.known = false;
         self.forms_lane.reconciling = false;
         self.forms_lane.trailing = false;
@@ -368,6 +378,9 @@ impl Ui {
     }
 
     pub fn navigation_blocked(&self) -> bool {
+        if self.scope_missing {
+            return false;
+        }
         self.busy
             || self.permissions_lane.mutation_pending()
             || self.forms_lane.mutation_pending()
@@ -484,6 +497,9 @@ impl Ui {
         self.refresh_forms();
     }
     pub(crate) fn refresh_session(&mut self, catalog: bool) {
+        if self.scope_missing {
+            return;
+        }
         if self.reading || self.busy {
             self.trailing = Some(self.trailing.unwrap_or(false) || catalog);
             return;
@@ -509,6 +525,9 @@ impl Ui {
         }
     }
     pub(crate) fn refresh_permissions(&mut self) {
+        if self.scope_missing {
+            return;
+        }
         let generation = self.permissions_lane.bump();
         self.attention.invalidate_kind(0);
         if self.permissions_lane.reading || self.permissions_lane.busy {
@@ -529,6 +548,9 @@ impl Ui {
         }
     }
     pub(crate) fn refresh_forms(&mut self) {
+        if self.scope_missing {
+            return;
+        }
         let generation = self.forms_lane.bump();
         self.attention.invalidate_kind(1);
         if self.forms_lane.reading || self.forms_lane.busy {
@@ -668,14 +690,15 @@ impl Ui {
         }
     }
     pub fn stop(&mut self) {
-        if !self.stopping && self.handle.stop.try_send(()).is_ok() {
+        if !self.scope_missing && !self.stopping && self.handle.stop.try_send(()).is_ok() {
             self.stopping = true;
             self.stop_error = false;
             self.sync_error();
         }
     }
     pub fn blocked(&self) -> bool {
-        self.busy
+        self.scope_missing
+            || self.busy
             || self.permissions_lane.mutation_pending()
             || self.forms_lane.mutation_pending()
             || !self.known
@@ -683,17 +706,18 @@ impl Ui {
             || self.stopping
     }
     pub fn model_locked(&self) -> bool {
-        self.busy
+        self.scope_missing
+            || self.busy
             || self.reading
             || self.catalog_reading
             || !self.online
             || self.models_directory != self.catalog_directory
     }
     pub fn permissions_locked(&self) -> bool {
-        self.permissions_lane.locked(self.online)
+        self.scope_missing || self.permissions_lane.locked(self.online)
     }
     pub fn forms_locked(&self) -> bool {
-        self.forms_lane.locked(self.online)
+        self.scope_missing || self.forms_lane.locked(self.online)
     }
     pub fn ids(&self) -> Vec<String> {
         self.permissions
@@ -831,15 +855,17 @@ impl Ui {
                 }
                 Result::Session(s, catalog_dir, catalog, generation) => {
                     self.reading = false;
-                    let session_known = s.session_known;
-                    self.session_error |= !session_known;
-                    self.sync_error();
-                    self.apply_session(s, generation);
-                    self.sync_catalog_scope(session_known, catalog_dir, catalog);
+                    if !self.scope_missing {
+                        let session_known = s.session_known;
+                        self.session_error |= !session_known;
+                        self.sync_error();
+                        self.apply_session(s, generation);
+                        self.sync_catalog_scope(session_known, catalog_dir, catalog);
+                    }
                 }
                 Result::Permissions(permissions, generation) => {
                     self.permissions_lane.reading = false;
-                    if generation == self.permissions_lane.generation {
+                    if !self.scope_missing && generation == self.permissions_lane.generation {
                         if permissions.is_some() {
                             self.permissions_lane.reconciling = false;
                         }
@@ -850,7 +876,7 @@ impl Ui {
                 }
                 Result::Forms(forms, generation) => {
                     self.forms_lane.reading = false;
-                    if generation == self.forms_lane.generation {
+                    if !self.scope_missing && generation == self.forms_lane.generation {
                         if forms.is_some() {
                             self.forms_lane.reconciling = false;
                         }
@@ -861,7 +887,8 @@ impl Ui {
                 }
                 Result::Catalog(models, directory, generation) => {
                     self.catalog_reading = false;
-                    if generation == self.catalog_generation
+                    if !self.scope_missing
+                        && generation == self.catalog_generation
                         && self.catalog_directory.as_deref() == Some(directory.as_str())
                     {
                         self.catalog_error = models.is_none();
@@ -874,11 +901,13 @@ impl Ui {
                 }
                 Result::Act(ok, s, catalog_dir, generation) => {
                     self.busy = false;
-                    let session_known = s.session_known;
-                    self.session_error = !ok || !session_known;
-                    self.sync_error();
-                    self.apply_session(s, generation);
-                    self.sync_catalog_scope(session_known, catalog_dir, false);
+                    if !self.scope_missing {
+                        let session_known = s.session_known;
+                        self.session_error = !ok || !session_known;
+                        self.sync_error();
+                        self.apply_session(s, generation);
+                        self.sync_catalog_scope(session_known, catalog_dir, false);
+                    }
                 }
                 Result::ActPermission(ok, permissions, generation) => {
                     self.permissions_lane.busy = false;

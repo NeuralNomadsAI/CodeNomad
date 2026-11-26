@@ -1833,9 +1833,14 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     assert!(!ui.blocked());
     assert!(!ui.navigation_blocked());
 
-    // 2. Uncertain form cancel (ok=false, None), then workspace disappears: navigation must
-    //    unblock (including after any late ActForm result) so the dead tab can close, while
-    //    composer and form replies remain locked.
+    // 2. Uncertain form cancel (ok=false, None) with dirty draft and typed reason, then
+    //    workspace disappears: navigation must unblock so the dead tab can close, while
+    //    composer/model/reply locks remain active even if late online/read results arrive.
+    let mut draft = crate::agent_forms::Draft::default();
+    draft.choose("typed answer");
+    ui.drafts.insert(("form_1".into(), "q0".into()), draft);
+    ui.reasons
+        .insert("perm_1".into(), rune::edit::TextEdit::new("typed reason"));
     ui.cancel_form("form_1".into());
     let form_act_gen = match form_rx.try_recv().unwrap() {
         super::PendingJob::Act(_, generation) => generation,
@@ -1851,18 +1856,48 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     assert!(!ui.workspace_stopped("ws_other"));
     assert!(ui.navigation_blocked());
     assert!(ui.workspace_stopped("ws_dead"));
+    assert!(ui.is_scope_missing());
     assert!(
         !ui.navigation_blocked(),
-        "missing workspace must release tab-close/navigation lock"
+        "missing workspace must release tab-close/navigation lock even with dirty drafts or reasons"
     );
     assert!(ui.blocked());
+    assert!(ui.model_locked());
+    assert!(ui.permissions_locked());
     assert!(ui.forms_locked());
 
-    // A late post-mutation failure arriving after workspace_stopped must not re-arm the lock.
+    // Late post-mutation results, valid reads, or online flips arriving after workspace_stopped
+    // must neither re-arm navigation_blocked nor unlock composer/model/reply controls.
+    ui.online = true;
     out.try_send(super::Result::ActForm(true, None, form_act_gen))
+        .unwrap();
+    out.try_send(super::Result::Session(
+        super::Snapshot {
+            models: None,
+            current: None,
+            directory: Some("/repo".into()),
+            root_directory: Some("/repo".into()),
+            usage: None,
+            session_known: true,
+            running: false,
+            permissions: None,
+            forms: None,
+        },
+        Some("/repo".into()),
+        false,
+        0,
+    ))
+    .unwrap();
+    let perm_gen_now = ui.permissions_lane.generation;
+    let form_gen_now = ui.forms_lane.generation;
+    out.try_send(super::Result::Permissions(Some(vec![]), perm_gen_now))
+        .unwrap();
+    out.try_send(super::Result::Forms(Some(vec![]), form_gen_now))
         .unwrap();
     assert!(ui.poll());
     assert!(!ui.navigation_blocked());
     assert!(ui.blocked());
+    assert!(ui.model_locked());
+    assert!(ui.permissions_locked());
     assert!(ui.forms_locked());
 }
