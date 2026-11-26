@@ -138,3 +138,19 @@ test("quota invalidation aborts the admitted HTTP signal before another account 
   assert.deepEqual(published, [undefined, undefined])
   state.dispose()
 })
+
+test("Missions panel schedule reads run on their dedicated lane while backgroundReads is saturated", async () => {
+  const occupied = deferred<void>()
+  const blockers = [0, 1].map(() => backgroundReads.run(new AbortController().signal, () => occupied.promise))
+  await Promise.resolve()
+  const api = createServerApi({ ...createBackendTransport({ id: "mission-lane", baseUrl: "https://example.test" }),
+    fetch: async () => Response.json({ version: 1, projectID: "project", schedules: [] }),
+  })
+  try {
+    const result = await api.fetchMissionSchedules("i", { limit: 8, kind: "schedule" })
+    assert.deepEqual(result.schedules, [])
+  } finally {
+    occupied.resolve()
+    await Promise.all(blockers)
+  }
+})

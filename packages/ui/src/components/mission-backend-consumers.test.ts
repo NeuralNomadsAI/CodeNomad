@@ -177,7 +177,7 @@ test("coordinator sources keep same-ID roots on A/B, filter foreign rows and rej
     assert.equal(reader.reader("coordinator-session", "ses_missing").lookupFailed(), true)
     reader.reader("coordinator-session").more()
     for (const [key, timer] of timers) { timers.delete(key); timer() }
-    assert.deepEqual(reads[1].options, { cursor: "page2" })
+    assert.deepEqual(reads[1].options, { cursor: "page2", limit: 200 })
     env.revoke(); assert.equal(reads[1].signal.aborted, true)
     pending.resolve({ data: [row("ses_late")], cursor: {} }); await flush()
     assert.deepEqual(reader.sources()["coordinator-session"], [{ id: "ses_same", label: `${owner}:ses_same` }])

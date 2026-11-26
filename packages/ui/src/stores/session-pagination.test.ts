@@ -21,10 +21,11 @@ describe("project session list loading", () => {
     assert.equal("cursor" in options, false)
   })
 
-  it("passes native cursors through unchanged", () => {
+  it("passes native cursors through with the project page limit and without filter scope", () => {
     const cursor = `next-page-${"x".repeat(4096)}`
     assert.deepEqual(buildProjectSessionListOptions({ directory: "/tmp/project", cursor }), {
       cursor,
+      limit: PROJECT_SESSION_LIST_LIMIT,
     })
   })
 
