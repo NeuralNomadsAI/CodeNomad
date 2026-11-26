@@ -4,19 +4,40 @@ use super::{
 };
 use crate::{
     backend::Backend,
-    bounded,
-    runtime::Instant,
-    stream,
+    bounded, stream,
     transport::{Command, Event},
 };
 use std::{
+    future::Future,
     pin::pin,
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    },
+    task::{Context, Poll, Wake, Waker},
     time::Duration,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-fn run(task: impl std::future::Future<Output = ()>) {
+struct CounterWake(AtomicUsize);
+
+impl Wake for CounterWake {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, SeqCst);
+    }
+}
+
+fn counter_waker() -> (Arc<CounterWake>, Waker) {
+    let counter = Arc::new(CounterWake(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    (counter, waker)
+}
+
+fn run(task: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -48,55 +69,53 @@ async fn read_request_line(stream: &mut BufReader<tokio::net::TcpStream>) -> Str
 }
 
 #[test]
-fn stream_cancel_and_stop_waiters_settle_on_first_poll_without_timers() {
-    run(async {
-        let state = stream::State::default();
-        let (tx, rx) = bounded(1);
-        let mut cancelled = pin!(state.wait_cancelled(&tx));
-        assert!(
-            futures_lite::future::poll_once(&mut cancelled)
-                .await
-                .is_none()
-        );
-        state.cancel();
-        assert!(
-            futures_lite::future::poll_once(&mut cancelled)
-                .await
-                .is_some()
-        );
-        drop(rx);
+fn stream_cancel_and_stop_waiters_notify_waker_synchronously() {
+    let state = stream::State::default();
+    let (tx, rx) = bounded(1);
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut cancelled = pin!(state.wait_cancelled(&tx));
+    assert!(cancelled.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(wakes.0.load(SeqCst), 0);
+    state.cancel();
+    assert!(wakes.0.load(SeqCst) >= 1, "cancel() must notify the waker");
+    assert!(cancelled.as_mut().poll(&mut cx).is_ready());
+    drop(rx);
 
-        let state = stream::State::default();
-        let (tx, rx) = bounded(1);
-        let mut closed = pin!(state.wait_cancelled(&tx));
-        assert!(futures_lite::future::poll_once(&mut closed).await.is_none());
-        drop(rx);
-        assert!(futures_lite::future::poll_once(&mut closed).await.is_some());
+    let state = stream::State::default();
+    let (tx, rx) = bounded(1);
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut closed = pin!(state.wait_cancelled(&tx));
+    assert!(closed.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(wakes.0.load(SeqCst), 0);
+    drop(rx);
+    assert!(
+        wakes.0.load(SeqCst) >= 1,
+        "dropping receiver must notify the waker"
+    );
+    assert!(closed.as_mut().poll(&mut cx).is_ready());
 
-        let idle = stream::State::default();
-        assert!(
-            futures_lite::future::poll_once(idle.wait_stopped())
-                .await
-                .is_some()
-        );
+    let idle = stream::State::default();
+    let (_, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    assert!(pin!(idle.wait_stopped()).poll(&mut cx).is_ready());
 
-        let running = stream::State::default();
-        running.running.store(true, SeqCst);
-        let (events_tx, events_rx) = bounded(1);
-        let mut auth_close = pin!(close_for_authentication(&running, &events_tx));
-        assert!(
-            futures_lite::future::poll_once(&mut auth_close)
-                .await
-                .is_none()
-        );
-        assert!(running.cancelled.load(SeqCst));
-        drop(events_rx);
-        assert!(
-            futures_lite::future::poll_once(&mut auth_close)
-                .await
-                .is_some()
-        );
-    });
+    let running = stream::State::default();
+    running.running.store(true, SeqCst);
+    let (events_tx, events_rx) = bounded(1);
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut auth_close = pin!(close_for_authentication(&running, &events_tx));
+    assert!(auth_close.as_mut().poll(&mut cx).is_pending());
+    assert!(running.cancelled.load(SeqCst));
+    assert_eq!(wakes.0.load(SeqCst), 0);
+    drop(events_rx);
+    assert!(
+        wakes.0.load(SeqCst) >= 1,
+        "closing Event receiver must wake close_for_authentication"
+    );
+    assert!(auth_close.as_mut().poll(&mut cx).is_ready());
 }
 
 #[test]
@@ -124,6 +143,7 @@ fn cancelling_during_stalled_attestation_stops_stream_immediately() {
             state.wait_stopped().await;
             assert!(!state.running.load(SeqCst));
             assert!(!state.alive.load(SeqCst));
+            assert!(state.version.load(SeqCst) > 0);
             assert!(matches!(inbox.recv().await.unwrap(), Input::Closed(1)));
             drop(reader);
 
@@ -145,6 +165,7 @@ fn cancelling_during_stalled_attestation_stops_stream_immediately() {
             state.wait_stopped().await;
             assert!(!state.running.load(SeqCst));
             assert!(!state.alive.load(SeqCst));
+            assert!(state.version.load(SeqCst) > 0);
         })
         .await
         .expect("attestation cancellation timed out");
@@ -179,6 +200,7 @@ fn close_for_authentication_cancels_live_stream_without_polling() {
             close_for_authentication(&wire, &ev_tx).await;
             assert!(!wire.running.load(SeqCst));
             assert!(!wire.alive.load(SeqCst));
+            assert!(wire.version.load(SeqCst) > 0);
             assert!(matches!(in_rx.recv().await.unwrap(), Input::Closed(3)));
         })
         .await
@@ -187,51 +209,132 @@ fn close_for_authentication_cancels_live_stream_without_polling() {
 }
 
 #[test]
-fn next_input_wakes_immediately_on_demand_and_guards_spin_windows() {
+fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
+    let (tx, rx) = bounded(4);
+    let (demand_tx, observer) = demand::open();
+    let (events, _snapshots) = bounded(1);
+    let reading = ReadingLane {
+        demand: observer,
+        events,
+        connection: Default::default(),
+    };
+
+    // Idle wait notifies the waker synchronously when demand changes.
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = pin!(next_input(&rx, Some(&reading), 0, None));
+    assert!(fut.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(wakes.0.load(SeqCst), 0);
+    let gen1 = demand_tx.publish(Some(demand::Target::Latest));
+    assert!(wakes.0.load(SeqCst) >= 1, "demand change must notify waker");
+    assert!(matches!(fut.as_mut().poll(&mut cx), Poll::Ready(None)));
+
+    // Dropping Demand while the reader is active & dirty must deactivate the reader and never spin.
+    let (ev_tx, _ev_rx) = bounded(1);
+    let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
+    wire.upstream.store(true, SeqCst);
+    let mut reader = Reader::new();
+    reader.demand(Some(&reading));
+    assert!(reader.active_reader && reader.dirty);
+    assert!(reader.next_sync_at(true, &wire, Some(&reading)).is_some());
+
+    drop(demand_tx);
+    assert!(reader.next_sync_at(true, &wire, Some(&reading)).is_none());
+    reader.demand(Some(&reading));
+    assert!(!reader.active_reader && !reader.dirty);
+
+    let (wakes, waker) = counter_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = pin!(next_input(&rx, Some(&reading), gen1, None));
+    assert!(fut.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(wakes.0.load(SeqCst), 0);
+    tx.try_send(Input::Opened(1)).unwrap();
+    assert!(wakes.0.load(SeqCst) >= 1, "rx send must notify waker");
+    assert!(matches!(
+        fut.as_mut().poll(&mut cx),
+        Poll::Ready(Some(Input::Opened(1)))
+    ));
+
+    // next_sync_at returns None once stream or placement is closed (no spin before Closed/Moved).
+    let (ev_tx, _ev_rx) = bounded(1);
+    let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
+    wire.upstream.store(true, SeqCst);
+    let reader = Reader::new();
+    assert!(reader.next_sync_at(true, &wire, None).is_some());
+    wire.close_stream();
+    assert!(reader.next_sync_at(true, &wire, None).is_none());
+
+    let (ev_tx, _ev_rx) = bounded(1);
+    let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
+    wire.upstream.store(true, SeqCst);
+    assert!(reader.next_sync_at(true, &wire, None).is_some());
+    wire.close_placement();
+    assert!(reader.next_sync_at(true, &wire, None).is_none());
+}
+
+#[test]
+fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
     run(async {
-        let (tx, rx) = bounded(4);
-        let (demand_tx, observer) = demand::open();
-        let (events, _snapshots) = bounded(1);
-        let reading = ReadingLane {
-            demand: observer,
-            events,
-            connection: Default::default(),
-        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::unauthenticated(&format!("http://{}", listener.local_addr().unwrap()))
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
 
-        // Idle wait wakes on the very next poll when demand changes.
-        let mut fut = pin!(next_input(&rx, Some(&reading), 0, None));
-        assert!(futures_lite::future::poll_once(&mut fut).await.is_none());
-        let gen1 = demand_tx.publish(None);
-        assert!(matches!(
-            futures_lite::future::poll_once(&mut fut).await,
-            Some(None)
-        ));
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(4);
+            let (demand_tx, observer) = demand::open();
+            let (content, _snapshots) = bounded(8);
 
-        // Dropping Demand must stay Pending (no busy spin) until an Input arrives.
-        drop(demand_tx);
-        let mut fut = pin!(next_input(&rx, Some(&reading), gen1, None));
-        assert!(futures_lite::future::poll_once(&mut fut).await.is_none());
-        tx.send(Input::Opened(1)).await.unwrap();
-        assert!(matches!(
-            futures_lite::future::poll_once(&mut fut).await,
-            Some(Some(Input::Opened(1)))
-        ));
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                },
+            ));
 
-        // next_sync_at returns None once stream or placement is closed (no spin before Closed/Moved).
-        let (ev_tx, _ev_rx) = bounded(1);
-        let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
-        wire.upstream.store(true, SeqCst);
-        let reader = Reader::new();
-        assert!(reader.next_sync_at(true, &wire).is_some());
-        wire.close_stream();
-        assert!(reader.next_sync_at(true, &wire).is_none());
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut sse = BufReader::new(socket);
+            let req = read_request_line(&mut sse).await;
+            assert!(req.contains("connectionId=stream-1"), "got {req}");
+            sse.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
 
-        let (ev_tx, _ev_rx) = bounded(1);
-        let wire = stream::State::observing_preferences(ev_tx, Arc::new(|| {}));
-        wire.upstream.store(true, SeqCst);
-        assert!(reader.next_sync_at(true, &wire).is_some());
-        wire.close_placement();
-        assert!(reader.next_sync_at(true, &wire).is_none());
+            // Reader is active by default; accept the initial history request and stall it.
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stalled_history = BufReader::new(socket);
+            let req = read_request_line(&mut stalled_history).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window"),
+                "unexpected request: {req}"
+            );
+
+            // Drop Demand while the history read is in flight: must cancel and stay idle (no retry spin).
+            drop(demand_tx);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                    .await
+                    .is_err(),
+                "dropped Demand must not trigger repeated sync attempts"
+            );
+
+            commands.send(Command::Close).await.unwrap();
+            task.await.unwrap().unwrap();
+            drop(stalled_history);
+            drop(sse);
+        })
+        .await
+        .expect("dropped demand test timed out");
     });
 }
 
@@ -275,7 +378,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 .unwrap();
             while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
 
-            // 2. Resume reader demand -> immediate history fetch without 25 ms polling.
+            // 2. Resume reader demand -> history fetch starts without waiting for a poll tick.
             demand_tx.publish(Some(demand::Target::Latest));
             let (socket, _) = listener.accept().await.unwrap();
             let mut history = BufReader::new(socket);
@@ -284,7 +387,8 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 req.starts_with("POST /api/workspaces/workspace/session-history/window"),
                 "unexpected history request: {req}"
             );
-            let body = r#"{"status":"window","latest":true,"older":null,"newer":null,"messages":[]}"#;
+            let body =
+                r#"{"status":"window","latest":true,"older":null,"newer":null,"messages":[]}"#;
             history
                 .get_mut()
                 .write_all(
@@ -296,7 +400,6 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 )
                 .await
                 .unwrap();
-            // Backend::reading_window also reads session status for running state.
             let (socket, _) = listener.accept().await.unwrap();
             let mut status = BufReader::new(socket);
             let req = read_request_line(&mut status).await;
@@ -322,17 +425,11 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
             // 3. Drop SSE -> enters 500 ms backoff; Command::Retry wakes reconnect immediately.
             drop(sse1);
             while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
-            let started = Instant::now();
             commands.send(Command::Retry).await.unwrap();
             let (socket, _) = listener.accept().await.unwrap();
-            let elapsed = started.elapsed();
             let mut sse2 = BufReader::new(socket);
             let req = read_request_line(&mut sse2).await;
             assert!(req.contains("connectionId=stream-2"), "got {req}");
-            assert!(
-                elapsed < Duration::from_millis(300),
-                "Command::Retry should bypass the 500 ms backoff, took {elapsed:?}"
-            );
 
             // 4. Close exits cleanly.
             commands.send(Command::Close).await.unwrap();

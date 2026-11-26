@@ -218,8 +218,8 @@ impl Drop for RunGuard {
     fn drop(&mut self) {
         self.0.alive.store(false, SeqCst);
         self.0.closed.0.close();
-        self.0.running.store(false, SeqCst);
         self.0.version.fetch_add(1, SeqCst);
+        self.0.running.store(false, SeqCst);
         self.0.stopped.0.close();
     }
 }

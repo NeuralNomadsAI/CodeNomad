@@ -95,7 +95,7 @@ pub(crate) async fn run_with_reading(
     let mut reader = Reader::new();
     loop {
         reader.demand(reading);
-        let deadline = match (retry, reader.next_sync_at(opened, &wire)) {
+        let deadline = match (retry, reader.next_sync_at(opened, &wire, reading)) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
