@@ -130,6 +130,9 @@ struct MockNative {
     update_fail: bool,
     patch_status: Option<Status>,
     raw_session: bool,
+    plain_session: bool,
+    plain_rpc: bool,
+    stall_rpc_body: Option<(String, Arc<Notify>, Arc<Notify>)>,
     hide_project_doc: bool,
     on_config_read: Option<Arc<dyn Fn() + Send + Sync>>,
     on_rpc: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
@@ -181,9 +184,9 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
     if method == Method::GET
         && let Some(sid) = path.strip_prefix("/api/session/")
     {
-        let (sess, raw_session) = {
+        let (sess, raw_session, plain_session) = {
             let g = state.lock().unwrap();
-            (g.sessions.get(sid).cloned(), g.raw_session)
+            (g.sessions.get(sid).cloned(), g.raw_session, g.plain_session)
         };
         let Some(sess) = sess else {
             return (Status::NOT_FOUND, Json(json!({ "_tag": "SessionNotFoundError", "sessionID": sid })))
@@ -202,7 +205,11 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
             "location": loc,
             "metadata": sess.metadata,
         });
-        return Json(if raw_session { inner } else { json!({ "data": inner }) }).into_response();
+        let payload = if raw_session { inner } else { json!({ "data": inner }) };
+        if plain_session {
+            return (Status::OK, [(header::CONTENT_TYPE, "text/plain")], payload.to_string()).into_response();
+        }
+        return Json(payload).into_response();
     }
     if method == Method::PATCH
         && let Some(sid) = path.strip_prefix("/api/session/")
@@ -222,7 +229,7 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
         && let Some(rest) = path.strip_prefix("/api/rpc/")
         && let Some((rpc_id, rpc_method)) = rest.split_once('/')
     {
-        let (hook, hang) = {
+        let (hook, hang, stall_body) = {
             let mut g = state.lock().unwrap();
             g.rpc_calls.push((rpc_id.to_owned(), rpc_method.to_owned(), body.clone()));
             let hang = g
@@ -230,8 +237,22 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
                 .as_ref()
                 .filter(|(m, _, _)| m == rpc_method)
                 .map(|(_, entered, release)| (entered.clone(), release.clone()));
-            (g.on_rpc.clone(), hang)
+            let stall_body = g
+                .stall_rpc_body
+                .as_ref()
+                .filter(|(m, _, _)| m == rpc_method)
+                .map(|(_, entered, release)| (entered.clone(), release.clone()));
+            (g.on_rpc.clone(), hang, stall_body)
         };
+        if let Some((entered, release)) = stall_body {
+            entered.notify_one();
+            let stream = futures_util::stream::once(async move {
+                release.notified().await;
+                Ok::<axum::body::Bytes, std::io::Error>(axum::body::Bytes::from_static(b"{}"))
+            });
+            return (Status::OK, [(header::CONTENT_TYPE, "application/json")], axum::body::Body::from_stream(stream))
+                .into_response();
+        }
         if let Some((entered, release)) = hang {
             entered.notify_one();
             release.notified().await;
@@ -241,6 +262,9 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
         }
         let g = state.lock().unwrap();
         if let Some((status, val)) = g.rpc_outputs.get(&(rpc_id.to_owned(), rpc_method.to_owned())) {
+            if g.plain_rpc {
+                return (*status, [(header::CONTENT_TYPE, "text/plain")], val.to_string()).into_response();
+            }
             return (*status, Json(val.clone())).into_response();
         }
         let default = match rpc_method {
@@ -258,6 +282,9 @@ async fn mock_native_handler(State(state): State<Arc<Mutex<MockNative>>>, req: R
             }),
             _ => json!({ "output": {} }),
         };
+        if g.plain_rpc {
+            return (Status::OK, [(header::CONTENT_TYPE, "text/plain")], default.to_string()).into_response();
+        }
         return Json(default).into_response();
     }
     Status::NOT_FOUND.into_response()
@@ -322,6 +349,9 @@ impl Harness {
             update_fail: false,
             patch_status: None,
             raw_session: false,
+            plain_session: false,
+            plain_rpc: false,
+            stall_rpc_body: None,
             hide_project_doc: false,
             on_config_read: None,
             on_rpc: None,
@@ -1700,5 +1730,213 @@ async fn fastify_parsing_strict_native_contracts_unmatched_404_and_revoked_statu
         .unwrap();
     assert_eq!(unauth.status(), Status::UNAUTHORIZED);
     assert_eq!(unauth.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+    local_task.abort();
+}
+
+#[tokio::test]
+async fn round2_pinning_body_cancel_content_type_param_limit_trailing_slash_and_encoded_paths() {
+    let h = Harness::new().await;
+    h.seed_loaded_fixture().await;
+    let dir = h.dir();
+
+    // 1. Directory swap DURING the very first `/api/config` read inside `read_bound` is refused (`403`).
+    for kind in ["install", "read", "hosts"] {
+        let h_swap = Harness::new().await;
+        h_swap.seed_loaded_fixture().await;
+        let dir_swap = h_swap.dir();
+        let swapped = h_swap.project_dir.clone();
+        let moved = h_swap.root.join("swapped-on-first-config");
+        let fired = Arc::new(AtomicUsize::new(0));
+        let fired_cb = fired.clone();
+        h_swap.mock.lock().unwrap().on_config_read = Some(Arc::new(move || {
+            if fired_cb.fetch_add(1, Ordering::SeqCst) == 0 {
+                fs::rename(&swapped, &moved).unwrap();
+                fs::create_dir_all(&swapped).unwrap();
+            }
+        }));
+        let resp = match kind {
+            "install" => h_swap
+                .client
+                .post(h_swap.url("/mail/install"))
+                .query(&[("directory", &dir_swap)])
+                .json(&json!({ "scope": "global" }))
+                .send()
+                .await
+                .unwrap(),
+            "read" => h_swap.client.get(h_swap.url("")).query(&[("directory", &dir_swap)]).send().await.unwrap(),
+            _ => {
+                h_swap.client.get(h_swap.url("/fixture/hosts")).query(&[("directory", &dir_swap)]).send().await.unwrap()
+            }
+        };
+        assert_eq!(resp.status(), Status::FORBIDDEN, "{kind} must refuse swap during initial snapshot read");
+    }
+
+    // 2. Principal cancellation aborts `status` RPC during stalled body read (after headers arrived).
+    let h_body = Harness::new().await;
+    h_body.seed_loaded_fixture().await;
+    let dir_body = h_body.dir();
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    h_body.mock.lock().unwrap().stall_rpc_body = Some(("status".into(), entered.clone(), release.clone()));
+    let principal = tokio_util::sync::CancellationToken::new();
+    let principal_cb = principal.clone();
+    let app_body = h_body.app.clone();
+    let ws_body = h_body.ws_id.to_string();
+    let started = std::time::Instant::now();
+    let task = tokio::spawn(async move {
+        reader::read_with_timeout(
+            &app_body,
+            &ws_body,
+            &ControlLocation::new(dir_body, None),
+            Some(&principal_cb),
+            Duration::from_secs(6),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    principal.cancel();
+    let body_res = tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+    assert!(matches!(body_res, Err(crate::subagent_depth::Fail::Status(Status::UNAUTHORIZED, _))));
+    assert!(started.elapsed() < Duration::from_secs(2), "body read must abort promptly on principal cancellation");
+    release.notify_waiters();
+
+    // 3. Strict native Content-Type (`application/json`) and strict `RpcError` status (`400` only).
+    h.mock.lock().unwrap().plain_session = true;
+    h.mock.lock().unwrap().rpc_calls.clear();
+    let plain_sess = h
+        .client
+        .post(h.url("/fixture/attach"))
+        .query(&[("directory", &dir)])
+        .json(&json!({ "offerID": "offer_fixture", "sessionID": "ses_1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain_sess.status(), Status::SERVICE_UNAVAILABLE);
+    assert!(h.mock.lock().unwrap().rpc_calls.is_empty(), "text/plain session must not authorize RPCs");
+    h.mock.lock().unwrap().plain_session = false;
+
+    h.mock.lock().unwrap().plain_rpc = true;
+    let plain_binding = h
+        .client
+        .get(h.url("/fixture/binding"))
+        .query(&[("directory", dir.as_str()), ("sessionID", "ses_1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain_binding.status(), Status::OK);
+    assert_eq!(plain_binding.json::<Value>().await.unwrap(), json!({ "state": "unknown" }));
+    h.mock.lock().unwrap().plain_rpc = false;
+
+    // `201 Created` carrying `RpcError` must NOT be classified as `409 unsupported` or `502 non-conforming`.
+    h.mock.lock().unwrap().rpc_outputs.insert(
+        ("neuralnomads.fixture".into(), "hosts".into()),
+        (Status::CREATED, json!({ "_tag": "RpcError", "type": "rpc.unavailable", "message": "x" })),
+    );
+    let hosts_201_err = h.client.get(h.url("/fixture/hosts")).query(&[("directory", &dir)]).send().await.unwrap();
+    assert_eq!(hosts_201_err.status(), Status::SERVICE_UNAVAILABLE);
+    assert_eq!(hosts_201_err.json::<Value>().await.unwrap()["code"], "unavailable");
+    h.mock.lock().unwrap().rpc_outputs.remove(&("neuralnomads.fixture".into(), "hosts".into()));
+
+    h.mock.lock().unwrap().rpc_outputs.insert(
+        ("neuralnomads.fixture".into(), "status".into()),
+        (Status::CREATED, json!({ "_tag": "RpcError", "type": "rpc.unavailable", "message": "x" })),
+    );
+    let status_201_err = h.client.get(h.url("")).query(&[("directory", &dir)]).send().await.unwrap();
+    assert_eq!(status_201_err.status(), Status::OK);
+    assert_eq!(status_201_err.json::<Value>().await.unwrap()["integrations"][0]["state"], "unknown");
+    h.mock.lock().unwrap().rpc_outputs.remove(&("neuralnomads.fixture".into(), "status".into()));
+
+    // 4. Fastify `maxParamLength: 100` -> `integrationId` of 101 chars returns `404 no-store`, not `400`.
+    let long_id = "a".repeat(101);
+    let long_hosts =
+        h.client.get(h.url(&format!("/{long_id}/hosts"))).query(&[("directory", &dir)]).send().await.unwrap();
+    assert_eq!(long_hosts.status(), Status::NOT_FOUND);
+    assert_eq!(long_hosts.headers()[header::CACHE_CONTROL], "no-store");
+    let long_install = h
+        .client
+        .post(h.url(&format!("/{long_id}/install")))
+        .query(&[("directory", &dir)])
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body("<bad/>")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(long_install.status(), Status::NOT_FOUND);
+    assert_eq!(long_install.headers()[header::CACHE_CONTROL], "no-store");
+
+    // 5. Trailing-slash integration subpaths return `404 no-store` instead of falling through.
+    for suffix in ["/fixture/", "/fixture/hosts/", "/fixture/unknown/", "/fixture/hosts/extra/"] {
+        let resp = h.client.get(h.url(suffix)).send().await.unwrap();
+        assert_eq!(resp.status(), Status::NOT_FOUND, "{suffix}");
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store", "{suffix}");
+    }
+
+    // 6. `previews::admit_local` + `auth::admit` preserve `no-store` even on percent-encoded `/%61pi/...`.
+    let local_dir = TempDir(crate::shared::test_dir("int-preview-local"));
+    let local_auth = auth::Auth::new(auth::Settings {
+        username: auth::DEFAULT_USERNAME.into(),
+        password: Some("local-pass".into()),
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        managed_local: false,
+        skip: false,
+        idle: Duration::from_secs(3600),
+        absolute: Duration::from_secs(7200),
+    })
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let local_settings = settings::Settings::new(settings::document::Location::resolve(&local_dir.0.to_string_lossy()));
+    let (wtx, _wrx) = tokio::sync::mpsc::channel(4);
+    let local_app = Arc::new(App::new(
+        local_auth,
+        port,
+        local_dir.0.clone(),
+        local_dir.0.clone(),
+        false,
+        local_settings,
+        json!({}),
+        Native::test_connection(listener.local_addr().unwrap()),
+        PathBuf::new(),
+        None,
+        files::watch::Watches::new(wtx),
+        None,
+    ));
+    let local_router = super::routes()
+        .layer(axum::middleware::from_fn_with_state(local_app.clone(), auth::admit))
+        .layer(axum::middleware::from_fn_with_state(local_app.clone(), crate::previews::admit_local))
+        .with_state(local_app);
+    let local_task = tokio::spawn(async move { axum::serve(listener, local_router).await.unwrap() });
+
+    let preview_host = format!("00000000-0000-0000-0000-000000000000.preview.localhost:{port}");
+    for target_path in [
+        format!("/api/workspaces/{}/integrations/fixture/hosts", h.ws_id),
+        format!("/%61pi/workspaces/{}/integrations/fixture/hosts", h.ws_id),
+    ] {
+        let prev_refused = h
+            .client
+            .get(format!("http://127.0.0.1:{port}{target_path}"))
+            .header(header::HOST, &preview_host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(prev_refused.status(), Status::NOT_FOUND, "{target_path}");
+        assert_eq!(
+            prev_refused.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "{target_path}"
+        );
+    }
+
+    let encoded_refused = h
+        .client
+        .get(format!("http://127.0.0.1:{port}/%61pi/workspaces/{}/integrations/fixture/hosts", h.ws_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(encoded_refused.status(), Status::NOT_FOUND);
+    assert_eq!(encoded_refused.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
     local_task.abort();
 }

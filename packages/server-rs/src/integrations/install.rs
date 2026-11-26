@@ -22,7 +22,7 @@ use crate::{
     subagent_depth::Fail,
 };
 
-use super::{LocationPin, capture_location_pin, owns_location, recognition::recognize_integrations};
+use super::{LocationPin, owns_location, recognition::recognize_integrations};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallError {
@@ -111,7 +111,7 @@ async fn install_inner(
     let location = ControlLocation::new(directory.to_owned(), None);
     // Run snapshot read and catalog read concurrently; fail fast on workspace/ownership refusals
     // before any catalog-derived answer (`install.ts:41`).
-    let ((snapshot, workspace, endpoint), catalog) = tokio::try_join!(
+    let ((snapshot, workspace, endpoint, pin), catalog) = tokio::try_join!(
         async {
             engine::read_bound(app, workspace_id, &location, principal.as_ref(), None).await.map_err(map_controls_fail)
         },
@@ -143,7 +143,6 @@ async fn install_inner(
     }
 
     let owned = snapshot.location;
-    let pin = capture_location_pin(&workspace, &owned.directory).await;
     authorize(app, &workspace, &endpoint, &owned.directory, &pin, principal.as_ref()).await?;
 
     let spec = format!("{}@{}", entry.package, entry.range);

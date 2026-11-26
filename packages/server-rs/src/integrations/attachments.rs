@@ -26,13 +26,13 @@ use crate::{
 };
 
 use super::{
-    LocationPin, capture_location_pin,
+    LocationPin,
     contract::{
         BindingReadOutput, INTEGRATION_ATTACHMENT_METADATA_KEY, IntegrationHostsOutput, OutcomeOutput, looks_like_path,
         parse_attach_host_output, parse_binding_read_output, parse_detach_host_output, parse_hosts_output,
         parse_install_host_output, parse_status_output, valid_native_session_id, valid_offer_id,
     },
-    owns_location,
+    is_json_content_type, owns_location,
     recognition::recognize_integrations,
 };
 
@@ -439,7 +439,7 @@ where
     let cancel = CancellationToken::new();
 
     let work = async {
-        let ((snapshot, workspace, endpoint), catalog) = tokio::try_join!(
+        let ((snapshot, workspace, endpoint, pin), catalog) = tokio::try_join!(
             async {
                 engine::read_bound(app, workspace_id, &location, principal.as_ref(), Some(&cancel))
                     .await
@@ -460,7 +460,6 @@ where
         if !matches!(recognition.runtime.as_ref().map(|r| &r.state), Some(RuntimeState::Active)) {
             return Err(AttachmentError::Inactive);
         }
-        let pin = capture_location_pin(&workspace, &snapshot.location.directory).await;
         let ctx = Context {
             app,
             workspace,
@@ -516,13 +515,16 @@ async fn fetch_session(ctx: &Context<'_>, session_id: &str) -> Result<Value, Att
         .map_err(|_| AttachmentError::Unavailable)?;
 
     if response.status() == Status::NOT_FOUND {
+        if !is_json_content_type(response.headers()) {
+            return Err(AttachmentError::Unavailable);
+        }
         let body = crate::opencode::read_json(response, 4096).await.ok();
         if body.as_ref().and_then(|v| v.get("_tag")).and_then(Value::as_str) == Some("SessionNotFoundError") {
             return Err(AttachmentError::NotFound);
         }
         return Err(AttachmentError::Unavailable);
     }
-    if response.status() != Status::OK {
+    if response.status() != Status::OK || !is_json_content_type(response.headers()) {
         return Err(AttachmentError::Unavailable);
     }
     let mut parsed = crate::opencode::read_json(response, SESSION_RECORD_MAX_BYTES)
@@ -591,7 +593,7 @@ async fn rpc_call(
         .send()
         .await
     {
-        Ok(response) if response.status() == Status::OK => {
+        Ok(response) if response.status() == Status::OK && is_json_content_type(response.headers()) => {
             match crate::opencode::read_json(response, RPC_OUTPUT_MAX_BYTES).await {
                 Ok(mut body) => match body.as_object_mut().and_then(|o| o.remove("output")) {
                     Some(output) => Ok(output),
@@ -600,11 +602,13 @@ async fn rpc_call(
                 Err(_) => Err(AttachmentError::Unavailable),
             }
         }
-        Ok(response) => match crate::opencode::read_json(response, 64 * 1024).await {
-            Ok(body) => Err(classify_attachment_rpc_error(&body)),
-            Err(_) => Err(AttachmentError::Unavailable),
-        },
-        Err(_) => Err(AttachmentError::Unavailable),
+        Ok(response) if response.status() == Status::BAD_REQUEST && is_json_content_type(response.headers()) => {
+            match crate::opencode::read_json(response, 64 * 1024).await {
+                Ok(body) => Err(classify_attachment_rpc_error(&body)),
+                Err(_) => Err(AttachmentError::Unavailable),
+            }
+        }
+        Ok(_) | Err(_) => Err(AttachmentError::Unavailable),
     };
 
     // Always re-verify session/location authority AFTER the RPC, even if the RPC failed.

@@ -115,12 +115,70 @@ fn revision_eq(expected: &str, actual: &str) -> bool {
     expected.len() == actual.len() && bool::from(expected.as_bytes().ct_eq(actual.as_bytes()))
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LocationPin {
+    pub(crate) root_canonical: Option<std::path::PathBuf>,
+    pub(crate) root_identity: Option<String>,
+    pub(crate) target_canonical: Option<std::path::PathBuf>,
+    pub(crate) target_identity: Option<String>,
+}
+
+pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str) -> LocationPin {
+    let root = workspace.path.clone();
+    let dir = directory.to_owned();
+    tokio::task::spawn_blocking(move || LocationPin {
+        root_canonical: dunce::canonicalize(&root).ok(),
+        root_identity: crate::files::directory_identity(&root).ok(),
+        target_canonical: dunce::canonicalize(&dir).ok(),
+        target_identity: crate::files::directory_identity(Path::new(&dir)).ok(),
+    })
+    .await
+    .unwrap_or(LocationPin {
+        root_canonical: None,
+        root_identity: None,
+        target_canonical: None,
+        target_identity: None,
+    })
+}
+
+async fn pin_still_live(workspace: &Workspace, directory: &str, pin: &LocationPin) -> bool {
+    let root = workspace.path.clone();
+    let dir = directory.to_owned();
+    let pin = pin.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Some(ref expected_root) = pin.root_canonical
+            && dunce::canonicalize(&root).ok().as_ref() != Some(expected_root)
+        {
+            return false;
+        }
+        if let Some(ref rid) = pin.root_identity
+            && crate::files::directory_identity(&root).ok().as_deref() != Some(rid.as_str())
+        {
+            return false;
+        }
+        if let Some(ref expected_target) = pin.target_canonical
+            && dunce::canonicalize(&dir).ok().as_ref() != Some(expected_target)
+        {
+            return false;
+        }
+        if let Some(ref tid) = pin.target_identity
+            && crate::files::directory_identity(Path::new(&dir)).ok().as_deref() != Some(tid.as_str())
+        {
+            return false;
+        }
+        true
+    })
+    .await
+    .unwrap_or(false)
+}
+
 pub(super) struct ReadContext {
     pub(super) workspace: Workspace,
     pub(super) endpoint: Arc<Endpoint>,
     pub(super) entries: Vec<Value>,
     pub(super) runtime: Vec<Value>,
     pub(super) location: ControlLocation,
+    pub(super) location_pin: LocationPin,
     pub(super) style: Style,
     pub(super) global_dir: String,
     pub(super) targets: Vec<ResolvedTarget>,
@@ -418,6 +476,9 @@ pub(super) async fn read_context(
         return Err(foreign);
     }
     let location = ControlLocation::new(location_dir, None);
+    // Pin root and target physical identities BEFORE native `/api/config` & `/api/plugin` reads so
+    // any directory swap during snapshot collection is detected and refused.
+    let location_pin = capture_location_pin(&workspace, &location.directory).await;
 
     let query = [("location[directory]", location.directory.as_str())];
     let (config, plugin) = tokio::join!(
@@ -442,6 +503,9 @@ pub(super) async fn read_context(
     );
     check_cancelled(cancel)?;
     assert_current(app, &endpoint, &workspace, principal)?;
+    if !pin_still_live(&workspace, &location.directory, &location_pin).await {
+        return Err(foreign);
+    }
     let (entries, runtime) = match (config, plugin) {
         (Ok(Value::Array(entries)), Ok(p)) if p["data"].is_array() => {
             (entries, p["data"].as_array().cloned().unwrap_or_default())
@@ -504,6 +568,7 @@ pub(super) async fn read_context(
         entries,
         runtime,
         location,
+        location_pin,
         style,
         global_dir,
         targets,
@@ -588,18 +653,19 @@ pub(crate) async fn read(
     principal: Option<&CancellationToken>,
     cancel: Option<&CancellationToken>,
 ) -> Result<Snapshot, Fail> {
-    read_bound(app, workspace_id, location, principal, cancel).await.map(|(snapshot, _, _)| snapshot)
+    read_bound(app, workspace_id, location, principal, cancel).await.map(|(snapshot, _, _, _)| snapshot)
 }
 
-/// `PluginControls.read` returning the bound `Workspace` and `Endpoint` that produced the snapshot,
-/// so integration routes re-verify the exact same connection and ownership after follow-up RPCs.
+/// `PluginControls.read` returning the bound `Workspace`, `Endpoint` and pre-read `LocationPin`
+/// that produced the snapshot, so integration routes re-verify the exact same connection and
+/// physical directory identity after catalog waits and follow-up RPCs.
 pub(crate) async fn read_bound(
     app: &App,
     workspace_id: &str,
     location: &ControlLocation,
     principal: Option<&CancellationToken>,
     cancel: Option<&CancellationToken>,
-) -> Result<(Snapshot, Workspace, Arc<Endpoint>), Fail> {
+) -> Result<(Snapshot, Workspace, Arc<Endpoint>, LocationPin), Fail> {
     let mut ctx = read_context(app, workspace_id, location, principal, cancel).await?;
     let base = snapshot_base(&ctx.eval_ctx())?;
     let mut snapshot = evaluate_documents(&base, &ctx.eval_ctx(), None).snapshot;
@@ -641,7 +707,10 @@ pub(crate) async fn read_bound(
     }
     assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     check_cancelled(cancel)?;
-    Ok((snapshot, ctx.workspace, ctx.endpoint))
+    if !pin_still_live(&ctx.workspace, &ctx.location.directory, &ctx.location_pin).await {
+        return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
+    }
+    Ok((snapshot, ctx.workspace, ctx.endpoint, ctx.location_pin))
 }
 
 /// `PluginControls.readConfigDocuments` (`strictDocuments = false`) for `sources::add`.

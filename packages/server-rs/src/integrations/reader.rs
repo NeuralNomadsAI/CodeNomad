@@ -30,12 +30,11 @@ use crate::{
 };
 
 use super::{
-    capture_location_pin,
     contract::{
         IntegrationStatusConnection, IntegrationStatusHost, IntegrationStatusOutput, is_integration_docs_url,
         looks_like_path, parse_status_output,
     },
-    owns_location,
+    is_json_content_type, owns_location,
     recognition::{IntegrationRecognition, recognize_integrations},
 };
 
@@ -161,13 +160,12 @@ pub(crate) async fn read_with_timeout(
     principal: Option<&CancellationToken>,
     timeout: Duration,
 ) -> Result<IntegrationsResponse, Fail> {
-    let ((snapshot, workspace, endpoint), catalog) =
+    let ((snapshot, workspace, endpoint, pin), catalog) =
         tokio::try_join!(engine::read_bound(app, workspace_id, location, principal, None), async {
             Ok::<_, Fail>(app.integration_catalog.read_view(true).await)
         },)?;
 
     let owned = snapshot.location.clone();
-    let pin = capture_location_pin(&workspace, &owned.directory).await;
     let recognitions = recognize_integrations(&catalog.catalog, &snapshot);
 
     let sem = Arc::new(Semaphore::new(INTEGRATION_STATUS_CONCURRENCY));
@@ -349,6 +347,34 @@ fn local_status_state(recognition: &IntegrationRecognition) -> Option<Integratio
     None
 }
 
+enum BodyReadErr {
+    Aborted,
+    Failed,
+}
+
+async fn read_json_cancellable(
+    response: reqwest::Response,
+    max_bytes: usize,
+    principal: Option<&CancellationToken>,
+    deadline: tokio::time::Instant,
+) -> Result<Value, BodyReadErr> {
+    let read = tokio::time::timeout_at(deadline, crate::opencode::read_json(response, max_bytes));
+    match principal {
+        Some(tok) => tokio::select! {
+            biased;
+            _ = tok.cancelled() => Err(BodyReadErr::Aborted),
+            res = read => match res {
+                Ok(Ok(val)) => Ok(val),
+                _ => Err(BodyReadErr::Failed),
+            },
+        },
+        None => match read.await {
+            Ok(Ok(val)) => Ok(val),
+            _ => Err(BodyReadErr::Failed),
+        },
+    }
+}
+
 async fn read_one_status(
     app: &App,
     endpoint: &Endpoint,
@@ -360,6 +386,7 @@ async fn read_one_status(
     let Ok(url) = endpoint.url.join(&format!("/api/rpc/{}/status", recognition.entry.rpc)) else {
         return StatusRead::State(IntegrationRuntimeState::Unknown);
     };
+    let deadline = tokio::time::Instant::now() + timeout;
     let send = app
         .native
         .client
@@ -374,27 +401,34 @@ async fn read_one_status(
         Some(tok) => tokio::select! {
             biased;
             _ = tok.cancelled() => return StatusRead::Aborted,
-            res = tokio::time::timeout(timeout, send) => match res {
+            res = tokio::time::timeout_at(deadline, send) => match res {
                 Ok(Ok(resp)) => resp,
                 _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
             },
         },
-        None => match tokio::time::timeout(timeout, send).await {
+        None => match tokio::time::timeout_at(deadline, send).await {
             Ok(Ok(resp)) => resp,
             _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
         },
     };
-    if response.status() != Status::OK {
-        let state = match tokio::time::timeout(timeout, crate::opencode::read_json(response, RPC_ERROR_MAX_BYTES)).await
-        {
-            Ok(Ok(body)) => classify_rpc_error(&body),
-            _ => IntegrationRuntimeState::Unknown,
-        };
-        return StatusRead::State(state);
+    let status = response.status();
+    if !is_json_content_type(response.headers()) {
+        return StatusRead::State(IntegrationRuntimeState::Unknown);
     }
-    let body = match tokio::time::timeout(timeout, crate::opencode::read_json(response, STATUS_RPC_MAX_BYTES)).await {
-        Ok(Ok(val)) => val,
-        _ => return StatusRead::State(IntegrationRuntimeState::Unknown),
+    if status == Status::BAD_REQUEST {
+        return match read_json_cancellable(response, RPC_ERROR_MAX_BYTES, principal, deadline).await {
+            Ok(body) => StatusRead::State(classify_rpc_error(&body)),
+            Err(BodyReadErr::Aborted) => StatusRead::Aborted,
+            Err(BodyReadErr::Failed) => StatusRead::State(IntegrationRuntimeState::Unknown),
+        };
+    }
+    if status != Status::OK {
+        return StatusRead::State(IntegrationRuntimeState::Unknown);
+    }
+    let body = match read_json_cancellable(response, STATUS_RPC_MAX_BYTES, principal, deadline).await {
+        Ok(val) => val,
+        Err(BodyReadErr::Aborted) => return StatusRead::Aborted,
+        Err(BodyReadErr::Failed) => return StatusRead::State(IntegrationRuntimeState::Unknown),
     };
     let Some(output) = body.get("output") else {
         return StatusRead::State(IntegrationRuntimeState::NonConforming);
