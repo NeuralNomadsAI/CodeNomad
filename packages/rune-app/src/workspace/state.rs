@@ -1,8 +1,8 @@
 mod tabs;
 use tabs::{activate, close_blocked};
 pub use tabs::{
-    active_project_title, can_close_active, can_new, can_switch_tabs, close, new_tab, rename_tab,
-    select, select_index, select_relative, tab_rename_seed,
+    active_project_title, can_close_active, can_new, can_switch_tabs, close, close_ordinary,
+    new_tab, rename_tab, select, select_index, select_relative, tab_rename_seed,
 };
 
 mod drafts;
@@ -11,6 +11,12 @@ mod observation;
 mod panel_state;
 mod polling;
 mod strip;
+mod temporary;
+pub(crate) use temporary::{
+    StashedTemporary, TemporaryTabInfo, active_temporary_workspace, clear_temporary_mark,
+    detach_stopped_temporary, finish_discarded, reconcile_temporary_folders, restore_stashed,
+    stash_for_discard, temporary_tab_info,
+};
 
 pub use drafts::{
     attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
@@ -295,6 +301,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
 fn busy(s: &State) -> bool {
     s.status_permissions.settling()
         || s.transcript_display.messages.pending()
+        || s.temporary.in_flight()
         || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
@@ -474,11 +481,23 @@ pub fn opened(s: &mut State, project: &Project) {
                     .flatten()
             })
         });
+    let initial_name = inherited_name.or_else(|| {
+        if project.temporary {
+            let base = crate::shell::temporary::base_name();
+            Some(temporary::next_temporary_name(ui, &base))
+        } else {
+            None
+        }
+    });
     let item = &mut ui.entries[ui.active];
     if matches!(&item.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id))
     {
         if let Tab::Workspace(w) = &mut item.saved {
             w.workspace_id = Some(project.id.clone());
+            w.temporary = project.temporary;
+            if w.temporary && w.project_name.is_none() {
+                w.project_name = initial_name;
+            }
         }
     } else {
         let mut drafts = std::collections::BTreeMap::new();
@@ -521,7 +540,8 @@ pub fn opened(s: &mut State, project: &Project) {
                 None
             },
             folder: project.path.clone(),
-            project_name: inherited_name,
+            project_name: initial_name,
+            temporary: project.temporary,
             occurrence,
             workspace_id: Some(project.id.clone()),
             active_session_id: None,

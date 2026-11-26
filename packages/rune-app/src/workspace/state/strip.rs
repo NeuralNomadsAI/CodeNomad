@@ -37,6 +37,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
                     None
                 },
                 closable: !busy(s) && !close_blocked(s, index),
+                temporary: matches!(&entry.saved, Tab::Workspace(w) if w.temporary),
             },
         )
         .collect();

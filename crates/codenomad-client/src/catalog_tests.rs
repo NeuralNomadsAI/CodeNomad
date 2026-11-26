@@ -536,6 +536,7 @@ fn binding_returns_the_validated_native_session_without_a_list_or_second_read() 
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let (bound, session) = backend
             .bind_session(&project, "off-page", false)
@@ -612,6 +613,7 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let results = backend.search_sessions(&project, "Off page").await.unwrap();
         assert_eq!(results.len(), 1);
@@ -696,6 +698,7 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         for (id, missing) in [
             ("missing", true),
@@ -734,6 +737,7 @@ fn malformed_catalogue_data_is_not_a_terminal_session_page() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         assert!(backend.sessions(&project, None).await.is_err());
         assert!(backend.sessions(&project, None).await.is_err());
@@ -781,6 +785,7 @@ fn catalogue_omissions_require_targeted_absence() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
         let (out, results) = async_channel::bounded(ids.len());
@@ -814,6 +819,7 @@ fn a_linked_session_requires_the_owned_proxy_placement() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         assert!(
             backend
@@ -847,6 +853,7 @@ fn linked_session_page_marks_403_as_location_unavailable() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let transient = backend
             .linked_session_page(&project, "/linked", None)
@@ -879,6 +886,7 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let rejected = backend
             .create_untitled_session(&project, "/linked")

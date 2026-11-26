@@ -100,6 +100,10 @@ pub(super) async fn dispatch(
         ))
         .await?;
     }
+    if let Some(event) = parse_temporary_changed(&value) {
+        out.send(Input::Workspace(epoch, event)).await?;
+        return Ok(());
+    }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
@@ -117,6 +121,9 @@ fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
 pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     if storage_owner(value) == Some(crate::settings::Owner::Config) {
         return Some(WorkspaceEvent::UiPreferencesChanged);
+    }
+    if let Some(event) = parse_temporary_changed(value) {
+        return Some(event);
     }
     if let Some(event) = parse_workspace_event(value) {
         return Some(event);
@@ -144,6 +151,14 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
         }),
         _ => None,
     }
+}
+
+fn parse_temporary_changed(value: &Value) -> Option<WorkspaceEvent> {
+    if value["type"].as_str()? != "workspace.temporaryChanged" {
+        return None;
+    }
+    let folders = crate::temporary_workspaces::parse_folders(&value["folders"]).ok()?;
+    Some(WorkspaceEvent::TemporaryChanged { folders })
 }
 
 pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {

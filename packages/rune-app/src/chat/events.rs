@@ -187,7 +187,17 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             ) => {
                 s.status_usage.refresh(directory.as_deref());
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::TemporaryChanged {
+                folders,
+            }) => {
+                let _ = workspace::reconcile_temporary_folders(s, &folders);
+            }
             Event::Workspace(event) => {
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                    &event
+                {
+                    s.temporary.queue_stopped(workspace_id.clone());
+                }
                 if matches!(
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }

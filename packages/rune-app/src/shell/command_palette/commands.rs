@@ -3,7 +3,8 @@ use crate::{
     platform::workspace_open::{Editor, WorkspaceTarget},
     settings,
     shell::{
-        launcher_replaces_project, notifications, shortcuts, sidebar, tab_rename, workspace_open,
+        launcher_replaces_project, notifications, shortcuts, sidebar, tab_rename, temporary,
+        workspace_open,
     },
     strings::{locale, t},
     workspace,
@@ -119,6 +120,26 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             Some("new-instance"),
             !workspace::can_new(s),
         ));
+        items.push(static_item(
+            "new-temporary-instance",
+            t("commands.newTemporaryInstance.label"),
+            None,
+            t("commands.newTemporaryInstance.keywords"),
+            Category::Instance,
+            Some("new-temporary-instance"),
+            !temporary::can_create(s),
+        ));
+        if temporary::can_keep_active(s) {
+            items.push(static_item(
+                "keep-temporary-instance",
+                t("instanceTab.actions.keepTemporary"),
+                None,
+                t("commands.newTemporaryInstance.keywords"),
+                Category::Instance,
+                None,
+                false,
+            ));
+        }
         items.push(static_item(
             "close-instance",
             t("commands.closeInstance.label"),
@@ -399,6 +420,12 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
             if workspace::can_new(s) {
                 workspace::new_tab(s, tx);
             }
+        }
+        "new-temporary-instance" => {
+            temporary::create(s, tx);
+        }
+        "keep-temporary-instance" => {
+            temporary::keep_active(s, tx);
         }
         "close-instance" => {
             if let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) {

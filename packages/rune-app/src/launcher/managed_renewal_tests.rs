@@ -94,6 +94,7 @@ fn managed_local_host_renews_expired_session_without_showing_login() {
         l.project = Some(Project {
             id: "ws-1".into(),
             path: "/proj".into(),
+            temporary: false,
         });
         s.screen = crate::Screen::Chat { launcher: Some(l) };
         let mut rt =
@@ -643,6 +644,7 @@ fn stale_created_reply_after_renewal_preserves_session_without_binding_expired_b
         l.project = Some(Project {
             id: "ws-1".into(),
             path: "/proj".into(),
+            temporary: false,
         });
         let (job_tx, job_rx) = bounded(1);
         l.pending = true;
@@ -874,6 +876,7 @@ fn stale_connected_reply_after_renewal_does_not_reinstall_expired_backend() {
                 vec![Project {
                     id: "ws-stale".into(),
                     path: "/stale".into(),
+                    temporary: false,
                 }],
                 "srv-managed".into(),
             )))

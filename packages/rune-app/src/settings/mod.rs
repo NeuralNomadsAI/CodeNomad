@@ -187,6 +187,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         s.workspace_open.cancel();
         s.command_palette.dismiss();
         s.tab_rename.dismiss();
+        s.temporary.cancel_for_auth();
     }
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());

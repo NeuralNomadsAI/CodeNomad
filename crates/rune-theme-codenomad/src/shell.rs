@@ -3,6 +3,7 @@ pub mod command_palette;
 pub mod icons;
 pub mod notices;
 pub mod tab_rename;
+pub mod temporary_close;
 use crate::{
     Length, Space, TextRole, kit,
     layout::{self, enter_action},

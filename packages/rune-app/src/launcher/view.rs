@@ -64,6 +64,19 @@ pub fn view(s: &State) -> El {
                 "browse-folder",
             ));
         }
+        let temporary = button_tx(
+            "new-temporary-tab",
+            t("folderSelection.temporary.button"),
+            !crate::shell::temporary::can_create(s),
+            crate::screen::action_tx(&scope, |s, tx| {
+                crate::shell::temporary::create(s, tx);
+            }),
+        )
+        .help(crate::settings::with_shortcut_label(
+            s,
+            t("folderSelection.temporary.button"),
+            "new-temporary-instance",
+        ));
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
             .child(
@@ -84,7 +97,8 @@ pub fn view(s: &State) -> El {
                         t("directoryBrowser.openCurrent"),
                         l.pending || waiting || l.folder.text.trim().is_empty(),
                         crate::screen::action_tx(&scope, launcher::open),
-                    )),
+                    ))
+                    .child(temporary),
             );
         if l.projects_stale {
             body = body.child(button_tx(

@@ -79,6 +79,7 @@ fn workspace_state(tabs: usize) -> State {
             let next = Project {
                 id: format!("project-{i}"),
                 path: format!("/repo-{i}"),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(next.clone());

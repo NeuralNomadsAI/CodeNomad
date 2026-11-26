@@ -15,6 +15,18 @@ pub(super) struct LiveDraft {
     command_unconfirmed: Option<crate::composer::UnconfirmedCommand>,
 }
 
+impl LiveDraft {
+    pub(super) fn has_content(&self) -> bool {
+        self.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+            || self
+                .parts
+                .as_ref()
+                .is_some_and(|(draft, _)| !draft.attachments.is_empty())
+            || self.unconfirmed.is_some()
+            || self.command_unconfirmed.is_some()
+    }
+}
+
 impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
         self.entries
@@ -323,6 +335,7 @@ mod tests {
             server_id: None,
             folder: "/repo".into(),
             project_name: None,
+            temporary: false,
             occurrence: 0,
             workspace_id: Some("ws".into()),
             active_session_id: None,

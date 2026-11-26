@@ -6,6 +6,7 @@ fn workspace() -> Workspace {
         server_id: None,
         folder: "/".into(),
         project_name: None,
+        temporary: false,
         occurrence: 0,
         workspace_id: None,
         active_session_id: None,

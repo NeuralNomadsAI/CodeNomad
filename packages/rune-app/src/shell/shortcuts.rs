@@ -24,6 +24,7 @@ pub(super) fn modal_open(s: &State) -> bool {
         return true;
     }
     settings::blocks_shell_shortcuts(s)
+        || super::temporary::is_open(s)
         || super::tab_rename::is_open(s)
         || super::command_palette::is_open(s)
         || notifications::history_open(s)
@@ -118,7 +119,7 @@ pub(super) fn has_active_session(s: &State) -> bool {
 fn home_focus_allows_browse(tx: &Tx) -> bool {
     match tx.focused() {
         None => true,
-        Some("browse" | "open-folder") => true,
+        Some("browse" | "open-folder" | "new-temporary-tab") => true,
         Some(key) => key.starts_with("project-") && !key.starts_with("project-tabs-"),
     }
 }
@@ -139,6 +140,7 @@ enum Action {
     RenameInstance(String),
     OpenWorkspace(crate::platform::workspace_open::WorkspaceTarget),
     NewInstance,
+    NewTemporaryInstance,
     CloseInstance,
     InstancePrev,
     InstanceNext,
@@ -210,6 +212,9 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if matches("new-instance") {
                 return Some(Action::NewInstance);
             }
+            if matches("new-temporary-instance") {
+                return Some(Action::NewTemporaryInstance);
+            }
             if matches("close-instance") {
                 return Some(Action::CloseInstance);
             }
@@ -267,6 +272,9 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if workspace::can_new(s) {
                 workspace::new_tab(s, tx);
             }
+        }
+        Action::NewTemporaryInstance => {
+            super::temporary::create(s, tx);
         }
         Action::CloseInstance => {
             if let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) {

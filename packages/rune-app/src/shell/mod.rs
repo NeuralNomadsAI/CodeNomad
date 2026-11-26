@@ -9,6 +9,7 @@ mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_usage;
 pub(crate) mod tab_rename;
+pub(crate) mod temporary;
 pub(crate) mod workspace_open;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
@@ -155,7 +156,10 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
 
 pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
-    if tab_rename::handle_key(s, event, tx) || command_palette::handle_key(s, event, tx) {
+    if temporary::handle_key(s, event, tx)
+        || tab_rename::handle_key(s, event, tx)
+        || command_palette::handle_key(s, event, tx)
+    {
         return true;
     }
     if shortcuts::modal_open(s) {

@@ -1,7 +1,7 @@
 use super::{Cache, State, Tab, TextEdit, Tx, busy, capture, capture_files_mode, entry};
 use crate::platform;
 
-fn stash(s: &mut State) {
+pub(super) fn stash(s: &mut State) {
     // History browsing is temporary; inactive tabs retain only their fresh draft.
     crate::composer::recall::restore(s);
     capture_files_mode(s);
@@ -244,7 +244,7 @@ pub fn can_switch_tabs(s: &State) -> bool {
         .is_some_and(|ui| ui.entries.len() > 1 && !busy(s))
 }
 
-fn path_basename(path: &str) -> &str {
+pub(super) fn path_basename(path: &str) -> &str {
     let trimmed = path.trim_end_matches(['/', '\\']);
     trimmed
         .rsplit(['/', '\\'])
@@ -364,6 +364,29 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     if close_blocked(s, index) {
         return;
     }
+    if super::temporary::temporary_tab_info(s, id).is_some() {
+        crate::shell::temporary::request_close(s, id, tx);
+        return;
+    }
+    close_ordinary(s, id, tx);
+}
+
+pub fn close_ordinary(s: &mut State, id: &str, tx: &mut Tx) {
+    detach_entry(s, id, true, true, tx);
+}
+
+pub(super) fn detach_local_without_release(s: &mut State, id: &str, tx: &mut Tx) {
+    detach_entry(s, id, false, false, tx);
+}
+
+fn detach_entry(s: &mut State, id: &str, keep_drafts: bool, release_on_server: bool, tx: &mut Tx) {
+    let Some(index) = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.iter().position(|e| e.key == id))
+    else {
+        return;
+    };
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
     if active {
         s.notifications.supersede_navigation();
@@ -377,30 +400,50 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     let removed = ui.entries.remove(index);
     s.notifications.forget_tab(id);
     if let Tab::Workspace(mut saved) = removed.saved {
-        // Undelivered copies still belong to their closed source.
-        saved
-            .drafts
-            .retain(|id, _| !removed.pending_drafts.contains(id));
-        saved
-            .attachment_drafts
-            .retain(|id| !removed.pending_drafts.contains(id));
-        saved
-            .attachment_parts
-            .retain(|id, _| !removed.pending_drafts.contains(id));
-        // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
-        saved.drafts.extend(
-            removed
-                .cleared
-                .into_iter()
-                .filter(|id| !removed.pending_drafts.contains(id))
-                .map(|id| (id, String::new())),
-        );
-        ui.closed.push(saved);
-        if ui.closed.len() > 16 {
-            ui.closed.remove(0);
+        if keep_drafts {
+            // Undelivered copies still belong to their closed source.
+            saved
+                .drafts
+                .retain(|id, _| !removed.pending_drafts.contains(id));
+            saved
+                .attachment_drafts
+                .retain(|id| !removed.pending_drafts.contains(id));
+            saved
+                .attachment_parts
+                .retain(|id, _| !removed.pending_drafts.contains(id));
+            // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+            saved.drafts.extend(
+                removed
+                    .cleared
+                    .into_iter()
+                    .filter(|id| !removed.pending_drafts.contains(id))
+                    .map(|id| (id, String::new())),
+            );
+            ui.closed.push(saved);
+            if ui.closed.len() > 16 {
+                ui.closed.remove(0);
+            }
+        } else {
+            let folder = &saved.folder;
+            let backend_id = saved.backend_id.as_deref();
+            let server_id = saved.server_id.as_deref();
+            let other_open = ui.entries.iter().any(|entry| {
+                matches!(&entry.saved, Tab::Workspace(other)
+                    if super::same_folder(&other.folder, folder)
+                        && other.backend_id.as_deref() == backend_id
+                        && (backend_id.is_none() || other.server_id.as_deref() == server_id))
+            });
+            if !other_open {
+                ui.closed.retain(|w| {
+                    !(super::same_folder(&w.folder, folder)
+                        && w.backend_id.as_deref() == backend_id
+                        && (backend_id.is_none() || w.server_id.as_deref() == server_id))
+                });
+            }
         }
     }
-    if let (Some(backend), Some(project)) = (removed.binding, removed.project) {
+    if release_on_server && let (Some(backend), Some(project)) = (removed.binding, removed.project)
+    {
         platform::spawn(async move {
             let _ = backend.release_project(&project.id).await;
         });

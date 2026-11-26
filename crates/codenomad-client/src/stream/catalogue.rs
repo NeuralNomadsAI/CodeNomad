@@ -74,6 +74,9 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
         WorkspaceEvent::NativeFilesystemChanged { workspace_id }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
         | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        WorkspaceEvent::TemporaryChanged { folders } => folders
+            .iter()
+            .fold(64usize, |acc, folder| acc.saturating_add(folder.len() + 32)),
         _ => 64,
     }
 }
@@ -86,6 +89,7 @@ pub(super) struct Signals {
     attention: Mutex<VecDeque<AttentionHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
     workspace_stopped: Mutex<HashSet<String>>,
+    temporary_folders: Mutex<Option<Vec<String>>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
     disconnect_notice: std::sync::atomic::AtomicBool,
     authentication_required: std::sync::atomic::AtomicBool,
@@ -127,6 +131,7 @@ impl Signals {
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
+        *self.temporary_folders.lock().unwrap() = None;
         *self.stats.lock().unwrap() = StatsChanges::default();
         let gen_changed = self
             .generation
@@ -190,6 +195,9 @@ impl Signals {
                         } else if !stopped.contains(&workspace_id) {
                             self.workspace_overflow.store(true, SeqCst);
                         }
+                    }
+                    WorkspaceEvent::TemporaryChanged { folders } => {
+                        *self.temporary_folders.lock().unwrap() = Some(folders);
                     }
                     other => {
                         if self.workspace_events.lock().unwrap().push(other) {
@@ -331,6 +339,7 @@ impl CatalogueWatch {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -402,6 +411,10 @@ impl CatalogueWatch {
 
     pub fn take(&self) -> CatalogueChanges {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
+    }
+
+    pub fn take_temporary_folders(&self) -> Option<Vec<String>> {
+        self.signals.temporary_folders.lock().unwrap().take()
     }
 
     pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
@@ -607,6 +620,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -682,6 +696,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -714,6 +729,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -753,6 +769,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -768,5 +785,48 @@ mod tests {
         assert!(!signals.workspace_overflow.load(SeqCst));
         signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
         assert!(signals.workspace_overflow.load(SeqCst));
+    }
+
+    #[test]
+    fn temporary_changed_coalesces_latest_folders_and_clears_on_disconnect() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            stats: Mutex::default(),
+            attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
+            generation: Default::default(),
+            workspace_generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-a", "/tmp/cn-b"]
+        }));
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-b"]
+        }));
+        assert_eq!(
+            signals.temporary_folders.lock().unwrap().take(),
+            Some(vec!["/tmp/cn-b".to_owned()])
+        );
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["relative/invalid"]
+        }));
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-c"]
+        }));
+        signals.disconnected();
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
     }
 }

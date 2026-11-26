@@ -23,13 +23,16 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_project_title, active_session, attachment_draft_admissible, bound, can_close_active,
-    can_new, can_switch_tabs, capture, capture_files_mode, close, connected,
-    conversation_stream_clients, draft_changed, file_draft_status, file_wrap, files_tab,
-    has_conversation_stream, input_ready, new_tab, opened, panel_width, poll, poll_file_drafts,
-    prepare_open, rename_tab, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
-    strip, tab_rename_seed, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    StashedTemporary, TemporaryTabInfo, Ui, active_project_title, active_session,
+    active_temporary_workspace, attachment_draft_admissible, bound, can_close_active, can_new,
+    can_switch_tabs, capture, capture_files_mode, clear_temporary_mark, close, close_ordinary,
+    connected, conversation_stream_clients, detach_stopped_temporary, draft_changed,
+    file_draft_status, file_wrap, files_tab, finish_discarded, has_conversation_stream,
+    input_ready, new_tab, opened, panel_width, poll, poll_file_drafts, prepare_open,
+    reconcile_temporary_folders, rename_tab, renew_connection, restore_files_mode, restore_stashed,
+    resume, retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
+    select_relative, stash_for_discard, status, strip, tab_rename_seed, temporary_tab_info,
+    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
@@ -47,6 +50,7 @@ use serde_json::{Map, Value, json};
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 const MAX_TABS: usize = 32;
+pub(crate) const MAX_TABS_LIMIT: usize = MAX_TABS;
 const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
@@ -80,6 +84,7 @@ pub struct Workspace {
     pub server_id: Option<String>,
     pub folder: String,
     pub project_name: Option<String>,
+    pub temporary: bool,
     pub occurrence: u64,
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
@@ -232,6 +237,9 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                         value[key] = Value::String(entry.clone());
                     }
                 }
+                if workspace.temporary {
+                    value["temporary"] = Value::Bool(true);
+                }
                 if !workspace.attachment_drafts.is_empty() {
                     value["attachmentDrafts"] = json!(workspace.attachment_drafts);
                 }
@@ -288,6 +296,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "serverId",
                     "folder",
                     "projectName",
+                    "temporary",
                     "occurrence",
                     "workspaceId",
                     "activeSessionId",
@@ -357,6 +366,10 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     .ok_or(Error::Malformed)?
                     .to_owned(),
                 project_name: decode_project_name(value.get("projectName")),
+                temporary: value
+                    .get("temporary")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 occurrence: value
                     .get("occurrence")
                     .map(|v| integer(Some(v)))

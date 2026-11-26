@@ -90,6 +90,7 @@ fn workspace_state(tabs: usize) -> State {
             let next = Project {
                 id: format!("project-{i}"),
                 path: format!("/repo-{i}"),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(next.clone());
@@ -340,6 +341,7 @@ fn project_name_persists_in_window_snapshot_and_validates_bounds() {
             server_id: None,
             folder: "/repo/alpha".into(),
             project_name: Some("Alpha Custom".into()),
+            temporary: false,
             occurrence: 0,
             workspace_id: Some("w-1".into()),
             active_session_id: None,
@@ -461,6 +463,7 @@ fn open_workspace_guards_local_vs_remote_and_palette_registration() {
         let local_project = Project {
             id: "ws-local".into(),
             path: "/local-repo".into(),
+            temporary: false,
         };
         local_rt.update(|s, _| {
             if let Some(l) = s.screen.launcher_mut() {
@@ -515,6 +518,7 @@ fn palette_and_rename_dismiss_on_project_install_and_auth_renewal() {
         let next = Project {
             id: "project-fresh".into(),
             path: "/fresh".into(),
+            temporary: false,
         };
         if let Some(l) = s.screen.launcher_mut() {
             l.project = Some(next.clone());
@@ -539,6 +543,7 @@ fn palette_and_rename_dismiss_on_project_install_and_auth_renewal() {
         l.project = Some(Project {
             id: "ws-managed".into(),
             path: "/managed".into(),
+            temporary: false,
         });
         s.screen = Screen::Chat { launcher: Some(l) };
         let mut rt = runtime(s);

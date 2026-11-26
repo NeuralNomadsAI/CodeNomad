@@ -18,6 +18,7 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         server_id: None,
         folder: "/fixture".into(),
         project_name: None,
+        temporary: false,
         occurrence: 0,
         workspace_id: None,
         active_session_id: Some("first".into()),

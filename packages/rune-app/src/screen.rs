@@ -85,6 +85,7 @@ impl State {
         self.composer.menu = Default::default();
         self.command_palette.dismiss();
         self.tab_rename.dismiss();
+        self.temporary.dismiss_dialog();
         self.workspace_open.cancel();
         #[cfg(target_arch = "wasm32")]
         self.rotate_composer_input();

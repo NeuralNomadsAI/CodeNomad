@@ -23,7 +23,7 @@ use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::{connect, refresh_projects};
 pub(crate) use placement::place;
 pub(crate) use projects::set_project;
-pub use projects::{choose_project, open, restore};
+pub use projects::{choose_project, open, open_temporary_folder, restore};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use reopen::reopen;
 use rune::{Tx, edit::TextEdit};
@@ -124,6 +124,12 @@ impl Launcher {
     }
     pub fn blocks_prompt(&self) -> bool {
         self.pending && !self.listing
+    }
+    pub(crate) fn is_listing(&self) -> bool {
+        self.listing
+    }
+    pub(crate) fn connection_generation(&self) -> u64 {
+        self.connection_generation
     }
     #[cfg(test)]
     pub(crate) fn workspace_stream_online(&self) -> bool {
@@ -371,6 +377,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let unauthorized = watch.take_authentication_required();
         let disconnected = watch.take_disconnect();
         let (generation, overflow, events) = watch.take_workspace_events();
+        let temporary_folders = watch.take_temporary_folders();
         let previous = l.workspace_stream_generation;
         l.workspace_stream_generation = generation;
         let expired = unauthorized.then(|| l.connection.clone()).flatten();
@@ -380,11 +387,24 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             overflow,
             disconnected,
             events,
+            temporary_folders,
             expired,
         ))
     });
     let mut relayed = false;
-    if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
+    if let Some((
+        previous,
+        generation,
+        overflow,
+        disconnected,
+        events,
+        temporary_folders,
+        expired,
+    )) = stream_update
+    {
+        if let Some(folders) = temporary_folders {
+            relayed |= crate::workspace::reconcile_temporary_folders(s, &folders);
+        }
         let mut stopped = Vec::new();
         let mut other = Vec::new();
         for event in events {
@@ -420,6 +440,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                             opened_after.remove(workspace_id);
                         }
                     }
+                }
+            }
+            for event in &stopped {
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = event
+                {
+                    relayed |= crate::workspace::detach_stopped_temporary(s, workspace_id, tx);
                 }
             }
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
@@ -702,6 +728,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
             }
             if stopped_in_flight {
+                let _ = crate::workspace::detach_stopped_temporary(s, &project.id, tx);
                 crate::workspace::deliver_detached_events(
                     s,
                     &[codenomad_client::transport::WorkspaceEvent::Stopped {
