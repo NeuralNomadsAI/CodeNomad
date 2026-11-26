@@ -34,7 +34,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     proof.errors.push(error?.message ?? String(error))
   }
   const isShutdownError = error =>
-    closing && /Target page, context or browser has been closed|Route is already handled|Browser has been closed/i.test(error?.message ?? '')
+    closing && /Target page, context or browser has been closed|Browser has been closed/i.test(error?.message ?? '')
   const proof = {
     runner: 'web-mobile-drawers',
     emulation: 'Chromium Playwright (isMobile+hasTouch), not Android ADB/Gboard',
@@ -143,7 +143,13 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
         } catch (error) {
           if (!isShutdownError(error)) {
             failRoute(error)
-            await route.abort('failed').catch(() => {})
+            try {
+              await route.abort('failed')
+            } catch (abortError) {
+              if (!isShutdownError(abortError)) {
+                proof.errors.push(`route.abort failed: ${abortError?.message ?? String(abortError)}`)
+              }
+            }
           }
         }
       })()
@@ -151,7 +157,9 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
       handle.finally(() => inflightRoutes.delete(handle))
       return handle
     })
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     const page = await context.newPage()
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     page.setDefaultTimeout(20000)
     page.on('pageerror', error => proof.errors.push(error.message))
     await page.goto(url.href, {waitUntil: 'domcontentloaded', timeout: 60000})
@@ -433,8 +441,10 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     }
     return closeError
   }
+  let probePromise = null
+  let passed = false
   try {
-    const probePromise = runProbe()
+    probePromise = runProbe()
     probePromise.catch(() => {})
     await Promise.race([probePromise, routeFailed])
     await Promise.allSettled([...inflightRoutes])
@@ -444,7 +454,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
     if (closeError) throw closeError
     proof.result = 'pass'
-    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
+    passed = true
   } catch (error) {
     primaryError = error
     cancelled = true
@@ -456,6 +466,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     throw error
   } finally {
     let cleanupError = await closeAllContexts()
+    await probePromise?.catch(() => {})
     try {
       await writeOutput('mobile-drawers-proof.json', JSON.stringify(proof, null, 2))
     } catch (writeError) {
@@ -463,5 +474,8 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
       cleanupError ??= writeError
     }
     if (!primaryError && cleanupError) throw cleanupError
+  }
+  if (passed) {
+    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
   }
 }

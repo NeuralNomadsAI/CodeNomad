@@ -1,6 +1,7 @@
 // Real product DOM bridge + sessionStorage, on a runner-owned loopback fixture only.
 import assert from 'node:assert/strict'
-import {mkdir,readFile,realpath,writeFile} from 'node:fs/promises'
+import {constants as fsConstants} from 'node:fs'
+import {mkdir,open,readFile,realpath,unlink,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
@@ -12,7 +13,7 @@ import {mobileDrawersBrowser} from './web-mobile-drawers.mjs'
 import {keyboardViewport} from './web-keyboard-viewport.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,writeExclusivePrivateFile,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},'mobile-drawers':{type:'boolean'},'keyboard-viewport':{type:'boolean'},outline:{type:'boolean'}}})
@@ -29,13 +30,16 @@ await verifyLoopbackListenerOwner(Number(url.port),targetPid)
 const targetStartId=(await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})).targetStartId
 url.search='?locale=fr'
 const outReal=await createPrivateOutputDir(out,profile)
-const outputAuthorized=true
+const anchorPath=path.join(outReal,'.output-anchor')
+let outputAnchor=null
+let outputAuthorized=false
 const ALLOWED_OUTPUT_NAME=/^(?:summary\.json|mobile-drawers-proof\.json|mobile-drawers-fail-\d+\.aria\.yml)$/
 const writeOutput=async(name,content)=>{
+  assert(outputAnchor&&outputAuthorized,'Output directory anchor is not active')
   assert(typeof name==='string'&&ALLOWED_OUTPUT_NAME.test(name),`Invalid output artifact name: ${name}`)
   const currentOut=await realpath(outReal)
   assert(currentOut===outReal&&inside(profile,currentOut),`Output directory shifted outside fixture profile: ${currentOut}`)
-  await writePrivateFile(path.join(outReal,name),content,profile)
+  await writeExclusivePrivateFile(path.join(outReal,name),content,profile)
 }
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
@@ -72,6 +76,12 @@ const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   return {status:res.status,admitted:res.ok}
 }
 try {
+  // Hold an open handle inside outReal so NTFS cannot rename or replace outReal or any ancestor during writes.
+  outputAnchor=await open(anchorPath,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL|(fsConstants.O_NOFOLLOW??0),0o600)
+  const anchorStat=await outputAnchor.stat()
+  const anchoredOut=await realpath(outReal)
+  assert(anchorStat.isFile()&&anchorStat.nlink===1&&anchoredOut===outReal&&inside(profile,anchoredOut),`Output anchor failed containment verification: ${anchoredOut}`)
+  outputAuthorized=true
   const chromiumEnv=await privateChromiumEnv(profile)
   attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid,{allowSelfSigned:url.protocol==='https:',targetStartId})
   ownedBrowser=await launchOwnedChromium({
@@ -462,6 +472,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}
       try{await context.close()}catch(closeError){
         console.error(`Failed to close restore context: ${closeError.message}`)
+        if(record.result==='pass'){record.result='fail';record.failure=closeError.message}
         specCleanupError??=closeError
       }
       try{await writePrivateFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2),profile)}catch(writeError){
@@ -491,11 +502,21 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
   }
   if(outputAuthorized&&!wroteSummary){
     try{
-      await writeOutput('summary.json',JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+      await writeOutput('summary.json',JSON.stringify({runner:'web-restore',origin:url.origin,...(cleanupError?{cleanupFailure:cleanupError.message}:{}),contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
     }catch(writeError){
       console.error(`Failed to write web-restore summary: ${writeError.message}`)
       cleanupError??=writeError
     }
+  }
+  if(outputAnchor){
+    const handle=outputAnchor
+    outputAnchor=null
+    outputAuthorized=false
+    try{await handle.close()}catch(closeError){
+      console.error(`Failed to close output anchor: ${closeError.message}`)
+      cleanupError??=closeError
+    }
+    await unlink(anchorPath).catch(()=>{})
   }
   if(!primaryError&&cleanupError)throw cleanupError
 }

@@ -45,7 +45,7 @@ export async function createPrivateOutputDir(out,allowedRoot){
     const entries=await readdir(resolved)
     assert.equal(entries.length,0,`Refusing to write into non-empty output directory: ${resolved}`)
   }else{
-    await mkdir(resolved)
+    await mkdir(resolved,{mode:0o700})
   }
   const outReal=await realpath(resolved)
   assert(inside(rootReal,outReal),`Output link escapes fixture root: ${outReal}`)
@@ -77,6 +77,13 @@ export async function writePrivateFile(filePath,content,allowedRoot){
   const handle=await openVerifiedPrivateFile(filePath,allowedRoot)
   try{
     await handle.truncate(0)
+    await handle.writeFile(content)
+  }finally{await handle.close()}
+}
+
+export async function writeExclusivePrivateFile(filePath,content,allowedRoot){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_EXCL)
+  try{
     await handle.writeFile(content)
   }finally{await handle.close()}
 }
