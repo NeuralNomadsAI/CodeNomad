@@ -33,6 +33,7 @@ pub(super) struct DispatchContext {
     pub receipt: Option<crate::sessions::receipts::Prepared>,
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
+    pub account_verified_locs: Vec<super::mutation::VerifiedAccountLocation>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
@@ -57,12 +58,18 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         receipt,
         mutation,
         account_manual,
+        account_verified_locs,
         rules_lock,
     } = ctx;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| {
         Box::pin(async move {
+            for loc in &account_verified_locs {
+                if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
+                    return Err(foreign());
+                }
+            }
             principal.live()?;
             if detached.is_cancelled()
                 || !app.native.current(&endpoint)
@@ -106,9 +113,31 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     Json(json!({"statusCode": 500, "error": "Internal Server Error", "message": "fetch failed"})),
                 ));
             }
-            if !response.status().is_success()
-                && (account_route || (message_list && !is_transport_json_content_type(response.headers())))
-            {
+            if account_route && !response.status().is_success() {
+                let status = response.status();
+                let unauthorized = status == Status::UNAUTHORIZED;
+                drop(response);
+                if status == Status::NOT_MODIFIED {
+                    app.native.invalidate(&endpoint);
+                    return Err(upstream_error());
+                }
+                if unauthorized {
+                    app.native.invalidate(&endpoint);
+                }
+                return Ok((
+                    status,
+                    Json(json!({
+                        "_tag": "OpenCodeContractError",
+                        "error": status.canonical_reason().unwrap_or("Upstream Error"),
+                        "message": format!("OpenCode account request returned HTTP {}", status.as_u16()),
+                        "status": status.as_u16(),
+                        "profile": "modern",
+                        "method": method,
+                    })),
+                )
+                    .into_response());
+            }
+            if message_list && !response.status().is_success() && !is_transport_json_content_type(response.headers()) {
                 let status = response.status();
                 let unauthorized = status == Status::UNAUTHORIZED;
                 drop(response);
@@ -120,18 +149,18 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     app.native.invalidate(&endpoint);
                 }
                 let version = if endpoint.version.is_empty() { "v2" } else { endpoint.version.as_str() };
-                let mut payload = json!({
-                    "_tag": "OpenCodeContractError",
-                    "message": format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16()),
-                    "status": status.as_u16(),
-                    "profile": "modern",
-                    "method": method,
-                    "path": route,
-                });
-                if account_route {
-                    payload["error"] = json!(status.canonical_reason().unwrap_or("Upstream Error"));
-                }
-                return Ok((status, Json(payload)).into_response());
+                return Ok((
+                    status,
+                    Json(json!({
+                        "_tag": "OpenCodeContractError",
+                        "message": format!("OpenCode {version}: {method} {route} returned HTTP {}", status.as_u16()),
+                        "status": status.as_u16(),
+                        "profile": "modern",
+                        "method": method,
+                        "path": route,
+                    })),
+                )
+                    .into_response());
             }
             if message_list && response.status().is_success() {
                 if !app.native.current(&endpoint) {

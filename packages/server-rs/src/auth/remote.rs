@@ -78,7 +78,7 @@ pub(crate) struct DeviceAdmission {
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
 }
-pub(super) fn is_no_store_account_path(path: &str) -> bool {
+pub(crate) fn is_no_store_account_path(path: &str) -> bool {
     let matches_raw = |p: &str| {
         (p.starts_with("/api/workspaces/") && p.contains("/provider-accounts/"))
             || (p.starts_with("/workspaces/")

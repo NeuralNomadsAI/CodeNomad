@@ -170,6 +170,20 @@ async fn fake_opencode(State(state): State<Arc<Mutex<MockUpstream>>>, req: Reque
                 }
                 UpstreamErrorMode::None => {}
             }
+            let parsed_query: Vec<(String, String)> = query
+                .as_deref()
+                .and_then(|q| reqwest::Url::parse(&format!("http://localhost/?{q}")).ok())
+                .map(|u| u.query_pairs().into_owned().collect())
+                .unwrap_or_default();
+            let has_raw_dir = parsed_query.iter().any(|(k, _)| k == "directory");
+            let loc_dirs: Vec<&str> =
+                parsed_query.iter().filter(|(k, _)| k == "location[directory]").map(|(_, v)| v.as_str()).collect();
+            let has_body_loc = body.as_ref().and_then(Value::as_object).is_some_and(|m| m.contains_key("location"));
+            let has_header_dir = s.calls.last().and_then(|c| c.dir_header.as_ref()).is_some();
+            if has_raw_dir || has_body_loc || loc_dirs.len() > 1 || (loc_dirs.is_empty() && !has_header_dir) {
+                return (Status::BAD_REQUEST, Json(json!({"error": "invalid native location carrier"})))
+                    .into_response();
+            }
             if p.ends_with("/connect/oauth") || p.ends_with("/connect/command") {
                 Json(json!({"data": {"attemptID": "att_1", "mode": "code", "url": "https://example.test/auth"}}))
                     .into_response()
@@ -405,7 +419,15 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         assert!(connect_key.query.as_deref().is_some_and(|q| q.contains("location%5Bdirectory%5D=")));
         let connect_ext =
             calls.iter().find(|c| c.method == "POST" && c.path == "/api/integration/azure/connect/external").unwrap();
-        assert!(connect_ext.query.is_none(), "body location suppresses default query location");
+        let parsed =
+            reqwest::Url::parse(&format!("http://localhost/?{}", connect_ext.query.as_deref().unwrap_or(""))).unwrap();
+        let loc_dir = parsed.query_pairs().find(|(k, _)| k == "location[directory]").map(|(_, v)| v.into_owned());
+        assert_eq!(
+            loc_dir.as_deref(),
+            Some(linked_str.as_str()),
+            "body.location must translate to location[directory]"
+        );
+        assert_eq!(connect_ext.body, Some(json!({"methodID": "azure-cli"})), "body.location must be stripped");
     }
 
     // x-codenomad-location alone injects x-opencode-directory and suppresses default query location.
@@ -460,19 +482,30 @@ async fn integration_connect_and_credential_mutations_relay_with_strict_validati
         assert_eq!(loc_dir.as_deref(), Some(linked_str.as_str()));
     }
 
-    // Equivalent canonical query selectors (directory + location[directory] pointing to same path) are accepted.
+    // Equivalent canonical query selectors (directory + location[directory] pointing to same path)
+    // and standalone ?directory= are normalized to a single native location[directory] query param.
     let root_encoded = percent_encoding::utf8_percent_encode(&root_str, percent_encoding::NON_ALPHANUMERIC).to_string();
-    let (status, cc, _) = call_relay(
-        &app,
-        Method::POST,
-        &format!("{base}/integration/openai/connect/key?directory={root_encoded}&location[directory]={root_encoded}"),
-        Some("application/json"),
-        Some(&json!({"key": "sk-eq"}).to_string()),
-        &[],
-    )
-    .await;
-    assert_eq!(status, Status::NO_CONTENT);
-    assert_eq!(cc, "no-store");
+    for query in
+        [format!("directory={root_encoded}&location[directory]={root_encoded}"), format!("directory={root_encoded}")]
+    {
+        let (status, cc, _) = call_relay(
+            &app,
+            Method::POST,
+            &format!("{base}/integration/openai/connect/key?{query}"),
+            Some("application/json"),
+            Some(&json!({"key": "sk-eq"}).to_string()),
+            &[],
+        )
+        .await;
+        assert_eq!(status, Status::NO_CONTENT);
+        assert_eq!(cc, "no-store");
+        let calls = &mock.lock().unwrap().calls;
+        let last = calls.last().unwrap();
+        let parsed =
+            reqwest::Url::parse(&format!("http://localhost/?{}", last.query.as_deref().unwrap_or(""))).unwrap();
+        let pairs: Vec<(String, String)> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(pairs, vec![("location[directory]".into(), root_str.clone())]);
+    }
 
     let before_refusals = mock.lock().unwrap().calls.len();
 

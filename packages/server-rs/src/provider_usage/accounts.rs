@@ -200,22 +200,26 @@ async fn write_policy(
             "providerAccounts",
             json!({ "autoSelect": { &integration_write: enabled } }),
             |_, _| {
-                if aborted_write.load(Ordering::SeqCst) || principal_write.live().is_err() {
-                    rejected = Some(crate::auth::unauthorized());
-                    return Err(crate::settings::Failure::Conflict);
-                }
-                if tokio::time::Instant::now() >= deadline {
-                    rejected = Some(unavailable());
-                    return Err(crate::settings::Failure::Unreadable);
-                }
-                if !crate::sessions::permission_mode::workspace_current(&app_write, &workspace_write) {
-                    rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
-                    return Err(crate::settings::Failure::HostOnly);
-                }
-                if !app_write.native.current(&endpoint_write) {
-                    rejected = Some(unavailable());
-                    return Err(crate::settings::Failure::Unreadable);
-                }
+                let check_authority = |rejected: &mut Option<Error>| -> Result<(), crate::settings::Failure> {
+                    if aborted_write.load(Ordering::SeqCst) || principal_write.live().is_err() {
+                        *rejected = Some(crate::auth::unauthorized());
+                        return Err(crate::settings::Failure::Conflict);
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        *rejected = Some(unavailable());
+                        return Err(crate::settings::Failure::Unreadable);
+                    }
+                    if !crate::sessions::permission_mode::workspace_current(&app_write, &workspace_write) {
+                        *rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
+                        return Err(crate::settings::Failure::HostOnly);
+                    }
+                    if !app_write.native.current(&endpoint_write) {
+                        *rejected = Some(unavailable());
+                        return Err(crate::settings::Failure::Unreadable);
+                    }
+                    Ok(())
+                };
+                check_authority(&mut rejected)?;
                 let dir_target = FsPath::new(&dir_write);
                 let live_ok = crate::worktrees::ownership::resolve_directory(&raw_dir_write).as_deref()
                     == Some(dir_target)
@@ -231,6 +235,7 @@ async fn write_policy(
                     rejected = Some(error(Status::FORBIDDEN, "Location does not belong to workspace"));
                     return Err(crate::settings::Failure::HostOnly);
                 }
+                check_authority(&mut rejected)?;
                 Ok(())
             },
             || {

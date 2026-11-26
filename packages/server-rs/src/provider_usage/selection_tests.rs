@@ -41,7 +41,7 @@ struct MockState {
     needs_auth: HashSet<String>,
     fail_activation: bool,
     activate_status: Status,
-    activate_delay: Duration,
+    activate_release: Option<Arc<tokio::sync::Notify>>,
     activate_received: Option<Arc<std::sync::atomic::AtomicBool>>,
     activate_seen: Option<Arc<tokio::sync::Notify>>,
     fail_native: bool,
@@ -121,19 +121,19 @@ async fn fake_native(State(state): State<Arc<Mutex<MockState>>>, req: Request) -
             .map(|(_, v)| v.into_owned())
     });
     if method == Method::POST && path.starts_with("/api/credential/") && path.ends_with("/activate") {
-        let (delay, received, seen) = {
+        let (release, received, seen) = {
             let mut s = state.lock().unwrap();
             s.calls.push(format!("{method} {path}"));
-            (s.activate_delay, s.activate_received.clone(), s.activate_seen.clone())
+            (s.activate_release.clone(), s.activate_received.clone(), s.activate_seen.clone())
         };
         if let Some(flag) = received {
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        if !delay.is_zero() {
+        if let Some(release) = release {
             if let Some(notify) = seen {
                 notify.notify_one();
             }
-            tokio::time::sleep(delay).await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), release.notified()).await;
         }
         let mut s = state.lock().unwrap();
         if s.fail_native {
@@ -258,7 +258,7 @@ async fn setup_harness_with_timeout(
         needs_auth: HashSet::new(),
         fail_activation: false,
         activate_status: Status::NO_CONTENT,
-        activate_delay: Duration::ZERO,
+        activate_release: None,
         activate_received: None,
         activate_seen: None,
         fail_native: false,
@@ -742,7 +742,7 @@ async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
         "openai",
         "openai",
         vec![codex_entry("one", true, "default"), codex_entry("two", false, "default")],
-        Duration::from_millis(300),
+        Duration::from_millis(800),
     )
     .await;
     crate::settings::patch_owner(
@@ -765,18 +765,20 @@ async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
     let now = crate::shared::now_ms() as f64 + 10.0;
     assert_eq!(h.app.provider_usage.accounts.active_at(&h.endpoint, "openai", now).flatten().as_deref(), Some("two"));
 
-    // Flip quota so "two" is exhausted and "one" is available, then stall POST .../activate past timeout.
+    // Flip quota so "two" is exhausted and "one" is available, then hold POST .../activate until timeout.
     let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let seen = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
     {
         let mut s = h.state.lock().unwrap();
         s.quota_responses.insert("acct-two".into(), (200, codex_usage_payload(100.0, 3_600_000)));
         s.quota_responses.insert("acct-one".into(), (200, codex_usage_payload(10.0, 3_600_000)));
-        s.activate_delay = Duration::from_millis(1200);
+        s.activate_release = Some(Arc::clone(&release));
         s.activate_received = Some(Arc::clone(&received));
         s.activate_seen = Some(Arc::clone(&seen));
     }
     let err = before_send(&h.app, &h.endpoint, &h.principal, "ses_1", |_| async { true }).await.unwrap_err();
+    release.notify_waiters();
     tokio::time::timeout(Duration::from_secs(2), seen.notified())
         .await
         .expect("POST .../activate must have arrived upstream");
@@ -792,6 +794,36 @@ async fn before_send_returns_502_and_clears_active_on_stalled_activation() {
         None,
         "timed-out activation must invalidate cached active account"
     );
+}
+
+#[tokio::test]
+async fn patch_owner_checked_aborts_before_rename_when_check_fails_after_sync() {
+    let h = setup_harness("openai", "openai", vec![codex_entry("one", true, "default")]).await;
+    let mut calls = 0usize;
+    let mut committed = false;
+    let result = crate::settings::patch_owner_checked(
+        &h.app,
+        crate::settings::Kind::Config,
+        "providerAccounts",
+        json!({"autoSelect": {"openai": true}}),
+        |_, _| {
+            calls += 1;
+            if calls == 1 { Ok(()) } else { Err(crate::settings::Failure::Conflict) }
+        },
+        || {
+            committed = true;
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(calls, 2, "check must run both before temp write and after sync_all right before rename");
+    assert!(!committed, "on_committed must not run when pre-rename check fails");
+    assert!(!h._dir.0.join("config.yaml").exists(), "aborted rename must not create config.yaml");
+    let leftovers: Vec<_> = std::fs::read_dir(&h._dir.0)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "aborted rename must clean up its temporary file");
 }
 
 #[tokio::test]

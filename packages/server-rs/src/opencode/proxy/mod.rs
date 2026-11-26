@@ -734,6 +734,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         mutation,
         account_manual,
         account_context_dir,
+        account_verified_locs,
         receipt,
     } = match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
         recheck: &recheck,
@@ -857,6 +858,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         receipt,
         mutation,
         account_manual,
+        account_verified_locs,
         rules_lock,
     }))
     .await

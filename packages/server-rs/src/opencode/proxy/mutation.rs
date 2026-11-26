@@ -24,6 +24,7 @@ pub(super) struct PreparedMutation {
     pub mutation: Option<crate::worktrees::fence::Entered>,
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub account_context_dir: Option<String>,
+    pub account_verified_locs: Vec<VerifiedAccountLocation>,
     pub receipt: Option<crate::sessions::receipts::Prepared>,
 }
 
@@ -208,10 +209,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 account_context_dir = Some(ctx_loc.owned.directory.clone());
             }
             has_body_location = resolved.body.is_some();
-            if let Some(ref translated) = account_body_resolved
-                && let Some(loc) = data.get_mut("location").and_then(Value::as_object_mut)
-            {
-                loc.insert("directory".into(), Value::String(translated.clone()));
+            if has_body_location && !route.starts_with("/api/credential/") {
+                // Native OpenCode integration connect endpoints take `location` in query
+                // (`location[directory]`) or `x-opencode-directory`, never in the JSON body.
+                data.remove("location");
             }
             account_verified_locs.extend(resolved.queries);
             for item in [resolved.context, resolved.body].into_iter().flatten() {
@@ -391,17 +392,17 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if create && !crate::worktrees::owns(app, workspace, directory).await {
             return Err(foreign());
         }
-        for loc in &account_verified_locs {
-            if !verify_account_location_live(app, workspace, loc).await {
-                return Err(foreign());
-            }
-        }
         Some(permit)
     } else {
         None
     };
     let account_manual =
         if account_mutation { Some(app.provider_usage.accounts.manual_fence(endpoint).await) } else { None };
+    for loc in &account_verified_locs {
+        if !verify_account_location_live(app, workspace, loc).await {
+            return Err(foreign());
+        }
+    }
     if send_input {
         let session = session.ok_or_else(upstream_error)?;
         let mut url = endpoint.url.clone();
@@ -452,17 +453,21 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
     if let Some(ref translated) = account_query_resolved {
-        let pairs: Vec<(String, String)> = target
-            .query_pairs()
-            .into_owned()
-            .map(|(k, v)| {
-                if matches!(k.as_str(), "directory" | "location[directory]") { (k, translated.clone()) } else { (k, v) }
-            })
-            .collect();
+        let mut emitted_location = false;
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for (k, v) in target.query_pairs().into_owned() {
+            if matches!(k.as_str(), "directory" | "location[directory]") {
+                if !emitted_location {
+                    emitted_location = true;
+                    pairs.push(("location[directory]".into(), translated.clone()));
+                }
+            } else {
+                pairs.push((k, v));
+            }
+        }
         target.query_pairs_mut().clear().extend_pairs(pairs);
     }
     if account_mutation
-        && head.method == Method::DELETE
         && !route.starts_with("/api/credential/")
         && !explicit
         && account_context_dir.is_none()
@@ -551,11 +556,12 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         mutation,
         account_manual,
         account_context_dir,
+        account_verified_locs,
         receipt,
     }))
 }
 
-struct VerifiedAccountLocation {
+pub(super) struct VerifiedAccountLocation {
     raw: String,
     owned: crate::worktrees::ownership::Owned,
     checkout_handle: same_file::Handle,
@@ -584,7 +590,11 @@ async fn capture_account_location(
     Ok(VerifiedAccountLocation { raw, owned, checkout_handle, anchor, anchor_handle })
 }
 
-async fn verify_account_location_live(app: &Shared, workspace: &Workspace, loc: &VerifiedAccountLocation) -> bool {
+pub(super) async fn verify_account_location_live(
+    app: &Shared,
+    workspace: &Workspace,
+    loc: &VerifiedAccountLocation,
+) -> bool {
     if !crate::sessions::permission_mode::workspace_current(app, workspace) {
         return false;
     }
