@@ -1,3 +1,4 @@
+use super::banners::arm_rail_collision;
 use super::*;
 
 pub(super) fn check(
@@ -19,6 +20,7 @@ pub(super) fn check(
     let hist_rect = rt.presented("history").expect("history presented").0;
     let rail_before_same_frame = owner(&mut rt.state).scroll.get().at.offset[1];
     let hist_before_same_frame = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
@@ -90,19 +92,21 @@ pub(super) fn check(
         .presented("history-search")
         .expect("history-search presented")
         .0;
-    let sx = search_rect[0] + search_rect[2] / 2.0;
-    let sy = search_rect[1] + search_rect[3] / 2.0;
+    let search_overlap_x0 = search_rect[0].max(hist_rect[0]);
+    let search_overlap_x1 = (search_rect[0] + search_rect[2]).min(hist_rect[0] + hist_rect[2]);
+    let search_overlap_y0 = search_rect[1].max(hist_rect[1]);
+    let search_overlap_y1 = (search_rect[1] + search_rect[3]).min(hist_rect[1] + hist_rect[3]);
     assert!(
-        sx >= hist_rect[0]
-            && sx <= hist_rect[0] + hist_rect[2]
-            && sy >= hist_rect[1]
-            && sy <= hist_rect[1] + hist_rect[3],
-        "precondition: search overlay center ({sx}, {sy}) must overlap history {hist_rect:?}"
+        search_overlap_x1 - search_overlap_x0 > 4.0 && search_overlap_y1 - search_overlap_y0 > 4.0,
+        "precondition: search overlay {search_rect:?} must overlap history {hist_rect:?}"
     );
+    let sx = (search_overlap_x0 + search_overlap_x1) / 2.0;
+    let sy = (search_overlap_y0 + search_overlap_y1) / 2.0;
     let hist_before_overlay = owner(&mut rt.state).scroll.get().viewport.offset[1];
     let rail_hit_y = (search_rect[1] + search_rect[3] + 12.0)
         .max(rail_rect[1] + 8.0)
         .min(rail_rect[1] + rail_rect[3] - 8.0);
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(rail_rect[0] + rail_rect[2] / 2.0, rail_hit_y, 0.0, 40.0);
     rt.frame(0.016);
     assert!(
@@ -185,6 +189,7 @@ pub(super) fn check(
             || uncovered_rail_y > dragged_search[1] + dragged_search[3] + 1.0,
         "precondition: uncovered_rail_y={uncovered_rail_y} must lie outside dragged_search={dragged_search:?} inside rail={rail_rect:?}"
     );
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         uncovered_rail_y,
@@ -351,16 +356,31 @@ pub(super) fn check(
         "wheel drifting from owned rail burst over timeline-peek must scroll timeline-peek by 55px without scrolling transcript or clearing browse: peek={peek_before}->{peek_after}, hist={hist_before_peek}->{hist_after_peek}"
     );
     // In the same owned burst, moving off timeline-peek onto uncovered history MUST scroll history.
-    let uncovered_hy = if peek_rect[1] - hist_rect[1] >= 24.0 {
-        hist_rect[1] + 12.0
+    let (uncovered_hx, uncovered_hy) = if peek_rect[1] - hist_rect[1] >= 24.0 {
+        (hist_rect[0] + hist_rect[2] / 2.0, hist_rect[1] + 12.0)
+    } else if (hist_rect[1] + hist_rect[3]) - (peek_rect[1] + peek_rect[3]) >= 4.0 {
+        (
+            hist_rect[0] + hist_rect[2] / 2.0,
+            (peek_rect[1] + peek_rect[3] + hist_rect[1] + hist_rect[3]) / 2.0,
+        )
     } else {
-        (peek_rect[1] + peek_rect[3] + 16.0).min(hist_rect[1] + hist_rect[3] - 8.0)
+        (
+            hist_rect[0] + (peek_rect[0] - hist_rect[0]) / 2.0,
+            hist_rect[1] + hist_rect[3] / 2.0,
+        )
     };
     assert!(
-        uncovered_hy < peek_rect[1] - 1.0 || uncovered_hy > peek_rect[1] + peek_rect[3] + 1.0,
-        "precondition: uncovered history y={uncovered_hy} must lie outside timeline-peek={peek_rect:?}"
+        uncovered_hx >= hist_rect[0] + 1.0
+            && uncovered_hx <= hist_rect[0] + hist_rect[2] - 1.0
+            && uncovered_hy >= hist_rect[1] + 1.0
+            && uncovered_hy <= hist_rect[1] + hist_rect[3] - 1.0
+            && (uncovered_hx < peek_rect[0] - 1.0
+                || uncovered_hx > peek_rect[0] + peek_rect[2] + 1.0
+                || uncovered_hy < peek_rect[1] - 1.0
+                || uncovered_hy > peek_rect[1] + peek_rect[3] + 1.0),
+        "precondition: uncovered history ({uncovered_hx}, {uncovered_hy}) must lie inside history={hist_rect:?} and outside timeline-peek={peek_rect:?}"
     );
-    rt.wheel_xy(hist_rect[0] + hist_rect[2] / 2.0, uncovered_hy, 0.0, 35.0);
+    rt.wheel_xy(uncovered_hx, uncovered_hy, 0.0, 35.0);
     rt.frame(0.016);
     let hist_after_off_peek = owner(&mut rt.state).scroll.get().viewport.offset[1];
     assert!(

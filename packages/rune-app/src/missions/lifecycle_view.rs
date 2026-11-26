@@ -24,16 +24,16 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
     );
     let mut row = layout::action_row();
     let button = |label, disabled: bool, gesture: fn() -> Gesture, key| {
-        let origin = source.clone();
-        layout::button_tx(label, false, move |s: &mut State, tx| {
-            if !disabled {
+        if disabled {
+            layout::focusable_disabled_button(label).key(key)
+        } else {
+            let origin = source.clone();
+            layout::button_tx(label, false, move |s: &mut State, tx| {
                 act(s, &origin, gesture());
                 tx.instant();
-            }
-        })
-        .disabled(disabled)
-        .focusable(true)
-        .key(key)
+            })
+            .key(key)
+        }
     };
     if owner.unresolved(&source, header) || owner.busy(&source) {
         row = row.child(button(
@@ -63,18 +63,16 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
             }
             _ => (LifecycleAction::Pause, true, "missionsPanel.action.pause"),
         };
-        let origin = source.clone();
-        row = row.child(
+        row = row.child(if disabled {
+            layout::focusable_disabled_button(t(label)).key("mission-control-primary")
+        } else {
+            let origin = source.clone();
             layout::button_tx(t(label), false, move |s, tx| {
-                if !disabled {
-                    act(s, &origin, Gesture::New(action, graceful, revision));
-                    tx.instant();
-                }
+                act(s, &origin, Gesture::New(action, graceful, revision));
+                tx.instant();
             })
-            .disabled(disabled)
-            .focusable(true)
-            .key("mission-control-primary"),
-        );
+            .key("mission-control-primary")
+        });
         if pausing {
             let origin = source.clone();
             row = row.child(

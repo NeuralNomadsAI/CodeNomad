@@ -37,7 +37,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     changed |= poll_cached(s, &mut ui, Some(now), tx);
     changed |= crate::timeline::sync_outline_mutation(s);
-    changed |= panel_state::poll_missions(&mut ui, s, tx);
+    let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+    changed |= missions_changed;
     ui.stage();
     let previous_error = (
         ui.persistence.read_error,
@@ -52,6 +53,17 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.partial,
     );
     s.workspace = Some(ui);
+    if !mission_auth_expired.is_empty() {
+        #[cfg(not(target_arch = "wasm32"))]
+        for expired in mission_auth_expired {
+            changed |= crate::settings::authentication_required(s, &expired);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = mission_auth_expired;
+            crate::platform::pairing::observe(s);
+        }
+    }
     if became_ready {
         resume(s, tx);
     }

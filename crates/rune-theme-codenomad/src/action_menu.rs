@@ -244,6 +244,7 @@ pub fn view<S: 'static>(
     let first = items.first().map(|item| item.key.clone());
     let last = items.last().map(|item| item.key.clone());
     let action = menu.clone();
+    let pressed_first = first.clone();
     let control = trigger
         .key(trigger_key.clone())
         .label(&menu.label)
@@ -255,6 +256,11 @@ pub fn view<S: 'static>(
                 close(s, at, &action, None, None, tx);
             } else {
                 open(s, at, &action, tx);
+                if tx.by_keys() || tx.press_point().is_none() {
+                    if let Some(first) = &pressed_first {
+                        tx.focus(format!("{}:item:{first}", action.key), true);
+                    }
+                }
             }
         })
         .on_key(move |s, event, tx| {
@@ -306,7 +312,7 @@ pub fn view<S: 'static>(
             .radius(metric("borderRadius"))
             .role("menuitem")
             .label(&item.label)
-            .disabled(item.disabled)
+            .aria_disabled(item.disabled)
             .focusable(true)
             .no_focus_ring()
             .focus_highlight(t.color("menu-item-hover-bg"))
@@ -319,10 +325,7 @@ pub fn view<S: 'static>(
             row = row.description(description).help(description);
         }
         if item.disabled {
-            // The web mirror only projects press-shaped menu items; keep this row inert.
-            return row
-                .on_press(|_: &mut S| {})
-                .opacity(t.metric("actionMenuDisabled", "opacity").px());
+            return row.opacity(t.metric("actionMenuDisabled", "opacity").px());
         }
         let hovered = item.clone();
         let owner = menu.key.clone();
@@ -361,6 +364,8 @@ pub fn view<S: 'static>(
         .role("menu")
         .label(&menu.label)
         .focus_group()
+        .focusable(true)
+        .tab_index(-1)
         .focus_return(&trigger_key)
         .modal_tx(true, move |s, tx| close(s, at, &dismiss, None, None, tx))
         .min_w(t.metric("actionMenu", "minWidth").px())

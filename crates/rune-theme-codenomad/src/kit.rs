@@ -1,8 +1,11 @@
 //! Map shared CodeNomad surface roles onto rune-kit's generic semantic schema.
 //! Component geometry, glyphs and spring-curve parity remain explicit qualification gaps.
-use crate::{MotionRole, TextRole, document, tokens};
+use crate::{Length, MotionRole, Space, TextRole, document, tokens};
 use rune::{Color, Spring};
-use rune_kit::{Elevation, Kit, Motion, Palette, Radius, StateColors, Type, css, glyphs};
+use rune_kit::{
+    ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, Kit, Metrics, Motion, Palette,
+    Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css, glyphs,
+};
 use std::sync::OnceLock;
 
 pub fn kit(dark: bool) -> &'static Kit {
@@ -140,19 +143,110 @@ fn build(dark: bool) -> Kit {
         text_xsmall_medium: t.text(TextRole::Button),
         mono: t.text(TextRole::Mono),
     };
+    let radius = Radius {
+        xs: t.number("radius-xs").px(),
+        sm: t.number("radius-sm").px(),
+        md: t.number("radius-md").px(),
+        lg: t.number("radius-lg").px(),
+        xl: t.number("radius-xl").px(),
+    };
+    let button_radius = t.number("button-radius").px();
+    let pad_sm = t.space(Space::Sm).px();
+    let pad_md = t.length(Length::ButtonPadX).px();
+    let pad_lg = t.space(Space::Lg).px();
+    let icon_sm = t.space(Space::Md).px();
+    let icon_md = t.length(Length::Icon).px();
+    let icon_lg = t.space(Space::Lg).px();
+    let switch_inset = t.space(Space::Xxs).px();
+    let switch = |track_width, track_height| {
+        let knob = track_height - 2.0 * switch_inset;
+        SwitchMetrics {
+            track_width,
+            track_height,
+            knob_width: knob,
+            knob_height: knob,
+            inset: switch_inset,
+        }
+    };
+    let metrics = Metrics {
+        button: Some(BySize {
+            mini: ButtonMetrics {
+                height: t.length(Length::ControlSmall).px() - t.space(Space::Xs).px(),
+                padding_x: pad_sm,
+                radius: button_radius,
+                icon: icon_sm,
+            },
+            small: ButtonMetrics {
+                height: t.length(Length::ControlSmall).px(),
+                padding_x: pad_sm,
+                radius: button_radius,
+                icon: icon_md,
+            },
+            regular: ButtonMetrics {
+                height: t.length(Length::Control).px(),
+                padding_x: pad_md,
+                radius: button_radius,
+                icon: icon_md,
+            },
+            large: ButtonMetrics {
+                height: t.length(Length::TouchCompact).px(),
+                padding_x: pad_md,
+                radius: button_radius,
+                icon: icon_lg,
+            },
+            extra_large: ButtonMetrics {
+                height: t.length(Length::TouchTarget).px(),
+                padding_x: pad_lg,
+                radius: button_radius,
+                icon: icon_lg,
+            },
+        }),
+        // Circular thumb (knob_width == knob_height) inside a capsule track, matching switches.css.
+        switch: Some(BySize {
+            mini: switch(t.length(Length::Control).px(), t.space(Space::Lg).px()),
+            small: switch(
+                t.length(Length::TouchCompact).px(),
+                t.length(Length::ControlSmall).px() - t.space(Space::Xs).px(),
+            ),
+            regular: switch(
+                t.length(Length::Selector).px(),
+                t.length(Length::ControlSmall).px(),
+            ),
+            large: switch(
+                t.length(Length::TouchTarget).px(),
+                t.length(Length::Control).px(),
+            ),
+            extra_large: switch(
+                t.length(Length::TouchTarget).px() + t.space(Space::Sm).px(),
+                t.length(Length::TouchCompact).px(),
+            ),
+        }),
+        // Keep the 1px inset focus ring so full-width fields inside scroll clips stay unclipped.
+        field: Some(FieldMetrics {
+            height: t.length(Length::Control).px(),
+            large_height: t.length(Length::TouchCompact).px(),
+            padding_x: pad_sm,
+            radius: radius.md,
+            focus_width: 1.0,
+            focus_offset: -1.0,
+        }),
+        text_area: Some(TextAreaMetrics {
+            style: t.text(TextRole::Body),
+            padding: pad_sm,
+        }),
+        checkbox: Some(CheckboxColors {
+            fill: c("accent-primary"),
+            border: c("accent-primary"),
+            mark: c("text-on-accent"),
+        }),
+    };
     Kit {
         dark,
         c: palette,
         elevation,
         glyph: glyphs::DEFAULT,
         ty,
-        radius: Radius {
-            xs: t.number("radius-xs").px(),
-            sm: t.number("radius-sm").px(),
-            md: t.number("radius-md").px(),
-            lg: t.number("radius-lg").px(),
-            xl: t.number("radius-xl").px(),
-        },
+        radius,
         // Source durations are exact; CSS easing and spring curves require separate qualification.
         motion: Motion {
             control: Spring::new(t.duration_seconds(MotionRole::Control), 0.0),
@@ -163,5 +257,143 @@ fn build(dark: bool) -> Kit {
         ring: None,
         invalid_text: false,
         forced: None,
+        metrics,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune::{Cx, El, Env, Runtime, TextEdit, col};
+    use rune_kit::{Button, Checkbox, ControlSize, Switch, TextInput};
+
+    #[test]
+    fn kit_metrics_follow_generated_tokens_and_drive_rendered_controls() {
+        for dark in [false, true] {
+            let k = kit(dark);
+            let t = tokens(dark);
+            let buttons = k.metrics.button.expect("button metrics");
+            assert_eq!(buttons.small.height, t.length(Length::ControlSmall).px());
+            assert_eq!(buttons.regular.height, t.length(Length::Control).px());
+            assert_eq!(buttons.large.height, t.length(Length::TouchCompact).px());
+            assert_eq!(
+                buttons.extra_large.height,
+                t.length(Length::TouchTarget).px()
+            );
+            assert_eq!(buttons.regular.padding_x, t.length(Length::ButtonPadX).px());
+            assert_eq!(buttons.regular.radius, 0.0);
+
+            let switches = k.metrics.switch.expect("switch metrics");
+            for size in [
+                ControlSize::Mini,
+                ControlSize::Small,
+                ControlSize::Regular,
+                ControlSize::Large,
+                ControlSize::ExtraLarge,
+            ] {
+                let s = switches.get(size);
+                assert_eq!(s.knob_width, s.knob_height, "circular switch thumb");
+                assert_eq!(s.knob_height, s.track_height - 2.0 * s.inset);
+                assert!(s.track_width > s.knob_width + 2.0 * s.inset);
+            }
+
+            let field = k.metrics.field.expect("field metrics");
+            assert_eq!(field.height, t.length(Length::Control).px());
+            assert_eq!(field.large_height, t.length(Length::TouchCompact).px());
+            assert_eq!(field.padding_x, t.space(Space::Sm).px());
+            assert_eq!(field.radius, 0.0);
+
+            let area = k.metrics.text_area.expect("text_area metrics");
+            assert_eq!(area.style, t.text(TextRole::Body));
+            assert_eq!(area.padding, t.space(Space::Sm).px());
+
+            let checkbox = k.metrics.checkbox.expect("checkbox colours");
+            assert_eq!(checkbox.fill, t.color("accent-primary"));
+            assert_eq!(checkbox.border, t.color("accent-primary"));
+            assert_eq!(checkbox.mark, t.color("text-on-accent"));
+
+            let code_area = crate::document_reader::editor::metrics(dark);
+            assert_eq!(code_area.style, crate::document_reader::source_font(dark));
+            assert_eq!(code_area.padding, t.space(Space::Sm).px());
+
+            fn view(edit: &TextEdit, cx: &mut Cx<TextEdit>) -> El {
+                crate::layout::render(cx, |cx| {
+                    let dark = cx.system_dark();
+                    let k = kit(dark);
+                    col()
+                        .w_full()
+                        .h_full()
+                        .child(Button::new("Default").build(k).key("btn-default"))
+                        .child(
+                            Button::new("Small")
+                                .control_size(ControlSize::Small)
+                                .build(k)
+                                .key("btn-small"),
+                        )
+                        .child(
+                            Button::new("Regular")
+                                .control_size(ControlSize::Regular)
+                                .build(k)
+                                .key("btn-regular"),
+                        )
+                        .child(
+                            TextInput::new(edit)
+                                .label("Field")
+                                .build(field_kit(dark))
+                                .key("field-box"),
+                        )
+                        .child(
+                            TextInput::new(edit)
+                                .label("Large field")
+                                .large()
+                                .build(field_kit(dark))
+                                .key("field-large"),
+                        )
+                        .child(Switch::new(true).label("Toggle").build(k).key("switch-box"))
+                        .child(
+                            Checkbox::new(true)
+                                .label("Checked")
+                                .build(k)
+                                .key("check-box"),
+                        )
+                })
+            }
+
+            let mut rt = Runtime::new(
+                TextEdit::new("hello"),
+                view,
+                (360.0, 320.0),
+                Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let rect = |key| {
+                elements
+                    .iter()
+                    .find(|node| node.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("missing {key}"))
+                    .rect
+            };
+            assert_eq!(rect("btn-default")[3], buttons.regular.height);
+            assert_eq!(rect("btn-small")[3], buttons.small.height);
+            assert_eq!(rect("btn-regular")[3], buttons.regular.height);
+            let field_floor = k.ty.ui_compact.line_px() + 12.0;
+            assert_eq!(rect("field-box")[3], field.height.max(field_floor));
+            assert_eq!(rect("field-large")[3], field.large_height.max(field_floor));
+            assert!(
+                elements.iter().any(|node| {
+                    node.path.contains("/check-box/") && node.fill == checkbox.fill
+                }),
+                "checked checkbox must paint accent-primary fill"
+            );
+            assert!(
+                elements.iter().any(|node| {
+                    node.path.contains("/switch-box/")
+                        && (node.rect[2] - switches.mini.track_width).abs() < 0.01
+                        && (node.rect[3] - switches.mini.track_height).abs() < 0.01
+                }),
+                "compact switch must render theme-owned track dimensions"
+            );
+        }
     }
 }

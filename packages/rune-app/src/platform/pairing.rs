@@ -116,10 +116,13 @@ pub fn view(s: &State) -> El {
         .modal(false, |_: &mut State| {})
         .child(text(t("authRecovery.pairingTitle")).text_role(TextRole::Title))
         .child(text(t("rune.pairing_guide")).role("alert"))
-        .child(crate::components::button_tx(
-            "pairing-check",
-            t("authRecovery.check"),
-            s.pairing.result.is_some(),
-            crate::retry_connection,
-        ))
+        .child(
+            crate::components::button_tx(
+                "pairing-check",
+                t("authRecovery.check"),
+                s.pairing.result.is_some(),
+                crate::retry_connection,
+            )
+            .autofocus(),
+        )
 }

@@ -643,6 +643,55 @@ fn task_duration_runs_for_foreground_and_follows_background_reports() {
 }
 
 #[test]
+fn clipped_running_tool_inside_observe_clip_does_not_spin_wakes() {
+    let start = unix_millis().saturating_sub(5_000);
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"clipped","content":[
+            {"type":"tool","id":"call","name":"bash","time":{"ran":start},
+             "state":{"status":"running","input":{"command":"sleep 10"}}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Streaming;
+    state.messages = vec![row.into()];
+    state
+        .tool_diff_preferences
+        .history_bounds
+        .set([0.0, 500.0, 960.0, 200.0]);
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                crate::chat::tools::duration::observe_clip(
+                    s,
+                    rune::col().children(s.messages[0].parts.iter().filter_map(|part| {
+                        let crate::content::Part::Tool(tool) = part else {
+                            return None;
+                        };
+                        Some(super::view(s, "clipped", tool))
+                    })),
+                )
+            })
+        },
+        (960.0, 600.0),
+        Env::new(false, 1.0),
+    );
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    // Trigger an observe_clip relayout while the running tool is mounted but clipped out of bounds.
+    rt.set_viewport((900.0, 600.0), 1.0);
+    for _ in 0..10 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.wake_deadline().is_none(),
+        "clipped running tool inside observe_clip must not spin wake_after(ZERO): {:?}",
+        rt.wake_deadline()
+    );
+}
+
+#[test]
 fn skill_search_hit_inside_mermaid_fence_reveals_source_with_match_anchor() {
     let raw_skill = "```mermaid\nflowchart LR\n  %% MERMAID_SEARCH_NEEDLE\n  A --> B\n```";
     let row = crate::history::decode_message(&json!({

@@ -82,7 +82,16 @@ fn the_foreign_notice_has_the_reference_shape() {
 /// A command that starts a grandchild, then waits: once the probe expires, neither remains.
 #[tokio::test]
 async fn an_expired_probe_ends_its_whole_process_family() {
+    struct CleanupDir(Option<std::path::PathBuf>);
+    impl Drop for CleanupDir {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.take() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
     let dir = crate::shared::test_dir("probe-family");
+    let mut cleanup = CleanupDir(Some(dir.clone()));
     #[cfg(windows)]
     let (command, members) = {
         // Copies of ping: a running image cannot be opened for writing, a stopped one can.
@@ -107,21 +116,44 @@ async fn an_expired_probe_ends_its_whole_process_family() {
     #[cfg(unix)]
     let alive = |member: &std::path::Path| {
         let pid: i32 = std::fs::read_to_string(member).ok().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+        if pid <= 0 {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            && stat.rfind(')').and_then(|i| stat[i + 1..].split_whitespace().next()) == Some("Z")
+        {
+            return false;
+        }
         // SAFETY: signal 0 only checks that the process exists.
-        pid > 0 && unsafe { libc::kill(pid, 0) } == 0
+        unsafe { libc::kill(pid, 0) == 0 }
     };
-    let during = async {
-        tokio::time::sleep(Duration::from_millis(2500)).await;
-        members.iter().map(|m| alive(m)).collect::<Vec<_>>()
+    let (expire_tx, expire_rx) = tokio::sync::oneshot::channel::<()>();
+    let wait_ready = async {
+        let start_deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let states: Vec<bool> = members.iter().map(|m| alive(m)).collect();
+            if states.iter().all(|&up| up) || std::time::Instant::now() >= start_deadline {
+                let _ = expire_tx.send(());
+                return states;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     };
     let command = command.to_string_lossy().into_owned();
-    let (probed, running) = tokio::join!(probe_version(&command, Duration::from_secs(4)), during);
+    let (probed, running) = tokio::join!(
+        probe_version_until(&command, || async {
+            let _ = expire_rx.await;
+        }),
+        wait_ready,
+    );
     assert!(matches!(probed, Probed::Unknown));
     assert_eq!(running, [true, true], "both members ran during the probe");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while members.iter().any(|m| alive(m)) {
         assert!(std::time::Instant::now() < deadline, "a member of the expired probe still runs");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    cleanup.0 = None;
     std::fs::remove_dir_all(dir).unwrap();
 }

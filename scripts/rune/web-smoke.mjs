@@ -658,8 +658,8 @@ try {
             await page.mouse.click(reasoningBox.x+reasoningBox.width/2,reasoningBox.y+reasoningBox.height/2)
             const group=page.getByText('Second fixture reasoning',{exact:true})
             await group.waitFor()
-            assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
             await reasoning.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
+            assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
             await page.mouse.move(box.x-40,box.y+25)
             await reasoning.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
@@ -674,11 +674,35 @@ try {
             await page.setViewportSize({width:width-40,height})
             await focusedPreview.waitFor({state:'detached'})
             await page.setViewportSize({width,height})
+            await page.waitForFunction(({w,h,right})=>{
+              const c=document.querySelector('canvas')?.getBoundingClientRect()
+              const nav=document.querySelector('[data-rune-a11y] nav')?.getBoundingClientRect()
+              return c&&nav&&Math.abs(c.width-w)<=1&&Math.abs(c.height-h)<=1&&Math.abs(nav.right-right)<=2
+            },{w:width,h:height,right:box.x+box.width})
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'Keyboard preview and resize stay local')
             for(const passage of ['Native compacted passage','Native conversation context']){
-              await rail.getByRole('button',{name:passage,exact:true}).click({force:true})
+              const marker=rail.getByRole('button',{name:passage,exact:true})
+              await marker.click({force:true})
+              await marker.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
               const content=page.getByRole('paragraph').filter({hasText:passage})
               await content.waitFor()
+              await page.evaluate(({text,top})=>new Promise((resolve,reject)=>{
+                const until=performance.now()+5000
+                let prev=null,frames=0
+                const step=now=>{
+                  const el=[...document.querySelectorAll('p,[role="paragraph"]')].find(node=>node.textContent?.includes(text))
+                  const y=el?el.getBoundingClientRect().top:null
+                  if(y!==null&&Math.abs(y-top)<65&&prev!==null&&Math.abs(y-prev)<0.5){
+                    if(++frames>=2)return resolve()
+                  }else{
+                    frames=0
+                  }
+                  prev=y
+                  if(now>=until)return reject(Error(`Native context did not settle: ${text}`))
+                  requestAnimationFrame(step)
+                }
+                requestAnimationFrame(step)
+              }),{text:passage,top:box.y})
               assert(Math.abs((await content.boundingBox()).y-box.y)<65,'Native context must land at its dedicated block')
             }
             await press(messages['rune.latest'])

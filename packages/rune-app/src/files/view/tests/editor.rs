@@ -35,8 +35,13 @@ fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
                 .split('\n')
                 .position(|line| line == "2")
                 .unwrap();
-            (row, gutter.rect[1] + 17.5 * row as f32 - viewport.rect[1])
+            let metrics = rune_theme_codenomad::document_reader::editor::metrics(false);
+            (
+                row,
+                gutter.rect[1] + metrics.style.line_px() * row as f32 - viewport.rect[1],
+            )
         };
+        let metrics = rune_theme_codenomad::document_reader::editor::metrics(false);
         let (wide, _) = top_line(&rt);
         assert!(wide > 1);
         rt.update(|s, tx| {
@@ -44,7 +49,7 @@ fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
             tx.scroll_to_instant(
                 format!("file-source-scroll-{scope}"),
                 0.0,
-                10.0 + 17.5 * wide as f32,
+                metrics.padding + 2.0 + metrics.style.line_px() * wide as f32,
             );
         });
         rt.frame(0.02);
@@ -142,12 +147,15 @@ fn wrapped_reader_keeps_exact_segment_inside_long_line_across_resize_reopen_and_
             (left, right)
         };
         // Scroll well inside the wrapped second line (row 5 inside line 2, plus 1 row for "header").
+        let editor_metrics = rune_theme_codenomad::document_reader::editor::metrics(false);
+        let line_height = editor_metrics.style.line_px();
+        let inset = editor_metrics.padding;
         rt.update(|s, tx| {
             let scope = s.files.as_ref().unwrap().document.scope();
             tx.scroll_to_instant(
                 format!("file-source-scroll-{scope}"),
                 0.0,
-                8.0 + 17.5 * 6.0 + 2.0,
+                inset + line_height * 6.0 + 2.0,
             );
         });
         rt.frame(0.02);
@@ -202,7 +210,7 @@ fn wrapped_reader_keeps_exact_segment_inside_long_line_across_resize_reopen_and_
             .source_viewport()
             .captured_scroll()[1];
         assert!(
-            ((narrow_scroll - 8.0) % 17.5 - 2.0).abs() <= 0.6,
+            ((narrow_scroll - inset) % line_height - 2.0).abs() <= 0.6,
             "sub-line offset lost on resize: {narrow_scroll}"
         );
         let (narrow_left, narrow_right) = top_row_span(&mut rt);
@@ -265,7 +273,7 @@ fn wrapped_reader_keeps_exact_segment_inside_long_line_across_resize_reopen_and_
             .source_viewport()
             .captured_scroll()[1];
         assert!(
-            (unwrapped_y - (8.0 + 17.5 + 2.0)).abs() <= 1.0,
+            (unwrapped_y - (inset + line_height + 2.0)).abs() <= 1.0,
             "unwrapped toggle missed line 2: {unwrapped_y}"
         );
         click(&mut rt, "file-wrap");

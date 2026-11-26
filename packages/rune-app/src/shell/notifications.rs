@@ -290,6 +290,9 @@ fn activate_notice(s: &mut State, target: Target) {
 
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
+    if focused {
+        codenomad_client::stream::probe_stale();
+    }
 }
 
 fn deliver(s: &mut State, notice: Notice) {
@@ -376,8 +379,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         else {
             continue;
         };
-        let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
-        drop(presented);
+        let (_, clicked, _) = s.notifications.routes.remove(index).unwrap();
         if ticket != s.notifications.navigation_ticket() {
             continue;
         }

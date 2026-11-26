@@ -89,18 +89,52 @@ struct Identity {
     server: String,
     capabilities: Vec<String>,
 }
+#[cfg(not(target_arch = "wasm32"))]
+struct OriginCookieJar {
+    origin: (String, Option<String>, Option<u16>),
+    inner: reqwest::cookie::Jar,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl OriginCookieJar {
+    fn new(url: &reqwest::Url) -> Self {
+        Self {
+            origin: (
+                url.scheme().to_owned(),
+                url.host_str().map(str::to_owned),
+                url.port_or_known_default(),
+            ),
+            inner: reqwest::cookie::Jar::default(),
+        }
+    }
+
+    fn matches(&self, url: &reqwest::Url) -> bool {
+        url.scheme() == self.origin.0
+            && url.host_str() == self.origin.1.as_deref()
+            && url.port_or_known_default() == self.origin.2
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl reqwest::cookie::CookieStore for OriginCookieJar {
+    fn set_cookies(
+        &self,
+        cookie_headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>,
+        url: &reqwest::Url,
+    ) {
+        if self.matches(url) {
+            self.inner.set_cookies(cookie_headers, url);
+        }
+    }
+
+    fn cookies(&self, url: &reqwest::Url) -> Option<reqwest::header::HeaderValue> {
+        self.matches(url).then(|| self.inner.cookies(url)).flatten()
+    }
+}
+
 impl Http {
-    pub fn new() -> Result<Self> {
-        #[cfg(not(target_arch = "wasm32"))]
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .cookie_store(true)
-            .timeout(REQUEST_TIMEOUT)
-            .build()?;
-        #[cfg(target_arch = "wasm32")]
-        let client = Client::new();
-        Ok(Self(
+    fn from_client(client: Client) -> Self {
+        Self(
             client,
             Arc::new(OnceLock::new()),
             Arc::default(),
@@ -116,7 +150,42 @@ impl Http {
                 stream_drop_epoch: AtomicU64::new(0),
                 attested_drop_epoch: AtomicU64::new(0),
             }),
-        ))
+        )
+    }
+    pub fn new() -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_store(true)
+            .build()?;
+        #[cfg(target_arch = "wasm32")]
+        let client = Client::new();
+        Ok(Self::from_client(client))
+    }
+    /// Pre-seed a loopback session cookie issued over the owned child host's stdio channel.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_session_cookie(address: &str, name: &str, value: &str) -> Result<Self> {
+        let valid_token = |token: &str| {
+            !token.is_empty()
+                && token
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        };
+        if !valid_token(name) || !valid_token(value) {
+            return Err("invalid session cookie".into());
+        }
+        let base = endpoint(address)?;
+        let url = reqwest::Url::parse(&base)?;
+        let jar = Arc::new(OriginCookieJar::new(&url));
+        jar.inner
+            .add_cookie_str(&format!("{name}={value}; Path=/"), &url);
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_provider(jar)
+            .build()?;
+        Ok(Self::from_client(client))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
@@ -397,6 +466,10 @@ impl Http {
     pub fn get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::GET, url)
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn stream_get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.0.get(url)
+    }
     pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::POST, url)
     }
@@ -499,6 +572,34 @@ pub fn client_id() -> Result<String> {
         ))
     }
 }
+
+/// Cryptographic lowercase RFC 4122 v4 UUID for native control correlation.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn random_uuid_v4() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "random source unavailable")?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    ))
+}
 /// Parse an external link without accepting credentials or active schemes.
 pub fn external_http_url(raw: &str) -> Option<(String, String)> {
     let url = credential_free_http_url(raw)?;
@@ -577,6 +678,84 @@ fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
     ] {
         assert!(external_http_url(rejected).is_none(), "{rejected:?}");
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn session_cookie_helper_validates_tokens_and_formats_uuid_v4() {
+    let id = random_uuid_v4().unwrap();
+    assert_eq!(id.len(), 36);
+    assert_eq!(&id[14..15], "4");
+    assert!(matches!(&id[19..20], "8" | "9" | "a" | "b"));
+    assert!(
+        id.bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+    );
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "", "abc").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "name;bad", "abc").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "codenomad_session", "a;b").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "codenomad_session", "a\nb").is_err());
+    assert!(Http::with_session_cookie("http://example.com/", "codenomad_session", "abc").is_err());
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let other_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let other_port = other_listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            req
+        });
+        let other_server = std::thread::spawn(move || {
+            let (mut stream, _) = other_listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nSet-Cookie: foreign=1; Path=/\r\nContent-Length: 2\r\n\r\nok",
+            );
+            req
+        });
+        let http = Http::with_session_cookie(
+            &format!("http://127.0.0.1:{port}"),
+            "codenomad_session_42",
+            "renewed_cookie_value_1234567890123456789012",
+        )
+        .unwrap();
+        let res = http
+            .get(format!("http://127.0.0.1:{port}/api/meta"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let raw = server.join().unwrap();
+        assert!(
+            raw.to_ascii_lowercase().contains(
+                "cookie: codenomad_session_42=renewed_cookie_value_1234567890123456789012"
+            ),
+            "missing session cookie in request: {raw}"
+        );
+        let other_res = http
+            .get(format!("http://127.0.0.1:{other_port}/api/meta"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(other_res.status(), 200);
+        let other_raw = other_server.join().unwrap();
+        assert!(
+            !other_raw.to_ascii_lowercase().contains("cookie:"),
+            "cookie leaked to another loopback port: {other_raw}"
+        );
+    });
 }
 
 #[cfg(test)]

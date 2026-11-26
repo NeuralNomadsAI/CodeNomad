@@ -5,6 +5,8 @@ mod connection;
 mod device_file;
 pub(crate) mod device_picker;
 pub(crate) mod diagnostics;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod launch;
 #[cfg(target_os = "windows")]
 pub(crate) use codenomad_windows_notifications as notifications;
 #[cfg(target_arch = "wasm32")]
@@ -16,8 +18,7 @@ pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
-#[cfg(target_arch = "wasm32")]
-pub(crate) mod web_alert;
+pub(crate) mod wake_lock;
 #[cfg(target_arch = "wasm32")]
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
@@ -31,9 +32,24 @@ use std::{future::Future, time::Duration};
 mod boot;
 #[cfg(not(target_arch = "wasm32"))]
 pub use boot::LocalHost;
+#[cfg(not(target_arch = "wasm32"))]
+pub use host::ManagedRenewal;
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+pub enum ManagedRenewal {
+    Renewed(crate::backend::Backend),
+    Denied,
+    Transient,
+}
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub struct LocalHost;
+#[cfg(target_arch = "wasm32")]
+impl LocalHost {
+    pub fn renew_managed_session(&self) -> Option<codenomad_client::Receiver<ManagedRenewal>> {
+        None
+    }
+}
 pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }

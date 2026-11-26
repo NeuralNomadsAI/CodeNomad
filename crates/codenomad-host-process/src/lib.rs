@@ -20,15 +20,19 @@ mod date;
 #[path = "date/posix.rs"]
 mod posix_date;
 pub mod procargs;
+mod second_launch;
 #[cfg(unix)]
 mod unix;
+mod wake_lock;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use date::{local_clock, local_month_day};
 pub use date::{local_date_time, local_time_zone};
+pub use second_launch::LaunchCoordinator;
 #[cfg(unix)]
 use unix::Family;
+pub use wake_lock::WakeLock;
 #[cfg(windows)]
 use windows::Family;
 

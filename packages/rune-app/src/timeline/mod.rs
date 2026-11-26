@@ -273,7 +273,10 @@ fn project_root(s: &State) -> Option<&str> {
 }
 
 pub(super) fn conversation_shown(s: &State) -> bool {
-    !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s)
+    !s.screen.is_launcher()
+        && !crate::files::has_preview(s)
+        && !crate::git::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
 }
 
 pub(crate) fn demanded(s: &State) -> bool {
@@ -363,17 +366,6 @@ fn reproject(s: &mut State) -> bool {
     }
 }
 
-pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
-    poll_inner(s, tx, tx.input_waiting())
-}
-
-// Temporary test seam: headless Runtime on Rune 1d78d5688 does not stamp q.at, so
-// tx.input_waiting() stays false in tests (anomalyco/rune#2035); remove once fixed upstream.
-#[cfg(test)]
-pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
-    poll_inner(s, tx, input_waiting)
-}
-
 pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
     if owner(s).keep_passage_deferred.is_none()
         && let Some(target) = crate::chat::reading::passage_target(s)
@@ -410,7 +402,8 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
     }
 }
 
-fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let input_waiting = tx.input_waiting();
     owner(s).poll_input_waiting = input_waiting;
     let mut changed = sync_outline_mutation(s) | flush_deferred_keep_passage(s, tx, input_waiting);
     if !demanded(s) {
