@@ -10,7 +10,8 @@ mod polling;
 mod strip;
 
 pub use drafts::{
-    attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
+    adopt_recovered_draft, attachment_draft_admissible, bound, capture, draft_changed,
+    recover_missing_session_draft, unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -339,7 +340,7 @@ pub fn active_session(s: &State) -> Option<&str> {
         Tab::Blank => None,
     }
 }
-pub fn unselect_missing(s: &mut State, id: &str) -> bool {
+pub fn unselect_session(s: &mut State, id: &str) -> bool {
     if active_session(s) != Some(id) {
         return false;
     }
@@ -354,6 +355,13 @@ pub fn unselect_missing(s: &mut State, id: &str) -> bool {
         return true;
     }
     false
+}
+pub fn unselect_missing(s: &mut State, id: &str) -> bool {
+    if !unselect_session(s, id) {
+        return false;
+    }
+    recover_missing_session_draft(s, id);
+    true
 }
 pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
     if busy(s) {

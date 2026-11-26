@@ -1,3 +1,6 @@
+use super::super::{
+    NO_SESSION_DRAFT_ID, RECOVERED_DRAFT_PREFIX, is_local_draft_id, is_recovered_draft_id,
+};
 use super::{Backend, State, Tab, Tx, Ui, same_project};
 use crate::composer::{
     draft::{Draft, MAX_FILES},
@@ -124,7 +127,7 @@ pub fn unconfirmed_drafts_full(s: &State) -> bool {
     let key = saved
         .active_session_id
         .as_deref()
-        .unwrap_or("__no_session_draft__");
+        .unwrap_or(NO_SESSION_DRAFT_ID);
     item.live_drafts
         .iter()
         .filter(|(existing, draft)| {
@@ -139,59 +142,53 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     let (edit, draft, missing) = crate::composer::recall::fresh(s);
     let text = &edit.text;
     let mut changed = false;
-    if let Tab::Workspace(saved) = &mut item.saved {
-        let key = saved
-            .active_session_id
-            .as_deref()
-            .unwrap_or("__no_session_draft__");
-        let owns_draft = item.binding.as_ref().is_some_and(|b| {
-            b.session == key || b.session.is_empty() && key == "__no_session_draft__"
-        });
-        if owns_draft {
-            let too_long = oversized(text);
-            let has_device_parts = draft.inline_usage().0 != 0;
-            let unconfirmed = s.composer.clone_unconfirmed();
-            let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
-            if too_long || has_device_parts || has_unconfirmed {
-                let live = item.live_drafts.entry(key.into()).or_default();
-                live.text = too_long.then(|| text.clone());
-                live.parts = (too_long || has_device_parts).then(|| {
-                    let mut draft = draft.clone();
-                    draft.literal_spans = crate::composer::literal::ranges(edit).collect();
-                    (draft, missing)
-                });
-                live.unconfirmed = unconfirmed;
-                live.command_unconfirmed = s.composer.command_unconfirmed.clone();
-            } else {
-                item.live_drafts.remove(key);
+    if let Tab::Workspace(saved) = &mut item.saved
+        && let Some(key) = saved.active_session_id.as_deref()
+        && item.binding.as_ref().is_some_and(|b| b.session == key)
+    {
+        let too_long = oversized(text);
+        let has_device_parts = draft.inline_usage().0 != 0;
+        let unconfirmed = s.composer.clone_unconfirmed();
+        let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
+        if too_long || has_device_parts || has_unconfirmed {
+            let live = item.live_drafts.entry(key.into()).or_default();
+            live.text = too_long.then(|| text.clone());
+            live.parts = (too_long || has_device_parts).then(|| {
+                let mut draft = draft.clone();
+                draft.literal_spans = crate::composer::literal::ranges(edit).collect();
+                (draft, missing)
+            });
+            live.unconfirmed = unconfirmed;
+            live.command_unconfirmed = s.composer.command_unconfirmed.clone();
+        } else {
+            item.live_drafts.remove(key);
+        }
+        if too_long {
+            return false;
+        }
+        let parts = SavedParts::capture(draft, missing, edit);
+        changed |= if parts.is_some() {
+            saved.attachment_drafts.insert(key.into())
+        } else {
+            saved.attachment_drafts.remove(key)
+        };
+        match parts {
+            Some(parts) if saved.attachment_parts.get(key) != Some(&parts) => {
+                saved.attachment_parts.insert(key.into(), parts);
+                changed = true;
             }
-            if too_long {
-                return false;
-            }
-            let parts = SavedParts::capture(draft, missing, edit);
-            changed |= if parts.is_some() {
-                saved.attachment_drafts.insert(key.into())
-            } else {
-                saved.attachment_drafts.remove(key)
-            };
-            match parts {
-                Some(parts) if saved.attachment_parts.get(key) != Some(&parts) => {
-                    saved.attachment_parts.insert(key.into(), parts);
-                    changed = true;
-                }
-                None => changed |= saved.attachment_parts.remove(key).is_some(),
-                _ => {}
-            }
-            if text.is_empty() {
-                if saved.drafts.remove(key).is_some() {
-                    item.cleared.insert(key.into());
-                    return true;
-                }
-            } else if saved.drafts.get(key).is_none_or(|value| value != text) {
-                saved.drafts.insert(key.into(), text.clone());
-                item.cleared.remove(key);
+            None => changed |= saved.attachment_parts.remove(key).is_some(),
+            _ => {}
+        }
+        if text.is_empty() {
+            if saved.drafts.remove(key).is_some() {
+                item.cleared.insert(key.into());
                 return true;
             }
+        } else if saved.drafts.get(key).is_none_or(|value| value != text) {
+            saved.drafts.insert(key.into(), text.clone());
+            item.cleared.remove(key);
+            return true;
         }
     }
     changed
@@ -307,6 +304,234 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         w.attachment_drafts.remove(id);
         w.attachment_parts.remove(id);
     }
+}
+
+fn live_has_authored_content(draft: &LiveDraft) -> bool {
+    draft.text.as_deref().is_some_and(|text| !text.is_empty())
+        || draft
+            .parts
+            .as_ref()
+            .is_some_and(|(parts, missing)| !parts.attachments.is_empty() || *missing)
+}
+
+fn has_draft_content(item: &super::Entry, saved: &crate::workspace::Workspace, key: &str) -> bool {
+    saved.drafts.get(key).is_some_and(|text| !text.is_empty())
+        || saved.attachment_drafts.contains(key)
+        || saved.attachment_parts.contains_key(key)
+        || item
+            .live_drafts
+            .get(key)
+            .is_some_and(live_has_authored_content)
+}
+
+fn has_any_draft_key(item: &super::Entry, saved: &crate::workspace::Workspace, key: &str) -> bool {
+    saved.drafts.contains_key(key)
+        || saved.attachment_drafts.contains(key)
+        || saved.attachment_parts.contains_key(key)
+        || item.live_drafts.contains_key(key)
+}
+
+fn next_recovered_draft_id(item: &super::Entry, saved: &crate::workspace::Workspace) -> String {
+    for _ in 0..8 {
+        if let Ok(uuid) = codenomad_client::http::client_id() {
+            let candidate = format!("{RECOVERED_DRAFT_PREFIX}{uuid}");
+            if is_recovered_draft_id(&candidate) && !has_any_draft_key(item, saved, &candidate) {
+                return candidate;
+            }
+        }
+    }
+    let mut counter: u64 = 1;
+    loop {
+        let candidate = format!("{RECOVERED_DRAFT_PREFIX}00000000-0000-4000-8000-{counter:012x}");
+        if !has_any_draft_key(item, saved, &candidate) {
+            return candidate;
+        }
+        counter = counter.wrapping_add(1);
+    }
+}
+
+fn earliest_recovered_draft_id(
+    item: &super::Entry,
+    saved: &crate::workspace::Workspace,
+) -> Option<String> {
+    saved
+        .drafts
+        .keys()
+        .chain(saved.attachment_drafts.iter())
+        .chain(saved.attachment_parts.keys())
+        .chain(item.live_drafts.keys())
+        .filter(|id| is_recovered_draft_id(id) && has_draft_content(item, saved, id))
+        .min()
+        .cloned()
+}
+
+fn move_draft_between_keys(
+    item: &mut super::Entry,
+    saved: &mut crate::workspace::Workspace,
+    from: &str,
+    to: &str,
+) {
+    let text = saved.drafts.remove(from);
+    let had_attachment_flag = saved.attachment_drafts.remove(from);
+    let parts = saved.attachment_parts.remove(from);
+    let live = item.live_drafts.remove(from);
+    item.cleared.remove(from);
+    item.pending_drafts.remove(from);
+
+    if let Some(text) = text
+        && !text.is_empty()
+    {
+        saved.drafts.insert(to.into(), text);
+    }
+    if had_attachment_flag || parts.is_some() {
+        saved.attachment_drafts.insert(to.into());
+    }
+    if let Some(parts) = parts {
+        saved.attachment_parts.insert(to.into(), parts);
+    }
+    if let Some(live) = live
+        && live_has_authored_content(&live)
+    {
+        // Never carry a dead session's unconfirmed send lock onto a recovered or new draft.
+        item.live_drafts.insert(
+            to.into(),
+            LiveDraft {
+                text: live.text.filter(|t| !t.is_empty()),
+                parts: live.parts,
+                unconfirmed: None,
+                command_unconfirmed: None,
+            },
+        );
+    }
+    item.cleared.remove(to);
+}
+
+/// Recovers authored draft text and attachments from a confirmed-missing session into
+/// `__no_session_draft__` (or `__recovered_draft__<uuid>` when occupied), matching Solid's
+/// `recoverRemovedSessionDraft` (`stores/session-draft-recovery.ts`), and removes the dead
+/// session ID from local and persisted draft storage.
+pub fn recover_missing_session_draft(s: &mut State, session_id: &str) -> bool {
+    if session_id.is_empty() || is_local_draft_id(session_id) {
+        return false;
+    }
+    if !s.screen.is_launcher() && super::active_session(s) == Some(session_id) {
+        return false;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    if ui
+        .entries
+        .get(ui.active)
+        .is_some_and(|item| item.pending_drafts.contains(session_id))
+    {
+        deliver_draft(ui, session_id);
+    }
+    let scope = match ui.entries.get(ui.active).map(|item| &item.saved) {
+        Some(Tab::Workspace(saved)) => saved.clone(),
+        _ => return false,
+    };
+    let mut cleaned_closed = false;
+    for closed in ui.closed.iter_mut().filter(|w| same_project(&scope, w)) {
+        cleaned_closed |= closed.drafts.remove(session_id).is_some();
+        cleaned_closed |= closed.attachment_drafts.remove(session_id);
+        cleaned_closed |= closed.attachment_parts.remove(session_id).is_some();
+    }
+    let item = &mut ui.entries[ui.active];
+    let Tab::Workspace(mut saved) = std::mem::replace(&mut item.saved, Tab::Blank) else {
+        return false;
+    };
+    let has_content = has_draft_content(item, &saved, session_id);
+    if !has_content {
+        let mut cleaned = cleaned_closed;
+        cleaned |= saved.drafts.remove(session_id).is_some();
+        cleaned |= saved.attachment_drafts.remove(session_id);
+        cleaned |= saved.attachment_parts.remove(session_id).is_some();
+        cleaned |= item.live_drafts.remove(session_id).is_some();
+        cleaned |= item.cleared.remove(session_id);
+        cleaned |= item.pending_drafts.remove(session_id);
+        item.saved = Tab::Workspace(saved);
+        if cleaned {
+            ui.changed();
+            ui.stage();
+        }
+        return false;
+    }
+    let target = if has_draft_content(item, &saved, NO_SESSION_DRAFT_ID) {
+        next_recovered_draft_id(item, &saved)
+    } else {
+        NO_SESSION_DRAFT_ID.into()
+    };
+    move_draft_between_keys(item, &mut saved, session_id, &target);
+    item.saved = Tab::Workspace(saved);
+    ui.changed();
+    ui.stage();
+    let message = crate::strings::with_locale(crate::settings::app_locale(s), || {
+        crate::strings::t("sessionState.cleanup.draftRecovered")
+    });
+    crate::shell::notifications::emit(
+        s,
+        crate::shell::notifications::Category::Projects,
+        None,
+        message,
+    );
+    true
+}
+
+/// Adopts the next recovered draft (`__no_session_draft__`, or the earliest queued
+/// `__recovered_draft__<uuid>`) into a newly created blank session so it opens directly
+/// in the conversation composer, promoting any next queued recovered draft into
+/// `__no_session_draft__`.
+pub fn adopt_recovered_draft(s: &mut State, session_id: &str) -> bool {
+    if session_id.is_empty() || is_local_draft_id(session_id) {
+        return false;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    let pending_local: Vec<String> = ui
+        .entries
+        .get(ui.active)
+        .map(|item| {
+            item.pending_drafts
+                .iter()
+                .filter(|id| is_local_draft_id(id))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in pending_local {
+        deliver_draft(ui, &id);
+    }
+    let Some(item) = ui.entries.get_mut(ui.active) else {
+        return false;
+    };
+    let Tab::Workspace(mut saved) = std::mem::replace(&mut item.saved, Tab::Blank) else {
+        return false;
+    };
+    if has_draft_content(item, &saved, session_id) {
+        item.saved = Tab::Workspace(saved);
+        return false;
+    }
+    let source = if has_draft_content(item, &saved, NO_SESSION_DRAFT_ID) {
+        Some(NO_SESSION_DRAFT_ID.to_owned())
+    } else {
+        earliest_recovered_draft_id(item, &saved)
+    };
+    let Some(source) = source else {
+        item.saved = Tab::Workspace(saved);
+        return false;
+    };
+    move_draft_between_keys(item, &mut saved, &source, session_id);
+    if source == NO_SESSION_DRAFT_ID
+        && let Some(next_recovered) = earliest_recovered_draft_id(item, &saved)
+    {
+        move_draft_between_keys(item, &mut saved, &next_recovered, NO_SESSION_DRAFT_ID);
+    }
+    item.saved = Tab::Workspace(saved);
+    ui.changed();
+    ui.stage();
+    true
 }
 
 #[cfg(test)]

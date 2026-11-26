@@ -324,7 +324,11 @@ fn confirmed_missing_selection_does_not_block_future_project_restoration() {
         panic!("workspace must remain")
     };
     assert_eq!(project.active_session_id, None);
-    assert_eq!(project.drafts["missing"], "unsent latest");
+    assert!(!project.drafts.contains_key("missing"));
+    assert_eq!(
+        project.drafts[crate::workspace::NO_SESSION_DRAFT_ID],
+        "unsent latest"
+    );
 }
 
 #[test]

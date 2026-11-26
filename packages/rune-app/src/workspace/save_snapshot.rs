@@ -1,8 +1,10 @@
 use super::{
-    Error, MAX_BYTES, MAX_DRAFT, MAX_DRAFTS, MAX_STRINGS, Snapshot, Tab, Workspace, draft_id,
-    encode, snapshot_budget::choose, snapshot_bytes, snapshot_string_units, validate,
+    Error, MAX_BYTES, MAX_DRAFT, MAX_DRAFTS, MAX_STRINGS, NO_SESSION_DRAFT_ID, Snapshot, Tab,
+    Workspace, draft_id, encode, is_recovered_draft_id, snapshot_budget::choose, snapshot_bytes,
+    snapshot_string_units, validate,
 };
 use crate::composer::draft_storage::SavedParts;
+use std::cmp::Reverse;
 
 pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
     if let Ok(bytes) = encode(snapshot) {
@@ -35,19 +37,41 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
             let Some(id) = saved
                 .drafts
                 .iter()
-                .max_by_key(|(_, text)| text.encode_utf16().count())
+                .max_by_key(|(id, text)| {
+                    (
+                        Reverse(cap_priority(saved, id)),
+                        text.encode_utf16().count(),
+                    )
+                })
                 .map(|(id, _)| id.clone())
             else {
                 break;
             };
             saved.drafts.remove(&id);
+            if let Some(parts) = saved.attachment_parts.get_mut(&id) {
+                parts.mark_incomplete();
+            }
         }
         saved
             .attachment_drafts
             .extend(saved.attachment_parts.keys().cloned());
         saved.attachment_drafts.retain(|id| draft_id(id));
         while saved.attachment_drafts.len() > MAX_DRAFTS {
-            saved.attachment_drafts.pop_last();
+            let Some(id) = saved
+                .attachment_drafts
+                .iter()
+                .max_by_key(|id| {
+                    (
+                        Reverse(cap_priority(saved, id)),
+                        !saved.drafts.contains_key(id.as_str()),
+                        id.as_str(),
+                    )
+                })
+                .cloned()
+            else {
+                break;
+            };
+            saved.attachment_drafts.remove(&id);
         }
         saved
             .attachment_parts
@@ -57,11 +81,20 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
     fit_parts(&mut valid).map(|bytes| (bytes, true))
 }
 
+fn cap_priority(saved: &Workspace, id: &str) -> u8 {
+    if saved.active_session_id.as_deref() == Some(id) {
+        3
+    } else if id == NO_SESSION_DRAFT_ID {
+        2
+    } else if is_recovered_draft_id(id) {
+        1
+    } else {
+        0
+    }
+}
+
 fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
-    if saved.active_session_id.as_deref() == Some(id)
-        || id == "__no_session_draft__"
-        || id.starts_with("__recovered_draft__")
-    {
+    if cap_priority(saved, id) > 0 {
         if active { 2 } else { 1 }
     } else {
         0

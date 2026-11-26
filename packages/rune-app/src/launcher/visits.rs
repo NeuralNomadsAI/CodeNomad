@@ -89,9 +89,9 @@ impl Visits {
             *stamp = Some(at);
         }
     }
-    pub fn poll_checks(&mut self) -> bool {
+    pub fn poll_checks(&mut self) -> Vec<String> {
         let Some((checks, verified)) = &self.checks else {
-            return false;
+            return Vec::new();
         };
         let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok())
             .filter(|(id, start)| {
@@ -105,7 +105,7 @@ impl Visits {
             self.checks = None;
         }
         self.forget(&missing);
-        !missing.is_empty()
+        missing
     }
 }
 
@@ -142,7 +142,7 @@ mod tests {
         visits.verified("b", started);
         out.try_send(("a".into(), started)).unwrap();
         out.try_send(("b".into(), started)).unwrap();
-        assert!(visits.poll_checks());
+        assert_eq!(visits.poll_checks(), vec!["a"]);
         assert_eq!(visits.steps(true, None).next(), Some((1, "b")));
         assert!(visits.steps(true, Some("b")).next().is_none());
         out.try_send((
@@ -150,7 +150,7 @@ mod tests {
             Instant::now() + std::time::Duration::from_secs(1),
         ))
         .unwrap();
-        assert!(visits.poll_checks());
+        assert_eq!(visits.poll_checks(), vec!["b"]);
         assert!(visits.steps(true, None).next().is_none());
     }
 }

@@ -25,12 +25,13 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
-    close, connected, conversation_stream_clients, draft_changed, file_draft_status, file_wrap,
-    files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width, poll,
-    poll_file_drafts, prepare_open, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
-    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    Ui, active_session, adopt_recovered_draft, attachment_draft_admissible, bound, can_new,
+    capture, capture_files_mode, close, connected, conversation_stream_clients, draft_changed,
+    file_draft_status, file_wrap, files_tab, has_conversation_stream, input_ready, new_tab, opened,
+    panel_width, poll, poll_file_drafts, prepare_open, recover_missing_session_draft,
+    renew_connection, restore_files_mode, resume, retry, schedule_catalogue,
+    schedule_catalogue_refresh, select, select_index, select_relative, status, strip,
+    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
@@ -536,18 +537,33 @@ fn safe_key(value: &str) -> bool {
 fn id_character(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
+pub(crate) const NO_SESSION_DRAFT_ID: &str = "__no_session_draft__";
+pub(crate) const RECOVERED_DRAFT_PREFIX: &str = "__recovered_draft__";
+
+pub(crate) fn is_recovered_draft_id(value: &str) -> bool {
+    value
+        .strip_prefix(RECOVERED_DRAFT_PREFIX)
+        .is_some_and(|tail| {
+            tail.len() == 36
+                && tail
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+        })
+}
+
+pub(crate) fn is_local_draft_id(value: &str) -> bool {
+    value == NO_SESSION_DRAFT_ID || is_recovered_draft_id(value)
+}
+
 fn draft_id(value: &str) -> bool {
     if !safe_key(value) {
         return false;
     }
-    if value == "__no_session_draft__" {
+    if value == NO_SESSION_DRAFT_ID {
         return true;
     }
-    if let Some(tail) = value.strip_prefix("__recovered_draft__") {
-        return tail.len() == 36
-            && tail
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-');
+    if value.starts_with(RECOVERED_DRAFT_PREFIX) {
+        return is_recovered_draft_id(value);
     }
     !value.is_empty() && value.len() <= 256 && value.bytes().all(id_character)
 }

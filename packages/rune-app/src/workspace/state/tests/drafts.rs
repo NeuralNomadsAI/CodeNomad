@@ -773,3 +773,189 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
         );
     }
 }
+
+#[test]
+fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
+    use crate::composer::draft::Attachment;
+    use crate::workspace::{NO_SESSION_DRAFT_ID, is_recovered_draft_id};
+
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("ses_gone_1", "first draft");
+    saved
+        .drafts
+        .insert("ses_gone_2".into(), "second draft".into());
+    saved
+        .drafts
+        .insert("ses_existing".into(), "keep existing".into());
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(saved));
+    ui.entries[0].binding = Some(backend("ses_gone_1"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("first latest");
+    let device = Attachment::Device {
+        name: "note.txt".into(),
+        mime: "text/plain".into(),
+        bytes: std::sync::Arc::from(b"payload".as_slice()),
+        token: None,
+    };
+    let agent = Attachment::Agent("reviewer".into());
+    assert!(s.composer.draft.attach(device.clone()));
+    assert!(s.composer.draft.attach(agent.clone()));
+
+    // Confirm ses_gone_1 missing: captures latest text + attachments and moves them to __no_session_draft__.
+    assert!(unselect_missing(&mut s, "ses_gone_1"));
+    s.draft = TextEdit::new("");
+    s.composer = Default::default();
+    s.show_launcher();
+    // Simulate launcher binding with empty session ID and verify capture() never wipes __no_session_draft__.
+    s.workspace.as_mut().unwrap().entries[0].binding = Some(backend(""));
+    capture(&mut s);
+
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(after_first) = &snap.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(after_first.active_session_id, None);
+    assert!(!after_first.drafts.contains_key("ses_gone_1"));
+    assert!(!after_first.attachment_drafts.contains("ses_gone_1"));
+    assert!(!after_first.attachment_parts.contains_key("ses_gone_1"));
+    assert_eq!(
+        after_first
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("first latest")
+    );
+    assert!(after_first.attachment_drafts.contains(NO_SESSION_DRAFT_ID));
+
+    // Confirm a second missing session: spills into __recovered_draft__<uuid> without overwriting __no_session_draft__.
+    assert!(recover_missing_session_draft(&mut s, "ses_gone_2"));
+    assert!(!recover_missing_session_draft(&mut s, "ses_empty"));
+
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(after_second) = &snap.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert!(!after_second.drafts.contains_key("ses_gone_2"));
+    assert_eq!(
+        after_second
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("first latest")
+    );
+    let recovered_keys: Vec<_> = after_second
+        .drafts
+        .keys()
+        .filter(|id| is_recovered_draft_id(id))
+        .cloned()
+        .collect();
+    assert_eq!(recovered_keys.len(), 1);
+    assert_eq!(after_second.drafts[&recovered_keys[0]], "second draft");
+
+    // Snapshot round-trip preserves both recovered slots cleanly with no dead session keys.
+    let encoded = crate::workspace::encode(&snap).unwrap();
+    let decoded = crate::workspace::decode(&encoded).unwrap();
+    assert_eq!(decoded, snap);
+
+    // Binding an existing session preserves its own draft and does NOT steal __no_session_draft__.
+    assert_eq!(bound(&mut s, &backend("ses_existing")), "keep existing");
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(still_waiting) = &snap.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        still_waiting
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("first latest")
+    );
+
+    // Creating/adopting a new blank session restores text + device + agent attachments and promotes queued recovered draft.
+    assert!(adopt_recovered_draft(&mut s, "ses_new_1"));
+    s.draft = TextEdit::new(bound(&mut s, &backend("ses_new_1")));
+    assert_eq!(s.draft.text, "first latest");
+    assert_eq!(s.composer.draft.attachments, [device, agent]);
+    assert!(!s.composer.attachments_missing);
+
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(after_adopt_1) = &snap.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(
+        after_adopt_1
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("second draft")
+    );
+    assert!(
+        after_adopt_1
+            .drafts
+            .keys()
+            .all(|id| !is_recovered_draft_id(id))
+    );
+
+    // Next new blank session adopts the promoted second recovered draft, leaving zero recovered leftovers.
+    assert!(adopt_recovered_draft(&mut s, "ses_new_2"));
+    s.draft = TextEdit::new(bound(&mut s, &backend("ses_new_2")));
+    assert_eq!(s.draft.text, "second draft");
+    let snap = s.workspace.as_ref().unwrap().snapshot();
+    let Tab::Workspace(after_adopt_2) = &snap.tabs[0] else {
+        panic!("expected workspace tab");
+    };
+    assert!(!after_adopt_2.drafts.contains_key(NO_SESSION_DRAFT_ID));
+    assert!(
+        after_adopt_2
+            .drafts
+            .keys()
+            .all(|id| !is_recovered_draft_id(id))
+    );
+}
+
+#[test]
+fn missing_session_recovers_undelivered_closed_draft_and_unselect_session_keeps_live_draft() {
+    use crate::workspace::NO_SESSION_DRAFT_ID;
+
+    let mut s = draft_state();
+    s.workspace.as_mut().unwrap().closed = vec![closed("ses_closed_gone", "from closed tab")];
+    reopen(&mut s);
+
+    assert!(recover_missing_session_draft(&mut s, "ses_closed_gone"));
+    let ui = s.workspace.as_ref().unwrap();
+    assert!(
+        ui.closed
+            .iter()
+            .all(|w| !w.drafts.contains_key("ses_closed_gone"))
+    );
+    let Tab::Workspace(saved) = &ui.entries[0].saved else {
+        panic!("expected workspace tab");
+    };
+    assert!(!saved.drafts.contains_key("ses_closed_gone"));
+    assert_eq!(
+        saved.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+        Some("from closed tab")
+    );
+
+    // Manual unselect_session (close-session shortcut) keeps the draft under the live session ID.
+    s.draft = TextEdit::new(bound(&mut s, &backend("ses_live")));
+    s.draft = TextEdit::new("live draft");
+    assert!(unselect_session(&mut s, "ses_live"));
+    let Tab::Workspace(after_close) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(after_close.active_session_id, None);
+    assert_eq!(
+        after_close.drafts.get("ses_live").map(String::as_str),
+        Some("live draft")
+    );
+    assert_eq!(
+        after_close
+            .drafts
+            .get(NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("from closed tab")
+    );
+}

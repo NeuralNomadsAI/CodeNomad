@@ -518,7 +518,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         let Some(id) = active else {
             return false;
         };
-        crate::workspace::unselect_missing(s, &id);
+        crate::workspace::unselect_session(s, &id);
     } else if !s.draft.text.is_empty()
         || !s.composer.draft.attachments.is_empty()
         || s.composer.unconfirmed_id().is_some()

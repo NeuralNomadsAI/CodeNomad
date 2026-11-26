@@ -596,10 +596,23 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
+    let checked_missing = {
+        let Some(l) = s.screen.launcher_mut() else {
+            return relayed;
+        };
+        if !l.pending {
+            l.visits.poll_checks()
+        } else {
+            Vec::new()
+        }
+    };
+    for id in &checked_missing {
+        crate::workspace::recover_missing_session_draft(s, id);
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
-    let mut changed = relayed | browser_changed | (!l.pending && l.visits.poll_checks());
+    let mut changed = relayed | browser_changed | !checked_missing.is_empty();
     changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
@@ -774,9 +787,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 l.rebind_after_send = None;
                 dismiss_origin_panel(s, dismiss, tx);
+                crate::workspace::adopt_recovered_draft(s, &session_id);
                 choose_destination(s, session_id, ticket, tx);
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
+                crate::workspace::adopt_recovered_draft(s, &b.session);
                 bind(s, b, title, None, &slug, tx);
             }
         }
@@ -858,10 +873,21 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
             {
                 retire_session(s, id);
+                for other in &missing {
+                    if other != id {
+                        crate::workspace::recover_missing_session_draft(s, other);
+                    }
+                }
                 tx.instant();
                 return true;
             }
-            let auth_required = l.authentication_required;
+            for id in &missing {
+                crate::workspace::recover_missing_session_draft(s, id);
+            }
+            let auth_required = s
+                .screen
+                .launcher()
+                .is_some_and(|l| l.authentication_required);
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
                     && !stopped_during_pending_overflow
@@ -870,7 +896,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
-                l.show_title = false;
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.show_title = false;
+                }
                 if stale_connection {
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
@@ -886,7 +914,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     bind(s, b, title, visit, &slug, tx);
                 }
             } else if !selection_blocked {
-                l.error = Some("sessionList.reload.error");
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.error = Some("sessionList.reload.error");
+                }
                 crate::shell::notifications::emit_outcome(
                     s,
                     crate::shell::notifications::Category::Sessions,
@@ -1043,10 +1073,15 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }) {
         crate::workspace::resume(s, tx);
     }
-    if let Some(l) = s.screen.launcher_mut()
+    let post_missing = if let Some(l) = s.screen.launcher_mut()
         && !l.pending
     {
-        l.visits.poll_checks();
+        l.visits.poll_checks()
+    } else {
+        Vec::new()
+    };
+    for id in &post_missing {
+        crate::workspace::recover_missing_session_draft(s, id);
     }
     tx.instant();
     true

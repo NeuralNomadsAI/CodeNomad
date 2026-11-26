@@ -387,3 +387,86 @@ fn source_wrap_round_trips_the_solid_layout_key_without_affecting_window_state()
         );
     }
 }
+
+#[test]
+fn per_tab_draft_cap_preserves_long_active_and_priority_drafts_beyond_24() {
+    let mut tab = workspace();
+    let active_id = "ses_active_long".to_string();
+    let active_text = "A".repeat(12_000);
+    let no_session_text = "N".repeat(10_000);
+    let recovered_id = format!("{RECOVERED_DRAFT_PREFIX}11111111-2222-4333-8444-555555555555");
+    let recovered_text = "R".repeat(8_000);
+
+    tab.active_session_id = Some(active_id.clone());
+    tab.drafts.insert(active_id.clone(), active_text.clone());
+    tab.drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), no_session_text.clone());
+    tab.drafts
+        .insert(recovered_id.clone(), recovered_text.clone());
+    tab.attachment_drafts.insert(active_id.clone());
+    tab.attachment_drafts.insert(NO_SESSION_DRAFT_ID.into());
+    tab.attachment_drafts.insert(recovered_id.clone());
+
+    for index in 0..MAX_DRAFTS {
+        let id = format!("ses_inactive_{index:02}");
+        // Make one inactive draft slightly longer than the other inactive drafts so we also verify tie-breaking.
+        let text = if index == 5 {
+            "x".repeat(400)
+        } else {
+            format!("short {index}")
+        };
+        tab.drafts.insert(id.clone(), text);
+        tab.attachment_drafts.insert(id);
+    }
+
+    assert_eq!(tab.drafts.len(), MAX_DRAFTS + 3);
+    assert_eq!(tab.attachment_drafts.len(), MAX_DRAFTS + 3);
+    let full = snapshot(tab);
+    assert_eq!(encode(&full).unwrap_err(), Error::Limit);
+
+    let (bytes, partial) = encode_for_save(&full).unwrap();
+    assert!(partial);
+    let decoded = decode(&bytes).unwrap();
+    let [Tab::Workspace(saved)] = decoded.tabs.as_slice() else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(saved.drafts.len(), MAX_DRAFTS);
+    assert_eq!(saved.attachment_drafts.len(), MAX_DRAFTS);
+    assert_eq!(saved.drafts.get(&active_id), Some(&active_text));
+    assert_eq!(
+        saved.drafts.get(NO_SESSION_DRAFT_ID),
+        Some(&no_session_text)
+    );
+    assert_eq!(saved.drafts.get(&recovered_id), Some(&recovered_text));
+    assert!(saved.attachment_drafts.contains(&active_id));
+    assert!(saved.attachment_drafts.contains(NO_SESSION_DRAFT_ID));
+    assert!(saved.attachment_drafts.contains(&recovered_id));
+    // Longest non-priority draft was evicted first.
+    assert!(!saved.drafts.contains_key("ses_inactive_05"));
+
+    // Even when 24+ recovered drafts exist, active_session_id and __no_session_draft__ stay protected.
+    let mut flooded = workspace();
+    flooded.active_session_id = Some(active_id.clone());
+    flooded
+        .drafts
+        .insert(active_id.clone(), active_text.clone());
+    flooded
+        .drafts
+        .insert(NO_SESSION_DRAFT_ID.into(), no_session_text.clone());
+    for index in 0..MAX_DRAFTS {
+        let id = format!("{RECOVERED_DRAFT_PREFIX}00000000-0000-4000-8000-{index:012x}");
+        flooded.drafts.insert(id, format!("recovered {index}"));
+    }
+    let (flood_bytes, flood_partial) = encode_for_save(&snapshot(flooded)).unwrap();
+    assert!(flood_partial);
+    let flood_decoded = decode(&flood_bytes).unwrap();
+    let [Tab::Workspace(flood_saved)] = flood_decoded.tabs.as_slice() else {
+        panic!("expected workspace tab");
+    };
+    assert_eq!(flood_saved.drafts.len(), MAX_DRAFTS);
+    assert_eq!(flood_saved.drafts.get(&active_id), Some(&active_text));
+    assert_eq!(
+        flood_saved.drafts.get(NO_SESSION_DRAFT_ID),
+        Some(&no_session_text)
+    );
+}
