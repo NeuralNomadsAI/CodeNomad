@@ -91,7 +91,6 @@
   "components/remote-server-dialog.tsx": ["api-client:listSshHosts x1","continuation:createEffect x1"],
   "components/server-add-field.tsx": ["api-client:connectRemoteServer x1","delegated:backend x3"],
   "components/session-list.tsx": ["continuation:createEffect x3","continuation:delegated x1","continuation:on x1","continuation:setTimeout x1","delegated:backend x18"],
-  "components/session-picker.tsx": ["delegated:backend x5"],
   "components/session-preview-view.tsx": ["delegated:backend x2"],
   "components/session/conversation-permissions.tsx": ["api-client:readConversationPermissionMode x1","api-client:setConversationPermissionMode x1","backend-events:on x2","backend-events:onOpen x1","backend-events:onTransportStatus x1","continuation:backend-events:on x2","continuation:backend-events:onOpen x1","continuation:onMount x1","delegated:backend x8"],
   "components/session/provider-usage-panel.tsx": ["api-client:fetchProviderUsage x1","backend-events:on x2","backend-events:onTransportStatus x1","continuation:delegated x1"],
