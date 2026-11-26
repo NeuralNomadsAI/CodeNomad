@@ -68,8 +68,8 @@ try{
       }
       res.setHeader('content-type','application/json');res.end(JSON.stringify(value));return
     }
-    if(req.method==='POST'&&req.url===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
     const target=new URL(req.url,origin)
+    if(req.method==='POST'&&target.pathname===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
     const up=request(target,{method:req.method,headers:{...req.headers,host:target.host}},async response=>{
       res.writeHead(response.statusCode,response.headers)
       if(!req.url.startsWith('/api/events?')){response.pipe(res);return}
