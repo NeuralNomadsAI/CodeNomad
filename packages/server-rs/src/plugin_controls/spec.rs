@@ -417,11 +417,12 @@ fn is_valid_semver_range(spec: &str) -> bool {
     if spec.is_empty() || spec == "*" {
         return true;
     }
-    for branch in spec.split("||") {
-        let branch = crate::shared::js_trim(branch);
+    // `node-semver` loose mode splits on `||`, discards invalid branches, and succeeds as long as
+    // at least one branch produces a non-empty comparator set (an empty branch parses as `*`).
+    spec.split("||").any(|raw_branch| {
+        let branch = crate::shared::js_trim(raw_branch);
         if branch.is_empty() {
-            // `node-semver` treats an empty comparator set (e.g. `>=1.0.0 ||`) as `*`.
-            continue;
+            return true;
         }
         let tokens: Vec<&str> = branch.split_whitespace().collect();
         let mut i = 0;
@@ -446,8 +447,8 @@ fn is_valid_semver_range(spec: &str) -> bool {
             }
             i += 1;
         }
-    }
-    true
+        true
+    })
 }
 
 fn is_comparator(tok: &str) -> bool {

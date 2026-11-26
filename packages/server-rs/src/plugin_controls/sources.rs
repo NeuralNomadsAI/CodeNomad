@@ -104,11 +104,15 @@ pub(super) async fn add_with_timeouts(
     let cancel = CancellationToken::new();
     let commit_state = Arc::new(AtomicU8::new(COMMIT_PENDING));
     let cancel_timer = cancel.clone();
+    let state_timer = commit_state.clone();
     let timer = tokio::spawn(async move {
         tokio::time::sleep_until(deadline).await;
+        // Arbitrate expiration on the same atomic state as rename admission so a rename cannot be
+        // admitted during the grace window.
+        let _ = state_timer.compare_exchange(COMMIT_PENDING, COMMIT_ABORTED, Ordering::SeqCst, Ordering::SeqCst);
         cancel_timer.cancel();
     });
-    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone(), commit_state.clone());
+    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone(), deadline, commit_state.clone());
     tokio::pin!(op);
     let outcome = match tokio::time::timeout_at(hard_deadline, &mut op).await {
         Ok(Ok(res)) => Ok(res),
@@ -122,6 +126,7 @@ pub(super) async fn add_with_timeouts(
         Err(_) => {
             cancel.cancel();
             if commit_state.compare_exchange(COMMIT_PENDING, COMMIT_ABORTED, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+                || commit_state.load(Ordering::SeqCst) == COMMIT_ABORTED
             {
                 // Proven: `rename` has not been admitted and will abort under `guard_current`.
                 Err(SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout"))
@@ -141,6 +146,7 @@ async fn add_serialized(
     req: &SourceAddRequest,
     principal: Option<CancellationToken>,
     cancel: CancellationToken,
+    deadline: tokio::time::Instant,
     commit_state: Arc<AtomicU8>,
 ) -> Result<SourceMutationResponse, SourceError> {
     let timeout_err = || SourceError::with_code(Status::SERVICE_UNAVAILABLE, "timeout");
@@ -207,6 +213,7 @@ async fn add_serialized(
         app,
         engine::EditTarget { workspace_id, location: &req.location, scope: req.scope, principal },
         cancel,
+        deadline,
         commit_state,
         SourceError::from_fail,
         timeout_err,

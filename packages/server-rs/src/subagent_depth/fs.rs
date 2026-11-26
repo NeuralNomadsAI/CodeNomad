@@ -155,12 +155,44 @@ struct Lock {
     nonce: String,
     released: bool,
 }
+/// Non-blocking, nofollow, bounded read of the 32-hex lock owner nonce so `Lock::verify`
+/// can never block under global workspace/connection guards if `owner` is swapped for a FIFO.
+fn read_lock_owner(path: &str) -> Option<String> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let mut file = opts.open(path).ok()?;
+    let handle_meta = file.metadata().ok()?;
+    if !handle_meta.is_file() || handle_meta.len() > 64 {
+        return None;
+    }
+    let mut buf = Vec::with_capacity(64);
+    (&mut file).take(65).read_to_end(&mut buf).ok()?;
+    if buf.len() > 64 {
+        return None;
+    }
+    String::from_utf8(buf).ok()
+}
+
 impl Lock {
     fn owner(&self) -> String {
         format!("{}{}owner", self.path, std::path::MAIN_SEPARATOR)
     }
     fn verify(&self) -> bool {
-        std::fs::read_to_string(self.owner()).ok().as_deref() == Some(self.nonce.as_str())
+        read_lock_owner(&self.owner()).as_deref() == Some(self.nonce.as_str())
     }
     fn release(&mut self) {
         if std::mem::replace(&mut self.released, true) {

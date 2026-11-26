@@ -869,6 +869,38 @@ async fn integration_catalog_rules_lone_surrogate_and_malformed_raw_doc_match_fa
         .unwrap();
     assert_eq!(surrogate_patch.status(), Status::FORBIDDEN);
     assert_eq!(fs::read_to_string(&h.global_file).unwrap(), "{}\n");
+
+    // Duplicate key where a later UTF-8 value shadows an earlier lone surrogate takes the normal path.
+    let shadowed_patch = h
+        .client
+        .patch(h.url("/plugin-controls"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{}}},"pluginId":"\uD800","pluginId":"id\uFFFD","scope":"global","enabled":false}}"#,
+            serde_json::to_string(&project).unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(shadowed_patch.status(), Status::OK);
+    fs::write(&h.global_file, "{}\n").unwrap();
+
+    // DELETE with unrepresentable `target` on a foreign directory still checks ownership first (`403`, not `409`).
+    let foreign_dir = h.app.root.join("foreign-dir");
+    fs::create_dir_all(&foreign_dir).unwrap();
+    let foreign_del = h
+        .client
+        .delete(h.url("/plugin-sources"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"location":{{"directory":{}}},"scope":"global","target":"\uD800","entryIndex":0,"expectedRevision":"{}"}}"#,
+            serde_json::to_string(foreign_dir.to_str().unwrap()).unwrap(),
+            "a".repeat(64)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_del.status(), Status::FORBIDDEN);
     h.mock.lock().unwrap().runtime.clear();
 
     // 2. Seed reviewed integration catalog (native `fixture` with Git prefix + api `mail`).

@@ -240,7 +240,12 @@ async fn read_plugin_json_body(
                 && !bytes.is_empty()
                 && let Some(js) = parse_strict_json(&bytes)
             {
-                return Ok(JsonBody::Utf16(js));
+                // If the final deduplicated object (last-key-wins) is losslessly UTF-8 (e.g. an
+                // earlier lone surrogate was shadowed by a later key), take the normal UTF-8 path.
+                return Ok(match js.to_utf8_json() {
+                    Some(val) => JsonBody::Utf8(val),
+                    None => JsonBody::Utf16(js),
+                });
             }
             let close = err.0 == Status::BAD_REQUEST;
             let response = err.into_response();
@@ -249,7 +254,9 @@ async fn read_plugin_json_body(
     }
 }
 
-fn parse_location_u16(val: &JsVal) -> Option<(Result<String, ()>, Option<Result<String, ()>>)> {
+type LocationU16 = (Result<String, ()>, Option<Result<String, ()>>);
+
+fn parse_location_u16(val: &JsVal) -> Option<LocationU16> {
     let entries = val.as_object()?;
     for (k, _) in entries {
         if !eq_ascii(k, "directory") && !eq_ascii(k, "workspaceID") {
@@ -502,11 +509,17 @@ async fn delete_source(
             if !workspace_exists(&app, &workspace_id) {
                 return sources_error(SourceError::Refused { status: Status::NOT_FOUND, code: None });
             }
-            let (Ok(_), None) = (dir, ws) else {
+            let (Ok(directory), None) = (dir, ws) else {
                 return sources_error(SourceError::Refused { status: Status::FORBIDDEN, code: None });
             };
-            // Unpaired UTF-16 surrogate in `target` or `pluginId` can never match a UTF-8 config entry.
-            sources_error(SourceError::with_code(Status::CONFLICT, "stale"))
+            // Preserve business check order: verify workspace/location ownership & daemon readiness
+            // before refusing an unrepresentable `target`/`pluginId` as `409 stale`.
+            let location = ControlLocation { directory, workspace_id: None };
+            let token = principal_token(principal);
+            match engine::read(&app, &workspace_id, &location, token.as_ref(), None).await {
+                Ok(_) => sources_error(SourceError::with_code(Status::CONFLICT, "stale")),
+                Err(err) => sources_error(SourceError::from_fail(err)),
+            }
         }
     }
 }

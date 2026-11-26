@@ -836,6 +836,7 @@ pub(super) async fn edit_config_document_cancellable<E, F>(
     app: &Shared,
     target_req: EditTarget<'_>,
     cancel: CancellationToken,
+    deadline: Instant,
     commit_state: Arc<std::sync::atomic::AtomicU8>,
     map_fail: impl Fn(Fail) -> E + Send + Copy + 'static,
     timeout_err: impl Fn() -> E + Send + Copy + 'static,
@@ -851,7 +852,7 @@ where
         Scope::Project => fence::project_key(workspace_id, &location.directory),
     };
     let queue_guard = fence::serialize(queue_key).await;
-    if cancel.is_cancelled() {
+    if cancel.is_cancelled() || Instant::now() >= deadline {
         return Err(timeout_err());
     }
 
@@ -872,7 +873,7 @@ where
     let workspace = ctx.workspace;
     tokio::task::spawn_blocking(move || {
         let _held = (admitted, queue_guard);
-        if cancel.is_cancelled() {
+        if cancel.is_cancelled() || Instant::now() >= deadline {
             return Err(timeout_err());
         }
         let doc = fs::load(&target.io_path).map_err(|e| map_fail(mapped(e)))?;
@@ -885,10 +886,18 @@ where
             || guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail),
             || {
                 use std::sync::atomic::Ordering;
-                if cancel.is_cancelled()
-                    || commit_state
-                        .compare_exchange(COMMIT_PENDING, COMMIT_ADMITTED, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_err()
+                if Instant::now() >= deadline {
+                    let _ = commit_state.compare_exchange(
+                        COMMIT_PENDING,
+                        COMMIT_ABORTED,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                    return Err(timeout_err());
+                }
+                if commit_state
+                    .compare_exchange(COMMIT_PENDING, COMMIT_ADMITTED, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
                 {
                     return Err(timeout_err());
                 }

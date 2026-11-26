@@ -3,6 +3,8 @@
 //! containing unpaired UTF-16 surrogate escapes (`\uD800`..`\uDFFF`) reaches schema/business
 //! validation without ever substituting `\uD800` for `\u{FFFD}`.
 
+use serde_json::{Map, Number, Value};
+
 const MAX_DEPTH: usize = 128;
 
 #[derive(Debug, Clone)]
@@ -48,15 +50,52 @@ impl JsVal {
             _ => None,
         }
     }
+
+    /// Converts the final JS object (after last-key-wins deduplication) into a lossless UTF-8
+    /// `serde_json::Value` when no retained key or value contains an unpaired UTF-16 surrogate.
+    pub(super) fn to_utf8_json(&self) -> Option<Value> {
+        match self {
+            Self::Null => Some(Value::Null),
+            Self::Bool(b) => Some(Value::Bool(*b)),
+            Self::Num(n) => {
+                if n.is_finite() && n.fract() == 0.0 && (*n >= i64::MIN as f64) && (*n <= i64::MAX as f64) {
+                    Some(Value::Number(Number::from(*n as i64)))
+                } else {
+                    Number::from_f64(*n).map(Value::Number)
+                }
+            }
+            Self::Str(units) => String::from_utf16(units).ok().map(Value::String),
+            Self::Arr(items) => items.iter().map(Self::to_utf8_json).collect::<Option<Vec<_>>>().map(Value::Array),
+            Self::Obj(entries) => {
+                // Keep only the final value for each key (matching JS `JSON.parse`), so a shadowed
+                // lone surrogate (`{"pluginId":"\uD800","pluginId":"id"}`) resolves cleanly to `"id"`.
+                let mut dedup: Vec<(&[u16], &JsVal)> = Vec::with_capacity(entries.len());
+                for (k, v) in entries {
+                    if let Some(slot) = dedup.iter_mut().find(|(ek, _)| *ek == k.as_slice()) {
+                        slot.1 = v;
+                    } else {
+                        dedup.push((k.as_slice(), v));
+                    }
+                }
+                let mut map = Map::with_capacity(dedup.len());
+                for (k, v) in dedup {
+                    let key = String::from_utf16(k).ok()?;
+                    let val = v.to_utf8_json()?;
+                    map.insert(key, val);
+                }
+                Some(Value::Object(map))
+            }
+        }
+    }
 }
 
 /// Parses strict RFC 8259 JSON (matching Fastify `secure-json-parse`: UTF-8 input, optional BOM,
 /// no comments, no trailing commas, `__proto__` and `constructor.prototype` refused), retaining
-/// exact UTF-16 code units in strings (including lone surrogates).
+/// exact UTF-16 code units in strings (including lone surrogates) in a single O(N) pass.
 pub(super) fn parse_strict_json(raw: &[u8]) -> Option<JsVal> {
     let bytes = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let text = std::str::from_utf8(bytes).ok()?;
-    let mut p = Parser { bytes: text.as_bytes(), pos: 0, depth: 0 };
+    let mut p = Parser { text, bytes: text.as_bytes(), pos: 0, depth: 0 };
     p.skip_ws();
     let val = p.value()?;
     p.skip_ws();
@@ -67,11 +106,11 @@ pub(super) fn parse_strict_json(raw: &[u8]) -> Option<JsVal> {
 }
 
 fn poisoned(v: &JsVal) -> bool {
-    let proto: [u16; 9] = [b'_', b'_', b'p', b'r', b'o', b't', b'o', b'_', b'_'].map(u16::from);
-    let ctor: [u16; 11] = [b'c', b'o', b'n', b's', b't', b'r', b'u', b'c', b't', b'o', b'r'].map(u16::from);
     match v {
         JsVal::Obj(entries) => entries.iter().any(|(k, x)| {
-            k.as_slice() == proto || (k.as_slice() == ctor && x.get_ascii("prototype").is_some()) || poisoned(x)
+            eq_ascii(k, "__proto__")
+                || (eq_ascii(k, "constructor") && x.get_ascii("prototype").is_some())
+                || poisoned(x)
         }),
         JsVal::Arr(items) => items.iter().any(poisoned),
         _ => false,
@@ -105,6 +144,7 @@ pub(super) fn eq_ascii(units: &[u16], ascii: &str) -> bool {
 }
 
 struct Parser<'a> {
+    text: &'a str,
     bytes: &'a [u8],
     pos: usize,
     depth: usize,
@@ -260,9 +300,13 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
-            // Input was validated as UTF-8, so decode one scalar value into UTF-16 code units.
-            let rest = std::str::from_utf8(&self.bytes[self.pos..]).ok()?;
-            let ch = rest.chars().next()?;
+            if b < 0x80 {
+                out.push(u16::from(b));
+                self.pos += 1;
+                continue;
+            }
+            // `self.text` was validated as UTF-8 once up front; slicing at `self.pos` is O(1).
+            let ch = self.text[self.pos..].chars().next()?;
             let mut buf = [0u16; 2];
             out.extend_from_slice(ch.encode_utf16(&mut buf));
             self.pos += ch.len_utf8();
@@ -305,7 +349,7 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
             }
         }
-        let s = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?;
+        let s = &self.text[start..self.pos];
         let n: f64 = s.parse().ok()?;
         n.is_finite().then_some(n)
     }

@@ -12,7 +12,7 @@ use std::{
 use reqwest::{Client, Url, header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use super::spec::registry_package_name;
 
@@ -83,22 +83,20 @@ struct CatalogState {
     attempt: Option<Attempt>,
     list_tag: Option<ListTag>,
     releases_url: Option<String>,
+    /// Detached in-flight refresh task; held until download + persistence finish so dropping a caller
+    /// never lets a second refresh race an older disk write.
+    refreshing: Option<Arc<Notify>>,
 }
 
 pub(crate) struct CatalogSource {
     state_file: Option<PathBuf>,
     state: Arc<Mutex<CatalogState>>,
-    refresh_gate: Arc<Mutex<()>>,
 }
 
 impl CatalogSource {
     pub(crate) fn new(state_file: Option<PathBuf>) -> Self {
         let releases_url = if cfg!(test) { None } else { Some(INTEGRATION_CATALOG_RELEASES_URL.to_owned()) };
-        Self {
-            state_file,
-            state: Arc::new(Mutex::new(CatalogState { releases_url, ..Default::default() })),
-            refresh_gate: Arc::new(Mutex::new(())),
-        }
+        Self { state_file, state: Arc::new(Mutex::new(CatalogState { releases_url, ..Default::default() })) }
     }
 
     #[cfg(test)]
@@ -125,38 +123,43 @@ impl CatalogSource {
     pub(crate) async fn read(&self) -> IntegrationCatalog {
         self.ensure_loaded().await;
         let now = now_ms();
-        let needs_refresh = {
-            let st = self.state.lock().await;
-            if st.releases_url.is_none() {
-                false
+        let waiter = {
+            let mut st = self.state.lock().await;
+            let fresh = st.attempt.as_ref().is_some_and(|a| {
+                now < a.at_ms.saturating_add(INTEGRATION_CATALOG_CACHE_MS).max(a.until_ms.unwrap_or(0))
+            });
+            let Some(url) = st.releases_url.clone() else {
+                return st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default();
+            };
+            if fresh {
+                return st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default();
+            }
+            if let Some(notify) = st.refreshing.clone() {
+                notify
             } else {
-                match &st.attempt {
-                    Some(a) => now >= a.at_ms.saturating_add(INTEGRATION_CATALOG_CACHE_MS).max(a.until_ms.unwrap_or(0)),
-                    None => true,
-                }
+                let notify = Arc::new(Notify::new());
+                st.refreshing = Some(notify.clone());
+                let state = self.state.clone();
+                let state_file = self.state_file.clone();
+                let known_rev = st.known.as_ref().map(|k| k.revision.clone());
+                let list_etag = st.list_tag.as_ref().map(|t| t.etag.clone());
+                let list_release = st.list_tag.as_ref().and_then(|t| t.release.clone());
+                let notify_done = notify.clone();
+                tokio::spawn(async move {
+                    run_refresh(state, state_file, url, known_rev, list_etag, list_release, notify_done).await;
+                });
+                notify
             }
         };
-        if needs_refresh {
-            let _gate = self.refresh_gate.lock().await;
-            let now = now_ms();
-            let (url, known_rev, list_etag, list_release) = {
-                let st = self.state.lock().await;
-                let fresh = st.attempt.as_ref().is_some_and(|a| {
-                    now < a.at_ms.saturating_add(INTEGRATION_CATALOG_CACHE_MS).max(a.until_ms.unwrap_or(0))
-                });
-                if fresh {
-                    return st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default();
-                }
-                (
-                    st.releases_url.clone(),
-                    st.known.as_ref().map(|k| k.revision.clone()),
-                    st.list_tag.as_ref().map(|t| t.etag.clone()),
-                    st.list_tag.as_ref().and_then(|t| t.release.clone()),
-                )
-            };
-            if let Some(url) = url {
-                self.refresh(&url, known_rev.as_deref(), list_etag.as_deref(), list_release).await;
-            }
+        let notified = waiter.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let still_running = {
+            let st = self.state.lock().await;
+            st.refreshing.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &waiter))
+        };
+        if still_running {
+            notified.await;
         }
         let st = self.state.lock().await;
         st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default()
@@ -184,77 +187,81 @@ impl CatalogSource {
             }
         }
     }
+}
 
-    /// Single 10 s deadline covering the whole refresh (release list pagination + asset download),
-    /// matching `AbortSignal.timeout(INTEGRATION_CATALOG_TIMEOUT_MS)` in `integrations/catalog.ts:97`.
-    async fn refresh(
-        &self,
-        releases_url: &str,
-        known_revision: Option<&str>,
-        cached_etag: Option<&str>,
-        cached_release: Option<Release>,
-    ) {
-        let total_budget = Duration::from_millis(INTEGRATION_CATALOG_TIMEOUT_MS);
-        let client = match Client::builder().build() {
-            Ok(c) => c,
-            Err(_) => {
-                let mut st = self.state.lock().await;
-                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-                return;
-            }
-        };
-        let outcome = tokio::time::timeout(total_budget, async {
-            let (release_opt, new_tag) =
-                fetch_newest_release(&client, releases_url, cached_etag, cached_release).await?;
-            let Some(release) = release_opt else {
-                return Ok::<_, Option<u64>>((None, new_tag));
-            };
-            if known_revision == Some(release.revision.as_str()) {
-                return Ok((Some(RefreshMatch::Unchanged), new_tag));
-            }
-            let (catalog, raw_document) = download_catalog(&client, &release.asset_url).await?;
-            Ok((
-                Some(RefreshMatch::Updated(KnownCatalog {
-                    catalog,
-                    raw_document,
-                    fetched_at: chrono::Utc::now().to_rfc3339(),
-                    revision: release.revision,
-                })),
-                new_tag,
-            ))
-        })
-        .await;
-
-        match outcome {
-            Ok(Ok((Some(RefreshMatch::Updated(known)), new_tag))) => {
-                if let Some(path) = self.state_file.clone() {
-                    let persist_known = known.clone();
-                    let _ = tokio::task::spawn_blocking(move || persist_catalog(&path, &persist_known)).await;
+/// Detached single-flight refresh holding `CatalogState::refreshing` through download and disk
+/// persistence, matching TS `this.refreshing ??= this.refresh().finally(...)`.
+async fn run_refresh(
+    state: Arc<Mutex<CatalogState>>,
+    state_file: Option<PathBuf>,
+    releases_url: String,
+    known_revision: Option<String>,
+    cached_etag: Option<String>,
+    cached_release: Option<Release>,
+    notify_done: Arc<Notify>,
+) {
+    let total_budget = Duration::from_millis(INTEGRATION_CATALOG_TIMEOUT_MS);
+    let outcome = match Client::builder().build() {
+        Ok(client) => {
+            tokio::time::timeout(total_budget, async {
+                let (release_opt, new_tag) =
+                    fetch_newest_release(&client, &releases_url, cached_etag.as_deref(), cached_release).await?;
+                let Some(release) = release_opt else {
+                    return Ok::<_, Option<u64>>((None, new_tag));
+                };
+                if known_revision.as_deref() == Some(release.revision.as_str()) {
+                    return Ok((Some(RefreshMatch::Unchanged), new_tag));
                 }
-                let mut st = self.state.lock().await;
-                st.list_tag = new_tag;
-                st.known = Some(known);
-                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+                let (catalog, raw_document) = download_catalog(&client, &release.asset_url).await?;
+                Ok((
+                    Some(RefreshMatch::Updated(KnownCatalog {
+                        catalog,
+                        raw_document,
+                        fetched_at: chrono::Utc::now().to_rfc3339(),
+                        revision: release.revision,
+                    })),
+                    new_tag,
+                ))
+            })
+            .await
+        }
+        Err(_) => Ok(Err(None)),
+    };
+
+    match outcome {
+        Ok(Ok((Some(RefreshMatch::Updated(known)), new_tag))) => {
+            if let Some(path) = state_file {
+                let persist_known = known.clone();
+                let _ = tokio::task::spawn_blocking(move || persist_catalog(&path, &persist_known)).await;
             }
-            Ok(Ok((Some(RefreshMatch::Unchanged), new_tag))) | Ok(Ok((None, new_tag))) => {
-                let mut st = self.state.lock().await;
-                st.list_tag = new_tag;
-                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-            }
-            Ok(Err(retry_at)) => {
-                let now = now_ms();
-                let mut st = self.state.lock().await;
-                st.attempt = Some(Attempt {
-                    at_ms: now,
-                    until_ms: retry_at.map(|r| r.min(now.saturating_add(RATE_LIMIT_MAX_WAIT_MS))),
-                });
-            }
-            Err(_) => {
-                let mut st = self.state.lock().await;
-                st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
-            }
+            let mut st = state.lock().await;
+            st.list_tag = new_tag;
+            st.known = Some(known);
+            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.refreshing = None;
+        }
+        Ok(Ok((Some(RefreshMatch::Unchanged), new_tag))) | Ok(Ok((None, new_tag))) => {
+            let mut st = state.lock().await;
+            st.list_tag = new_tag;
+            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.refreshing = None;
+        }
+        Ok(Err(retry_at)) => {
+            let now = now_ms();
+            let mut st = state.lock().await;
+            st.attempt = Some(Attempt {
+                at_ms: now,
+                until_ms: retry_at.map(|r| r.min(now.saturating_add(RATE_LIMIT_MAX_WAIT_MS))),
+            });
+            st.refreshing = None;
+        }
+        Err(_) => {
+            let mut st = state.lock().await;
+            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.refreshing = None;
         }
     }
+    notify_done.notify_waiters();
 }
 
 enum RefreshMatch {
@@ -334,7 +341,10 @@ fn valid_display_name(s: &str) -> bool {
     let Some(rest) = s.strip_prefix("OpenCode for ") else { return false };
     let mut chars = rest.chars();
     let Some(first) = chars.next() else { return false };
-    !first.is_whitespace() && !rest.contains('\n') && !rest.contains('\r') && s.chars().count() <= 60
+    // ECMAScript `.` excludes `\n`, `\r`, U+2028 (Line Separator), and U+2029 (Paragraph Separator).
+    !first.is_whitespace()
+        && !rest.chars().any(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+        && s.chars().count() <= 60
 }
 
 fn valid_locale_key(s: &str) -> bool {
@@ -365,7 +375,7 @@ fn valid_positive_safe_int(value: &Value) -> bool {
 /// Validates the complete `integrationCatalogSchema` (`opencode/integrations/contract.ts:95-131`).
 pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
     let obj = value.as_object()?;
-    if obj.len() != 2 || obj.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+    if obj.len() != 2 || obj.get("schemaVersion").and_then(Value::as_f64) != Some(1.0) {
         return None;
     }
     let list = obj.get("integrations")?.as_array()?;
@@ -660,12 +670,20 @@ fn select_catalog_release(list: &Value, api_origin: &str) -> Option<Release> {
         if !same_origin(asset_url, api_origin) {
             continue;
         }
-        if let Some(size) = asset.get("size").and_then(Value::as_u64)
-            && size as usize > INTEGRATION_CATALOG_MAX_BYTES
+        if let Some(size) = asset.get("size").and_then(Value::as_f64)
+            && size.is_finite()
+            && size > INTEGRATION_CATALOG_MAX_BYTES as f64
         {
             continue;
         }
-        let Some(asset_id) = asset.get("id").and_then(Value::as_u64) else { continue };
+        let Some(asset_id_f) = asset.get("id").and_then(Value::as_f64) else { continue };
+        if !asset_id_f.is_finite()
+            || asset_id_f.fract() != 0.0
+            || !(0.0..=9_007_199_254_740_991.0).contains(&asset_id_f)
+        {
+            continue;
+        }
+        let asset_id = asset_id_f as u64;
         let Some(updated_at) = asset.get("updated_at").and_then(Value::as_str) else { continue };
         let revision = format!("{tag_name}#{asset_id}@{updated_at}");
         if !valid_revision(&revision) {
