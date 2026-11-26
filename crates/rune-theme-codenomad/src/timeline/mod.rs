@@ -51,22 +51,27 @@ pub fn transcript_lane(history: El) -> El {
     rune::col().grow(1.0).min_w(0.0).min_h(0.0).child(history)
 }
 
-pub fn conversation(expanded: bool) -> El {
-    rune::row()
-        .w_full()
-        .grow(1.0)
-        .min_h(crate::interruption::history_minimum(expanded))
+pub fn conversation(layout: crate::interruption::SessionLayout) -> El {
+    rune::row().w_full().grow(1.0).min_h(layout.history_min())
 }
 
 /// Stable wrapper keeping `conversation` mounted when status banners appear or clear above it.
-pub fn panel(expanded: bool, notice: Option<El>, conversation: El) -> El {
+pub fn panel(
+    layout: crate::interruption::SessionLayout,
+    notice: Option<El>,
+    conversation: El,
+) -> El {
     let panel = rune::col()
         .key("conversation-panel")
         .w_full()
         .grow(1.0)
         .children(notice)
         .child(conversation);
-    if expanded { panel } else { panel.min_h(0.0) }
+    if layout.scrolls_stack() {
+        panel
+    } else {
+        panel.min_h(0.0)
+    }
 }
 
 /// Fixed-width slot that isolates the timeline rail's virtualized height from flex min-content sizing.

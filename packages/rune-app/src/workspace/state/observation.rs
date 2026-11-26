@@ -33,7 +33,7 @@ pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut
             }
             #[cfg(target_arch = "wasm32")]
             if now.is_none() {
-                changed |= crate::git::poll_notices(s);
+                changed |= crate::git::poll_notices(s, tx);
             }
             item.cache = Some(Cache::take(s));
         }

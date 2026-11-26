@@ -32,6 +32,11 @@ pub(super) struct Cache {
     status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
+    #[cfg(test)]
+    pub(super) fn git_mut(&mut self) -> &mut crate::git::Binding {
+        &mut self.git
+    }
+
     pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
         self.agent
             .as_ref()
