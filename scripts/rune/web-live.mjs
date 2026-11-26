@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {now, withBudget} from './web-budget.mjs'
 
 export function command(action) {
   assert(process.send,'Run the mobile smoke through launcher-fixture.mjs')
@@ -49,7 +50,7 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
   }
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
   const before=eventSources()
@@ -63,8 +64,8 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
   if(workspaces){
     const button=page.getByRole('button',{name:messages['rune.older'],exact:true})
     const disabled=await button.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true')
-    older={expected:'disabled',observed:disabled?'disabled':'enabled',status:disabled?'pass':'known-gap',
-      ...(disabled?{}:{issue:'https://github.com/anomalyco/rune/issues/118'})}
+    assert.equal(disabled,true,'Older messages button must expose disabled state while reconnecting')
+    older={expected:'disabled',observed:'disabled',status:'pass'}
   }
   await command('resume')
   await text('Mobile recovered history').waitFor()
@@ -124,29 +125,196 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     assert.equal(page.url(),url.href)
     evidence.recoveredAfterRustRestart=true
     evidence.ordinaryCatalogueAfterClosingSearch=true
-    const beforeRevoke=eventSources()
-    await command('revoke')
-    const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
-    await dialog.waitFor()
-    await text(messages['rune.pairing_guide']).waitFor()
-    assert.equal(await dialog.getByRole('textbox').count(),0,'Browser pairing never shows a password form')
-    const check=dialog.getByRole('button',{name:messages['authRecovery.check'],exact:true})
-    const denied=page.waitForResponse(response=>response.url()===`${url.origin}/api/auth/status`&&response.ok())
-    await check.click({force:true})
-    assert.equal((await (await denied).json()).pairingRequired,true)
+    // Prepare the pairing link and second tab and restore front focus BEFORE revoking the device,
+    // so neither tab creation nor bringToFront can trigger an unintercepted FocusCheck probe.
     const again=new URL(await command('pair'))
     assert.equal(again.origin,url.origin)
     assert.equal(again.pathname,'/remote-pair')
     again.searchParams.set('locale','he')
+    let beforeRevoke=0
     const tab=await context.newPage()
     try {
-      await navigatePair(tab, again, {fromLink})
-    } finally { await tab.close() }
-    await page.bringToFront()
-    if(await dialog.count())await check.click({force:true,timeout:2500}).catch(async error=>{
-      if(await dialog.count())throw error
-    })
-    await dialog.waitFor({state:'detached'})
+      const pairFlow=await preparePair(tab, again, {fromLink, waitUntil:'commit'})
+      try {
+        await page.bringToFront()
+        beforeRevoke=eventSources()
+        const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
+        const staleCaptured=Promise.withResolvers()
+        const releaseStale=Promise.withResolvers()
+        const staleSettled=Promise.withResolvers()
+        const followUpCaptured=Promise.withResolvers()
+        const releaseFollowUp=Promise.withResolvers()
+        const followUpSettled=Promise.withResolvers()
+        const staleReceivedByBrowser=Promise.withResolvers()
+        const authStatusUrl=`${url.origin}/api/auth/status`
+        const eventsUrl=`${url.origin}/api/events*`
+        let heldStale=false
+        let heldFollowUp=false
+        let staleRequest=null
+        let authStatusRequests=0
+        let staleAborted=null
+        let staleReleased=false
+        let staleDone=false
+        let blockEvents=false
+        let postStaleStatus=0
+        let staleError=null
+        const onAuthFailed=req=>{
+          if(staleRequest&&req===staleRequest){
+            staleAborted=req.failure()?.errorText||'aborted'
+            staleReceivedByBrowser.reject(new Error(`Held /api/auth/status aborted before delivery: ${staleAborted}`))
+          }
+        }
+        const onAuthResponse=res=>{
+          if(staleRequest&&res.request()===staleRequest){
+            staleReceivedByBrowser.resolve(res)
+          }
+        }
+        void staleCaptured.promise.catch(()=>{})
+        void followUpCaptured.promise.catch(()=>{})
+        void staleReceivedByBrowser.promise.catch(()=>{})
+        page.on('requestfailed',onAuthFailed)
+        page.on('response',onAuthResponse)
+        const admitRoute=async req=>{
+          if(policy)return await policy.request(req,{allowApi:true})
+          const requested=new URL(req.url())
+          return requested.origin===url.origin&&Boolean((await req.allHeaders()).cookie)
+        }
+        const fetchOwnedStatus=async route=>{
+          const response=await route.fetch({maxRedirects:0})
+          assert.equal(new URL(response.url()).origin,url.origin,'Auth status response must stay on the owned origin')
+          assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
+          return response
+        }
+        const holdEvents=async route=>{
+          if(!blockEvents)return route.fallback()
+          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+        }
+        const holdStaleStatus=async route=>{
+          if(route.request().method()!=='GET')return route.fallback()
+          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          authStatusRequests++
+          if(heldStale){
+            if(staleReleased&&!heldFollowUp){
+              heldFollowUp=true
+              postStaleStatus++
+              try {
+                const response=await fetchOwnedStatus(route)
+                const body=await response.json()
+                assert.equal(body.authenticated,true)
+                assert(!body.pairingRequired)
+                followUpCaptured.resolve()
+                await releaseFollowUp.promise
+                await route.fulfill({response})
+              } catch (err) {
+                followUpCaptured.reject(err)
+                await route.abort().catch(()=>{})
+              } finally {
+                followUpSettled.resolve()
+              }
+              return
+            }
+            if(staleReleased)postStaleStatus++
+            return route.fallback()
+          }
+          heldStale=true
+          blockEvents=true
+          staleRequest=route.request()
+          try {
+            const response=await fetchOwnedStatus(route)
+            const body=await response.json()
+            assert.equal(body.authenticated,false)
+            assert.equal(body.pairingRequired,true)
+            staleCaptured.resolve()
+            await releaseStale.promise
+            await route.fulfill({response})
+          } catch (err) {
+            staleError=err
+            staleCaptured.reject(err)
+            await route.abort().catch(()=>{})
+          } finally {
+            staleDone=true
+            staleSettled.resolve()
+          }
+        }
+        // Intercept the VERY FIRST /api/auth/status triggered by device revocation (before #pairing-recovery opens),
+        // then block SSE reconnects until the pairing overlay dismisses so focus/visibility alone drives recovery.
+        await page.route(eventsUrl,holdEvents)
+        await page.route(authStatusUrl,holdStaleStatus)
+        try {
+          try {
+            await page.evaluate(()=>{
+              globalThis.__runeReturnSignal=null
+              const onFocus=()=>{ globalThis.__runeReturnSignal='focus' }
+              const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeReturnSignal='visibility' }
+              window.addEventListener('focus',onFocus)
+              document.addEventListener('visibilitychange',onVis)
+              globalThis.__runeCleanupReturnSignal=()=>{
+                window.removeEventListener('focus',onFocus)
+                document.removeEventListener('visibilitychange',onVis)
+                delete globalThis.__runeCleanupReturnSignal
+                delete globalThis.__runeReturnSignal
+              }
+            })
+            await command('revoke')
+            await withBudget(now()+10_000,'first pre-pairing auth status capture',()=>staleCaptured.promise)
+            assert.equal(await dialog.count(),0,'#pairing-recovery must not be open yet while the first /api/auth/status is held')
+            // Re-pair in the prepared tab and return focus BEFORE the first status probe delivers pairingRequired=true.
+            await pairFlow.complete()
+            await page.bringToFront()
+            // Headless shell keeps every page visible/focused across tabs; when bringToFront emits
+            // neither signal, dispatch window focus so Rune's real FocusCheck listener runs before release.
+            const returnSignal=await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{
+              if(!globalThis.__runeReturnSignal)window.dispatchEvent(new Event('focus'))
+              requestAnimationFrame(()=>requestAnimationFrame(()=>{
+                const signal=globalThis.__runeReturnSignal
+                globalThis.__runeCleanupReturnSignal?.()
+                resolve(signal)
+              }))
+            })))
+            assert(returnSignal==='focus'||returnSignal==='visibility','Expected a focus or visibility return signal before releasing the held status probe')
+            assert.equal(await dialog.count(),0,'Focus return must precede opening of #pairing-recovery')
+            assert(!staleDone,'Focus return must precede delivery of the held first status probe')
+            assert.equal(staleAborted,null,'Held first status probe must still be in flight when focus returns')
+            assert.equal(authStatusRequests,1,'No follow-up /api/auth/status may start before the held probe is delivered')
+            assert.equal(eventSources(),beforeRevoke,'SSE must remain blocked so focus/visibility alone drives recovery')
+          } finally {
+            await page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{})
+            staleReleased=true
+            releaseStale.resolve()
+            if(heldStale)await staleSettled.promise
+          }
+          if(staleError)throw staleError
+          assert.equal(staleAborted,null,'Held first status probe must not abort before browser delivery')
+          const staleBrowserResponse=await withBudget(now()+5_000,'browser receipt of held first auth status',()=>staleReceivedByBrowser.promise)
+          assert.equal(staleBrowserResponse.status(),200)
+          assert.equal(await staleBrowserResponse.finished(),null,'Browser must finish reading the held first status response')
+          assert.equal((await staleBrowserResponse.json()).pairingRequired,true,'Browser must receive pairingRequired=true from the first probe')
+          // Returning focus while the first status probe was in flight must queue a follow-up check
+          // immediately once pairingRequired=true opens #pairing-recovery, without any click or SSE help.
+          try {
+            await withBudget(now()+10_000,'follow-up auth status after first stale probe',()=>followUpCaptured.promise)
+            await dialog.waitFor()
+            await text(messages['rune.pairing_guide']).waitFor()
+            assert.equal(await dialog.getByRole('textbox').count(),0,'Browser pairing never shows a password form')
+          } finally {
+            releaseFollowUp.resolve()
+            if(heldFollowUp)await followUpSettled.promise
+          }
+          await dialog.waitFor({state:'detached',timeout:10_000})
+          assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
+          assert(postStaleStatus>=1,'Focus return during the first status probe must trigger a follow-up /api/auth/status check')
+        } finally {
+          blockEvents=false
+          releaseFollowUp.resolve()
+          if(heldFollowUp)await followUpSettled.promise
+          page.off('requestfailed',onAuthFailed)
+          page.off('response',onAuthResponse)
+          await page.unroute(eventsUrl,holdEvents).catch(()=>{})
+          await page.unroute(authStatusUrl,holdStaleStatus).catch(()=>{})
+        }
+      } finally { await pairFlow.dispose() }
+    } finally { await tab.close().catch(()=>{}) }
     await connecting.waitFor({state:'hidden'})
     assert.equal(await (await focus()).inputValue(),draft)
     assert(eventSources()>beforeRevoke,'Re-pairing must open a new real EventSource')
@@ -200,7 +368,7 @@ export async function revokedLauncher({context,url,messages}){
   }
 }
 
-export async function navigatePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale')}={}){
+export async function preparePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale'),waitUntil='load'}={}){
   const pairPath='/api/remote-control/pair'
   const referrer='https://rune-pair-source.test/'
   let observedReferrer
@@ -222,19 +390,34 @@ export async function navigatePair(tab, url, {fromLink=false,assets,waitForRune=
   await tab.route('**/*', routePair)
   try {
     if(fromLink)await tab.goto(referrer)
-    const document=tab.waitForResponse(response=>response.request().isNavigationRequest()&&
-      new URL(response.url()).origin===url.origin&&new URL(response.url()).pathname==='/remote-pair')
-    void document.catch(()=>{})
-    const exchange=tab.waitForResponse(response=>new URL(response.url()).pathname===pairPath)
-    void exchange.catch(()=>{})
-    if(fromLink)await tab.getByRole('link',{name:'Pair',exact:true}).click({noWaitAfter:true})
-    else await tab.goto(url.href,{waitUntil:'commit'})
-    const status=(await document).status()
-    if(fromLink)assert.equal(observedReferrer,referrer,'Pairing navigation must carry a real cross-origin Referer')
-    assert.equal(status,200,'Serve the pairing document even with a foreign Referer')
-    assert.equal((await exchange).status(),200)
-    await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===returnLocale,
-      {waitUntil:'load'})
-    if(waitForRune)await tab.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
-  } finally { await tab.unroute('**/*',routePair) }
+  } catch (err) {
+    await tab.unroute('**/*', routePair).catch(()=>{})
+    throw err
+  }
+  return {
+    async complete(){
+      const document=tab.waitForResponse(response=>response.request().isNavigationRequest()&&
+        new URL(response.url()).origin===url.origin&&new URL(response.url()).pathname==='/remote-pair')
+      void document.catch(()=>{})
+      const exchange=tab.waitForResponse(response=>new URL(response.url()).pathname===pairPath)
+      void exchange.catch(()=>{})
+      if(fromLink)await tab.getByRole('link',{name:'Pair',exact:true}).click({noWaitAfter:true})
+      else await tab.goto(url.href,{waitUntil:'commit'})
+      const status=(await document).status()
+      if(fromLink)assert.equal(observedReferrer,referrer,'Pairing navigation must carry a real cross-origin Referer')
+      assert.equal(status,200,'Serve the pairing document even with a foreign Referer')
+      assert.equal((await exchange).status(),200)
+      await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===returnLocale,
+        {waitUntil})
+      if(waitForRune)await tab.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
+    },
+    async dispose(){
+      await tab.unroute('**/*',routePair).catch(()=>{})
+    },
+  }
+}
+
+export async function navigatePair(tab, url, options){
+  const flow=await preparePair(tab, url, options)
+  try { await flow.complete() } finally { await flow.dispose() }
 }

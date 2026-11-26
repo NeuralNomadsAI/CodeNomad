@@ -90,7 +90,12 @@ fn drain_chat(
                     if let Some(reader) = &mut s.reader {
                         reader.stream_reconnected();
                     }
+                    let newly_connected = !s.conversation_stream_connected;
                     s.conversation_stream_connected = true;
+                    #[cfg(target_arch = "wasm32")]
+                    platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let _ = newly_connected;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);
@@ -104,11 +109,24 @@ fn drain_chat(
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                {
                     if catalog {
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::AgentControl(lane) => {
+                if let Some(a) = s.agent.as_mut() {
+                    match lane {
+                        codenomad_client::transport::AgentLane::Session => a.refresh_session(false),
+                        codenomad_client::transport::AgentLane::Permissions => {
+                            a.refresh_permissions()
+                        }
+                        codenomad_client::transport::AgentLane::Forms => a.refresh_forms(),
+                    }
                 }
             }
             Event::SessionUsage(usage) => {
@@ -171,10 +189,29 @@ fn drain_chat(
                 form,
                 id,
             }) => {
-                if !uses_workspace_attention(s)
-                    && let Some(agent) = &mut s.agent
-                {
-                    agent.notice_request(form, id);
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.notice_request(form, id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
+                }
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::SessionRequestResolved { form, id },
+            ) => {
+                let local_attention = !uses_workspace_attention(s);
+                if let Some(agent) = &mut s.agent {
+                    if local_attention {
+                        agent.resolve_request(form, &id);
+                    } else if form {
+                        agent.refresh_forms();
+                    } else {
+                        agent.refresh_permissions();
+                    }
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
@@ -186,7 +223,7 @@ fn drain_chat(
                     let verify = notice.is_some();
                     agent.attention.execution(notice);
                     if verify {
-                        agent.refresh(false);
+                        agent.refresh_session(false);
                     }
                 }
             }
@@ -197,7 +234,7 @@ fn drain_chat(
                     && let Some(agent) = &mut s.agent
                 {
                     agent.attention.compacted(id);
-                    agent.refresh(false);
+                    agent.refresh_session(false);
                 }
             }
             Event::Workspace(
@@ -253,6 +290,12 @@ fn drain_chat(
                         agent.attention.disconnected();
                     }
                 }
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                    &event
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.workspace_stopped(workspace_id);
+                }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
@@ -260,7 +303,14 @@ fn drain_chat(
                 }
             }
             Event::Preferences(owner) => {
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                if newly_connected {
+                    platform::pairing::observe_conversation_authenticated(s, true);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 settings::invalidate(s, owner);
             }
             event @ (Event::Sync(_) | Event::ReaderSync { .. }) => {
@@ -269,7 +319,12 @@ fn drain_chat(
                     Event::ReaderSync { page, version } => (page, Some(version)),
                     _ => continue,
                 };
+                let newly_connected = !s.conversation_stream_connected;
                 s.conversation_stream_connected = true;
+                #[cfg(target_arch = "wasm32")]
+                platform::pairing::observe_conversation_authenticated(s, newly_connected);
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = newly_connected;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
@@ -350,12 +405,13 @@ fn drain_chat(
                 if let Some(files) = &mut s.files {
                     files.online(true);
                 }
-                if let Some(a) = s.agent.as_mut() {
-                    if !a.online || a.running != page.running {
-                        a.online = true;
-                        s.composer.picker.refresh_commands(&s.reads, &s.wake);
-                        a.refresh(false);
-                    }
+                if let Some(a) = s.agent.as_mut()
+                    && !a.is_scope_missing()
+                    && (!a.online || a.running != page.running)
+                {
+                    a.online = true;
+                    s.composer.picker.refresh_commands(&s.reads, &s.wake);
+                    a.refresh(false);
                 }
                 s.composer.clear_optimistic(None);
                 s.messages = page.rows;
@@ -495,6 +551,9 @@ fn drain_chat(
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
+                if let Some(a) = s.agent.as_mut() {
+                    a.mark_scope_missing();
+                }
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();

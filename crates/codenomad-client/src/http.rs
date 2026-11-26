@@ -517,7 +517,7 @@ pub async fn pairing_required() -> Result<Option<bool>> {
     let response = Http::new()?
         .get(format!("{base}api/auth/status"))
         .fetch_cache_no_store()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(15))
         .send()
         .await?
         .error_for_status()?;

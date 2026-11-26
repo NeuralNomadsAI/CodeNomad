@@ -74,7 +74,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             list = list.child(button(
                 &format!("model-{}", reference),
                 &model.label,
-                a.locked() || s.phase != Phase::Ready,
+                a.model_locked() || s.phase != Phase::Ready,
                 crate::screen::action(&scope, move |s: &mut State| {
                     if let Some(a) = s.agent.as_mut() {
                         a.choose_model(reference.clone())
@@ -156,7 +156,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
                 actions = actions.child(button(
                     key,
                     t(label),
-                    a.locked() || !p.supported,
+                    a.permissions_locked() || !p.supported,
                     crate::screen::action(&scope, move |s: &mut State| {
                         if let Some(a) = s.agent.as_mut() {
                             a.reply_permission(id.clone(), decision)

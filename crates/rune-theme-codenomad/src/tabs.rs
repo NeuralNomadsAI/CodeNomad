@@ -534,8 +534,29 @@ mod tests {
     fn web_mirror_keeps_tabs_selected_state_and_sibling_closes() {
         let rt = runtime("fr");
         let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tablist_label =
+            catalogue::message("fr", "instanceShell.rightPanel.customize.tabs").unwrap();
+        let tablist_index = items
+            .iter()
+            .position(|e| e["o"] == "tablist" && e["t"] == tablist_label)
+            .unwrap_or_else(|| panic!("missing tablist in web mirror: {}", rt.a11y_json()));
+        let inside_tablist = |item: &serde_json::Value| {
+            let mut ancestor = item["a"].as_u64().map(|index| index as usize);
+            while let Some(index) = ancestor {
+                if index == tablist_index {
+                    return true;
+                }
+                ancestor = items[index]["a"].as_u64().map(|next| next as usize);
+            }
+            false
+        };
         let tabs: Vec<_> = items.iter().filter(|e| e["o"] == "tab").collect();
         assert_eq!(tabs.len(), 2, "real web mirror: {}", rt.a11y_json());
+        assert!(
+            tabs.iter().all(|tab| inside_tablist(tab)),
+            "tabs must be grouped inside tablist in web mirror: {}",
+            rt.a11y_json()
+        );
         assert_eq!(tabs.iter().filter(|e| e["se"] == true).count(), 1);
         assert!(tabs.iter().any(|e| e["t"] == "Alpha" && e["se"] == true));
         let close = catalogue::message("fr", "instanceTab.actions.close.ariaLabel").unwrap();
