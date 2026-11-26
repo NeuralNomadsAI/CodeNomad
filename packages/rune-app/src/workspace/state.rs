@@ -11,8 +11,8 @@ mod strip;
 
 pub use drafts::{
     adopt_recovered_draft, attachment_draft_admissible, bound, bound_with_adopt, capture,
-    draft_changed, note_session_deleted, recover_missing_session_draft, restored_draft_session_ids,
-    session_deleted_hook, unconfirmed_drafts_full,
+    check_restored_draft_sessions, draft_changed, note_session_deleted,
+    recover_missing_session_draft, session_deleted_hook, unconfirmed_drafts_full,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -171,6 +171,20 @@ pub struct Ui {
         codenomad_client::Sender<(ProjectScope, String)>,
         codenomad_client::Receiver<(ProjectScope, String)>,
     ),
+    restored_draft_checked: Vec<(ProjectScope, String)>,
+    restored_draft_in_flight: Vec<(ProjectScope, String)>,
+    restored_draft_checks: (
+        codenomad_client::Sender<(
+            ProjectScope,
+            String,
+            Option<Option<codenomad_client::catalog::SessionAbsence>>,
+        )>,
+        codenomad_client::Receiver<(
+            ProjectScope,
+            String,
+            Option<Option<codenomad_client::catalog::SessionAbsence>>,
+        )>,
+    ),
 }
 impl Ui {
     #[cfg(test)]
@@ -230,6 +244,9 @@ impl Ui {
             closed_derived_from: Vec::new(),
             closed_pending_deleted: Vec::new(),
             deleted_sessions: codenomad_client::bounded(256),
+            restored_draft_checked: Vec::new(),
+            restored_draft_in_flight: Vec::new(),
+            restored_draft_checks: codenomad_client::bounded(128),
         }
     }
     fn changed(&mut self) {
@@ -388,28 +405,46 @@ impl Ui {
                 keys.insert(key);
                 keys.len() <= super::MAX_DRAFTS
             };
+            let unprojected: Vec<_> = closed_bundles.into_iter().skip(projected_count).collect();
+            let need_session_slot = unprojected.len() > 1;
+            let can_host_session = |tabs: &[Tab], i: usize| -> bool {
+                matches!(
+                    &tabs[i],
+                    Tab::Workspace(w)
+                        if scope.matches(w)
+                            && !self.entries[i].cleared.contains(id)
+                            && !w.drafts.contains_key(id)
+                            && !w.attachment_drafts.contains(id)
+                            && !w.attachment_parts.contains_key(id)
+                            && tab_has_room(w, id)
+                )
+            };
             let pick_no_session_dest = |tabs: &[Tab]| -> Option<usize> {
-                let find = |prefer_surviving: bool, require_room: bool| {
-                    tabs.iter().enumerate().find_map(|(i, tab)| {
+                tabs.iter()
+                    .enumerate()
+                    .filter_map(|(i, tab)| {
                         let Tab::Workspace(w) = tab else {
                             return None;
                         };
-                        if (prefer_surviving && self.entries[i].closing_deferred)
-                            || !scope.matches(w)
+                        if !scope.matches(w)
                             || self.entries[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
-                            || (require_room && !tab_has_room(w, super::NO_SESSION_DRAFT_ID))
+                            || !tab_has_room(w, super::NO_SESSION_DRAFT_ID)
                         {
                             return None;
                         }
-                        Some(i)
+                        Some((
+                            (
+                                self.entries[i].closing_deferred,
+                                need_session_slot && can_host_session(tabs, i),
+                                i,
+                            ),
+                            i,
+                        ))
                     })
-                };
-                find(true, true)
-                    .or_else(|| find(false, true))
-                    .or_else(|| find(true, false))
-                    .or_else(|| find(false, false))
+                    .min_by_key(|(rank, _)| *rank)
+                    .map(|(_, i)| i)
             };
-            for bundle in closed_bundles.into_iter().skip(projected_count) {
+            for bundle in unprojected {
                 let target = if no_session_free && let Some(dest) = pick_no_session_dest(&tabs) {
                     no_session_free = false;
                     Some((dest, super::NO_SESSION_DRAFT_ID))

@@ -3195,7 +3195,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         saved_at: 1,
         panel_widths: [None; 2],
         file_wrap: None,
-        tabs: vec![Tab::Workspace(a15_3), Tab::Workspace(b15_3)],
+        tabs: vec![Tab::Workspace(a15_3.clone()), Tab::Workspace(b15_3)],
         active: Some(0),
     });
     ui.ready = true;
@@ -3206,14 +3206,38 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     ];
     ui.closed_restored = vec![Default::default(), Default::default()];
     ui.closed_derived_from = vec![Default::default(), Default::default()];
+    // R17 Mineur 1: pre-arm closed_pending_deleted and attach a real Store so we specifically
+    // prove that transitioning closing_deferred -> true advances revision and stages the snapshot
+    // on its own.
+    #[cfg(not(target_arch = "wasm32"))]
+    let store_parent = {
+        let parent = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+        std::fs::create_dir(&parent).unwrap();
+        let store =
+            crate::platform::block_on(crate::platform::storage::Store::open(parent.join("rune")))
+                .unwrap();
+        ui.persistence.store = Some(store);
+        parent
+    };
+    ui.closed_pending_deleted.push((
+        crate::workspace::state::ProjectScope::from_workspace(&a15_3),
+        "ses_r15_poll".into(),
+    ));
     let rev_before_defer = ui.revision;
     r15_b3.workspace = Some(ui);
     r15_b3.show_launcher();
     crate::workspace::state::tabs::close_with_uuid(&mut r15_b3, "tab-0", &mut tx, || None);
-    assert_eq!(r15_b3.workspace.as_ref().unwrap().entries.len(), 2);
+    let ui_after_defer = r15_b3.workspace.as_ref().unwrap();
+    assert_eq!(ui_after_defer.entries.len(), 2);
     assert!(
-        r15_b3.workspace.as_ref().unwrap().revision > rev_before_defer,
-        "R16 Bloquant 1: activating deferred snapshot projection must advance revision for persistence"
+        ui_after_defer.revision > rev_before_defer,
+        "R16 Bloquant 1 + R17 Mineur 1: setting closing_deferred must advance revision even when closed_pending_deleted was already armed"
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(
+        ui_after_defer.staged_revision,
+        Some(ui_after_defer.revision),
+        "setting closing_deferred must stage the updated snapshot revision"
     );
     // Poll runs before second close click: must deposit drafts onto B, not deferred-closing A.
     assert!(crate::workspace::state::drafts::poll_pending_deleted(
@@ -3248,6 +3272,9 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         vec!["poll closed 1", "poll closed 2"],
         "poll after deferred close must route recovered drafts onto surviving sibling B"
     );
+    drop(r15_b3);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = std::fs::remove_dir_all(&store_parent);
 
     // 29. R15 Moyen 3: A queued deletion failure on an unrelated project must not block closing
     // a tab of another project.
@@ -3288,8 +3315,12 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         "deferred deletion on unrelated project must not block closing tab-1"
     );
 
-    // 30. R16 Bloquant 3: Fallback snapshot projection must skip a full 24-draft surviving tab
-    // when another sibling has room, and must never write into a cleared __no_session_draft__ slot.
+    // 30. R16 Bloquant 3 + R17 Bloquant 1 + Mineur 2:
+    // (a) Fallback snapshot projection must skip a full 24-draft tab AND a tab whose
+    // __no_session_draft__ is marked cleared, landing __no_session_draft__ on a 3rd tab with room.
+    // (b) Joint packing: A and B each have 23 drafts, only B already owns key S; with 2 closed
+    // drafts for S, __no_session_draft__ must go to B (24/24) and S to A (24/24) without overflow.
+    // (c) When every tab is already at 24/24, fallback must never force an over-quota insertion.
     let mut r16_b3 = draft_state();
     let mut full_tab = closed("ses_r16_cap", "");
     full_tab.drafts.clear();
@@ -3299,9 +3330,13 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             .drafts
             .insert(format!("ses_fill_{i:02}"), format!("fill {i}"));
     }
+    let mut cleared_tab = closed("ses_r16_cap", "");
+    cleared_tab.drafts.clear();
+    cleared_tab.occurrence = 1;
+    cleared_tab.active_session_id = None;
     let mut room_tab = closed("ses_r16_cap", "");
     room_tab.drafts.clear();
-    room_tab.occurrence = 1;
+    room_tab.occurrence = 2;
     room_tab.active_session_id = None;
     let mut ui = Ui::new();
     ui.hydrate(crate::workspace::Snapshot {
@@ -3309,10 +3344,17 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         saved_at: 1,
         panel_widths: [None; 2],
         file_wrap: None,
-        tabs: vec![Tab::Workspace(full_tab.clone()), Tab::Workspace(room_tab)],
+        tabs: vec![
+            Tab::Workspace(full_tab.clone()),
+            Tab::Workspace(cleared_tab),
+            Tab::Workspace(room_tab),
+        ],
         active: Some(0),
     });
     ui.ready = true;
+    ui.entries[1]
+        .cleared
+        .insert(crate::workspace::NO_SESSION_DRAFT_ID.into());
     ui.closed = vec![
         closed("ses_r16_cap", "fallback 1"),
         closed("ses_r16_cap", "fallback 2"),
@@ -3330,7 +3372,10 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
     let Tab::Workspace(dec_full) = &decoded_r16_b3.tabs[0] else {
         panic!("expected full tab");
     };
-    let Tab::Workspace(dec_room) = &decoded_r16_b3.tabs[1] else {
+    let Tab::Workspace(dec_cleared) = &decoded_r16_b3.tabs[1] else {
+        panic!("expected cleared tab");
+    };
+    let Tab::Workspace(dec_room) = &decoded_r16_b3.tabs[2] else {
         panic!("expected room tab");
     };
     assert_eq!(
@@ -3338,70 +3383,169 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         crate::workspace::MAX_DRAFTS,
         "full 24-draft tab must not lose any draft to fallback projection"
     );
+    assert!(
+        !dec_cleared
+            .drafts
+            .contains_key(crate::workspace::NO_SESSION_DRAFT_ID),
+        "R17 Mineur 2: cleared __no_session_draft__ slot must be skipped"
+    );
     assert_eq!(
         dec_room
             .drafts
             .get(crate::workspace::NO_SESSION_DRAFT_ID)
             .map(String::as_str),
         Some("fallback 2"),
-        "fallback __no_session_draft__ must land on sibling with room"
+        "fallback __no_session_draft__ must skip full and cleared tabs and land on tab 2"
     );
-    assert_eq!(
-        dec_room.drafts.get("ses_r16_cap").map(String::as_str),
-        Some("fallback 1"),
-        "second fallback draft must land on sibling with room"
+    assert!(
+        dec_cleared.drafts.get("ses_r16_cap").map(String::as_str) == Some("fallback 1")
+            || dec_room.drafts.get("ses_r16_cap").map(String::as_str) == Some("fallback 1"),
+        "second fallback draft must land on an eligible tab with room"
     );
 
-    // 31. R16 Bloquant 2: Hydrated non-local draft session IDs (such as fallback "ses_r16_cap"
-    // restored on a tab with no active_session_id) are surfaced by restored_draft_session_ids
-    // and checked once by Visits::seed_draft_checks + poll_checks -> confirmed 404 recovers them.
-    let mut r16_b2 = draft_state();
-    let mut ui_b2 = Ui::new();
-    ui_b2.hydrate(decoded_r16_b3);
-    ui_b2.ready = true;
-    r16_b2.workspace = Some(ui_b2);
-    let ids = crate::workspace::restored_draft_session_ids(&r16_b2);
-    assert!(
-        ids.iter().any(|id| id == "ses_r16_cap"),
-        "restored_draft_session_ids must include hydrated fallback session key"
-    );
-    let mut visits = crate::launcher::Visits::default();
-    visits.seed_draft_checks(ids);
-    let listed = std::collections::HashSet::new();
-    assert!(
-        visits
-            .pending_draft_checks(&listed)
-            .any(|id| id == "ses_r16_cap")
-    );
-    let (check_tx, check_rx) = codenomad_client::bounded(2);
-    visits.start_checks(&["ses_r16_cap".into()], check_rx);
-    let _ = check_tx.try_send((
-        "ses_r16_cap".into(),
-        codenomad_client::runtime::Instant::now(),
-        codenomad_client::catalog::SessionAbsence::NotFound,
+    // 30b. R17 Bloquant 1: Joint destination packing (A and B both have 23 drafts, B already
+    // holds key S; both closed drafts for S fit: __no_session_draft__ in B, S in A).
+    let mut r17_pack = draft_state();
+    let mut pack_a = closed("ses_r17_pack", "");
+    pack_a.drafts.clear();
+    pack_a.active_session_id = None;
+    for i in 0..23 {
+        pack_a
+            .drafts
+            .insert(format!("ses_pa_{i:02}"), format!("pa {i}"));
+    }
+    let mut pack_b = closed("ses_r17_pack", "");
+    pack_b.drafts.clear();
+    pack_b.occurrence = 1;
+    pack_b.active_session_id = None;
+    for i in 0..22 {
+        pack_b
+            .drafts
+            .insert(format!("ses_pb_{i:02}"), format!("pb {i}"));
+    }
+    pack_b
+        .drafts
+        .insert("ses_r17_pack".into(), "existing B".into());
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(pack_a.clone()), Tab::Workspace(pack_b)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.closed = vec![
+        closed("ses_r17_pack", "pack closed 1"),
+        closed("ses_r17_pack", "pack closed 2"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default()];
+    ui.closed_pending_deleted.push((
+        crate::workspace::state::ProjectScope::from_workspace(&pack_a),
+        "ses_r17_pack".into(),
     ));
-    drop(check_tx);
-    let polled = visits.poll_checks();
-    assert_eq!(polled.deleted, vec!["ses_r16_cap"]);
-    assert!(
-        !visits
-            .pending_draft_checks(&listed)
-            .any(|id| id == "ses_r16_cap"),
-        "completed draft check must be retired after batch finishes"
+    r17_pack.workspace = Some(ui);
+    let snap_pack = r17_pack.workspace.as_ref().unwrap().snapshot();
+    let bytes_pack = crate::workspace::encode(&snap_pack).unwrap();
+    let dec_pack = crate::workspace::decode(&bytes_pack).unwrap();
+    let Tab::Workspace(da) = &dec_pack.tabs[0] else {
+        panic!("expected A");
+    };
+    let Tab::Workspace(db) = &dec_pack.tabs[1] else {
+        panic!("expected B");
+    };
+    assert_eq!(da.drafts.len(), crate::workspace::MAX_DRAFTS);
+    assert_eq!(db.drafts.len(), crate::workspace::MAX_DRAFTS);
+    assert_eq!(
+        db.drafts
+            .get(crate::workspace::NO_SESSION_DRAFT_ID)
+            .map(String::as_str),
+        Some("pack closed 2"),
+        "joint packing must put __no_session_draft__ into B (which already owns S)"
     );
-    assert!(crate::workspace::recover_missing_session_draft(
-        &mut r16_b2,
-        "ses_r16_cap"
+    assert_eq!(
+        da.drafts.get("ses_r17_pack").map(String::as_str),
+        Some("pack closed 1"),
+        "joint packing must preserve A's free S slot for the second closed draft"
+    );
+
+    // 31. R17 Bloquant 2: When A is the ONLY tab of the project and its close was deferred,
+    // background poll_pending_deleted must keep recovery pending rather than depositing drafts
+    // onto closing_deferred A; once sibling B opens, poll deposits them onto B so closing A
+    // and restarting keeps them on B.
+    let mut r17_b2 = draft_state();
+    let mut sole_a = closed("ses_r17_sole", "");
+    sole_a.drafts.clear();
+    sole_a.active_session_id = None;
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![Tab::Workspace(sole_a)],
+        active: Some(0),
+    });
+    ui.ready = true;
+    ui.entries[0].pending_deleted.insert("ses_r17_sole".into());
+    ui.closed = vec![
+        closed("ses_r17_sole", "sole closed 1"),
+        closed("ses_r17_sole", "sole closed 2"),
+    ];
+    ui.closed_restored = vec![Default::default(), Default::default()];
+    ui.closed_derived_from = vec![Default::default(), Default::default()];
+    r17_b2.workspace = Some(ui);
+    r17_b2.show_launcher();
+    crate::workspace::state::tabs::close_with_uuid(&mut r17_b2, "tab-0", &mut tx, || None);
+    assert_eq!(r17_b2.workspace.as_ref().unwrap().entries.len(), 1);
+    // Background poll with no surviving sibling must NOT deposit onto closing_deferred A.
+    assert!(!crate::workspace::state::drafts::poll_pending_deleted(
+        &mut r17_b2
     ));
-    let Tab::Workspace(rec_room) = &r16_b2.workspace.as_ref().unwrap().entries[1].saved else {
-        panic!("expected room tab");
+    let Tab::Workspace(a_still_clean) = &r17_b2.workspace.as_ref().unwrap().entries[0].saved else {
+        panic!("expected sole A");
     };
     assert!(
-        rec_room
-            .drafts
-            .iter()
-            .any(|(k, v)| crate::workspace::is_recovered_draft_id(k) && v == "fallback 1"),
-        "confirmed 404 on restored fallback key must promote it into a local recovered draft"
+        a_still_clean.drafts.is_empty(),
+        "poll must not deposit recovered drafts onto sole closing_deferred tab A"
+    );
+    // Now open sibling B -> poll deposits both drafts onto B, then closing A keeps them on B.
+    new_tab(&mut r17_b2, &mut tx);
+    if let Some(l) = r17_b2.screen.launcher_mut() {
+        l.pending = false;
+    }
+    opened(
+        &mut r17_b2,
+        &Project {
+            id: "proj-r17-b".into(),
+            path: "/fixture".into(),
+        },
+    );
+    assert!(crate::workspace::state::drafts::poll_pending_deleted(
+        &mut r17_b2
+    ));
+    close(&mut r17_b2, "tab-0", &mut tx);
+    let snap_sole = r17_b2.workspace.as_ref().unwrap().snapshot();
+    let bytes_sole = crate::workspace::encode(&snap_sole).unwrap();
+    let mut hyd_sole = Ui::new();
+    hyd_sole.hydrate(crate::workspace::decode(&bytes_sole).unwrap());
+    assert_eq!(hyd_sole.entries.len(), 1);
+    let Tab::Workspace(b_surv) = &hyd_sole.entries[0].saved else {
+        panic!("expected surviving B");
+    };
+    let mut sole_texts: Vec<&str> = b_surv
+        .drafts
+        .iter()
+        .filter(|(k, _)| crate::workspace::is_local_draft_id(k))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    sole_texts.sort_unstable();
+    assert_eq!(
+        sole_texts,
+        vec!["sole closed 1", "sole closed 2"],
+        "opening B after deferred close of sole tab A must route drafts onto B across restart"
     );
 
     // 32. R16 Moyen 1: When two tabs A and B both have deferred closes while C stays open,
@@ -3471,4 +3615,253 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         ],
         "consecutive recoveries with two deferred-closing tabs must route every draft onto surviving C"
     );
+
+    // 33. R17 Moyens 1, 2, 3 + Mineur 3: Real HTTP end-to-end startup check through
+    // launcher::open -> launcher::poll (Reply::Opened with paginated cursor) -> workspace::poll,
+    // with 48 listed drafts on tabs 0 & 1 (must not starve tab 2's deleted key), 404/403/200
+    // probes, and a second sibling Reply::Opened proving zero repeat HTTP requests.
+    {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::{Arc, Mutex, mpsc},
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let probed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let probed_srv = probed.clone();
+        let list_calls = Arc::new(Mutex::new(0usize));
+        let list_calls_srv = list_calls.clone();
+        let listed_rows: Vec<serde_json::Value> = (0..48)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("ses_listed_{i:02}"),
+                    "title": format!("listed {i}"),
+                    "location": { "directory": "/fixture" }
+                })
+            })
+            .collect();
+        let paginated_body = serde_json::json!({
+            "data": listed_rows,
+            "cursor": { "next": "page-2" }
+        })
+        .to_string();
+        let (stop, stopped) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut byte = [0];
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    if socket.read_exact(&mut byte).is_err() {
+                        break;
+                    }
+                    bytes.push(byte[0]);
+                }
+                let header = String::from_utf8_lossy(&bytes);
+                let line = header.lines().next().unwrap_or("").to_string();
+                let length = header
+                    .lines()
+                    .find_map(|l| {
+                        l.split_once(':')
+                            .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                            .map(|(_, v)| v.trim().parse::<usize>().unwrap_or(0))
+                    })
+                    .unwrap_or(0);
+                let mut req_body = Vec::new();
+                if length > 0 && length < 16384 {
+                    req_body.resize(length, 0);
+                    let _ = socket.read_exact(&mut req_body);
+                }
+                let (status, body) = if line.starts_with("POST /api/workspaces ") {
+                    let req_id = serde_json::from_slice::<serde_json::Value>(&req_body)
+                        .ok()
+                        .and_then(|v| v["requestId"].as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    (
+                        201,
+                        serde_json::json!({
+                            "id": "ws-probe",
+                            "requestId": req_id,
+                            "location": { "directory": "/fixture" }
+                        })
+                        .to_string(),
+                    )
+                } else if line.contains("/creation/release ") || line.contains("/creation/cancel ")
+                {
+                    (204, String::new())
+                } else if line.starts_with("GET /workspaces/ws-probe/instance/api/session?") {
+                    *list_calls_srv.lock().unwrap() += 1;
+                    (200, paginated_body.clone())
+                } else if line.contains("/instance/api/session/ses_probe_404 ") {
+                    probed_srv.lock().unwrap().push("ses_probe_404".into());
+                    (
+                        404,
+                        r#"{"_tag":"SessionNotFoundError","sessionID":"ses_probe_404"}"#.into(),
+                    )
+                } else if line.contains("/instance/api/session/ses_probe_403 ") {
+                    probed_srv.lock().unwrap().push("ses_probe_403".into());
+                    (403, r#"{"reason":"session_located_elsewhere"}"#.into())
+                } else if line.contains("/instance/api/session/ses_probe_200 ") {
+                    probed_srv.lock().unwrap().push("ses_probe_200".into());
+                    (
+                        200,
+                        r#"{"data":{"id":"ses_probe_200","title":"live","location":{"directory":"/fixture"}}}"#
+                            .into(),
+                    )
+                } else {
+                    (200, r#"{"data":[]}"#.into())
+                };
+                let _ = socket.write_all(
+                    format!(
+                        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let mut r17_http = draft_state();
+        r17_http
+            .screen
+            .launcher_mut()
+            .unwrap()
+            .connection
+            .as_mut()
+            .unwrap()
+            .base = address.clone();
+        let mut t0 = closed("ses_listed_00", "");
+        t0.drafts.clear();
+        t0.active_session_id = None;
+        let mut t1 = closed("ses_listed_24", "");
+        t1.drafts.clear();
+        t1.occurrence = 1;
+        t1.active_session_id = None;
+        for i in 0..24 {
+            t0.drafts
+                .insert(format!("ses_listed_{i:02}"), format!("l0 {i}"));
+            t1.drafts
+                .insert(format!("ses_listed_{:02}", i + 24), format!("l1 {i}"));
+        }
+        let mut t2 = closed("ses_probe_404", "recover me 404");
+        t2.occurrence = 2;
+        t2.active_session_id = None;
+        t2.drafts.insert("ses_probe_403".into(), "keep 403".into());
+        t2.drafts.insert("ses_probe_200".into(), "keep 200".into());
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(t0), Tab::Workspace(t1), Tab::Workspace(t2)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        r17_http.workspace = Some(ui);
+        crate::platform::block_on(async {
+            // 1. Real launcher::choose_project -> Reply::Opened with paginated cursor ("page-2")
+            // and 48 listed sessions: must start bounded checks for tab 2's 3 unlisted keys
+            // immediately.
+            crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut opened_once = false;
+            while Instant::now() < deadline {
+                let _ = crate::launcher::poll(&mut r17_http, &mut tx);
+                let _ = crate::workspace::poll(&mut r17_http, 1.0, &mut tx);
+                if r17_http
+                    .screen
+                    .launcher()
+                    .is_some_and(|l| !l.pending && l.next.as_deref() == Some("page-2"))
+                {
+                    opened_once = true;
+                }
+                let done = opened_once
+                    && r17_http
+                        .workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_in_flight
+                        .is_empty()
+                    && probed.lock().unwrap().len() >= 3;
+                if done {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(opened_once, "Reply::Opened must receive paginated cursor");
+            assert_eq!(
+                *list_calls.lock().unwrap(),
+                1,
+                "first project open must fetch the paginated session list once"
+            );
+            // 2. Second sibling Reply::Opened for the same project: must send ZERO repeat probes.
+            crate::launcher::choose_project(&mut r17_http, "/fixture", &mut tx);
+            let second_deadline = Instant::now() + Duration::from_secs(5);
+            let mut opened_twice = false;
+            while Instant::now() < second_deadline {
+                let _ = crate::launcher::poll(&mut r17_http, &mut tx);
+                let _ = crate::workspace::poll(&mut r17_http, 2.0, &mut tx);
+                if *list_calls.lock().unwrap() >= 2
+                    && r17_http
+                        .screen
+                        .launcher()
+                        .is_some_and(|l| !l.pending && l.next.as_deref() == Some("page-2"))
+                {
+                    opened_twice = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(
+                opened_twice,
+                "second sibling open must also complete Reply::Opened"
+            );
+            let settle_deadline = Instant::now() + Duration::from_millis(120);
+            while Instant::now() < settle_deadline {
+                let _ = crate::launcher::poll(&mut r17_http, &mut tx);
+                let _ = crate::workspace::poll(&mut r17_http, 3.0, &mut tx);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let _ = stop.send(());
+        let _ = server.join();
+        let mut seen_probes = probed.lock().unwrap().clone();
+        seen_probes.sort();
+        assert_eq!(
+            seen_probes,
+            vec!["ses_probe_200", "ses_probe_403", "ses_probe_404"],
+            "paginated Reply::Opened must probe each unlisted restored key once without starvation or replay"
+        );
+        let Tab::Workspace(after_t2) = &r17_http.workspace.as_ref().unwrap().entries[2].saved
+        else {
+            panic!("expected tab 2");
+        };
+        assert!(
+            after_t2
+                .drafts
+                .iter()
+                .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover me 404"),
+            "404 probe must recover the draft into a local key"
+        );
+        assert_eq!(
+            after_t2.drafts.get("ses_probe_403").map(String::as_str),
+            Some("keep 403"),
+            "403 session_located_elsewhere must NOT trigger recovery"
+        );
+        assert_eq!(
+            after_t2.drafts.get("ses_probe_200").map(String::as_str),
+            Some("keep 200"),
+            "200 OK session must remain intact"
+        );
+    }
 }

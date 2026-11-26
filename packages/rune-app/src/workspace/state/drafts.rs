@@ -1233,6 +1233,30 @@ fn recover_missing_session_draft_with_uuid_impl(
             });
 
         let project_scope = super::ProjectScope::from_workspace(&scope);
+        // Never deposit background recovery drafts onto a closing_deferred tab when no surviving
+        // sibling exists yet; wait until a sibling opens or the user explicitly retries close.
+        if closing_tab.is_none()
+            && ui.entries[origin].closing_deferred
+            && preferred_sibling.is_none()
+        {
+            ui.entries[origin].pending_deleted.insert(session_id.into());
+            if !ui
+                .closed_pending_deleted
+                .iter()
+                .any(|(existing_scope, existing_id)| {
+                    existing_scope.same_scope(&project_scope) && existing_id == session_id
+                })
+            {
+                ui.closed_pending_deleted
+                    .push((project_scope.clone(), session_id.into()));
+                ui.changed();
+                ui.stage();
+            }
+            return RecoveryOutcome {
+                recovered: false,
+                deferred: true,
+            };
+        }
         let mut clear_authorities = collect_open_clear_authorities(ui, &project_scope, session_id);
         let (closed_bundles, closed_explicitly_cleared) =
             collect_closed_bundles_for_recovery(ui, &project_scope, session_id, &clear_authorities);
@@ -1495,34 +1519,159 @@ fn recover_missing_session_draft_with_uuid_impl(
     }
 }
 
-/// Returns bounded distinct non-local session IDs that hold hydrated drafts in the active
-/// tab's project so startup listing reconciliation can confirm whether any were deleted while
-/// the app was closed (including fallback projections under a dead session key).
-pub fn restored_draft_session_ids(s: &State) -> Vec<String> {
-    let Some(ui) = &s.workspace else {
-        return Vec::new();
-    };
-    let Some(Tab::Workspace(scope)) = ui.entries.get(ui.active).map(|e| &e.saved) else {
-        return Vec::new();
-    };
-    let mut ids = Vec::new();
-    let order = std::iter::once(ui.active).chain((0..ui.entries.len()).filter(|&i| i != ui.active));
-    for idx in order {
-        let entry = &ui.entries[idx];
-        if !matches!(&entry.saved, Tab::Workspace(w) if same_project(scope, w)) {
-            continue;
-        }
-        for id in entry.restored_drafts.keys() {
-            if is_local_draft_id(id) || ids.iter().any(|existing| existing == id) {
+/// Starts bounded, project-scoped absence checks for hydrated non-local draft session IDs not
+/// already present in `listed`, checked, or in-flight. Runs immediately on project open (even
+/// when the listing is paginated); only a confirmed 404 triggers draft recovery.
+pub fn check_restored_draft_sessions(
+    s: &mut State,
+    backend: &Backend,
+    project: &crate::catalog::Project,
+    listed: &std::collections::HashSet<String>,
+) {
+    let (scope, ids, out) = {
+        let Some(ui) = &mut s.workspace else {
+            return;
+        };
+        let Some(Tab::Workspace(active_ws)) = ui.entries.get(ui.active).map(|e| &e.saved) else {
+            return;
+        };
+        let scope = super::ProjectScope::from_workspace(active_ws);
+        let scope_has = |list: &[(super::ProjectScope, String)], id: &str| {
+            list.iter().any(|(existing_scope, existing_id)| {
+                existing_scope.same_scope(&scope) && existing_id == id
+            })
+        };
+        let order =
+            std::iter::once(ui.active).chain((0..ui.entries.len()).filter(|&i| i != ui.active));
+        let mut to_check = Vec::new();
+        let mut newly_listed = Vec::new();
+        for idx in order {
+            let entry = &ui.entries[idx];
+            if !matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)) {
                 continue;
             }
-            ids.push(id.clone());
-            if ids.len() >= super::super::MAX_DRAFTS * 2 {
-                return ids;
+            for id in entry.restored_drafts.keys() {
+                if is_local_draft_id(id)
+                    || scope_has(&ui.restored_draft_checked, id)
+                    || scope_has(&ui.restored_draft_in_flight, id)
+                    || to_check.iter().any(|existing| existing == id)
+                {
+                    continue;
+                }
+                if listed.contains(id) {
+                    if !newly_listed.iter().any(|existing| existing == id) {
+                        newly_listed.push(id.clone());
+                    }
+                    continue;
+                }
+                to_check.push(id.clone());
+                if to_check.len() >= super::super::MAX_DRAFTS * 2 {
+                    break;
+                }
+            }
+            if to_check.len() >= super::super::MAX_DRAFTS * 2 {
+                break;
+            }
+        }
+        for id in newly_listed {
+            if ui.restored_draft_checked.len() < super::super::MAX_DRAFTS * 8 {
+                ui.restored_draft_checked.push((scope.clone(), id));
+            }
+        }
+        if to_check.is_empty() {
+            return;
+        }
+        for id in &to_check {
+            ui.restored_draft_in_flight
+                .push((scope.clone(), id.clone()));
+        }
+        (scope, to_check, ui.restored_draft_checks.0.clone())
+    };
+    let backend = backend.clone();
+    let project = project.clone();
+    let wake = s.wake.clone();
+    crate::platform::spawn(async move {
+        for id in ids {
+            let result = backend.probe_session_absence(&project, &id).await;
+            if out.send((scope.clone(), id, result)).await.is_err() {
+                return;
+            }
+            wake();
+        }
+    });
+}
+
+pub(super) fn poll_restored_draft_checks(s: &mut State) -> bool {
+    let completed: Vec<_> = {
+        let Some(ui) = &mut s.workspace else {
+            return false;
+        };
+        let mut items = Vec::new();
+        while let Ok(item) = ui.restored_draft_checks.1.try_recv() {
+            items.push(item);
+        }
+        items
+    };
+    if completed.is_empty() {
+        return false;
+    }
+    let mut deleted = Vec::new();
+    if let Some(ui) = &mut s.workspace {
+        for (scope, id, result) in completed {
+            ui.restored_draft_in_flight
+                .retain(|(existing_scope, existing_id)| {
+                    !(existing_scope.same_scope(&scope) && existing_id == &id)
+                });
+            if let Some(absence) = result {
+                if !ui
+                    .restored_draft_checked
+                    .iter()
+                    .any(|(existing_scope, existing_id)| {
+                        existing_scope.same_scope(&scope) && existing_id == &id
+                    })
+                    && ui.restored_draft_checked.len() < super::super::MAX_DRAFTS * 8
+                {
+                    ui.restored_draft_checked.push((scope.clone(), id.clone()));
+                }
+                if absence == Some(codenomad_client::catalog::SessionAbsence::NotFound) {
+                    deleted.push((scope, id));
+                }
             }
         }
     }
-    ids
+    let mut changed = false;
+    for (scope, id) in deleted {
+        let target_idx = s.workspace.as_ref().and_then(|ui| {
+            ui.entries
+                .iter()
+                .enumerate()
+                .find_map(|(idx, entry)| {
+                    (!entry.closing_deferred
+                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+                    .then_some(idx)
+                })
+                .or_else(|| {
+                    ui.entries.iter().position(
+                        |entry| matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)),
+                    )
+                })
+        });
+        if let Some(idx) = target_idx {
+            changed |= recover_missing_session_draft_in(s, Some(idx), &id);
+        } else if let Some(ui) = &mut s.workspace
+            && !ui
+                .closed_pending_deleted
+                .iter()
+                .any(|(existing_scope, existing_id)| {
+                    existing_scope.same_scope(&scope) && existing_id == &id
+                })
+        {
+            ui.closed_pending_deleted.push((scope, id));
+            ui.changed();
+            ui.stage();
+        }
+    }
+    changed
 }
 
 /// Retries any deferred deletion recoveries (e.g. after temporary UUID entropy failure or
@@ -1543,33 +1692,40 @@ pub(super) fn poll_pending_deleted(s: &mut State) -> bool {
                     && matches!(&ui.entries[*other_idx].saved, Tab::Workspace(w) if same_project(scope, w))
             })
         };
+        let surviving_for = |idx: usize, id: &str| -> Option<usize> {
+            let Tab::Workspace(scope) = &ui.entries[idx].saved else {
+                return None;
+            };
+            ui.entries.iter().enumerate().find_map(|(other, entry)| {
+                (!entry.closing_deferred
+                    && matches!(&entry.saved, Tab::Workspace(w) if same_project(scope, w))
+                    && !occurrence_in_active_chat_on(on_launcher, ui, other, id))
+                .then_some(other)
+            })
+        };
         for (idx, entry) in ui.entries.iter().enumerate() {
             for id in &entry.pending_deleted {
-                if !occurrence_in_active_chat_on(on_launcher, ui, idx, id) && !seen(&work, idx, id)
+                let target_idx = if entry.closing_deferred {
+                    surviving_for(idx, id)
+                } else if !occurrence_in_active_chat_on(on_launcher, ui, idx, id) {
+                    Some(idx)
+                } else {
+                    None
+                };
+                if let Some(target) = target_idx
+                    && !seen(&work, target, id)
                 {
-                    work.push((idx, id.clone()));
+                    work.push((target, id.clone()));
                 }
             }
         }
         for (scope, id) in &ui.closed_pending_deleted {
-            if let Some(idx) = ui
-                .entries
-                .iter()
-                .enumerate()
-                .find_map(|(idx, entry)| {
-                    (!entry.closing_deferred
-                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                        && !occurrence_in_active_chat_on(on_launcher, ui, idx, id))
-                    .then_some(idx)
-                })
-                .or_else(|| {
-                    ui.entries.iter().enumerate().find_map(|(idx, entry)| {
-                        (matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                            && !occurrence_in_active_chat_on(on_launcher, ui, idx, id))
-                        .then_some(idx)
-                    })
-                })
-                && !seen(&work, idx, id)
+            if let Some(idx) = ui.entries.iter().enumerate().find_map(|(idx, entry)| {
+                (!entry.closing_deferred
+                    && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                    && !occurrence_in_active_chat_on(on_launcher, ui, idx, id))
+                .then_some(idx)
+            }) && !seen(&work, idx, id)
             {
                 work.push((idx, id.clone()));
             }

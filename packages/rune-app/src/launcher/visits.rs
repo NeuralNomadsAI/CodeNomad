@@ -21,8 +21,6 @@ pub struct Visits {
     ids: Vec<Option<Visit>>,
     cursor: usize,
     checks: Option<Checks>,
-    draft_checks: Vec<String>,
-    checked_drafts: HashSet<String>,
 }
 
 impl Visits {
@@ -68,7 +66,6 @@ impl Visits {
                 *id = None;
             }
         }
-        self.draft_checks.retain(|id| !missing.contains(id));
     }
     pub fn observe_listing(&mut self, listed: &HashSet<String>) {
         for visit in self.ids.iter_mut().flatten() {
@@ -76,30 +73,6 @@ impl Visits {
                 visit.listed = true;
             }
         }
-        self.draft_checks.retain(|id| !listed.contains(id));
-    }
-    pub fn seed_draft_checks(&mut self, ids: impl IntoIterator<Item = String>) {
-        for id in ids {
-            if self.draft_checks.len() >= crate::workspace::MAX_DRAFTS * 2 {
-                break;
-            }
-            if id.is_empty()
-                || self.checked_drafts.contains(&id)
-                || self.draft_checks.iter().any(|existing| existing == &id)
-            {
-                continue;
-            }
-            self.draft_checks.push(id);
-        }
-    }
-    pub fn pending_draft_checks<'a>(
-        &'a self,
-        listed: &'a HashSet<String>,
-    ) -> impl Iterator<Item = &'a str> {
-        self.draft_checks
-            .iter()
-            .map(String::as_str)
-            .filter(move |id| !listed.contains(*id))
     }
     pub fn listed_ids(&self) -> impl Iterator<Item = &str> {
         let mut seen = HashSet::new();
@@ -145,23 +118,8 @@ impl Visits {
                 unavailable.push(id);
             }
         }
-        let finished_ids: Vec<String> = if checks.is_closed() && checks.is_empty() {
-            verified.keys().cloned().collect()
-        } else {
-            Vec::new()
-        };
         if checks.is_closed() && checks.is_empty() {
             self.checks = None;
-        }
-        if !finished_ids.is_empty() {
-            for id in &finished_ids {
-                if self.draft_checks.iter().any(|pending| pending == id)
-                    && self.checked_drafts.len() < crate::workspace::MAX_DRAFTS * 2
-                {
-                    self.checked_drafts.insert(id.clone());
-                }
-            }
-            self.draft_checks.retain(|id| !finished_ids.contains(id));
         }
         self.forget(&unavailable);
         PollChecks {

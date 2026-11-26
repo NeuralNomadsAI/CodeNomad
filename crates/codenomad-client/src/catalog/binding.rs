@@ -47,6 +47,29 @@ impl Backend {
         )
         .await;
     }
+    /// Probes one session ID for confirmed presence (`Some(None)`), confirmed 404/403 absence
+    /// (`Some(Some(absence))`), or transient error/timeout (`None`).
+    pub async fn probe_session_absence(
+        &self,
+        project: &Project,
+        id: &str,
+    ) -> Option<Option<SessionAbsence>> {
+        futures_lite::future::race(
+            async {
+                match self.bind_session(project, id, false).await {
+                    Ok(_) => Some(None),
+                    Err(error) => error
+                        .downcast_ref::<SessionMissing>()
+                        .map(|missing| Some(missing.absence())),
+                }
+            },
+            async {
+                crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                None
+            },
+        )
+        .await
+    }
     pub async fn bind_session(
         &self,
         project: &Project,
