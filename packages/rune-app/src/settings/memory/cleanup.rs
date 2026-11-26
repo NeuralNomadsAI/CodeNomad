@@ -66,7 +66,7 @@ pub(in crate::settings) struct Run {
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
     prompt_guard: Option<(String, Arc<AtomicBool>)>,
     receiver: Receiver<Reply>,
 }
@@ -78,11 +78,18 @@ enum Reply {
     Failed,
 }
 
+fn drop_stamp(backend: &Backend) -> (u64, u64) {
+    (
+        backend.client.drop_generation(),
+        backend.client.stream_drop_epoch(),
+    )
+}
+
 fn authorized(
     backend: &Backend,
     intent: &Intent,
     expected_server: Option<&str>,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
     require_token: bool,
 ) -> bool {
     let valid = if require_token {
@@ -91,7 +98,7 @@ fn authorized(
         intent.authority_valid()
     };
     valid
-        && backend.client.drop_generation() == expected_drop_gen
+        && drop_stamp(backend) == expected_drop_gen
         && ServerOwner::backend_verified(backend)
         && expected_server.is_none_or(|id| backend.client.server_identity() == Some(id))
 }
@@ -100,7 +107,7 @@ async fn attest_and_authorize(
     backend: &Backend,
     intent: &Intent,
     expected_server: Option<&str>,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
     require_token: bool,
 ) -> bool {
     if !authorized(
@@ -145,7 +152,7 @@ fn prompt_owner_current(
     s: &State,
     intent: &Intent,
     created_session: &str,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
 ) -> bool {
     let Some(launcher) = s.screen.launcher() else {
         return false;
@@ -162,7 +169,7 @@ fn prompt_owner_current(
         && prefs.memory.visible
         && prefs.memory.active_scope(prefs.provider_target.as_ref()) == intent.scope
         && backend.client_id == intent.connection
-        && backend.client.drop_generation() == expected_drop_gen
+        && drop_stamp(backend) == expected_drop_gen
         && project.id == intent.workspace
         && !launcher.authentication_required
         && !prefs.transport_lost()
@@ -189,8 +196,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         };
         let intent = &run.intent;
         let current = s.current_scope(&run.owner)
-            && owner(s, intent)
-                .is_some_and(|b| b.client.drop_generation() == run.expected_drop_gen);
+            && owner(s, intent).is_some_and(|b| drop_stamp(&b) == run.expected_drop_gen);
         match reply {
             Reply::Checked(backend)
                 if current && s.settings.shared.borrow().memory.cleanup_current(intent) =>
@@ -244,7 +250,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             Reply::Created(backend)
                 if current
-                    && backend.client.drop_generation() == run.expected_drop_gen
+                    && drop_stamp(&backend) == run.expected_drop_gen
                     && s.settings.shared.borrow().memory.cleanup_current(intent) =>
             {
                 let scope = intent.scope;
@@ -355,7 +361,7 @@ pub(in crate::settings) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     };
     let expected_server = backend.client.server_identity().map(str::to_owned);
     let expected = expected_server.clone();
-    let drop_gen = backend.client.drop_generation();
+    let drop_gen = drop_stamp(&backend);
     let request = intent.clone();
     s.settings.memory_cleanup = Some(advance(
         s,
@@ -403,7 +409,7 @@ fn advance(
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {
     advance_with_guard(
@@ -422,7 +428,7 @@ fn advance_with_guard(
     intent: Intent,
     owner: Rc<()>,
     expected_server: Option<String>,
-    expected_drop_gen: u64,
+    expected_drop_gen: (u64, u64),
     prompt_guard: Option<(String, Arc<AtomicBool>)>,
     task: impl std::future::Future<Output = Reply> + platform::TaskBound + 'static,
 ) -> Run {

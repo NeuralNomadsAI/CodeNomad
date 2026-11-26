@@ -89,7 +89,11 @@ pub(super) struct Review {
     expanded: bool,
     key: Option<Key>,
     snapshot: Option<List>,
-    flight: Option<((u64, u64), Sender<()>, Receiver<Result<List, &'static str>>)>,
+    flight: Option<(
+        (u64, u64, u64),
+        Sender<()>,
+        Receiver<Result<List, &'static str>>,
+    )>,
     refresh: bool,
     failed: Option<&'static str>,
     pending: Option<(Edit, Option<Fields>, u64)>,
@@ -549,7 +553,11 @@ impl Review {
             }
             return changed;
         }
-        let current_stamp = (current_auth, backend.client.drop_generation());
+        let current_stamp = (
+            current_auth,
+            backend.client.drop_generation(),
+            backend.client.stream_drop_epoch(),
+        );
         if let Some((flight_stamp, _, flight)) = &self.flight {
             if *flight_stamp != current_stamp {
                 self.flight = None;
@@ -609,7 +617,7 @@ impl Review {
             (backend.clone(), key.clone(), main.clone(), window.clone());
         let expected_server = key.owner.server().map(str::to_owned);
         let prefs_auth = prefs_authority.clone();
-        let (prefs_gen, prepared_gen) = current_stamp;
+        let (prefs_gen, prepared_gen, prepared_stream_epoch) = current_stamp;
         let review_auth = self.authority.clone();
         let review_gen = review_auth.load(Ordering::SeqCst);
         platform::spawn(async move {
@@ -617,6 +625,7 @@ impl Review {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && review_auth.load(Ordering::SeqCst) == review_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -698,6 +707,7 @@ impl Review {
         }
         let expected_server = edit.key.owner.server().map(str::to_owned);
         let prepared_gen = backend.client.drop_generation();
+        let prepared_stream_epoch = backend.client.stream_drop_epoch();
         let prefs_auth = prefs_authority.clone();
         let prefs_gen = admitted_gen;
         let review_auth = self.authority.clone();
@@ -718,6 +728,7 @@ impl Review {
             let still_authorized = || {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && review_auth.load(Ordering::SeqCst) == review_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && same_server()
             };
             // Re-attest live HTTP routing right before sending the draft when attestation is

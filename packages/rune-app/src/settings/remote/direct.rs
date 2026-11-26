@@ -22,6 +22,7 @@ pub(super) struct DirectAccess {
     meta_verified: bool,
     meta_server: Option<String>,
     meta_drop_gen: Option<u64>,
+    meta_stream_drop_epoch: Option<u64>,
     meta_auth_gen: u64,
     auth: Option<AuthStatus>,
     auth_error: Option<ErrorText>,
@@ -29,7 +30,7 @@ pub(super) struct DirectAccess {
     pending_refresh: bool,
     meta_flight: Option<(u64, FlightStamp, Sender<()>, Receiver<MetaReply>)>,
     mode_flight: Option<(FlightStamp, Receiver<Result<Option<String>, remote::Error>>)>,
-    password_flight: Option<(FlightStamp, Receiver<Result<PasswordSaved, remote::Error>>)>,
+    password_flight: Option<(FlightStamp, Receiver<PasswordReply>)>,
     meta_error: Option<ErrorText>,
     disclosure_override: Option<bool>,
     locked_info_open: bool,
@@ -46,7 +47,13 @@ pub(super) struct DirectAccess {
     open_seq: u64,
 }
 
-type FlightStamp = (String, Option<String>, u64, u64);
+type FlightStamp = (String, Option<String>, u64, u64, u64);
+
+enum PasswordReply {
+    Verified(PasswordSaved),
+    ReauthRequired,
+    Failed(remote::Error),
+}
 
 struct MetaReply {
     meta: Result<DirectAccessMeta, remote::Error>,
@@ -60,6 +67,7 @@ impl DirectAccess {
             backend.client_id.clone(),
             backend.client.server_identity().map(str::to_owned),
             backend.client.drop_generation(),
+            backend.client.stream_drop_epoch(),
             prefs
                 .authority_handle()
                 .load(std::sync::atomic::Ordering::SeqCst),
@@ -72,7 +80,8 @@ impl DirectAccess {
             && stamp.0 == backend.client_id
             && stamp.1.as_deref() == backend.client.server_identity()
             && stamp.2 == backend.client.drop_generation()
-            && stamp.3
+            && stamp.3 == backend.client.stream_drop_epoch()
+            && stamp.4
                 == prefs
                     .authority_handle()
                     .load(std::sync::atomic::Ordering::SeqCst)
@@ -91,6 +100,7 @@ impl DirectAccess {
         self.meta_flight = None;
         self.meta_verified = false;
         self.meta_drop_gen = None;
+        self.meta_stream_drop_epoch = None;
         self.confirm_mode = None;
         self.auth = None;
     }
@@ -101,6 +111,7 @@ impl DirectAccess {
             && super::super::ServerOwner::backend_verified(backend)
             && self.owner.as_deref() == Some(backend.client_id.as_str())
             && self.meta_drop_gen == Some(backend.client.drop_generation())
+            && self.meta_stream_drop_epoch == Some(backend.client.stream_drop_epoch())
             && self.meta_server.as_deref() == backend.client.server_identity()
             && self.meta_auth_gen
                 == prefs
@@ -131,8 +142,9 @@ impl DirectAccess {
         let flight_stamp = Self::current_stamp(prefs, backend);
         let expected_server = flight_stamp.1.clone();
         let prepared_gen = flight_stamp.2;
+        let prepared_stream_epoch = flight_stamp.3;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = flight_stamp.3;
+        let prefs_gen = flight_stamp.4;
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
         self.meta_flight = Some((auth_gen, flight_stamp, cancel, input));
@@ -141,6 +153,7 @@ impl DirectAccess {
             let still_ok = || {
                 prefs_auth.load(std::sync::atomic::Ordering::SeqCst) == prefs_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && super::super::ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -164,8 +177,16 @@ impl DirectAccess {
                         || backend.attest_server().await.is_ok())
                     && still_ok();
                 MetaReply {
-                    meta,
-                    auth,
+                    meta: if verified {
+                        meta
+                    } else {
+                        Err(remote::Error::Transport)
+                    },
+                    auth: if verified {
+                        auth
+                    } else {
+                        Err(remote::Error::Transport)
+                    },
                     verified,
                 }
             };
@@ -219,6 +240,8 @@ impl DirectAccess {
                             self.meta_server =
                                 backend.and_then(|b| b.client.server_identity().map(str::to_owned));
                             self.meta_drop_gen = backend.map(|b| b.client.drop_generation());
+                            self.meta_stream_drop_epoch =
+                                backend.map(|b| b.client.stream_drop_epoch());
                             self.meta_auth_gen = prefs
                                 .authority_handle()
                                 .load(std::sync::atomic::Ordering::SeqCst);
@@ -231,8 +254,11 @@ impl DirectAccess {
                         }
                         Err(err) => {
                             self.on_unverified();
-                            self.meta_error =
-                                Some(ErrorText::from_remote(err, "rune.connect_error"))
+                            self.meta_error = Some(if verified {
+                                ErrorText::from_remote(err, "rune.connect_error")
+                            } else {
+                                ErrorText::Key("rune.connect_error")
+                            });
                         }
                     }
                     if flight_auth_gen == self.auth_gen && verified {
@@ -286,8 +312,11 @@ impl DirectAccess {
                             if !current {
                                 self.on_unverified();
                             }
-                            self.mode_error =
-                                Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
+                            self.mode_error = Some(if current {
+                                ErrorText::from_remote(err, "settings.preferenceSaveFailed")
+                            } else {
+                                ErrorText::Key("settings.preferenceSaveFailed")
+                            });
                         }
                     }
                     changed = true;
@@ -310,7 +339,7 @@ impl DirectAccess {
                     let current =
                         backend.is_some_and(|b| Self::stamp_matches(prefs, b, &flight_stamp));
                     match result {
-                        Ok(saved) if current => {
+                        PasswordReply::Verified(saved) if current => {
                             self.auth_gen = self.auth_gen.wrapping_add(1);
                             self.wipe_password_fields();
                             self.password_form_open = false;
@@ -329,7 +358,18 @@ impl DirectAccess {
                                 }
                             }
                         }
-                        Ok(_) => {
+                        PasswordReply::ReauthRequired => {
+                            // Saving the password revoked the calling session cookie as expected;
+                            // close the form and wait for an attested new session to report auth
+                            // status without replaying POST or surfacing a bogus failure.
+                            self.auth_gen = self.auth_gen.wrapping_add(1);
+                            self.wipe_password_fields();
+                            self.password_form_open = false;
+                            self.password_error = None;
+                            self.auth_error = None;
+                            self.on_unverified();
+                        }
+                        PasswordReply::Verified(_) => {
                             self.on_unverified();
                             self.password_error =
                                 Some(ErrorText::Key("settings.preferenceSaveFailed"));
@@ -337,12 +377,15 @@ impl DirectAccess {
                                 self.refresh(prefs, backend, wake);
                             }
                         }
-                        Err(err) => {
+                        PasswordReply::Failed(err) => {
                             if !current {
                                 self.on_unverified();
                             }
-                            self.password_error =
-                                Some(ErrorText::from_remote(err, "settings.preferenceSaveFailed"));
+                            self.password_error = Some(if current {
+                                ErrorText::from_remote(err, "settings.preferenceSaveFailed")
+                            } else {
+                                ErrorText::Key("settings.preferenceSaveFailed")
+                            });
                             if let Some(backend) = backend {
                                 self.refresh(prefs, backend, wake);
                             }
@@ -407,8 +450,9 @@ impl DirectAccess {
         let flight_stamp = Self::current_stamp(prefs, backend);
         let expected_server = flight_stamp.1.clone();
         let prepared_gen = flight_stamp.2;
+        let prepared_stream_epoch = flight_stamp.3;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = flight_stamp.3;
+        let prefs_gen = flight_stamp.4;
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
         self.mode_flight = Some((flight_stamp, input));
@@ -418,6 +462,7 @@ impl DirectAccess {
             let still_ok = || {
                 prefs_auth.load(std::sync::atomic::Ordering::SeqCst) == prefs_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && super::super::ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -433,6 +478,10 @@ impl DirectAccess {
                 match remote::set_listening_mode(&backend, target).await {
                     Ok(warning) if attest().await => Ok(warning),
                     Ok(_) => Err(remote::Error::Transport),
+                    Err(remote::Error::Server(msg)) if attest().await => {
+                        Err(remote::Error::Server(msg))
+                    }
+                    Err(remote::Error::Server(_)) => Err(remote::Error::Transport),
                     Err(err) => Err(err),
                 }
             } else {
@@ -466,8 +515,9 @@ impl DirectAccess {
         let flight_stamp = Self::current_stamp(prefs, backend);
         let expected_server = flight_stamp.1.clone();
         let prepared_gen = flight_stamp.2;
+        let prepared_stream_epoch = flight_stamp.3;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = flight_stamp.3;
+        let prefs_gen = flight_stamp.4;
         let (out, input) = bounded(1);
         let (lock_tx, lock_rx) = bounded::<()>(1);
         self.password_flight = Some((flight_stamp, input));
@@ -477,6 +527,7 @@ impl DirectAccess {
             let still_ok = || {
                 prefs_auth.load(std::sync::atomic::Ordering::SeqCst) == prefs_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && super::super::ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -490,12 +541,37 @@ impl DirectAccess {
             };
             let result = if attest().await {
                 match remote::set_password(&backend, &next).await {
-                    Ok(saved) if attest().await => Ok(saved),
-                    Ok(_) => Err(remote::Error::Transport),
-                    Err(err) => Err(err),
+                    Ok(saved) => {
+                        let auth_revoked = matches!(&saved.auth, Ok(auth) if !auth.authenticated);
+                        if !backend.client.tracks_server_attestation() {
+                            if still_ok() {
+                                PasswordReply::Verified(saved)
+                            } else {
+                                PasswordReply::Failed(remote::Error::Transport)
+                            }
+                        } else {
+                            match backend.attest_server().await {
+                                Ok(_) if still_ok() => PasswordReply::Verified(saved),
+                                Err(err)
+                                    if auth_revoked
+                                        && codenomad_client::http::is_unauthorized(&err) =>
+                                {
+                                    PasswordReply::ReauthRequired
+                                }
+                                _ => PasswordReply::Failed(remote::Error::Transport),
+                            }
+                        }
+                    }
+                    Err(remote::Error::Server(msg)) if attest().await => {
+                        PasswordReply::Failed(remote::Error::Server(msg))
+                    }
+                    Err(remote::Error::Server(_)) => {
+                        PasswordReply::Failed(remote::Error::Transport)
+                    }
+                    Err(err) => PasswordReply::Failed(err),
                 }
             } else {
-                Err(remote::Error::Transport)
+                PasswordReply::Failed(remote::Error::Transport)
             };
             drop(lock_tx);
             let _ = out.send(result).await;

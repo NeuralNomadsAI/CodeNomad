@@ -48,12 +48,15 @@ pub(super) struct Remote {
     owner: Option<String>,
     owner_server: Option<String>,
     owner_drop_gen: Option<u64>,
+    owner_stream_drop_epoch: Option<u64>,
     owner_auth_gen: u64,
     snapshot_verified: bool,
     devices_verified: bool,
     snapshot: Option<Snapshot>,
     pairing: Option<ActivePairing>,
     flight: Option<(FlightStamp, Option<Sender<()>>, Receiver<Reply>)>,
+    detached_mutations: Vec<(String, Option<String>, Receiver<Reply>)>,
+    pending_refresh: bool,
     recheck: Option<(Sender<()>, Receiver<()>)>,
     error: Option<ErrorText>,
     mutation_error: Option<(MutationOutcome, ErrorText)>,
@@ -66,7 +69,7 @@ pub(super) struct Remote {
     direct: direct::DirectAccess,
 }
 
-type FlightStamp = (String, Option<String>, u64, u64);
+type FlightStamp = (String, Option<String>, u64, u64, u64);
 
 type Snapshot = (Status, Option<Vec<Device>>);
 
@@ -176,6 +179,7 @@ impl Remote {
             backend.client_id.clone(),
             backend.client.server_identity().map(str::to_owned),
             backend.client.drop_generation(),
+            backend.client.stream_drop_epoch(),
             prefs
                 .authority_handle()
                 .load(std::sync::atomic::Ordering::SeqCst),
@@ -188,7 +192,8 @@ impl Remote {
             && stamp.0 == backend.client_id
             && stamp.1.as_deref() == backend.client.server_identity()
             && stamp.2 == backend.client.drop_generation()
-            && stamp.3
+            && stamp.3 == backend.client.stream_drop_epoch()
+            && stamp.4
                 == prefs
                     .authority_handle()
                     .load(std::sync::atomic::Ordering::SeqCst)
@@ -199,11 +204,47 @@ impl Remote {
             && super::ServerOwner::backend_verified(backend)
             && self.owner.as_deref() == Some(backend.client_id.as_str())
             && self.owner_drop_gen == Some(backend.client.drop_generation())
+            && self.owner_stream_drop_epoch == Some(backend.client.stream_drop_epoch())
             && self.owner_server.as_deref() == backend.client.server_identity()
             && self.owner_auth_gen
                 == prefs
                     .authority_handle()
                     .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn detach_active_mutation(&mut self) {
+        if let Some((stamp, None, receiver)) = self.flight.take() {
+            self.detached_mutations.push((stamp.0, stamp.1, receiver));
+        }
+    }
+
+    fn drain_detached_mutations(&mut self, backend: Option<&Backend>) -> bool {
+        let mut settled_for_active = false;
+        self.detached_mutations
+            .retain(|(client_id, server, rx)| match rx.try_recv() {
+                Ok(_) => {
+                    if let Some(b) = backend
+                        && (b.client_id == *client_id
+                            || (server.is_some()
+                                && b.client.server_identity() == server.as_deref()))
+                    {
+                        settled_for_active = true;
+                    }
+                    false
+                }
+                Err(_) if rx.is_closed() => {
+                    if let Some(b) = backend
+                        && (b.client_id == *client_id
+                            || (server.is_some()
+                                && b.client.server_identity() == server.as_deref()))
+                    {
+                        settled_for_active = true;
+                    }
+                    false
+                }
+                Err(_) => true,
+            });
+        settled_for_active
     }
 
     pub fn poll(&mut self, prefs: &Preferences, wake: &Waker) -> bool {
@@ -212,16 +253,31 @@ impl Remote {
         });
         let owner = backend.map(|backend| backend.client_id.as_str());
         let drop_gen = backend.map(|b| b.client.drop_generation());
+        let stream_drop_epoch = backend.map(|b| b.client.stream_drop_epoch());
         let server = backend.and_then(|b| b.client.server_identity());
         let auth_gen = prefs
             .authority_handle()
             .load(std::sync::atomic::Ordering::SeqCst);
         if self.owner.as_deref() != owner {
+            self.detach_active_mutation();
+            let carried: Vec<_> = if let Some(server_id) = server {
+                self.detached_mutations
+                    .drain(..)
+                    .filter(|(_, s, _)| s.as_deref() == Some(server_id))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             self.close();
+            self.detached_mutations = carried;
             self.owner = owner.map(str::to_owned);
             self.owner_server = server.map(str::to_owned);
             self.owner_drop_gen = drop_gen;
+            self.owner_stream_drop_epoch = stream_drop_epoch;
             self.owner_auth_gen = auth_gen;
+            if self.drain_detached_mutations(backend) {
+                self.pending_refresh = true;
+            }
             if let Some(backend) = backend {
                 self.start(prefs, backend, wake, Action::Refresh { explicit: false });
                 self.direct.poll(prefs, Some(backend), wake);
@@ -231,9 +287,11 @@ impl Remote {
         let mut changed = false;
         if let Some(backend) = backend
             && (self.owner_drop_gen != drop_gen
+                || self.owner_stream_drop_epoch != stream_drop_epoch
                 || self.owner_server.as_deref() != server
                 || self.owner_auth_gen != auth_gen)
         {
+            self.detach_active_mutation();
             self.flight = None;
             self.recheck = None;
             self.snapshot_verified = false;
@@ -245,10 +303,23 @@ impl Remote {
             self.clear_pairing();
             self.owner_server = server.map(str::to_owned);
             self.owner_drop_gen = drop_gen;
+            self.owner_stream_drop_epoch = stream_drop_epoch;
             self.owner_auth_gen = auth_gen;
             self.direct.on_unverified();
             self.start(prefs, backend, wake, Action::Refresh { explicit: false });
             self.direct.refresh(prefs, backend, wake);
+            changed = true;
+        }
+        if self.drain_detached_mutations(backend) {
+            self.pending_refresh = true;
+            changed = true;
+        }
+        if self.pending_refresh
+            && self.flight.is_none()
+            && let Some(backend) = backend
+        {
+            self.pending_refresh = false;
+            self.start(prefs, backend, wake, Action::Refresh { explicit: false });
             changed = true;
         }
         changed |= self.direct.poll(prefs, backend, wake);
@@ -400,17 +471,23 @@ impl Remote {
                 self.snapshot_verified = false;
                 self.devices_verified = false;
                 self.needs_read = true;
-                if let Some(Mutation::Revoke(id, stored)) = self.unconfirmed.as_mut()
-                    && let Some(err) = revoke_err
-                {
-                    let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
-                    *stored = Some(err_text.clone());
-                    self.mutation_error = Some((MutationOutcome::Revoke(id.clone()), err_text));
+                if !current_flight {
+                    self.unconfirmed = None;
+                    self.clear_pairing();
+                    self.error = Some(ErrorText::Key("remoteControl.state.error"));
+                } else {
+                    if let Some(Mutation::Revoke(id, stored)) = self.unconfirmed.as_mut()
+                        && let Some(err) = revoke_err
+                    {
+                        let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
+                        *stored = Some(err_text.clone());
+                        self.mutation_error = Some((MutationOutcome::Revoke(id.clone()), err_text));
+                    }
+                    let stored = self.mutation_error.as_ref().map(|(_, err)| err.clone());
+                    self.error = stored
+                        .filter(|err| matches!(err, ErrorText::Raw(_)))
+                        .or_else(|| Some(ErrorText::from_remote(err, "remoteControl.state.error")));
                 }
-                let stored = self.mutation_error.as_ref().map(|(_, err)| err.clone());
-                self.error = stored
-                    .filter(|err| matches!(err, ErrorText::Raw(_)))
-                    .or_else(|| Some(ErrorText::from_remote(err, "remoteControl.state.error")));
             }
             Reply::Started(Ok((status, pairing, devices, devices_error))) => {
                 self.unconfirmed = None;
@@ -443,8 +520,14 @@ impl Remote {
                 }
             }
             Reply::Started(Err(err)) => {
-                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
-                self.mutation_error = Some((MutationOutcome::Start, err_text.clone()));
+                let err_text = if current_flight {
+                    ErrorText::from_remote(err, "remoteControl.state.error")
+                } else {
+                    ErrorText::Key("remoteControl.state.error")
+                };
+                if current_flight {
+                    self.mutation_error = Some((MutationOutcome::Start, err_text.clone()));
+                }
                 self.error = Some(err_text);
                 if let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b)) {
                     self.start(prefs, backend, wake, Action::Refresh { explicit: false });
@@ -488,8 +571,14 @@ impl Remote {
                 }
             }
             Reply::Status(Err(err)) => {
-                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
-                if let Some(outcome) = self.unconfirmed.as_ref().map(Mutation::outcome) {
+                let err_text = if current_flight {
+                    ErrorText::from_remote(err, "remoteControl.state.error")
+                } else {
+                    ErrorText::Key("remoteControl.state.error")
+                };
+                if current_flight
+                    && let Some(outcome) = self.unconfirmed.as_ref().map(Mutation::outcome)
+                {
                     self.mutation_error = Some((outcome, err_text.clone()));
                 }
                 self.error = Some(err_text);
@@ -520,8 +609,14 @@ impl Remote {
                 }
             }
             Reply::Pairing(Err(err)) => {
-                let err_text = ErrorText::from_remote(err, "remoteControl.state.error");
-                self.mutation_error = Some((MutationOutcome::Pair, err_text.clone()));
+                let err_text = if current_flight {
+                    ErrorText::from_remote(err, "remoteControl.state.error")
+                } else {
+                    ErrorText::Key("remoteControl.state.error")
+                };
+                if current_flight {
+                    self.mutation_error = Some((MutationOutcome::Pair, err_text.clone()));
+                }
                 self.error = Some(err_text);
                 if let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b)) {
                     self.start(prefs, backend, wake, Action::Refresh { explicit: false });
@@ -533,6 +628,13 @@ impl Remote {
                     self.clear_pairing();
                 }
             }
+        }
+        if self.pending_refresh
+            && self.flight.is_none()
+            && let Some(backend) = backend.filter(|b| self.matches_backend(prefs, b))
+        {
+            self.pending_refresh = false;
+            self.start(prefs, backend, wake, Action::Refresh { explicit: false });
         }
         self.sync_connecting_poll(wake);
         true
@@ -636,8 +738,9 @@ impl Remote {
         let flight_stamp = Self::current_stamp(prefs, backend);
         let expected_server = flight_stamp.1.clone();
         let prepared_gen = flight_stamp.2;
+        let prepared_stream_epoch = flight_stamp.3;
         let prefs_auth = prefs.authority_handle();
-        let prefs_gen = flight_stamp.3;
+        let prefs_gen = flight_stamp.4;
         let tunnel_origin = self
             .snapshot
             .as_ref()
@@ -663,6 +766,7 @@ impl Remote {
             let still_ok = || {
                 prefs_auth.load(std::sync::atomic::Ordering::SeqCst) == prefs_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && super::ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -674,15 +778,31 @@ impl Remote {
                         || backend.attest_server().await.is_ok())
                     && still_ok()
             };
+            let attest_ref = &attest;
+            let sanitize_err = |err: remote::Error| async move {
+                match err {
+                    remote::Error::Server(msg) if attest_ref().await => remote::Error::Server(msg),
+                    remote::Error::Server(_) => remote::Error::Transport,
+                    other => other,
+                }
+            };
             let result = match action {
                 Action::Refresh { .. } => {
                     let task = async {
                         if !attest().await {
                             return Err(remote::Error::Transport);
                         }
-                        let mut read = snapshot(&backend).await?;
-                        read.verified = attest().await;
-                        Ok(read)
+                        match snapshot(&backend).await {
+                            Ok(mut read) => {
+                                read.verified = attest().await;
+                                if !read.verified {
+                                    read.devices_error =
+                                        read.devices_error.map(|_| remote::Error::Transport);
+                                }
+                                Ok(read)
+                            }
+                            Err(err) => Err(sanitize_err(err).await),
+                        }
                     };
                     let Some(result) = platform::reads::cancellable(&cancelled, task).await else {
                         return;
@@ -699,7 +819,7 @@ impl Remote {
                                 {
                                     Ok(devices) if attest().await => (devices, None),
                                     Ok(_) => (None, Some(remote::Error::Transport)),
-                                    Err(err) => (None, Some(err)),
+                                    Err(err) => (None, Some(sanitize_err(err).await)),
                                 };
                                 Reply::Started(Ok((
                                     started.status,
@@ -709,7 +829,7 @@ impl Remote {
                                 )))
                             }
                             Ok(_) => Reply::Started(Err(remote::Error::Transport)),
-                            Err(err) => Reply::Started(Err(err)),
+                            Err(err) => Reply::Started(Err(sanitize_err(err).await)),
                         }
                     }
                 }
@@ -720,7 +840,7 @@ impl Remote {
                         match remote::stop(&backend).await {
                             Ok(status) if attest().await => Reply::Status(Ok(status)),
                             Ok(_) => Reply::Status(Err(remote::Error::Transport)),
-                            Err(err) => Reply::Status(Err(err)),
+                            Err(err) => Reply::Status(Err(sanitize_err(err).await)),
                         }
                     }
                 }
@@ -731,7 +851,7 @@ impl Remote {
                         match remote::set_previews(&backend, enabled).await {
                             Ok(status) if attest().await => Reply::Status(Ok(status)),
                             Ok(_) => Reply::Status(Err(remote::Error::Transport)),
-                            Err(err) => Reply::Status(Err(err)),
+                            Err(err) => Reply::Status(Err(sanitize_err(err).await)),
                         }
                     }
                 }
@@ -743,7 +863,7 @@ impl Remote {
                             Some(origin) => match remote::pairing(&backend, None, &origin).await {
                                 Ok(p) if attest().await => Reply::Pairing(Ok((p, false))),
                                 Ok(_) => Reply::Pairing(Err(remote::Error::Transport)),
-                                Err(err) => Reply::Pairing(Err(err)),
+                                Err(err) => Reply::Pairing(Err(sanitize_err(err).await)),
                             },
                             None => Reply::Pairing(Err(remote::Error::InvalidResponse)),
                         }
@@ -756,7 +876,7 @@ impl Remote {
                         match remote::pairing(&backend, Some(&origin), &origin).await {
                             Ok(p) if attest().await => Reply::Pairing(Ok((p, true))),
                             Ok(_) => Reply::Pairing(Err(remote::Error::Transport)),
-                            Err(err) => Reply::Pairing(Err(err)),
+                            Err(err) => Reply::Pairing(Err(sanitize_err(err).await)),
                         }
                     }
                 }
@@ -764,14 +884,21 @@ impl Remote {
                     if !attest().await {
                         Reply::Snapshot(Err(remote::Error::Transport), None)
                     } else {
-                        let revoke_err = remote::revoke(&backend, &id).await.err();
+                        let revoke_err = match remote::revoke(&backend, &id).await {
+                            Ok(()) => None,
+                            Err(err) => Some(sanitize_err(err).await),
+                        };
                         let snap = if attest().await {
                             match snapshot(&backend).await {
                                 Ok(mut read) => {
                                     read.verified = attest().await;
+                                    if !read.verified {
+                                        read.devices_error =
+                                            read.devices_error.map(|_| remote::Error::Transport);
+                                    }
                                     Ok(read)
                                 }
-                                Err(err) => Err(err),
+                                Err(err) => Err(sanitize_err(err).await),
                             }
                         } else {
                             Err(remote::Error::Transport)

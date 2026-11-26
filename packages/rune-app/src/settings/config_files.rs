@@ -25,17 +25,19 @@ pub(super) struct Editor {
     exists: bool,
     crlf: bool,
     syntax_line: Option<usize>,
-    read: Option<((u64, u64), Sender<()>, Receiver<Read>)>,
+    read: Option<(Stamp, Sender<()>, Receiver<Read>)>,
     write: Option<Receiver<(String, bool)>>,
     goal: Option<usize>,
     confirm: Option<usize>,
     notice: Option<&'static str>,
     saved_notice: bool,
-    last_stamp: Option<(u64, u64)>,
-    verified_stamp: Option<(u64, u64)>,
+    last_stamp: Option<Stamp>,
+    verified_stamp: Option<Stamp>,
     reverify: bool,
     conflict: bool,
 }
+
+type Stamp = (u64, u64, u64);
 
 enum Read {
     List(Option<Vec<api::File>>),
@@ -71,10 +73,11 @@ impl Editor {
         self.active.is_some() || self.dirty()
     }
 
-    fn current_stamp(prefs: &Preferences, backend: &Backend) -> (u64, u64) {
+    fn current_stamp(prefs: &Preferences, backend: &Backend) -> Stamp {
         (
             prefs.authority_handle().load(Ordering::SeqCst),
             backend.client.drop_generation(),
+            backend.client.stream_drop_epoch(),
         )
     }
 
@@ -256,11 +259,14 @@ impl Editor {
                                 }
                                 Read::Verify(index, Some(content)) => {
                                     if self.active == Some(index) {
+                                        let disk_crlf = content.contents.contains("\r\n")
+                                            && !content.contents.replace("\r\n", "").contains('\n');
                                         let disk = content.contents.replace("\r\n", "\n");
                                         let unchanged = content.exists == self.exists
                                             && self.original.as_deref() == Some(disk.as_str());
                                         self.reverify = false;
                                         if unchanged {
+                                            self.crlf = disk_crlf;
                                             self.verified_stamp = Some(stamp);
                                             self.conflict = false;
                                             self.notice = None;
@@ -333,7 +339,7 @@ impl Editor {
         &mut self,
         prefs: &Preferences,
         backend: &Backend,
-        stamp: (u64, u64),
+        stamp: Stamp,
         wake: &Waker,
         kind: ReadKind,
     ) {
@@ -346,7 +352,7 @@ impl Editor {
             .as_ref()
             .and_then(|o| o.server().map(str::to_owned));
         let prefs_auth = prefs.authority_handle();
-        let (prefs_gen, prepared_gen) = stamp;
+        let (prefs_gen, prepared_gen, prepared_stream_epoch) = stamp;
         let editor_auth = self.authority.clone();
         let editor_gen = editor_auth.load(Ordering::SeqCst);
         platform::spawn(async move {
@@ -354,6 +360,7 @@ impl Editor {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && editor_auth.load(Ordering::SeqCst) == editor_gen
                     && backend.client.drop_generation() == prepared_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && ServerOwner::backend_verified(&backend)
                     && expected_server
                         .as_deref()
@@ -479,6 +486,7 @@ impl Editor {
             .as_ref()
             .and_then(|o| o.server().map(str::to_owned));
         let prepared_gen = backend.client.drop_generation();
+        let prepared_stream_epoch = backend.client.stream_drop_epoch();
         let prefs_auth = prefs.authority_handle();
         let prefs_gen = prefs_auth.load(Ordering::SeqCst);
         let editor_auth = self.authority.clone();
@@ -502,6 +510,7 @@ impl Editor {
             let still_authorized = || {
                 prefs_auth.load(Ordering::SeqCst) == prefs_gen
                     && editor_auth.load(Ordering::SeqCst) == editor_gen
+                    && backend.client.stream_drop_epoch() == prepared_stream_epoch
                     && same_server()
             };
             // Re-attest live HTTP routing right before sending the draft when attestation is
