@@ -16,6 +16,7 @@ use std::{
 };
 
 const CONCURRENT: usize = 2;
+const RETAINED_PIXELS: usize = 32 * 1024 * 1024;
 
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) mod browser_fixture;
@@ -30,6 +31,7 @@ pub(crate) struct Pictures {
     hover: Option<(String, String)>,
     generation: u64,
     child_generations: HashMap<String, u64>,
+    access_seq: u64,
 }
 
 struct Entry {
@@ -40,6 +42,8 @@ struct Entry {
     visible: bool,
     request: Option<(Sender<()>, Receiver<Option<Arc<Vec<u8>>>>)>,
     image: Option<Image>,
+    pixels: usize,
+    last_used: u64,
     settled: bool,
 }
 
@@ -138,6 +142,51 @@ impl Pictures {
         }
     }
 
+    fn retained_pixels(&self) -> usize {
+        self.images
+            .values()
+            .fold(0usize, |acc, entry| acc.saturating_add(entry.pixels))
+    }
+
+    fn is_pinned(&self, key: &str) -> bool {
+        self.preview
+            .as_ref()
+            .is_some_and(|(anchor, _, _)| anchor == key || anchor == &format!("{key}-enlarge"))
+            || self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key)
+    }
+
+    fn evict_one_offscreen(&mut self) -> bool {
+        let victim = self
+            .images
+            .iter()
+            .filter(|(key, entry)| {
+                !entry.visible && entry.image.is_some() && entry.pixels > 0 && !self.is_pinned(key)
+            })
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone());
+        let Some(victim) = victim else {
+            return false;
+        };
+        if let Some(entry) = self.images.get_mut(&victim) {
+            entry.image = None;
+            entry.pixels = 0;
+            entry.settled = false;
+            return true;
+        }
+        false
+    }
+
+    fn evict_pixels(&mut self, budget: usize) -> bool {
+        let mut changed = false;
+        while self.retained_pixels() > budget {
+            if !self.evict_one_offscreen() {
+                break;
+            }
+            changed = true;
+        }
+        changed
+    }
+
     fn visibility(
         &mut self,
         key: &str,
@@ -151,6 +200,8 @@ impl Pictures {
             return;
         }
         if visible {
+            self.access_seq = self.access_seq.wrapping_add(1);
+            let seq = self.access_seq;
             let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
                 lease: Rc::downgrade(lease),
                 media: media.clone(),
@@ -159,15 +210,18 @@ impl Pictures {
                 visible: false,
                 request: None,
                 image: None,
+                pixels: 0,
+                last_used: seq,
                 settled: false,
             });
+            entry.last_used = seq;
             if !entry.visible && entry.request.is_none() && entry.image.is_none() && !entry.settled
             {
                 self.waiting.push_back(key.into());
             }
             entry.visible = true;
         } else if let Some(entry) = self.images.get_mut(key) {
-            // Keep the acquired height and image until the card actually unmounts.
+            // Keep the acquired height and image until unmount or pixel-budget eviction.
             entry.visible = false;
             self.waiting.retain(|queued| queued != key);
             if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
@@ -181,11 +235,24 @@ impl Pictures {
         reads: &crate::platform::reads::Reads,
         wake: &rune::Waker,
     ) -> bool {
+        self.poll_with_budget(reads, wake, RETAINED_PIXELS)
+    }
+
+    fn poll_with_budget(
+        &mut self,
+        reads: &crate::platform::reads::Reads,
+        wake: &rune::Waker,
+        pixel_budget: usize,
+    ) -> bool {
         self.images
             .retain(|_, entry| entry.lease.strong_count() > 0);
-        self.waiting
-            .retain(|key| self.images.get(key).is_some_and(|entry| entry.visible));
+        self.waiting.retain(|key| {
+            self.images.get(key).is_some_and(|entry| {
+                entry.visible && !entry.settled && entry.request.is_none() && entry.image.is_none()
+            })
+        });
         let mut changed = false;
+        let mut seq = self.access_seq;
         for entry in self.images.values_mut() {
             if let Some(bytes) = entry
                 .request
@@ -194,6 +261,7 @@ impl Pictures {
             {
                 entry.request = None;
                 entry.settled = bytes.is_none();
+                entry.pixels = 0;
                 entry.image = bytes.map(|bytes| {
                     self.cache
                         .get_or_insert_with(|| ImageCache::new(wake.clone()))
@@ -202,23 +270,29 @@ impl Pictures {
                 changed = true;
             }
             if !entry.settled && entry.image.as_ref().is_some_and(Image::is_ready) {
-                if entry
-                    .image
-                    .as_ref()
-                    .and_then(attachment::decoded_size)
-                    .is_some_and(|[width, height]| {
-                        !codenomad_client::files::images::transcript_dimensions(
-                            width as usize,
-                            height as usize,
-                        )
-                    })
+                if let Some([width, height]) =
+                    entry.image.as_ref().and_then(attachment::decoded_size)
                 {
-                    entry.image = None;
+                    if !codenomad_client::files::images::transcript_dimensions(
+                        width as usize,
+                        height as usize,
+                    ) {
+                        entry.image = None;
+                        entry.pixels = 0;
+                    } else {
+                        entry.pixels = (width as usize).saturating_mul(height as usize);
+                        seq = seq.wrapping_add(1);
+                        entry.last_used = seq;
+                    }
+                } else {
+                    entry.pixels = 0;
                 }
                 entry.settled = true;
                 changed = true;
             }
         }
+        self.access_seq = seq;
+        changed |= self.evict_pixels(pixel_budget);
         let running = self
             .images
             .values()
@@ -228,9 +302,17 @@ impl Pictures {
             })
             .count();
         let mut remaining = CONCURRENT.saturating_sub(running);
-        while remaining > 0
-            && let Some(key) = self.waiting.pop_front()
-        {
+        while remaining > 0 && !self.waiting.is_empty() {
+            if self.retained_pixels() >= pixel_budget {
+                if !self.evict_one_offscreen() {
+                    break;
+                }
+                changed = true;
+                continue;
+            }
+            let Some(key) = self.waiting.pop_front() else {
+                break;
+            };
             let Some(entry) = self.images.get_mut(&key).filter(|entry| {
                 entry.visible && !entry.settled && entry.request.is_none() && entry.image.is_none()
             }) else {
@@ -459,7 +541,7 @@ fn view_on_platform(
                     &lease,
                     visible,
                 );
-                if visible {
+                if visible || !s.transcript_display.pictures.waiting.is_empty() {
                     tx.wake_after(std::time::Duration::ZERO);
                 }
             }

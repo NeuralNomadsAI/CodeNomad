@@ -1,6 +1,8 @@
 import { PassThrough, Readable } from "node:stream"
 import type { FastifyReply, FastifyRequest } from "fastify"
 
+export const MAX_PROXY_TRANSFORM_BYTES = 24 * 1024 * 1024
+
 export async function forwardRuntimeRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
@@ -14,6 +16,7 @@ export async function forwardRuntimeRequest(args: {
   invalidate: () => void
   /** Rewrites a successful JSON response in place before it is relayed whole. */
   transform?: (body: unknown) => void
+  maxTransformBytes?: number
 }) {
   const controller = new AbortController()
   let released = false
@@ -79,18 +82,56 @@ export async function forwardRuntimeRequest(args: {
     }
     if (!response.body) { confirmed = definitive; release(); return args.reply.send() }
     if (args.transform && response.ok && /^application\/json\b/i.test(response.headers.get("content-type") ?? "")) {
-      let text: string
-      try { text = await response.text() } catch {
-        // Like an interrupted stream: the connection stays; only this response failed.
-        release()
-        return args.reply.code(502).send({ error: "OpenCode response was interrupted" })
+      const limit = args.maxTransformBytes ?? MAX_PROXY_TRANSFORM_BYTES
+      const rawLength = response.headers.get("content-length")?.trim() ?? ""
+      const declared = /^\d+$/.test(rawLength) ? Number(rawLength) : NaN
+      if (!(Number.isFinite(declared) && declared > limit)) {
+        const reader = response.body.getReader()
+        const chunks: Uint8Array[] = []
+        let total = 0
+        let overflowed = false
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(value)
+            total += value.byteLength
+            if (total > limit) { overflowed = true; break }
+          }
+        } catch {
+          await reader.cancel().catch(() => {})
+          reader.releaseLock()
+          release()
+          if (detached) return
+          return args.reply.code(502).send({ error: "OpenCode response was interrupted" })
+        }
+        if (!overflowed) {
+          reader.releaseLock()
+          confirmed = definitive
+          release()
+          const text = Buffer.concat(chunks, total).toString("utf8")
+          let value: unknown
+          try { value = JSON.parse(text) } catch { return args.reply.send(text) }
+          args.transform(value)
+          return args.reply.send(JSON.stringify(value))
+        }
+        const stream = Readable.from((async function* () {
+          let finished = false
+          try {
+            while (chunks.length > 0) yield chunks.shift()!
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) { finished = true; break }
+              yield value
+            }
+          } finally {
+            if (!finished) await reader.cancel().catch(() => {})
+            reader.releaseLock()
+          }
+        })())
+        stream.once("end", () => { confirmed = definitive; release() }).once("close", release).once("error", release)
+        return args.reply.send(stream)
       }
-      confirmed = definitive
-      release()
-      let value: unknown
-      try { value = JSON.parse(text) } catch { return args.reply.send(text) }
-      args.transform(value)
-      return args.reply.send(JSON.stringify(value))
     }
     const stream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)
     if (args.retainMutation) {

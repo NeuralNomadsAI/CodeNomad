@@ -799,3 +799,83 @@ fn child_task_deferred_tool_image_uses_verified_child_session() {
         http.quiet().await;
     });
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn offscreen_images_evict_lru_under_retained_pixel_budget_and_reacquire_when_visible() {
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC";
+    // Each decoded PNG is 8x4 = 32 pixels; allow 64 pixels (two images) simultaneously.
+    const TEST_BUDGET: usize = 64;
+    let mut photos = Pictures::default();
+    let origin = PictureSource::Inline(png.into());
+    let slots: Vec<_> = (0..4)
+        .map(|index| (format!("img-{index}"), Rc::new(())))
+        .collect();
+    let reads = crate::platform::reads::Reads::default();
+    let wake: rune::Waker = Arc::new(|| {});
+
+    // Mount all 4 visible: budget admits 2 decoded images and pauses dispatching the remaining 2.
+    for (key, lease) in &slots {
+        photos.visibility(key, &origin, "image/png", None, lease, true);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
+        let ready = photos
+            .images
+            .values()
+            .filter(|e| e.image.as_ref().is_some_and(Image::is_ready))
+            .count();
+        if ready == 2 && photos.retained_pixels() == TEST_BUDGET {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(photos.waiting.len(), 2);
+    assert!(photos.images["img-2"].image.is_none());
+    assert!(photos.images["img-3"].image.is_none());
+
+    // Scroll img-0 and img-1 off-screen: poll must evict them to admit img-2 and img-3.
+    photos.visibility("img-0", &origin, "image/png", None, &slots[0].1, false);
+    photos.visibility("img-1", &origin, "image/png", None, &slots[1].1, false);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
+        if photos.images["img-2"]
+            .image
+            .as_ref()
+            .is_some_and(Image::is_ready)
+            && photos.images["img-3"]
+                .image
+                .as_ref()
+                .is_some_and(Image::is_ready)
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(photos.images["img-0"].image.is_none() && !photos.images["img-0"].settled);
+    assert!(photos.images["img-1"].image.is_none() && !photos.images["img-1"].settled);
+    assert!(photos.retained_pixels() <= TEST_BUDGET);
+
+    // Scroll img-0 back into view while img-2 leaves: img-0 must re-acquire cleanly.
+    photos.visibility("img-2", &origin, "image/png", None, &slots[2].1, false);
+    photos.visibility("img-0", &origin, "image/png", None, &slots[0].1, true);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        photos.poll_with_budget(&reads, &wake, TEST_BUDGET);
+        if photos.images["img-0"]
+            .image
+            .as_ref()
+            .is_some_and(Image::is_ready)
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(photos.images["img-2"].image.is_none());
+    assert!(photos.retained_pixels() <= TEST_BUDGET);
+}

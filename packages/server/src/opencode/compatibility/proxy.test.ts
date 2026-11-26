@@ -65,3 +65,34 @@ test("a transform rewrites only successful JSON responses and releases each requ
     assert.equal(invalidations, 0)
   } finally { await app.close(); await upstream.close() }
 })
+
+test("a transform falls back to streaming when the upstream JSON exceeds maxTransformBytes", async () => {
+  const upstream = Fastify()
+  const payload = JSON.stringify({ data: [{ uri: "x".repeat(4096) }] })
+  upstream.get("/api/sized", async (_request, reply) => reply.type("application/json").send(payload))
+  upstream.get("/api/chunked", async (_request, reply) => reply.type("application/json").send(Readable.from((async function* () {
+    yield payload.slice(0, 512)
+    await setImmediate()
+    yield payload.slice(512)
+  })())))
+  await upstream.listen({ host: "127.0.0.1", port: 0 })
+  const origin = `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`
+  const app = Fastify()
+  let releases = 0, transforms = 0
+  app.get("/:path", (request, reply) => forwardRuntimeRequest({
+    request, reply, url: `${origin}/api/${(request.params as { path: string }).path}`, body: undefined, headers: {}, fetch,
+    invalidate: () => {}, release: () => { releases++ },
+    maxTransformBytes: 1024,
+    transform: () => { transforms++ },
+  }))
+  try {
+    const sized = await app.inject("/sized")
+    assert.equal(sized.statusCode, 200)
+    assert.equal(sized.body, payload)
+    const chunked = await app.inject("/chunked")
+    assert.equal(chunked.statusCode, 200)
+    assert.equal(chunked.body, payload)
+    assert.equal(transforms, 0)
+    assert.equal(releases, 2)
+  } finally { await app.close(); await upstream.close() }
+})
