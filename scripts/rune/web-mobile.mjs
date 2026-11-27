@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import {readFile} from 'node:fs/promises'
+import {mkdir,readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
-import {chromium} from 'playwright'
-import {bundleAssetPaths} from './web-workspace-policy.mjs'
+import path from 'node:path'
+import {createAttestedFetch,probeProcessIdentity,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {launchOwnedChromium} from './web-chromium.mjs'
+import {bundleAssetPaths,privateChromiumEnv} from './web-workspace-policy.mjs'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {navigatePair} from './web-live.mjs'
 
@@ -26,14 +28,27 @@ export async function mobileClientHints(page, browser) {
   return cdp
 }
 
-export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fromLink=true}) {
+export async function pairFixture({origin, targetPid, profile: fixtureProfile, pairingUrl, storage, manifest, ui, fromLink=true}) {
   const url = new URL(pairingUrl)
   assert.match(origin, /^https:\/\/127\.0\.0\.1:\d+$/)
+  assert(Number.isSafeInteger(targetPid) && targetPid > 0, 'Attested target PID required for mobile pairing')
+  assert(typeof fixtureProfile === 'string' && fixtureProfile.length > 0, 'Isolated profile path required for mobile pairing')
   assert.equal(url.origin, origin)
   assert.equal(url.pathname, '/remote-pair')
   assert.match(url.hash, /^#[\w-]{32}$/)
-  const browser = await chromium.launch({headless:true})
+  await verifyLoopbackListenerOwner(Number(url.port), targetPid)
+  const pairProfile = path.join(fixtureProfile, 'pair-chromium')
+  await mkdir(pairProfile, {recursive: true})
+  const ca = await readFile(path.join(fixtureProfile, 'identity.data/tls/ca-cert.pem')).catch(() => undefined)
+  const targetProbe = await probeProcessIdentity(targetPid, {refresh: true})
+  assert(targetProbe.status === 'ok' && targetProbe.identity?.startId, 'Unable to attest mobile pairing server incarnation')
+  const targetStartId = targetProbe.identity.startId
+  const chromiumEnv = await privateChromiumEnv(pairProfile)
+  let ownedBrowser, attestedFetch, primaryError = null
   try {
+    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: chromiumEnv, origin, targetPid, targetStartId})
+    attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, {...(ca ? {ca} : {allowSelfSigned: true}), targetStartId})
+    const browser = ownedBrowser.browser
     const context = await browser.newContext({...mobileContext(browser), ignoreHTTPSErrors:true})
     const page = await context.newPage()
     await mobileClientHints(page,browser)
@@ -44,23 +59,38 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
       return requested.origin === origin && req.method() === 'GET' && assets.has(requested.pathname)
         ? route.continue() : route.abort()
     })
-    const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
+    const cookieHeader = async () => (await context.cookies(origin)).map(c => `${c.name}=${c.value}`).join('; ')
+    const get = async (pathname, options = {}) => {
+      const cookie = await cookieHeader()
+      return attestedFetch(new URL(pathname, origin).href, {
+        redirect: 'manual', ...options,
+        headers: {...(cookie ? {cookie} : {}), ...options.headers},
+        signal: AbortSignal.timeout(15000),
+      })
+    }
     const entryHeaders={accept:'text/html',referer:'https://rune-pair-source.test/'}
-    const entry=method=>context.request.fetch(`${origin}/`,{method,maxRedirects:0,headers:entryHeaders})
-    assert.equal((await get('/api/workspaces')).status(), 401)
+    const entry = async method => {
+      const cookie = await cookieHeader()
+      return attestedFetch(`${origin}/`, {
+        method, redirect: 'manual',
+        headers: {...entryHeaders, ...(cookie ? {cookie} : {})},
+        signal: AbortSignal.timeout(15000),
+      })
+    }
+    assert.equal((await get('/api/workspaces')).status, 401)
     assert.deepEqual(await (await get('/api/auth/status')).json(), {authenticated:false,pairingRequired:true})
-    const redirect = await get('/', {maxRedirects:0,headers:{accept:'text/html'}})
-    assert.equal(redirect.status(), 302)
-    assert.equal(redirect.headers().location, '/remote-pair')
+    const redirect = await get('/', {headers:{accept:'text/html'}})
+    assert.equal(redirect.status, 302)
+    assert.equal(redirect.headers.get('location'), '/remote-pair')
     if(fromLink)for(const method of ['GET','HEAD']){
       const response=await entry(method)
-      assert.equal(response.status(),302,`${method} from an external page must redirect before pairing`)
-      assert.equal(response.headers().location,'/remote-pair')
-      if(method==='HEAD')assert.equal((await response.body()).length,0)
+      assert.equal(response.status,302,`${method} from an external page must redirect before pairing`)
+      assert.equal(response.headers.get('location'),'/remote-pair')
+      if(method==='HEAD')assert.equal((await response.arrayBuffer()).byteLength,0)
     }
     const guide = await get('/remote-pair')
-    assert.equal(guide.headers()['cache-control'], 'no-store')
-    assert.equal(guide.headers()['referrer-policy'], 'no-referrer')
+    assert.equal(guide.headers.get('cache-control'), 'no-store')
+    assert.equal(guide.headers.get('referrer-policy'), 'no-referrer')
     await page.goto(`${origin}/remote-pair?locale=he`)
     await page.waitForFunction(() => document.documentElement.lang==='he' && document.documentElement.dir==='rtl')
     assert(await page.getByRole('heading').textContent())
@@ -77,32 +107,63 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
-    assert.equal((await get('/api/workspaces')).status(), 200)
+    assert.equal((await get('/api/workspaces')).status, 200)
     const pairedEntry={}
     if(fromLink)for(const method of ['GET','HEAD']){
       const response=await entry(method)
-      assert.equal(response.status(),200,`${method} from an external page must serve the client after pairing`)
-      assert.match(response.headers()['content-type'],/^text\/html/)
-      const body=await response.body()
+      assert.equal(response.status,200,`${method} from an external page must serve the client after pairing`)
+      assert.match(response.headers.get('content-type')??'',/^text\/html/)
+      const body=Buffer.from(await response.arrayBuffer())
       if(method==='GET')assert.match(body.toString('utf8'),/\.\/boot\.js/)
       else assert.equal(body.length,0)
-      pairedEntry[method]=response.status()
+      pairedEntry[method]=response.status
     }
-    for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts']) {
-      assert.equal((await get(pathname)).status(), 404, pathname)
+    for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts', '/app_bg.wasm.br']) {
+      assert.equal((await get(pathname)).status, 404, pathname)
     }
-    const wasm = await get('/app_bg.wasm')
-    assert.equal(wasm.status(), 200)
-    assert.equal(wasm.headers()['content-type'], 'application/wasm')
-    const cached = await get('/app_bg.wasm', {headers:{'if-none-match':wasm.headers().etag}})
-    assert.equal(cached.status(), 304)
-    assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status(),403)
-    assert.equal((await get('/app_bg.wasm',{headers:{'x-codenomad-server-request':'1'}})).status(),404)
-    const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
-    assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
+    const wasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'br'}})
+    assert.equal(wasm.status, 200)
+    assert.equal(wasm.headers.get('content-type'), 'application/wasm')
+    assert.equal(wasm.headers.get('content-encoding'), 'br')
+    const cached = await get('/app_bg.wasm', {cache: 'force-cache', headers:{'accept-encoding': 'br', 'if-none-match': wasm.headers.get('etag')}})
+    assert.equal(cached.status, 304)
+    const rawWasm = await get('/app_bg.wasm', {headers: {'accept-encoding': 'identity'}})
+    assert.equal(rawWasm.status, 200)
+    assert.equal(rawWasm.headers.get('content-type'), 'application/wasm')
+    assert.equal(rawWasm.headers.get('content-encoding'), null)
+    assert.notEqual(rawWasm.headers.get('etag'), wasm.headers.get('etag'))
+    const rawCached = await get('/app_bg.wasm', {cache: 'force-cache', headers: {'accept-encoding': 'identity', 'if-none-match': rawWasm.headers.get('etag')}})
+    assert.equal(rawCached.status, 304)
+    assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status,403)
+    const serverAssetCookie = await cookieHeader()
+    const serverAsset = await attestedFetch.request({
+      path: '/app_bg.wasm',
+      method: 'GET',
+      headers: { ...(serverAssetCookie ? { cookie: serverAssetCookie } : {}), 'x-codenomad-server-request': '1' },
+      signal: AbortSignal.timeout(15000),
+    })
+    await serverAsset.body.dump()
+    assert.equal(serverAsset.statusCode, 404)
+    const expectedWasmSha = manifest.files.find(row => row.file === 'app_bg.wasm').sha256
+    const sha256 = createHash('sha256').update(Buffer.from(await wasm.arrayBuffer())).digest('hex')
+    assert.equal(sha256, expectedWasmSha)
+    assert.equal(createHash('sha256').update(Buffer.from(await rawWasm.arrayBuffer())).digest('hex'), expectedWasmSha)
     await context.storageState({path:storage})
     return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
-  } finally { await browser.close() }
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    await attestedFetch?.close().catch(() => {})
+    if (ownedBrowser) {
+      try {
+        await ownedBrowser.close()
+      } catch (closeError) {
+        console.error(`Failed to close pairing browser: ${closeError.message}`)
+        if (!primaryError) throw closeError
+      }
+    }
+  }
 }
 
 export async function mobileTabBar(page, labels) {
@@ -229,6 +290,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     assert(rect && rect.width && rect.height)
     return {x:Math.round(rect.x + rect.width / 2),y:Math.round(rect.y + rect.height / 2)}
   }
+  const fieldCenter = async () => {
+    const field = await fieldRect()
+    return {x:Math.round(field.x + field.width / 2),y:Math.round(field.y + field.height / 2)}
+  }
   const rowSample = () => page.evaluate(() => [...document.querySelectorAll('[data-rune-a11y] p')]
     .filter(n => n.textContent.startsWith('Mobile history row '))
     .map(n => [n.textContent,Math.round(n.getBoundingClientRect().top)])
@@ -252,8 +317,20 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     const beforeTop = rowIndex(prev[0][0]), afterTop = rowIndex(rows[0][0])
     return beforeTop !== null && afterTop !== null && afterTop < beforeTop
   }
-  const waitValue = value => page.waitForFunction(value =>
-    document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
+  const waitValue = async value => {
+    try {
+      await page.waitForFunction(value =>
+        document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value,
+        value, {polling: 50, timeout: 10_000})
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        activeTag: document.activeElement?.tagName ?? null,
+        activeValue: typeof document.activeElement?.value === 'string' ? document.activeElement.value : null,
+        textareas: [...document.querySelectorAll('textarea')].map(el => ({inert: el.inert, value: el.value})),
+      })).catch(() => null)
+      throw new Error(`${error.message} (expected=${JSON.stringify(value)}, state=${JSON.stringify(state)})`, {cause: error})
+    }
+  }
   const text = 'été 日本語 🦀'
   let blank,paintedDraft
   try {
@@ -265,7 +342,9 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       await withBudget(now() + 10000, 'touchScroll gesture', () => cdp.send('Input.synthesizeScrollGesture', {
         x:175,y,yDistance:240,speed:1000,gestureSourceType:'touch',preventFling:true,
       }))
-      const frames = await withBudget(now() + 20000, 'touchScroll frames', () => page.evaluate(() => new Promise(resolve => {
+      // DPR 2.75 software WebGL (SwiftShader) renders ~800 ms/frame (~19.5 s for 24 frames);
+      // 35 s keeps the full 24-frame sample without timing out under parallel CPU load.
+      const frames = await withBudget(now() + 35000, 'touchScroll frames', () => page.evaluate(() => new Promise(resolve => {
         const all = []
         let last = performance.now()
         function frame(at) {
@@ -276,7 +355,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         }
         requestAnimationFrame(frame)
       })))
-      // Post-scroll accessibility mirror updates defer for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+      // Post-scroll accessibility mirror updates flush off-rAF after scroll settle and idle timeout.
       let after = [], moved = false
       const settleDeadline = now() + 1500
       while (now() < settleDeadline) {
@@ -298,9 +377,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       return {moved,before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
     })
     await probe('touchEditor', async () => {
-      const focus = await center(composer)
+      const focus = await fieldCenter()
       await page.touchscreen.tap(focus.x,focus.y)
-      await editor.waitFor({state:'attached',timeout:2500})
+      await editor.waitFor({state:'attached',timeout:10_000})
+      assert.equal(await page.locator('[data-rune-menu]').count(),0,'Primary tap on composer must not open a long-press menu')
       blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
@@ -310,7 +390,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
     await probe('compositionAndReplacement', async () => {
       const clip=inkClip(await fieldRect())
       let before,prefix
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         before=await capture(clip)
         // Locate the typed prefix by its ink, not by changed focus or field pixels.
         prefix=await glyphMatch(blank,before,before,0,0,true)
@@ -327,7 +407,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       await cdp.send('Input.insertText',{text:composing})
       await waitValue(text+composing)
       let preedit,reference
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         reference=await capture(clip)
         const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample,startX)))
         preedit=matches.find(looksLikeGlyphs)
@@ -346,11 +426,11 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       paintedDraft=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
-      const point=await center(composer)
+      const point=await fieldCenter()
       await page.touchscreen.tap(point.x,point.y)
       await waitValue(draft)
       let refocused
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         refocused=await glyphMatch(blank,paintedDraft,await capture(clip))
         if(looksLikeGlyphs(refocused))break
         assert(Date.now()<until,'The committed glyphs must reappear in the painted editor after refocus')
@@ -372,7 +452,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
       const {top,bottom,left,right}=viewportBounds
       let settled = null, lastField = null, lastButton = null
-      // Mirror updates defer off rAF after resize/scroll settle (#1670).
+      // Accessibility mirror updates flush off-rAF after viewport resize settles.
       for(const until=now()+2000;;){
         const remaining=until-now()
         if(remaining<=0) break
@@ -412,7 +492,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       const {field, button} = settled
       const clip=inkClip(field)
       let draftInk,resizedDraft
-      for(const until=Date.now()+2500;;){
+      for(const until=Date.now()+10_000;;){
         // CSS screenshots at fractional DPR can round the two crops differently.
         resizedDraft=await capture(clip)
         draftInk=await glyphMatch(blank,paintedDraft,resizedDraft,0,2,true)

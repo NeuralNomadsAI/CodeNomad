@@ -18,10 +18,24 @@ pub struct Panels {
     right_width_initialized: bool,
     pub wanted: [Option<[bool; 2]>; 2],
     pub(crate) file_wrap: bool,
+    touch: bool,
     portrait: bool,
+    touch_initialized: bool,
+    started_portrait: bool,
+    touch_viewport: Option<(f32, f32)>,
+    portrait_width: Option<f32>,
+    screen_portrait: Option<bool>,
     floating: Option<usize>,
     floating_epoch: u64,
     resizing: Option<usize>,
+    #[cfg(target_arch = "wasm32")]
+    orientation_watch: Option<super::web_orientation::Watch>,
+    #[cfg(target_arch = "wasm32")]
+    orientation_watch_attempted: bool,
+    #[cfg(test)]
+    pub(super) touch_override: bool,
+    #[cfg(test)]
+    pub(super) test_orientation_pending: Option<Option<bool>>,
 }
 impl Default for Panels {
     fn default() -> Self {
@@ -31,10 +45,24 @@ impl Default for Panels {
             right_width_initialized: false,
             wanted: [None; 2],
             file_wrap: false,
+            touch: false,
             portrait: false,
+            touch_initialized: false,
+            started_portrait: false,
+            touch_viewport: None,
+            portrait_width: None,
+            screen_portrait: None,
             floating: None,
             floating_epoch: 0,
             resizing: None,
+            #[cfg(target_arch = "wasm32")]
+            orientation_watch: None,
+            #[cfg(target_arch = "wasm32")]
+            orientation_watch_attempted: false,
+            #[cfg(test)]
+            touch_override: false,
+            #[cfg(test)]
+            test_orientation_pending: None,
         }
     }
 }
@@ -52,7 +80,8 @@ impl Panels {
         }
     }
     fn wanted(&self) -> [bool; 2] {
-        self.wanted[usize::from(self.portrait)].unwrap_or([!self.portrait; 2])
+        let default = !self.portrait && !(self.touch && self.started_portrait);
+        self.wanted[usize::from(self.portrait)].unwrap_or([default; 2])
     }
     fn set_wanted(&mut self, index: usize, open: bool) {
         let mut wanted = self.wanted();
@@ -75,22 +104,181 @@ impl Panels {
         self.docked(wanted)[index].is_some()
     }
 
-    fn measure(&mut self, width: f32, height: f32, touch: bool, tx: &mut Tx) {
+    fn resolve_portrait(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        screen_portrait: Option<bool>,
+    ) -> bool {
+        if !touch || width <= 0.0 || height <= 0.0 {
+            self.touch_viewport = None;
+            return false;
+        }
+        let previous = self.touch_viewport.replace((width, height));
+        let Some((prev_w, prev_h)) = previous else {
+            if screen_portrait.is_some() {
+                self.screen_portrait = screen_portrait;
+            }
+            return width <= height;
+        };
+        if (width - prev_w).abs() < 1.0 {
+            if !self.portrait && screen_portrait == Some(true) {
+                self.screen_portrait = Some(true);
+                return true;
+            }
+            return self.portrait || width <= height;
+        }
+        let screen_changed = screen_portrait.is_some() && screen_portrait != self.screen_portrait;
+        if screen_portrait.is_some() {
+            self.screen_portrait = screen_portrait;
+        }
+        if screen_changed {
+            return screen_portrait.unwrap_or(width <= height);
+        }
+        if !self.portrait
+            && width < prev_w
+            && height > prev_h
+            && self
+                .portrait_width
+                .is_some_and(|pw| (width - pw).abs() < 1.0)
+        {
+            return true;
+        }
+        width <= height
+    }
+
+    pub(super) fn measure(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        panel_overlay_open: bool,
+        tx: &mut Tx,
+    ) -> Option<usize> {
+        #[cfg(target_arch = "wasm32")]
+        let screen_portrait = web_screen_portrait();
+        #[cfg(not(target_arch = "wasm32"))]
+        let screen_portrait = None;
+        self.measure_with_screen_and_overlay(
+            width,
+            height,
+            touch,
+            screen_portrait,
+            panel_overlay_open,
+            tx,
+        )
+    }
+
+    pub(super) fn poll(
+        &mut self,
+        wake: &rune::Waker,
+        panel_overlay_open: bool,
+        tx: &mut Tx,
+    ) -> (bool, Option<usize>) {
+        let _ = wake;
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.orientation_watch_attempted {
+                self.orientation_watch_attempted = true;
+                self.orientation_watch = super::web_orientation::Watch::new(wake.clone());
+            }
+            if self
+                .orientation_watch
+                .as_ref()
+                .is_some_and(super::web_orientation::Watch::take_changed)
+                && self.touch
+                && let Some((width, height)) = self.touch_viewport
+            {
+                let dismissed = self.measure_with_screen_and_overlay(
+                    width,
+                    height,
+                    true,
+                    web_screen_portrait(),
+                    panel_overlay_open,
+                    tx,
+                );
+                return (true, dismissed);
+            }
+        }
+        #[cfg(test)]
+        if let Some(screen_portrait) = self.test_orientation_pending.take()
+            && self.touch
+            && let Some((width, height)) = self.touch_viewport
+        {
+            let dismissed = self.measure_with_screen_and_overlay(
+                width,
+                height,
+                true,
+                screen_portrait,
+                panel_overlay_open,
+                tx,
+            );
+            return (true, dismissed);
+        }
+        (false, None)
+    }
+
+    #[cfg(test)]
+    pub(super) fn measure_with_screen(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        screen_portrait: Option<bool>,
+        tx: &mut Tx,
+    ) -> Option<usize> {
+        self.measure_with_screen_and_overlay(width, height, touch, screen_portrait, false, tx)
+    }
+
+    fn measure_with_screen_and_overlay(
+        &mut self,
+        width: f32,
+        height: f32,
+        touch: bool,
+        screen_portrait: Option<bool>,
+        panel_overlay_open: bool,
+        tx: &mut Tx,
+    ) -> Option<usize> {
         if width > 0.0 && !self.right_width_initialized {
             self.preferred[1] = shell::default_right_panel(width);
             self.right_width_initialized = true;
         }
+        let prev_floating = self.floating;
         self.width = width;
-        let portrait = touch && width < height;
-        if portrait != self.portrait {
+        self.touch = touch;
+        let portrait = self.resolve_portrait(width, height, touch, screen_portrait);
+        if touch && width > 0.0 && height > 0.0 && !self.touch_initialized {
+            self.touch_initialized = true;
+            self.started_portrait = portrait;
             self.portrait = portrait;
-            self.leave_project();
+            if portrait {
+                self.portrait_width = Some(width);
+            }
+        } else if portrait != self.portrait {
+            self.portrait = portrait;
+            if touch && portrait {
+                self.portrait_width = Some(width);
+            }
+            if let Some(index) = self.floating.take()
+                && (tx.focus_within(REGIONS[index]) || (index == 1 && panel_overlay_open))
+            {
+                tx.focus_when_shown(KEYS[index], tx.focus_visible());
+            }
+            self.resizing = None;
+        } else if touch && portrait {
+            self.portrait_width = Some(width);
+        }
+        if !touch {
+            self.portrait_width = None;
+            self.screen_portrait = None;
         }
         self.dock_floating();
         if self.resizing.is_some_and(|i| !self.visible(i)) {
             self.resizing = None;
         }
         tx.instant();
+        prev_floating.filter(|&index| self.floating != Some(index))
     }
 
     pub fn visible(&self, index: usize) -> bool {
@@ -141,34 +329,6 @@ impl Panels {
         self.floating.is_some()
     }
 
-    pub fn wrap_floating_focus(&self, backward: bool, tx: &mut Tx) -> bool {
-        let Some(index) = self.floating else {
-            return false;
-        };
-        if tx.focused().is_none() {
-            tx.focus(KEYS[index], true);
-            return true;
-        }
-        let last = if index == 0 {
-            "refresh-sessions"
-        } else {
-            KEYS[1]
-        };
-        let (from, to) = if backward {
-            (KEYS[0], last)
-        } else {
-            (last, KEYS[0])
-        };
-        if tx.focused() == Some(from) {
-            tx.focus(to, true);
-            if index == 0 && backward {
-                tx.scroll_into_view_in("session-list", last);
-            }
-            true
-        } else {
-            false
-        }
-    }
     pub fn leave_project(&mut self) {
         self.floating = None;
         self.resizing = None;
@@ -204,6 +364,34 @@ impl Panels {
             PANEL_MIN[index],
             f32::from(crate::workspace::MAX_PANEL_WIDTH),
         )
+    }
+
+    pub(super) fn wrap_floating_focus(&self, _backward: bool, tx: &mut Tx) -> bool {
+        let Some(index) = self.floating else {
+            return false;
+        };
+        if tx.focused().is_none() {
+            tx.focus(KEYS[index], true);
+            return true;
+        }
+        false
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_screen_portrait() -> Option<bool> {
+    let window = web_sys::window()?;
+    let screen = js_sys::Reflect::get(window.as_ref(), &"screen".into()).ok()?;
+    let orientation = js_sys::Reflect::get(&screen, &"orientation".into()).ok()?;
+    let kind = js_sys::Reflect::get(&orientation, &"type".into())
+        .ok()?
+        .as_string()?;
+    if kind.starts_with("portrait") {
+        Some(true)
+    } else if kind.starts_with("landscape") {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -291,12 +479,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
     if let Some(width) = docked[1].filter(|_| floating != Some(1)) {
         columns = columns.child(panel(1, width, false));
     }
-    let mut root = shell::frame()
-        .key("session-shell")
-        .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
-            s.shell.measure(width, height, touch, tx)
-        })
-        .on_key(panel_keys);
+    let mut root = shell::frame().key("session-shell").on_key(panel_keys);
     if project {
         for i in 0..2 {
             root = root.child(shell::toggle(
@@ -312,17 +495,24 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
     }
     root = root.child(inactive(columns));
     if let Some(index) = floating {
-        root = root.child(panel(index, PANEL_DEFAULT[index], true));
+        let width = if s.shell.width > 0.0 {
+            s.shell.width
+        } else {
+            PANEL_DEFAULT[index]
+        };
+        root = root.child(panel(index, width, true));
     }
     root
 }
 
 fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El {
     let title = if s.chat_title.is_empty() && project {
-        s.screen
-            .launcher()
-            .and_then(|l| l.project.as_ref())
-            .map_or("", |p| &p.path)
+        crate::workspace::active_project_title(s).unwrap_or_else(|| {
+            s.screen
+                .launcher()
+                .and_then(|l| l.project.as_ref())
+                .map_or("", |p| &p.path)
+        })
     } else {
         &s.chat_title
     };
@@ -334,7 +524,10 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         [
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
-            crate::timeline::search::trigger(s).unwrap_or_else(shell::spacer),
+            shell::spacer(),
+            super::tab_rename::trigger(s, touch).unwrap_or_else(col),
+            super::command_palette::trigger(s, touch),
+            crate::timeline::search::trigger(s).unwrap_or_else(col),
             crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],
@@ -350,8 +543,8 @@ fn connection_warning(s: &State) -> Option<El> {
     let failed = s.phase == crate::Phase::Failed;
     #[cfg(target_arch = "wasm32")]
     let failed = failed || s.phase == crate::Phase::RestoreFailed;
-    match s.phase {
-        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
+    match &s.phase {
+        phase if phase.reconnecting() => Some(text(connection(s)).role("status")),
         _ if failed => Some(crate::components::button_tx(
             "connection-retry",
             strings::t("sessionList.loadError.retry"),

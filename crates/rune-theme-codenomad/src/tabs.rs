@@ -120,6 +120,7 @@ pub struct ProjectTab<'a> {
     pub title: &'a str,
     pub status: Option<Status>,
     pub closable: bool,
+    pub temporary: bool,
 }
 fn focus_layers(element: El, key: &str, metric: &str) -> El {
     let t = tokens(layout::dark());
@@ -147,16 +148,18 @@ pub fn tab<S: 'static>(
 ) -> El {
     let close_help = catalogue::message(locale, "instanceTab.actions.close.ariaLabel").unwrap();
     tab_with_help(
-        locale, tab, selected, first, close_help, on_select, on_close,
+        locale, tab, selected, first, close_help, false, on_select, on_close,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tab_with_help<S: 'static>(
     locale: &str,
     tab: &ProjectTab<'_>,
     selected: bool,
     first: bool,
     close_help: &str,
+    skip_tab: bool,
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
 ) -> El {
@@ -184,6 +187,7 @@ fn tab_with_help<S: 'static>(
     let action = select.clone();
     let title = tab.title.to_owned();
     let rtl = catalogue::direction(locale) == "rtl";
+    let temporary = tab.temporary;
     let mut select_button = Button::new(tab.title)
         .variant(ButtonVariant::Ghost)
         .label_with(move |_, _| {
@@ -198,13 +202,18 @@ fn tab_with_help<S: 'static>(
             } else {
                 title.truncate()
             };
+            let glyph = if temporary {
+                &crate::shell::icons::HOURGLASS
+            } else {
+                &FOLDER
+            };
             rune::row()
                 .w_full()
                 .min_w(0.0)
                 .items_center()
                 .gap(metric("columnGap"))
                 .child(
-                    rune::icon(&FOLDER, t.metric("tabGlyph", "width").px())
+                    rune::icon(glyph, t.metric("tabGlyph", "width").px())
                         .color(ink)
                         .a11y_hidden(),
                 )
@@ -227,12 +236,31 @@ fn tab_with_help<S: 'static>(
         let (id, action) = (tab.id.to_owned(), close.clone());
         select_button = select_button.on_middle_press(move |s, tx| action(s, &id, tx));
     }
-    if let Some(status) = tab.status {
-        select_button = select_button.description(catalogue::format(
+    if tab.temporary {
+        select_button =
+            select_button.help(catalogue::message(locale, "instanceTab.temporary.title").unwrap());
+    }
+    let temporary_aria = tab
+        .temporary
+        .then(|| catalogue::message(locale, "instanceTab.temporary.ariaLabel").unwrap());
+    let status_aria = tab.status.map(|status| {
+        catalogue::format(
             locale,
             "instanceTab.status.ariaLabel",
             &[("status", catalogue::message(locale, status.key()).unwrap())],
-        ));
+        )
+    });
+    match (temporary_aria, status_aria) {
+        (Some(temp), Some(status)) => {
+            select_button = select_button.description(format!("{temp}, {status}"));
+        }
+        (Some(temp), None) => {
+            select_button = select_button.description(temp);
+        }
+        (None, Some(status)) => {
+            select_button = select_button.description(status);
+        }
+        (None, None) => {}
     }
     let border = metric("borderTopWidth");
     let end = metric("borderRightWidth");
@@ -291,7 +319,11 @@ fn tab_with_help<S: 'static>(
         .on_press_tx(move |s, tx| action(s, &id, tx))
         .role("group")
         .label(tab.title)
-        .child(select_button.role("tab"));
+        .child(
+            select_button
+                .role("tab")
+                .tab_index(if skip_tab { -1 } else { 0 }),
+        );
     if let Some(status) = tab.status {
         let side = t.length(Length::Icon).px() / 2.0;
         slot = slot.child(
@@ -327,7 +359,8 @@ fn tab_with_help<S: 'static>(
                 .radius(metric("borderRadius"))
                 .hover_group()
                 .hover(t.color("tab-close-hover-bg"))
-                .no_focus_ring(),
+                .no_focus_ring()
+                .tab_index(if skip_tab { -1 } else { 0 }),
             &close_key,
             "tabCloseFocus",
         ));
@@ -352,6 +385,7 @@ pub fn strip<S: 'static>(
         active,
         word("instanceTabs.new.title"),
         word("instanceTab.actions.close.ariaLabel"),
+        false,
         on_select,
         on_close,
         on_new,
@@ -367,6 +401,7 @@ pub fn strip_with_help<S: 'static>(
     active: Option<&str>,
     new_help: &str,
     active_close_help: &str,
+    skip_tab: bool,
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_new: impl Fn(&mut S, &mut Tx) + 'static,
@@ -387,7 +422,8 @@ pub fn strip_with_help<S: 'static>(
         new_size,
         on_new,
     )
-    .key("project-tabs-new");
+    .key("project-tabs-new")
+    .tab_index(if skip_tab { -1 } else { 0 });
     let select = Rc::new(on_select);
     let close = Rc::new(on_close);
     let close_label = word("instanceTab.actions.close.ariaLabel");
@@ -405,6 +441,7 @@ pub fn strip_with_help<S: 'static>(
             } else {
                 close_label
             },
+            skip_tab,
             move |s, id, tx| select(s, id, tx),
             move |s, id, tx| close(s, id, tx),
         )
@@ -492,12 +529,14 @@ mod tests {
                     title: "Alpha",
                     status: Some(Status::Working),
                     closable: true,
+                    temporary: false,
                 },
                 ProjectTab {
                     id: "b",
                     title: "Beta",
                     status: Some(Status::Permission),
                     closable: true,
+                    temporary: false,
                 },
             ],
             Some(&s.active),
@@ -534,8 +573,29 @@ mod tests {
     fn web_mirror_keeps_tabs_selected_state_and_sibling_closes() {
         let rt = runtime("fr");
         let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tablist_label =
+            catalogue::message("fr", "instanceShell.rightPanel.customize.tabs").unwrap();
+        let tablist_index = items
+            .iter()
+            .position(|e| e["o"] == "tablist" && e["t"] == tablist_label)
+            .unwrap_or_else(|| panic!("missing tablist in web mirror: {}", rt.a11y_json()));
+        let inside_tablist = |item: &serde_json::Value| {
+            let mut ancestor = item["a"].as_u64().map(|index| index as usize);
+            while let Some(index) = ancestor {
+                if index == tablist_index {
+                    return true;
+                }
+                ancestor = items[index]["a"].as_u64().map(|next| next as usize);
+            }
+            false
+        };
         let tabs: Vec<_> = items.iter().filter(|e| e["o"] == "tab").collect();
         assert_eq!(tabs.len(), 2, "real web mirror: {}", rt.a11y_json());
+        assert!(
+            tabs.iter().all(|tab| inside_tablist(tab)),
+            "tabs must be grouped inside tablist in web mirror: {}",
+            rt.a11y_json()
+        );
         assert_eq!(tabs.iter().filter(|e| e["se"] == true).count(), 1);
         assert!(tabs.iter().any(|e| e["t"] == "Alpha" && e["se"] == true));
         let close = catalogue::message("fr", "instanceTab.actions.close.ariaLabel").unwrap();
@@ -630,6 +690,7 @@ mod tests {
                         title: TITLE,
                         status: None,
                         closable: true,
+                        temporary: false,
                     },
                     s.active == "a",
                     true,
@@ -738,10 +799,14 @@ mod tests {
                         .button(true, key, move |s: &mut App| s.closed.push(key.into()))
                         .key(key)
                 });
-                let bell =
-                    crate::shell::notices::bell("bell", None, false, true, |s: &mut App, _| {
-                        s.closed.push("bell".into())
-                    });
+                let bell = crate::shell::notices::bell(
+                    "bell",
+                    None,
+                    false,
+                    true,
+                    false,
+                    |s: &mut App, _| s.closed.push("bell".into()),
+                );
                 strip_view(s, true, actions.into_iter().chain([bell]))
             })
         }
@@ -793,6 +858,43 @@ mod tests {
                 assert_eq!(rt.state.closed, ["settings", "chat", "bell"]);
             }
         }
+    }
+
+    #[test]
+    fn temporary_tab_uses_hourglass_and_localized_temporary_description() {
+        let mut rt = rune::Runtime::new(
+            App {
+                active: "temp".into(),
+                closed: vec![],
+                new: 0,
+                locale: "fr",
+            },
+            |s, cx| {
+                layout::render(cx, |_| {
+                    tab::<App>(
+                        s.locale,
+                        &ProjectTab {
+                            id: "temp",
+                            title: "Temporaire · 12:30",
+                            status: None,
+                            closable: true,
+                            temporary: true,
+                        },
+                        true,
+                        true,
+                        |_, _, _| {},
+                        |_, _, _| {},
+                    )
+                })
+            },
+            (400.0, 80.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tab_node = items.iter().find(|e| e["o"] == "tab").unwrap();
+        let expected_desc = catalogue::message("fr", "instanceTab.temporary.ariaLabel").unwrap();
+        assert_eq!(tab_node["d"], expected_desc);
     }
     #[test]
     fn direction_and_words_follow_the_catalogue() {

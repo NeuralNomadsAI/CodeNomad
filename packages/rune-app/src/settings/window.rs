@@ -12,18 +12,19 @@ use std::{
     rc::Rc,
 };
 
-pub(crate) fn entries(touch: bool) -> impl IntoIterator<Item = El> {
+pub(crate) fn entries(touch: bool, skip_tab: bool) -> impl IntoIterator<Item = El> {
     #[cfg(not(target_arch = "wasm32"))]
     return [rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, strings::t("settings.title"), open)
+        .tab_index(if skip_tab { -1 } else { 0 })
         .key("open-preferences")];
     #[cfg(target_arch = "wasm32")]
-    return [web::entry(touch)];
+    return [web::entry(touch, skip_tab)];
 }
 
-pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
+pub(crate) fn direct_entry(s: &State, touch: bool, skip_tab: bool) -> El {
     if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
-        rune_theme_codenomad::layout::action_row().children(entries(touch))
+        rune_theme_codenomad::layout::action_row().children(entries(touch, skip_tab))
     } else {
         rune::el()
     }
@@ -31,7 +32,15 @@ pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
+    s.shell.leave_project();
     open_window(s, false);
+}
+
+pub(crate) fn open_preferences(s: &mut State) {
+    #[cfg(not(target_arch = "wasm32"))]
+    open(s);
+    #[cfg(target_arch = "wasm32")]
+    web::open(s);
 }
 
 pub(crate) fn open_providers(s: &mut State) {
@@ -72,7 +81,9 @@ fn open_window(s: &mut State, providers: bool) {
         return;
     }
     if host.window.as_ref().is_some_and(|(_, _, request)| {
-        request.reopen.borrow().is_some() || request.config_reopen.borrow().is_some()
+        request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some()
     }) {
         return;
     }
@@ -125,6 +136,37 @@ pub(super) fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'st
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn warn_save_failed(locale: &'static str) {
     crate::platform::preferences_save_warning(locale, view::save_warning);
+}
+
+pub(crate) fn close_request(
+    s: &mut State,
+    _tx: &mut rune::Tx,
+) -> rune_theme_codenomad::shell::CloseResponse {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((window, token, request)) = &s.settings.window {
+        let alive = Rc::strong_count(token) > 1;
+        let has_reopen = request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some();
+        if (alive && request.guard_close.get()) || has_reopen {
+            request.close_main_after.set(true);
+            request.requested.set(true);
+            if alive {
+                window.focus();
+                if let Some(wake) = &s.settings.shared.borrow().window_wake {
+                    wake();
+                }
+            } else {
+                let request = request.clone();
+                let editor = request.reopen.borrow_mut().take();
+                launch_preferences(s, request, editor);
+            }
+            return rune_theme_codenomad::shell::CloseResponse::Defer;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = s;
+    rune_theme_codenomad::shell::CloseResponse::Close
 }
 
 pub(crate) fn close(s: &mut State) {

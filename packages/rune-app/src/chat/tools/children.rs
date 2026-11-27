@@ -264,6 +264,35 @@ impl Children {
         self.background_pending = None;
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let mut total = self.expanded_report_bytes;
+        if let ReportCopy::Ready { text, .. } = &self.report_copy {
+            total = total.saturating_add(text.len());
+        }
+        for ((parent, id), entry) in &self.entries {
+            total = total
+                .saturating_add(parent.as_deref().map_or(0, str::len))
+                .saturating_add(id.len());
+            for (msg_id, tool) in &entry.snapshot.steps {
+                total = total
+                    .saturating_add(msg_id.len())
+                    .saturating_add(tool.id.len())
+                    .saturating_add(tool.name.len())
+                    .saturating_add(tool.status.len())
+                    .saturating_add(tool.output.len())
+                    .saturating_add(tool.error.len());
+            }
+            for report in &entry.snapshot.reports {
+                total = total
+                    .saturating_add(report.row_id.len())
+                    .saturating_add(report.report.child.len())
+                    .saturating_add(report.report.state.len())
+                    .saturating_add(report.report.body.len());
+            }
+        }
+        total
+    }
+
     pub(super) fn unavailable(&self, parent: Option<&str>, id: &str) -> bool {
         self.unavailable.contains(&child_key(parent, id))
     }

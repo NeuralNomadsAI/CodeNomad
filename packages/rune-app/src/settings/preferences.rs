@@ -9,10 +9,17 @@ pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
 pub(super) use document::env_var_is_masked;
 use document::{Choice, Document};
-use rune_theme_codenomad::palettes::{Palette, built_in};
+use rune_theme_codenomad::palettes::{
+    ColorSchemeColors, Palette, ResolvedPalette, built_in, custom, increased_contrast,
+};
 use serde_json::Value;
 #[cfg(any(test, feature = "test-support"))]
 use serde_json::json;
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 #[derive(Default)]
 pub(super) struct Preferences {
@@ -23,9 +30,13 @@ pub(super) struct Preferences {
     pub(super) memory: super::memory::Setting,
     pub(super) missions: super::missions::Shared,
     pub(super) speech: super::speech::Shared,
+    pub(super) startup: super::startup_state::StartupState,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
     pub(super) announced_update: Option<String>,
+    palette_preview: Option<(bool, Option<&'static str>, ColorSchemeColors)>,
+    binding_epoch: u64,
+    authority: Arc<AtomicU64>,
     config: Document,
     state: Document,
     server: Document,
@@ -44,6 +55,7 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    direct_access_lock: std::sync::Mutex<Option<(String, codenomad_client::Receiver<()>)>>,
 }
 
 impl Preferences {
@@ -51,6 +63,37 @@ impl Preferences {
         self.show_server || self.show_environment || self.show_speech || self.server.unsettled()
     }
 
+    pub(super) fn set_direct_access_lock(
+        &self,
+        owner: String,
+        lock: codenomad_client::Receiver<()>,
+    ) {
+        *self.direct_access_lock.lock().unwrap() = Some((owner, lock));
+    }
+
+    pub(super) fn clear_direct_access_lock(&self) {
+        *self.direct_access_lock.lock().unwrap() = None;
+    }
+
+    pub(super) fn direct_access_locked(&self, owner: Option<&str>) -> bool {
+        let Some(owner) = owner else {
+            return false;
+        };
+        let guard = self.direct_access_lock.lock().unwrap();
+        guard
+            .as_ref()
+            .is_some_and(|(lock_owner, rx)| lock_owner == owner && !rx.is_closed())
+    }
+
+    pub(super) fn take_finished_direct_access_lock(&self, owner: Option<&str>) -> bool {
+        let mut guard = self.direct_access_lock.lock().unwrap();
+        let finished = guard.as_ref().is_some_and(|(_, rx)| rx.is_closed());
+        if !finished {
+            return false;
+        }
+        let lock_owner = guard.take().map(|(id, _)| id);
+        owner.is_some() && owner == lock_owner.as_deref()
+    }
     pub(super) fn show_timeline(&self) -> bool {
         self.config
             .snapshot
@@ -300,7 +343,12 @@ impl Preferences {
         }
     }
 
+    fn revoke_send_authority(&self) {
+        self.authority.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(super) fn mark_transport_lost(&mut self) {
+        self.revoke_send_authority();
         if let Some(backend) = self.backend.clone() {
             self.seen_drop_generation = backend.client.drop_generation();
             let mut ids = self.active_client_ids(&backend);
@@ -386,6 +434,7 @@ impl Preferences {
         if !dropped {
             return false;
         }
+        self.revoke_send_authority();
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
@@ -505,6 +554,14 @@ impl Preferences {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn fixture_config(&mut self, url: &str, settings: Value) {
+        let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.base = url.into();
+        self.backend = Some(backend);
+        self.config.snapshot = Some(json!({"settings": settings}));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn prepare_all_drains(&mut self, check_revisions: bool, retry_failed: bool) {
         let Some(backend) = &self.backend else {
@@ -609,13 +666,17 @@ impl Preferences {
             .zip(owner.as_ref())
             .is_some_and(|(old, new)| {
                 old.base == new.base
+                    && !new.client.attestation_revoked()
                     && old.client.server_identity().is_some()
                     && old.client.server_identity() == new.client.server_identity()
             });
         self.unwatch();
+        self.revoke_send_authority();
         if !same_address {
             self.seen_drops.clear();
             self.closing_stream_client_id = None;
+            self.binding_epoch = self.binding_epoch.wrapping_add(1);
+            self.palette_preview = None;
         }
         self.config.rebind(same_address);
         self.state.rebind(same_address);
@@ -737,6 +798,14 @@ impl Preferences {
         self.backend.is_some() && !self.authentication_required
     }
 
+    pub fn transport_lost(&self) -> bool {
+        self.transport_lost
+    }
+
+    pub(super) fn authority_handle(&self) -> Arc<AtomicU64> {
+        self.authority.clone()
+    }
+
     pub(super) fn awaiting_appearance(&self) -> bool {
         self.can_retry()
             && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())
@@ -798,6 +867,9 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.revoke_send_authority();
+        self.memory.on_authentication_required();
+        self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);
@@ -1117,6 +1189,7 @@ impl Preferences {
         let mut disconnected = false;
         if let Some(stream) = &self.stream {
             if stream.take_disconnected() {
+                self.revoke_send_authority();
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
@@ -1155,11 +1228,26 @@ impl Preferences {
 
     fn poll_documents_inner(&mut self, revalidate_idle: bool) -> (bool, bool, bool) {
         let install = self.opencode_install.poll();
+        let memory_verified = !self.authentication_required
+            && !self.transport_lost
+            && self
+                .backend
+                .as_ref()
+                .is_some_and(super::ServerOwner::backend_verified);
+        let memory_writes = self
+            .memory
+            .poll_pending_writes(self.authority.load(Ordering::SeqCst), memory_verified);
         if self.authentication_required {
-            return (install, false, false);
+            if memory_writes {
+                self.revision += 1;
+            }
+            return (install | memory_writes, false, false);
         }
         let Some(backend) = self.backend.clone() else {
-            return (install, false, false);
+            if memory_writes {
+                self.revision += 1;
+            }
+            return (install | memory_writes, false, false);
         };
         let active_client_ids = self.active_client_ids(&backend);
         let seen_drops = self.seen_drops_sum(&active_client_ids);
@@ -1255,10 +1343,22 @@ impl Preferences {
             | server_changed
             | missions_changed
             | speech_changed
-            | self.memory.poll(&backend, &main, &window)
-            | self
-                .memory
-                .poll_review(&backend, self.provider_target.as_ref(), &main, &window)
+            | memory_writes
+            | self.memory.poll(
+                &backend,
+                self.transport_lost,
+                &self.authority,
+                &main,
+                &window,
+            )
+            | self.memory.poll_review(
+                &backend,
+                self.provider_target.as_ref(),
+                self.transport_lost,
+                &self.authority,
+                &main,
+                &window,
+            )
             | install;
         let settled =
             config_settled | state_settled | server_settled | missions_settled | speech_settled;
@@ -1323,6 +1423,10 @@ impl Preferences {
         }
     }
 
+    pub(super) fn binding_epoch(&self) -> u64 {
+        self.binding_epoch
+    }
+
     pub fn mode(&self) -> &'static str {
         let Some(state) = self.saved(Owner::State) else {
             return "system";
@@ -1332,8 +1436,8 @@ impl Preferences {
             Some("dark") => "dark",
             Some("system") => "system",
             _ => self
-                .legacy(state)
-                .map_or("system", |(appearance, _)| appearance),
+                .legacy_scheme(state)
+                .map_or("system", |legacy| super::palettes::mode_str(legacy.dark)),
         }
     }
 
@@ -1364,50 +1468,18 @@ impl Preferences {
             .unwrap_or_else(|| self.mode())
     }
 
-    fn legacy(&self, state: &Value) -> Option<(&'static str, &'static str)> {
+    fn legacy_scheme(&self, state: &Value) -> Option<super::palettes::LegacyScheme> {
         let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
-        let scheme = state
-            .get("colorScheme")
-            .or_else(|| config.get("colorScheme"));
-        if let Some(scheme) = scheme {
-            let id = scheme.as_str().or_else(|| scheme["id"].as_str());
-            if id == Some("system") {
-                return None;
-            }
-            if id == Some("custom") {
-                let appearance = if scheme["appearance"] == "light" {
-                    "light"
-                } else {
-                    "dark"
-                };
-                return Some((appearance, "custom"));
-            }
-            if let Some(palette) = built_in().iter().find(|p| Some(p.id) == id) {
-                let appearance = if palette.dark { "dark" } else { "light" };
-                return Some((appearance, palette.id));
-            }
-        }
-        let (appearance, id) = match state
-            .get("theme")
-            .or_else(|| config.get("theme"))
-            .and_then(Value::as_str)
-        {
-            Some("light") => ("light", "light"),
-            Some("dark") => ("dark", "classic"),
-            _ => return None,
-        };
-        Some((appearance, id))
+        super::palettes::legacy_scheme(state, config)
     }
 
     pub fn palette(&self, dark: bool) -> Option<&'static Palette> {
         let state = self.saved(Owner::State)?;
         let mode = if dark { "dark" } else { "light" };
-        let legacy = self
-            .legacy(state)
-            .filter(|(appearance, _)| *appearance == mode);
+        let legacy = self.legacy_scheme(state).filter(|l| l.dark == dark);
         let id = state["appearancePreferences"][mode]["scheme"]["id"]
             .as_str()
-            .or_else(|| legacy.map(|(_, id)| id));
+            .or_else(|| legacy.as_ref().map(|l| l.id));
         let palettes = built_in();
         palettes
             .iter()
@@ -1423,9 +1495,324 @@ impl Preferences {
         if !self.palette_ready() || self.backend.is_none() {
             return;
         }
+        if self.needs_slot_migration(palette.dark) {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
+                id: palette.id,
+                dark: palette.dark,
+            });
+            self.state.stage_palette_mutation(mutation);
+            return;
+        }
+        self.state.clear_palette_mutation();
         if self.state.requested(Choice::Palette(palette.dark)) != Some(palette.id) {
             self.state.stage(Choice::Palette(palette.dark), palette.id);
         }
+    }
+
+    fn needs_slot_migration(&self, dark: bool) -> bool {
+        let Some(state) = self.saved(Owner::State) else {
+            return false;
+        };
+        let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
+        super::palettes::needs_slot_migration(state, config, dark, None)
+    }
+
+    pub(super) fn set_palette_preview(
+        &mut self,
+        preview: Option<(bool, Option<&'static str>, ColorSchemeColors)>,
+    ) {
+        if self.palette_preview != preview {
+            self.palette_preview = preview;
+            self.revision += 1;
+        }
+    }
+
+    pub(super) fn has_palette_preview(&self) -> bool {
+        self.palette_preview.is_some()
+    }
+
+    pub(super) fn palette_slot(&self, dark: bool) -> Option<super::palettes::SlotSelection> {
+        let state = self.saved(Owner::State)?;
+        let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
+        let legacy = self.legacy_scheme(state);
+        if !self.state.choice_failed(Choice::Palette(dark))
+            && let Some(id) = self.state.requested(Choice::Palette(dark))
+            && let Some(palette) = built_in().iter().find(|p| p.dark == dark && p.id == id)
+        {
+            let override_colors = super::palettes::normalize_overrides(state)
+                .get(palette.id)
+                .cloned();
+            return Some(super::palettes::SlotSelection {
+                key: format!("builtin:{}", palette.id),
+                builtin_id: Some(palette.id),
+                preset_id: None,
+                dark,
+                colors: override_colors,
+            });
+        }
+        Some(super::palettes::resolve_slot(
+            state,
+            config,
+            legacy.as_ref(),
+            dark,
+        ))
+    }
+
+    pub(super) fn resolved_palette(
+        &self,
+        dark: bool,
+        high_contrast: bool,
+        include_preview: bool,
+    ) -> Option<ResolvedPalette> {
+        if include_preview
+            && let Some((preview_dark, builtin_id, colors)) = &self.palette_preview
+            && *preview_dark == dark
+        {
+            let id = builtin_id.filter(|id| *id != "custom");
+            return Some(custom(id, dark, high_contrast, colors.clone()));
+        }
+        if let Some(slot) = self.palette_slot(dark) {
+            return slot.resolve(high_contrast);
+        }
+        high_contrast
+            .then(|| increased_contrast(None, dark).map(ResolvedPalette::BuiltIn))
+            .flatten()
+    }
+
+    pub(super) fn palette_display_signature(&self, dark: bool) -> String {
+        self.palette_slot(dark)
+            .map_or_else(String::new, |slot| slot.display_signature())
+    }
+
+    pub(super) fn palette_options(&self, dark: bool) -> Vec<super::palettes::PaletteOption> {
+        let Some(state) = self.saved(Owner::State) else {
+            return Vec::new();
+        };
+        let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
+        let Some(active) = self.palette_slot(dark) else {
+            return Vec::new();
+        };
+        super::palettes::options(state, config, &active, dark)
+    }
+
+    pub(super) fn has_saved_override(&self, builtin_id: &str) -> bool {
+        self.saved(Owner::State).is_some_and(|state| {
+            super::palettes::normalize_overrides(state).contains_key(builtin_id)
+        })
+    }
+
+    pub(super) fn preset_count(&self) -> usize {
+        self.saved(Owner::State)
+            .map_or(0, |state| super::palettes::normalize_presets(state).len())
+    }
+
+    pub(super) fn preset_names(&self) -> Vec<String> {
+        self.saved(Owner::State).map_or_else(Vec::new, |state| {
+            super::palettes::normalize_presets(state)
+                .into_iter()
+                .map(|p| p.name)
+                .collect()
+        })
+    }
+
+    pub(super) fn palette_saving(&self) -> bool {
+        self.state.palette_mutation_pending()
+    }
+
+    pub(super) fn palette_save_failed(&self) -> bool {
+        self.state.palette_mutation_failed()
+    }
+
+    pub(super) fn set_mode_confirmed(&mut self, mode: &'static str) -> bool {
+        if !self.mode_ready() || self.backend.is_none() || self.mode_display() == mode {
+            return false;
+        }
+        let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SetMode { mode });
+        self.state.stage_palette_mutation(mutation);
+        true
+    }
+
+    pub(super) fn clear_palette_save_failed(&mut self) {
+        self.state.clear_palette_mutation();
+    }
+
+    fn wrap_palette_mutation(
+        &self,
+        op: super::palettes::PaletteOp,
+    ) -> super::palettes::PaletteMutation {
+        let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
+        super::palettes::PaletteMutation {
+            op,
+            legacy_config: super::palettes::legacy_config_fields(config),
+        }
+    }
+
+    pub(super) fn select_palette_option(
+        &mut self,
+        option: &super::palettes::PaletteOption,
+        force_mutation: bool,
+    ) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        if let Some(preset_id) = &option.preset_id {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectPreset {
+                preset_id: preset_id.clone(),
+                dark: option.dark,
+                colors: option.colors.clone(),
+            });
+            self.state.stage_palette_mutation(mutation);
+            return true;
+        }
+        let Some(id) = option.builtin_id else {
+            return false;
+        };
+        if id == "custom" {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectCustom {
+                dark: option.dark,
+            });
+            self.state.stage_palette_mutation(mutation);
+            return true;
+        }
+        if force_mutation || self.needs_slot_migration(option.dark) {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SelectBuiltIn {
+                id,
+                dark: option.dark,
+            });
+            self.state.stage_palette_mutation(mutation);
+            return true;
+        }
+        if let Some(palette) = built_in()
+            .iter()
+            .find(|p| p.id == id && p.dark == option.dark)
+        {
+            self.set_palette(palette);
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn save_palette_override(
+        &mut self,
+        id: &'static str,
+        dark: bool,
+        colors: ColorSchemeColors,
+    ) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        let op = if id == "custom" {
+            super::palettes::PaletteOp::SaveCustom { dark, colors }
+        } else {
+            super::palettes::PaletteOp::SaveOverride { id, dark, colors }
+        };
+        let mutation = self.wrap_palette_mutation(op);
+        self.state.stage_palette_mutation(mutation);
+        true
+    }
+
+    pub(super) fn reset_palette_override(&mut self, id: &'static str, dark: bool) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        if id == "custom" {
+            let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SaveCustom {
+                dark,
+                colors: ColorSchemeColors::default_custom(),
+            });
+            self.state.stage_palette_mutation(mutation);
+            return true;
+        }
+        let Some(palette) = built_in().iter().find(|p| p.id == id && p.dark == dark) else {
+            return false;
+        };
+        let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::ResetOverride {
+            id,
+            dark,
+            default_colors: palette.colors(),
+        });
+        self.state.stage_palette_mutation(mutation);
+        true
+    }
+
+    pub(super) fn save_palette_preset(
+        &mut self,
+        name: &str,
+        dark: bool,
+        colors: ColorSchemeColors,
+        preset_id: Option<String>,
+        allow_new_id: bool,
+    ) -> Option<String> {
+        self.save_palette_preset_fields(name, dark, colors, preset_id, allow_new_id, None)
+    }
+
+    pub(super) fn save_palette_preset_fields(
+        &mut self,
+        name: &str,
+        dark: bool,
+        colors: ColorSchemeColors,
+        preset_id: Option<String>,
+        allow_new_id: bool,
+        edited_fields: Option<Vec<rune_theme_codenomad::palettes::ColorField>>,
+    ) -> Option<String> {
+        if !self.palette_ready() || self.backend.is_none() {
+            return None;
+        }
+        let trimmed: String = name
+            .trim()
+            .chars()
+            .take(super::palettes::MAX_PRESET_NAME_LEN)
+            .collect();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let existing = preset_id.as_ref().is_some_and(|existing_id| {
+            self.saved(Owner::State).is_some_and(|state| {
+                super::palettes::normalize_presets(state)
+                    .iter()
+                    .any(|p| p.id == *existing_id)
+            })
+        });
+        if !existing && self.preset_count() >= super::palettes::MAX_PRESETS {
+            return None;
+        }
+        if preset_id.is_some() && !existing && !allow_new_id {
+            return None;
+        }
+        let id = match preset_id {
+            Some(id) => id,
+            None => codenomad_client::http::client_id().ok()?,
+        };
+        let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::SavePreset {
+            preset_id: id.clone(),
+            name: trimmed,
+            dark,
+            colors,
+            allow_new: allow_new_id,
+            edited_fields,
+        });
+        self.state.stage_palette_mutation(mutation);
+        Some(id)
+    }
+
+    pub(super) fn delete_palette_preset(&mut self, preset_id: &str) -> bool {
+        if !self.palette_ready() || self.backend.is_none() {
+            return false;
+        }
+        let Some(state) = self.saved(Owner::State) else {
+            return false;
+        };
+        if !super::palettes::normalize_presets(state)
+            .iter()
+            .any(|p| p.id == preset_id)
+        {
+            return false;
+        }
+        let mutation = self.wrap_palette_mutation(super::palettes::PaletteOp::DeletePreset {
+            preset_id: preset_id.to_owned(),
+        });
+        self.state.stage_palette_mutation(mutation);
+        true
     }
 
     pub fn palette_ready(&self) -> bool {
@@ -1441,25 +1828,11 @@ impl Preferences {
     }
 
     pub fn palette_display(&self, dark: bool) -> Option<&'static Palette> {
-        self.state
-            .requested(Choice::Palette(dark))
+        (!self.state.choice_failed(Choice::Palette(dark)))
+            .then(|| self.state.requested(Choice::Palette(dark)))
+            .flatten()
             .and_then(|id| built_in().iter().find(|p| p.dark == dark && p.id == id))
             .or_else(|| self.palette(dark))
-    }
-
-    pub fn step_palette(&mut self, dark: bool, step: isize) {
-        let options: Vec<_> = built_in().iter().filter(|p| p.dark == dark).collect();
-        let Some(current) = self.palette_display(dark) else {
-            return;
-        };
-        let next = options
-            .iter()
-            .position(|p| p.id == current.id)
-            .and_then(|index| index.checked_add_signed(step))
-            .and_then(|index| options.get(index));
-        if let Some(palette) = next {
-            self.set_palette(palette);
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1473,6 +1846,12 @@ impl Preferences {
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_state(&mut self, value: Value) {
+        self.state.snapshot = Some(value);
+        self.revision += 1;
     }
 
     #[cfg(test)]

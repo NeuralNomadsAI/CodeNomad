@@ -1,16 +1,10 @@
 import assert from 'node:assert/strict'
-import {mkdir,writeFile} from 'node:fs/promises'
-import {execFile} from 'node:child_process'
-import {promisify} from 'node:util'
+import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {randomUUID} from 'node:crypto'
-import {connectNative} from './live-access.mjs'
-export async function prepareLive() {
-  const native=await connectNative()
-  const profile=path.join(path.resolve(import.meta.dirname,'..'),'fixture-profile',`live-${randomUUID()}`)
-  const project=path.join(profile,'project')
-  await mkdir(project,{recursive:true})
-  await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
+import {args,ensurePrivateGitRepo,withNative} from './live-access.mjs'
+export async function prepareLive(native) {
+  const {profile,project}=native
+  await ensurePrivateGitRepo(project,profile,native.runtimeEnv)
   const location={directory:project}
   await native.read(`/api/location?${new URLSearchParams({'location[directory]':project})}`)
   const created=await native.read('/api/session',{method:'POST',body:JSON.stringify({location,title:'Rune disposable live test',permissions:[{action:'*',resource:'*',effect:'deny'}]})})
@@ -23,4 +17,4 @@ export async function prepareLive() {
     plugins:(plugins.data??[]).map(p=>({id:p.id,status:p.state?.status}))},null,2))
   return {...native,profile,project,sessionID:session.id}
 }
-if(process.argv.includes('--prepare'))await prepareLive()
+if(args.includes('--prepare'))await withNative(prepareLive)

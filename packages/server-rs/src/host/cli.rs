@@ -174,7 +174,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     };
     Ok(Command::Serve(Box::new(Launch {
         root,
-        identity: PathBuf::from(format!("{}.server-id", destination(&yaml).map_err(|e| e.to_string())?.display())),
+        identity: destination(&yaml).ok().map(|path| PathBuf::from(format!("{}.server-id", path.display()))),
         data: base,
         settings,
         unrestricted,
@@ -271,7 +271,7 @@ mod tests {
         let https = l.https.unwrap();
         assert_eq!((https.bind.port, https.bind.fallback, https.name.as_str()), (9898, true, "localhost"));
         assert!(l.data.ends_with(std::path::Path::new(".config").join("codenomad")) && https.dir == l.data.join("tls"));
-        assert_eq!(l.identity, l.data.join("config.yaml.server-id"));
+        assert_eq!(l.identity, Some(l.data.join("config.yaml.server-id")));
         assert_eq!(l.auth.file.unwrap(), l.data.join("auth.json"));
         assert_eq!((l.auth.idle.as_secs(), l.auth.absolute.as_secs()), (86400, 604800));
 
@@ -282,9 +282,21 @@ mod tests {
         assert!(matches!(l.ui, ui::Source::Dev(ref u) if u.as_str() == "http://localhost:3000/"));
         let l = launch(&["--http=yes", "--https=0", "--http-port=4100", "--config", "x/custom.yml"]).unwrap();
         assert!(l.https.is_none() && (l.http.port, l.http.fallback) == (4100, false));
-        assert!(l.identity.ends_with("x/custom.yml.server-id") && l.data.ends_with("x"));
-        assert!(launch(&["--config", "y/config.json"]).unwrap().identity.ends_with("y/config.yaml.server-id"));
-        assert!(launch(&["--config", "z"]).unwrap().identity.ends_with("z/config.yaml.server-id"));
+        assert!(l.identity.as_deref().is_some_and(|p| p.ends_with("x/custom.yml.server-id")) && l.data.ends_with("x"));
+        assert!(
+            launch(&["--config", "y/config.json"])
+                .unwrap()
+                .identity
+                .as_deref()
+                .is_some_and(|p| p.ends_with("y/config.yaml.server-id"))
+        );
+        assert!(
+            launch(&["--config", "z"])
+                .unwrap()
+                .identity
+                .as_deref()
+                .is_some_and(|p| p.ends_with("z/config.yaml.server-id"))
+        );
         assert_eq!(launch(&["--auth-cookie-name", " a b;c "]).unwrap().auth.cookie, "a_b_c");
         assert_eq!(launch(&["--host", "LOCALHOST"]).unwrap().https.unwrap().name, "localhost");
         assert_eq!(launch(&["--host", "[::ffff:10.1.2.3]"]).unwrap().https.unwrap().name, "10.1.2.3");

@@ -176,10 +176,14 @@ fn workspace_stop_revokes_requests_and_cannot_be_reopened_by_a_late_sync() {
     let read = ui.tree.load("src", true).unwrap();
     ui.event(WorkspaceEvent::Stopped {
         workspace_id: "foreign".into(),
+        deleted: false,
+        temporary_retained: false,
     });
     assert!(!read.cancelled());
     ui.event(WorkspaceEvent::Stopped {
         workspace_id: "owned".into(),
+        deleted: false,
+        temporary_retained: false,
     });
     assert!(ui.stopped);
     assert!(read.cancelled());

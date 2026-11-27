@@ -116,6 +116,13 @@ impl Remote {
             }
         }
     }
+    pub fn revoke_device(&self, id: Uuid) {
+        for record in self.records.lock().unwrap().values() {
+            if record.device.as_ref().is_some_and(|device| device.id == id) {
+                record.signal.cancel();
+            }
+        }
+    }
 }
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -153,6 +160,13 @@ async fn create(State(app): State<Shared>, Path(id): Path<String>, request: Requ
         .then(|| request.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_owned))
         .flatten();
     let remote = &app.previews.remote;
+    let admission_epoch = request.extensions().get::<crate::auth::remote::DeviceAdmission>().copied();
+    let logout_epoch = device.as_ref().map(|d| {
+        admission_epoch
+            .filter(|a| a.id == d.id)
+            .map(|a| a.logout_epoch)
+            .unwrap_or_else(|| app.previews.logout_epoch(d.id))
+    });
     {
         let mut pending = remote.pending.lock().unwrap();
         if *pending + remote.records.lock().unwrap().len() >= 128 {
@@ -230,18 +244,33 @@ async fn create(State(app): State<Shared>, Path(id): Path<String>, request: Requ
         let mut answer = serde_json::to_value(&source).ok()?;
         answer["capability"] = json!(key);
         answer["contentUrl"] = json!(renewed);
+        let device_id = device.as_ref().map(|d| d.id);
         let record =
             Arc::new(Record { source, generation: generation.clone(), embedding, device, signal: signal.clone() });
-        remote.records.lock().unwrap().insert(key, record.clone());
+        let inserted = {
+            let mut records = remote.records.lock().unwrap();
+            let logged_out = device_id.is_some_and(|id| app.previews.logout_epoch(id) != logout_epoch.unwrap_or(0));
+            if logged_out {
+                false
+            } else {
+                records.insert(key, record.clone());
+                true
+            }
+        };
+        if !inserted {
+            cleanup(app.clone(), generation.clone(), record.source.token);
+            return None;
+        }
         let app = app.clone();
         let owner = record.signal.clone();
         let shutdown = remote.stop.clone();
         tokio::spawn(async move {
-            // Revocation cancels both active content connections and in-flight requests.
+            // Revocation cancels both active content connections and in-flight requests,
+            // including local session logouts that cancel the issuing Principal token.
             tokio::select! {
                 _ = owner.cancelled() => {},
                 _ = shutdown.cancelled() => {},
-                _ = principal.cancelled(), if record.device.is_some() => {},
+                _ = principal.cancelled() => {},
             }
             revoke(&app, key);
         });

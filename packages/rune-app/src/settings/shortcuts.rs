@@ -63,7 +63,7 @@ pub(crate) fn save_label(s: &State) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), FILE_SAVE))
 }
 
-fn shortcut_label(s: &State, action: &str) -> String {
+pub(crate) fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
 }
 
@@ -274,10 +274,10 @@ fn logical_command(
     physical_key: Option<PhysicalKeyCode>,
     base: Option<char>,
 ) -> char {
-    // Rune substitutes the unshifted US-position character for non-ASCII Ctrl chords off macOS.
+    // Rune substitutes the unshifted US-position character for non-ASCII command chords off macOS.
     if cfg!(not(target_os = "macos"))
         && typed.is_ascii()
-        && event.mods.ctrl
+        && (event.mods.ctrl || event.mods.cmd)
         && !event.mods.alt
         && physical_key.map_or_else(
             || is_unshifted_us_char(typed),
@@ -672,4 +672,73 @@ fn turkish_shifted_i_does_not_substitute_dotless_base() {
             Some('i'),
         ));
     }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+#[test]
+fn runtime_key_base_records_and_matches_non_ascii_command_chords() {
+    use rune::{Env, Mods, Runtime};
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct Harness {
+        prefs: Preferences,
+        recorded: Vec<Option<Value>>,
+        matched_umlaut: Vec<bool>,
+        matched_semicolon: Vec<bool>,
+    }
+
+    let mut harness = Harness::default();
+    harness.prefs.fixture_shortcuts(json!({
+        FILE_SAVE: [{"key": "ö", "mod": true}],
+        "instance-next": [{"key": ";", "mod": true}],
+    }));
+    let mut rt = Runtime::new(harness, |_, _| rune::el(), (120.0, 80.0), Env::default());
+    rt.on_key = Some(|s, ev, tx| {
+        s.recorded.push(record(ev, tx));
+        s.matched_umlaut
+            .push(matches_shortcut_in(&s.prefs, FILE_SAVE, ev, tx));
+        s.matched_semicolon
+            .push(matches_shortcut_in(&s.prefs, "instance-next", ev, tx));
+        true
+    });
+    rt.frame(0.0);
+
+    let ctrl = Mods {
+        ctrl: true,
+        cmd: true,
+        ..Mods::default()
+    };
+    let web_mac_cmd = Mods {
+        cmd: true,
+        logo: true,
+        ..Mods::default()
+    };
+    rt.key_with(
+        KeyEvent {
+            key: Key::Command(';'),
+            mods: ctrl,
+        },
+        PhysicalKeyCode::Semicolon,
+        Some('ö'),
+    );
+    rt.key_with(
+        KeyEvent {
+            key: Key::Command(';'),
+            mods: web_mac_cmd,
+        },
+        PhysicalKeyCode::Semicolon,
+        Some('ö'),
+    );
+    rt.frame(0.02);
+
+    assert_eq!(
+        rt.state.recorded,
+        [
+            Some(json!([{"key": "ö", "mod": true}])),
+            Some(json!([{"key": "ö", "meta": true}])),
+        ]
+    );
+    assert_eq!(rt.state.matched_umlaut, [true, false]);
+    assert_eq!(rt.state.matched_semicolon, [false, false]);
 }

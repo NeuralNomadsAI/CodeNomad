@@ -19,15 +19,20 @@ mod date;
 #[cfg(any(unix, test))]
 #[path = "date/posix.rs"]
 mod posix_date;
+pub mod procargs;
+mod second_launch;
 #[cfg(unix)]
 mod unix;
+mod wake_lock;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use date::{local_clock, local_month_day};
 pub use date::{local_date_time, local_time_zone};
+pub use second_launch::LaunchCoordinator;
 #[cfg(unix)]
 use unix::Family;
+pub use wake_lock::WakeLock;
 #[cfg(windows)]
 use windows::Family;
 
@@ -53,7 +58,7 @@ pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
 
 pub struct OwnedProcess {
     #[cfg(unix)]
-    child: Child,
+    child: Option<Child>,
     #[cfg(windows)]
     child: windows::Process,
     family: Family,
@@ -62,7 +67,7 @@ impl OwnedProcess {
     /// Start a managed backend with piped stdio and only the environment on `command`.
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
         #[cfg(windows)]
-        return windows::launch(command, None);
+        return windows::launch(command, None, false);
         #[cfg(unix)]
         {
             let envs: Vec<_> = command
@@ -82,10 +87,27 @@ impl OwnedProcess {
 
     /// Start a fixture in the launcher's working directory, environment and stdio.
     pub fn spawn_inherited(command: &mut Command, started: impl FnOnce(u32)) -> io::Result<Self> {
+        Self::spawn_inherited_with_console(command, false, started)
+    }
+
+    /// Start a fixture attached to the launcher's console (e.g. a headless ConPTY).
+    pub fn spawn_inherited_console(
+        command: &mut Command,
+        started: impl FnOnce(u32),
+    ) -> io::Result<Self> {
+        Self::spawn_inherited_with_console(command, true, started)
+    }
+
+    fn spawn_inherited_with_console(
+        command: &mut Command,
+        inherit_console: bool,
+        started: impl FnOnce(u32),
+    ) -> io::Result<Self> {
         #[cfg(windows)]
-        return windows::launch(command, Some(Box::new(started)));
+        return windows::launch(command, Some(Box::new(started)), inherit_console);
         #[cfg(unix)]
         {
+            let _ = inherit_console;
             let process = Self::spawn_unix(command)?;
             started(process.id());
             Ok(process)
@@ -94,10 +116,15 @@ impl OwnedProcess {
 
     #[cfg(unix)]
     fn spawn_unix(command: &mut Command) -> io::Result<Self> {
-        Family::prepare(command);
-        let mut child = command.spawn()?;
-        match Family::adopt(&mut child) {
-            Ok(family) => Ok(Self { child, family }),
+        let marker = Family::prepare(command);
+        let spawn_result = command.spawn();
+        Family::cleanup_command(command, marker.as_ref());
+        let mut child = spawn_result?;
+        match Family::adopt(&mut child, marker) {
+            Ok(family) => Ok(Self {
+                child: Some(child),
+                family,
+            }),
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -106,19 +133,51 @@ impl OwnedProcess {
         }
     }
     pub fn id(&self) -> u32 {
-        self.child.id()
+        #[cfg(unix)]
+        return self.child.as_ref().map_or(0, Child::id);
+        #[cfg(windows)]
+        return self.child.id();
     }
     pub fn take_stdin(&mut self) -> Option<impl io::Write + Send + use<>> {
-        self.child.stdin.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stdin.take();
+        #[cfg(windows)]
+        return self.child.stdin.take();
     }
     pub fn take_stdout(&mut self) -> Option<impl io::Read + Send + use<>> {
-        self.child.stdout.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stdout.take();
+        #[cfg(windows)]
+        return self.child.stdout.take();
     }
     pub fn take_stderr(&mut self) -> Option<impl io::Read + Send + use<>> {
-        self.child.stderr.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stderr.take();
+        #[cfg(windows)]
+        return self.child.stderr.take();
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        #[cfg(unix)]
+        return match self.child.as_mut() {
+            Some(child) => {
+                let status = child.try_wait()?;
+                if status.is_some() {
+                    self.family.mark_leader_reaped();
+                }
+                Ok(status)
+            }
+            None => Ok(None),
+        };
+        #[cfg(windows)]
+        return self.child.try_wait();
+    }
+    #[cfg(target_os = "linux")]
+    pub fn track_subreaper(&mut self) {
+        self.family.track_subreaper();
+    }
+    #[cfg(unix)]
+    pub fn refresh_descendants(&self) {
+        self.family.sample_descendants();
     }
     /// Includes remaining owned descendants after the direct child has exited.
     pub fn family_is_empty(&self) -> io::Result<bool> {
@@ -126,6 +185,10 @@ impl OwnedProcess {
     }
     pub fn terminate(&mut self) -> io::Result<()> {
         self.family.terminate()
+    }
+    #[cfg(unix)]
+    pub fn request_terminate(&mut self) -> io::Result<()> {
+        self.family.signal_term()
     }
 }
 impl Drop for OwnedProcess {
@@ -135,7 +198,22 @@ impl Drop for OwnedProcess {
         if !self.family.empty().unwrap_or(false) {
             let _ = self.family.terminate();
         }
-        let _ = self.child.wait();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        while std::time::Instant::now() < deadline {
+            if matches!(self.try_wait(), Ok(Some(_)) | Err(_)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        #[cfg(unix)]
+        if let Some(mut child) = self.child.take() {
+            // Transfer reaping off the host thread so a slow-exiting child never remains a zombie.
+            let _ = std::thread::Builder::new()
+                .name("codenomad-reaper".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+        }
     }
 }
 

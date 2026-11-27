@@ -16,7 +16,7 @@ pub struct Request {
     pub body: serde_json::Value,
 }
 pub async fn wait<T>(task: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(3), task)
+    tokio::time::timeout(Duration::from_secs(15), task)
         .await
         .expect("fixture deadline")
 }

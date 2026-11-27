@@ -113,6 +113,30 @@ pub enum Diff {
     Binary,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitError {
+    CheckoutUnavailable,
+    UnconfirmedMutation,
+    OversizedContent,
+    UnsupportedImageType,
+    InvalidRequest,
+    UnexpectedResponse,
+}
+
+impl fmt::Display for GitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::CheckoutUnavailable => "git_checkout_unavailable",
+            Self::UnconfirmedMutation => "git_unconfirmed_mutation",
+            Self::OversizedContent => "git_oversized_content",
+            Self::UnsupportedImageType => "git_unsupported_image_type",
+            Self::InvalidRequest => "git_invalid_request",
+            Self::UnexpectedResponse => "git_unexpected_response",
+        })
+    }
+}
+impl std::error::Error for GitError {}
+
 #[derive(Debug)]
 pub struct Refusal {
     pub status: u16,
@@ -122,7 +146,7 @@ pub struct Refusal {
 
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(message) = &self.message {
+        if let Some(message) = self.message() {
             f.write_str(message)
         } else {
             write!(f, "HTTP {}", self.status)
@@ -132,8 +156,25 @@ impl fmt::Display for Refusal {
 impl std::error::Error for Refusal {}
 
 impl Refusal {
+    pub fn new(status: u16, code: Option<String>, message: Option<String>) -> Self {
+        Self {
+            status,
+            code,
+            message: message
+                .map(|m| m.trim().to_owned())
+                .filter(|m| !m.is_empty()),
+        }
+    }
+
+    pub fn message(&self) -> Option<&str> {
+        self.message
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+    }
+
     pub fn placement_answered(&self) -> bool {
-        (400..500).contains(&self.status) && self.status != 408 && self.message.is_some()
+        (400..500).contains(&self.status) && self.status != 408 && self.message().is_some()
     }
 }
 
@@ -141,7 +182,7 @@ fn placement_members(value: &Value, session: &str) -> Result<Vec<String>> {
     let root = value["rootSessionId"]
         .as_str()
         .filter(|id| valid_id(id))
-        .ok_or("invalid family root")?;
+        .ok_or(GitError::UnexpectedResponse)?;
     let mut seen = HashSet::new();
     let members = rows(&value["sessionIds"], 512)?
         .iter()
@@ -149,11 +190,11 @@ fn placement_members(value: &Value, session: &str) -> Result<Vec<String>> {
             id.as_str()
                 .filter(|id| valid_id(id) && seen.insert(*id))
                 .map(str::to_owned)
-                .ok_or_else(|| "invalid family member".into())
+                .ok_or_else(|| GitError::UnexpectedResponse.into())
         })
         .collect::<Result<Vec<_>>>()?;
     if !seen.contains(root) || !seen.contains(session) {
-        return Err("incomplete placement family".into());
+        return Err(GitError::UnexpectedResponse.into());
     }
     Ok(members)
 }
@@ -171,7 +212,7 @@ impl Backend {
 
     pub async fn place_session(&self, slug: &str) -> Result<Vec<String>> {
         if !valid_id(&self.session) || !valid_slug(slug) {
-            return Err("invalid session placement".into());
+            return Err(GitError::InvalidRequest.into());
         }
         let result = read(
             self.client
@@ -181,7 +222,7 @@ impl Backend {
         )
         .await?;
         if result["worktreeSlug"] != slug {
-            return Err("invalid session placement acknowledgement".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         placement_members(&result, &self.session)
     }
@@ -196,17 +237,17 @@ impl Backend {
         match &data["settings"]["hideDiffWhitespaceChanges"] {
             Value::Bool(hide) => Ok(*hide),
             Value::Null => Ok(true),
-            _ => Err("invalid Git whitespace preference".into()),
+            _ => Err(GitError::UnexpectedResponse.into()),
         }
     }
 
     fn git_route(&self, segments: &[&str]) -> Result<Url> {
         if !valid_id(&self.workspace) {
-            return Err("invalid Git workspace".into());
+            return Err(GitError::InvalidRequest.into());
         }
-        let mut url = Url::parse(&self.base)?;
+        let mut url = Url::parse(&self.base).map_err(|_| GitError::InvalidRequest)?;
         url.path_segments_mut()
-            .map_err(|_| "invalid Git backend URL")?
+            .map_err(|_| GitError::InvalidRequest)?
             .pop_if_empty()
             .extend(["api", "workspaces", &self.workspace])
             .extend(segments.iter().copied());
@@ -215,11 +256,11 @@ impl Backend {
 
     fn git_tree_route(&self, slug: &str, tail: &[&str]) -> Result<Url> {
         if !valid_slug(slug) {
-            return Err("invalid Git worktree".into());
+            return Err(GitError::InvalidRequest.into());
         }
         let mut url = self.git_route(&["worktrees", slug])?;
         url.path_segments_mut()
-            .map_err(|_| "invalid Git backend URL")?
+            .map_err(|_| GitError::InvalidRequest)?
             .extend(tail.iter().copied());
         Ok(url)
     }
@@ -242,7 +283,7 @@ impl Backend {
         {
             return Ok(tree.directory);
         }
-        Err("Selected checkout is unavailable".into())
+        Err(GitError::CheckoutUnavailable.into())
     }
 
     pub async fn git_worktrees(&self, fresh: bool) -> Result<Worktrees> {
@@ -269,18 +310,18 @@ impl Backend {
                     || !crate::absolute_server_path(&directory)
                     || !seen.insert(slug.clone())
                 {
-                    return Err("invalid or duplicate worktree".into());
+                    return Err(GitError::UnexpectedResponse.into());
                 }
                 let service_directory = optional(row, "serviceDirectory")?;
                 if service_directory
                     .as_deref()
                     .is_some_and(|d| !crate::absolute_server_path(d))
                 {
-                    return Err("invalid worktree service directory".into());
+                    return Err(GitError::UnexpectedResponse.into());
                 }
                 let head = optional(row, "head")?;
                 if let Some(head) = &head {
-                    sha(head)?;
+                    sha(head, GitError::UnexpectedResponse)?;
                 }
                 Ok(Worktree {
                     slug,
@@ -294,7 +335,7 @@ impl Backend {
             })
             .collect::<Result<Vec<_>>>()?;
         if !seen.contains("root") {
-            return Err("worktree inventory has no root".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         Ok(Worktrees { repository, trees })
     }
@@ -312,9 +353,9 @@ impl Backend {
             .iter()
             .map(|row| {
                 let path = field(row, "path")?;
-                relative(&path, false, &tree.directory)?;
+                response_relative(&path, &tree.directory)?;
                 if !seen.insert(path.clone()) {
-                    return Err("duplicate Git status path".into());
+                    return Err(GitError::UnexpectedResponse.into());
                 }
                 let staged = change(row, "stagedStatus", "stagedAdditions", "stagedDeletions")?;
                 let unstaged = change(
@@ -344,7 +385,7 @@ impl Backend {
             .client
             .get(self.git_tree_route(slug, &["git-history"])?);
         request = if let Some((head, offset)) = previous {
-            sha(head)?;
+            sha(head, GitError::InvalidRequest)?;
             request.query(&[("offset", offset.to_string().as_str()), ("head", head)])
         } else {
             request.query(&[("offset", "0")])
@@ -352,16 +393,16 @@ impl Backend {
         let data = read(request, INVENTORY_BYTES).await?;
         let head = optional(&data, "head")?;
         if let Some(head) = &head {
-            sha(head)?;
+            sha(head, GitError::UnexpectedResponse)?;
         }
         let mut ids = HashSet::new();
         let commits = rows(&data["commits"], 50)?
             .iter()
             .map(|row| {
                 let id = field(row, "id")?;
-                sha(&id)?;
+                sha(&id, GitError::UnexpectedResponse)?;
                 if !ids.insert(id.clone()) {
-                    return Err("duplicate Git commit".into());
+                    return Err(GitError::UnexpectedResponse.into());
                 }
                 Ok(Commit {
                     id,
@@ -374,13 +415,13 @@ impl Backend {
             .collect::<Result<Vec<_>>>()?;
         let has_more = data["hasMore"]
             .as_bool()
-            .ok_or("missing Git continuation flag")?;
+            .ok_or(GitError::UnexpectedResponse)?;
         if (head.is_none() && (!commits.is_empty() || has_more))
             || has_more && commits.is_empty()
             || previous.is_some_and(|(anchor, _)| head.as_deref() != Some(anchor))
             || previous.is_none() && commits.first().map(|item| &item.id) != head.as_ref()
         {
-            return Err("invalid Git history anchor".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         Ok(Page {
             head,
@@ -390,7 +431,7 @@ impl Backend {
     }
 
     pub async fn git_commit_details(&self, tree: &Worktree, commit: &str) -> Result<Details> {
-        sha(commit)?;
+        sha(commit, GitError::InvalidRequest)?;
         let data = read(
             self.client
                 .get(self.git_tree_route(&tree.slug, &["git-history", commit])?),
@@ -398,16 +439,16 @@ impl Backend {
         )
         .await?;
         if data["id"].as_str() != Some(commit) {
-            return Err("foreign Git commit".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         let mut seen = HashSet::new();
         let files = rows(&data["files"], 8192)?
             .iter()
             .map(|row| {
                 let path = field(row, "path")?;
-                relative(&path, false, &tree.directory)?;
+                response_relative(&path, &tree.directory)?;
                 if !seen.insert(path.clone()) {
-                    return Err("duplicate Git commit file".into());
+                    return Err(GitError::UnexpectedResponse.into());
                 }
                 Ok(CommitFile {
                     path,
@@ -443,14 +484,14 @@ impl Backend {
         if data["scope"].as_str() != Some(section.key())
             || optional(&data, "originalPath")?.as_deref() != original
         {
-            return Err("foreign Git diff scope".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         diff(data, path)
     }
 
     pub async fn git_commit_diff(&self, tree: &Worktree, commit: &str, path: &str) -> Result<Diff> {
-        sha(commit)?;
-        relative(path, false, &tree.directory)?;
+        sha(commit, GitError::InvalidRequest)?;
+        relative(path, false, &tree.directory).map_err(|_| GitError::InvalidRequest)?;
         diff(
             read(
                 self.client
@@ -470,7 +511,7 @@ impl Backend {
         paths: &[String],
     ) -> Result<()> {
         if paths.is_empty() || paths.len() > 8192 {
-            return Err("invalid Git mutation paths".into());
+            return Err(GitError::InvalidRequest.into());
         }
         for path in paths {
             exact_path(path, &tree.directory)?;
@@ -495,7 +536,7 @@ impl Backend {
     pub async fn git_commit(&self, slug: &str, message: &str) -> Result<()> {
         let message = message.trim();
         if message.is_empty() || message.len() > 16_384 || message.contains('\0') {
-            return Err("invalid Git commit message".into());
+            return Err(GitError::InvalidRequest.into());
         }
         acknowledge(
             self.client
@@ -507,7 +548,7 @@ impl Backend {
 
     pub async fn git_init(&self, directory: &str) -> Result<()> {
         if !crate::absolute_server_path(directory) {
-            return Err("invalid Git init directory".into());
+            return Err(GitError::InvalidRequest.into());
         }
         acknowledge(
             self.client
@@ -519,7 +560,7 @@ impl Backend {
 
     pub async fn git_init_sessions(&self, tree: &Worktree) -> Result<Sessions> {
         if !valid_id(&self.workspace) || tree.slug != "root" {
-            return Err("invalid Git root session scope".into());
+            return Err(GitError::InvalidRequest.into());
         }
         let directory = tree.service_directory.as_deref().unwrap_or(&tree.directory);
         let location = read(
@@ -537,12 +578,13 @@ impl Backend {
             .is_some_and(|path| crate::same_server_path(path, directory))
             || !location["project"]["id"].as_str().is_some_and(valid_id)
         {
-            return Err("unexpected Git init project".into());
+            return Err(GitError::UnexpectedResponse.into());
         }
         self.sessions(
             &Project {
                 id: self.workspace.clone(),
                 path: directory.into(),
+                temporary: false,
             },
             None,
         )
@@ -579,14 +621,14 @@ async fn read(request: RequestBuilder, limit: usize) -> Result<Value> {
     let data = read_json_limited(response, 64 * 1024)
         .await
         .unwrap_or(Value::Null);
-    Err(Refusal {
+    Err(Refusal::new(
         status,
-        code: data["code"].as_str().map(str::to_owned),
-        message: data["error"]
+        data["code"].as_str().map(str::to_owned),
+        data["error"]
             .as_str()
             .or(data["message"].as_str())
             .map(str::to_owned),
-    }
+    )
     .into())
 }
 
@@ -594,7 +636,7 @@ async fn acknowledge(request: RequestBuilder) -> Result<()> {
     if read(request, 64 * 1024).await?["ok"] == true {
         Ok(())
     } else {
-        Err("unconfirmed Git mutation".into())
+        Err(GitError::UnconfirmedMutation.into())
     }
 }
 
@@ -602,7 +644,7 @@ fn valid_slug(slug: &str) -> bool {
     !matches!(slug, "" | "." | "..") && slug.len() <= 200 && !slug.chars().any(char::is_control)
 }
 
-fn sha(value: &str) -> Result<()> {
+fn sha(value: &str, error: GitError) -> Result<()> {
     if matches!(value.len(), 40 | 64)
         && value
             .bytes()
@@ -610,15 +652,19 @@ fn sha(value: &str) -> Result<()> {
     {
         Ok(())
     } else {
-        Err("invalid Git commit id".into())
+        Err(error.into())
     }
 }
 
 fn exact_path(path: &str, directory: &str) -> Result<()> {
     if path != path.trim() {
-        return Err("Git route trims path edge spaces".into());
+        return Err(GitError::InvalidRequest.into());
     }
-    relative(path, false, directory)
+    relative(path, false, directory).map_err(|_| GitError::InvalidRequest.into())
+}
+
+fn response_relative(path: &str, directory: &str) -> Result<()> {
+    relative(path, false, directory).map_err(|_| GitError::UnexpectedResponse.into())
 }
 
 fn rows(value: &Value, limit: usize) -> Result<&[Value]> {
@@ -626,18 +672,18 @@ fn rows(value: &Value, limit: usize) -> Result<&[Value]> {
         .as_array()
         .filter(|items| items.len() <= limit)
         .map(Vec::as_slice)
-        .ok_or_else(|| "invalid or oversized Git list".into())
+        .ok_or_else(|| GitError::UnexpectedResponse.into())
 }
 
 fn field(value: &Value, name: &str) -> Result<String> {
-    optional(value, name)?.ok_or_else(|| "missing Git response field".into())
+    optional(value, name)?.ok_or_else(|| GitError::UnexpectedResponse.into())
 }
 
 fn optional(value: &Value, name: &str) -> Result<Option<String>> {
     match &value[name] {
         Value::Null => Ok(None),
         Value::String(value) => Ok(Some(value.clone())),
-        _ => Err("invalid Git response field".into()),
+        _ => Err(GitError::UnexpectedResponse.into()),
     }
 }
 
@@ -645,14 +691,14 @@ fn flag(value: &Value, name: &str) -> Result<bool> {
     match &value[name] {
         Value::Null => Ok(false),
         Value::Bool(value) => Ok(*value),
-        _ => Err("invalid Git response flag".into()),
+        _ => Err(GitError::UnexpectedResponse.into()),
     }
 }
 
 fn original_path(row: &Value, directory: &str) -> Result<Option<String>> {
     let path = optional(row, "originalPath")?;
     if let Some(path) = &path {
-        relative(path, false, directory)?;
+        response_relative(path, directory)?;
     }
     Ok(path)
 }
@@ -665,18 +711,22 @@ fn change(row: &Value, field: &str, additions: &str, deletions: &str) -> Result<
         kind.as_str(),
         "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
     ) {
-        return Err("invalid Git status".into());
+        return Err(GitError::UnexpectedResponse.into());
     }
     Ok(Some(Change {
         kind,
-        additions: row[additions].as_u64().ok_or("invalid Git additions")?,
-        deletions: row[deletions].as_u64().ok_or("invalid Git deletions")?,
+        additions: row[additions]
+            .as_u64()
+            .ok_or(GitError::UnexpectedResponse)?,
+        deletions: row[deletions]
+            .as_u64()
+            .ok_or(GitError::UnexpectedResponse)?,
     }))
 }
 
 fn diff(data: Value, path: &str) -> Result<Diff> {
     if data["path"].as_str() != Some(path) {
-        return Err("foreign Git diff path".into());
+        return Err(GitError::UnexpectedResponse.into());
     }
     let image = &data["image"];
     if !image.is_null() {
@@ -692,18 +742,20 @@ fn diff(data: Value, path: &str) -> Result<Diff> {
                 | "image/x-icon"
                 | "image/svg+xml"
         ) {
-            return Err("unsupported Git image type".into());
+            return Err(GitError::UnsupportedImageType.into());
         }
         let decode = |side| -> Result<Option<Vec<u8>>> {
             let Some(encoded) = optional(image, side)? else {
                 return Ok(None);
             };
             if encoded.len() > MAX_FILE_BYTES.div_ceil(3) * 4 {
-                return Err("oversized Git image".into());
+                return Err(GitError::OversizedContent.into());
             }
-            let bytes = STANDARD.decode(encoded)?;
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| GitError::UnexpectedResponse)?;
             if bytes.len() > MAX_FILE_BYTES {
-                return Err("oversized Git image".into());
+                return Err(GitError::OversizedContent.into());
             }
             Ok(Some(bytes))
         };
@@ -719,7 +771,7 @@ fn diff(data: Value, path: &str) -> Result<Diff> {
         let after = field(&data, "after")?;
         // Lossy UTF-8 can expand each source byte to the replacement character.
         if before.len().max(after.len()) > 6 * 1024 * 1024 {
-            return Err("oversized Git text".into());
+            return Err(GitError::OversizedContent.into());
         }
         Ok(Diff::Text { before, after })
     }

@@ -221,7 +221,7 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
         fresh_mode: false,
     });
     assert!(demanded(&s));
-    let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(s, view, (800.0, 540.0), Env::new(false, 1.0));
     rt.poll = Some(crate::poll);
     rt.set_system_reduced_motion(reduced_motion);
     rt.frame(0.0);

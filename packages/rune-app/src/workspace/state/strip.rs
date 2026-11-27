@@ -1,8 +1,8 @@
 use super::{State, Tab, busy, close, close_blocked, new_tab, select};
 use crate::strings;
-use rune::{Cx, El};
+use rune::El;
 
-pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
+pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
     let Some(ui) = &s.workspace else {
         return rune::el();
     };
@@ -11,7 +11,11 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .iter()
         .map(|e| match &e.saved {
             Tab::Blank => strings::t("instanceTabs.new.ariaLabel"),
-            Tab::Workspace(w) => w.folder.as_str(),
+            Tab::Workspace(w) => w
+                .project_name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(w.folder.as_str()),
         })
         .collect();
     let tabs: Vec<_> = ui
@@ -33,14 +37,14 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
                     None
                 },
                 closable: !busy(s) && !close_blocked(s, index),
+                temporary: matches!(&entry.saved, Tab::Workspace(w) if w.temporary),
             },
         )
         .collect();
-    let touch = cx.touch_controls();
-    let actions = crate::settings::entries(touch)
+    let actions = crate::settings::entries(touch, skip_tab)
         .into_iter()
         .chain(std::iter::once(crate::shell::notifications::history_entry(
-            s, touch,
+            s, touch, skip_tab,
         )));
     let search_visible = crate::timeline::search::available(s);
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
@@ -77,6 +81,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         ui.entries.get(ui.active).map(|e| e.key.as_str()),
         &new_help,
         &active_close_help,
+        skip_tab,
         select,
         close,
         new_tab,

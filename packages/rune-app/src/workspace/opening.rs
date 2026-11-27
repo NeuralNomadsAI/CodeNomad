@@ -137,6 +137,16 @@ impl Openings {
         }
         self.schedule();
     }
+    pub fn revoke_intent(&self, intent: &str) {
+        if let Ok(mut state) = self.state() {
+            for claim in &mut state.entries {
+                if claim.intent == intent {
+                    claim.revoked = true;
+                }
+            }
+        }
+        self.schedule();
+    }
     pub fn close(&self) {
         if let Ok(mut state) = self.state() {
             state.closed = true;

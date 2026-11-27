@@ -175,6 +175,31 @@ mod tests {
     }
 
     #[test]
+    fn a_flowchart_with_500_edges_renders_and_over_1500_items_stays_source() {
+        let fence = |edges: usize| {
+            let mut body = String::from("```mermaid\nflowchart LR\n");
+            for i in 0..edges {
+                body.push_str(&format!("  N{i} --> N{}\n", i + 1));
+            }
+            body.push_str("```");
+            body
+        };
+        let within_cap = render(&fence(500), false);
+        assert!(within_cap.find("example-code-0-diagram").is_some());
+        assert!(within_cap.find("example-code-0-diagram-toggle").is_some());
+
+        let over_cap = render(&fence(750), false);
+        assert!(over_cap.find("example-code-0-diagram").is_none());
+        assert!(over_cap.find("example-code-0-copy").is_some());
+        assert!(
+            over_cap
+                .accessibility_json()
+                .to_string()
+                .contains("supported diagram formats")
+        );
+    }
+
+    #[test]
     fn a_closed_mermaid_fence_can_switch_to_copyable_source_and_back() {
         for source in [
             "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```",

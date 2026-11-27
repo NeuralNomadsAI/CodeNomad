@@ -168,9 +168,16 @@ pub fn publish_commands(prefix: &Prefix, names: &[String]) -> Result<(), String>
         if cfg!(windows) {
             let target = WINDOWS_TARGET;
             let forward = target.replace('\\', "/");
+            let expected = prefix.binary();
             replace(&commands.join(format!("{name}.cmd")), cmd(target).as_bytes())?;
-            replace(&commands.join(format!("{name}.ps1")), ps1(&forward).as_bytes())?;
-            replace(&commands.join(name), sh(&forward).as_bytes())?;
+            let ps1_path = commands.join(format!("{name}.ps1"));
+            if !ps1_path.exists() || super::legacy::is_npm_companion_shim(&ps1_path, &expected) {
+                replace(&ps1_path, ps1(&forward).as_bytes())?;
+            }
+            let sh_path = commands.join(name);
+            if !sh_path.exists() || super::legacy::is_npm_companion_shim(&sh_path, &expected) {
+                replace(&sh_path, sh(&forward).as_bytes())?;
+            }
         } else {
             #[cfg(unix)]
             {
@@ -213,7 +220,7 @@ pub fn cmd(target: &str) -> String {
         "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\{target}\"   %*\r\n"
     )
 }
-fn ps1(target: &str) -> String {
+pub(super) fn ps1(target: &str) -> String {
     format!(
         "#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n\n$exe=\"\"\n\
          if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {{\n  # Fix case when both the Windows and Linux builds of Node\n\
@@ -221,7 +228,7 @@ fn ps1(target: &str) -> String {
          \x20 $input | & \"$basedir/{target}\"   $args\n}} else {{\n  & \"$basedir/{target}\"   $args\n}}\nexit $LASTEXITCODE\n"
     )
 }
-fn sh(target: &str) -> String {
+pub(super) fn sh(target: &str) -> String {
     format!(
         "#!/bin/sh\nbasedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")\nbasedir_win=\"$basedir\"\n\ncase `uname -a` in\n\
          \x20 *CYGWIN*|*MINGW*|*MSYS*)\n    if command -v cygpath > /dev/null 2>&1; then\n      basedir_win=`cygpath -w \"$basedir\"`\n    fi\n  ;;\n\

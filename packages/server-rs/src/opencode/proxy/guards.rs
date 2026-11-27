@@ -44,9 +44,70 @@ pub(super) fn safe_route(value: &str) -> Option<String> {
     decode(value)
 }
 
+pub(super) fn valid_segment(seg: &str) -> bool {
+    !seg.is_empty()
+        && !seg.contains('/')
+        && seg.encode_utf16().count() <= 256
+        && !seg.chars().any(|c| c.is_ascii_control())
+}
+
+pub(super) fn is_credential_mutation(route: &str, method: &Method) -> bool {
+    let Some(rest) = route.strip_prefix("/api/credential/") else {
+        return false;
+    };
+    match *method {
+        Method::PATCH | Method::DELETE => valid_segment(rest),
+        Method::POST => rest.strip_suffix("/activate").is_some_and(valid_segment),
+        _ => false,
+    }
+}
+
+pub(super) fn is_integration_connect_mutation(route: &str, method: &Method) -> bool {
+    let Some(rest) = route.strip_prefix("/api/integration/") else {
+        return false;
+    };
+    let Some((integration_id, tail)) = rest.split_once("/connect/") else {
+        return false;
+    };
+    if !valid_segment(integration_id) {
+        return false;
+    }
+    match *method {
+        Method::POST => {
+            matches!(tail, "key" | "oauth" | "command" | "external")
+                || tail.strip_prefix("oauth/").and_then(|s| s.strip_suffix("/complete")).is_some_and(valid_segment)
+        }
+        Method::DELETE => {
+            tail.strip_prefix("oauth/").or_else(|| tail.strip_prefix("command/")).is_some_and(valid_segment)
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn is_account_mutation(route: &str, method: &Method) -> bool {
+    is_credential_mutation(route, method) || is_integration_connect_mutation(route, method)
+}
+
+pub(super) fn is_account_no_store_route(route: &str, method: &Method) -> bool {
+    is_account_mutation(route, method)
+        || (*method == Method::GET
+            && route.strip_prefix("/api/integration/").and_then(|r| r.split_once("/connect/")).is_some_and(
+                |(id, tail)| {
+                    valid_segment(id)
+                        && tail
+                            .strip_prefix("oauth/")
+                            .or_else(|| tail.strip_prefix("command/"))
+                            .is_some_and(valid_segment)
+                },
+            ))
+}
+
 pub(super) fn guarded(route: &str, method: &Method) -> bool {
     if *method == Method::GET {
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
+    }
+    if is_account_mutation(route, method) {
+        return true;
     }
     let session_segment = route
         .strip_prefix("/api/session/")
@@ -58,10 +119,20 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background"]
+            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background", "/revert/stage"]
                 .iter()
                 .any(|suffix| route.ends_with(suffix)))
-        || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
+        || (matches!(*method, Method::PATCH | Method::DELETE)
+            && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
+        || (matches!(*method, Method::PATCH | Method::DELETE)
+            && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
+                !sid.is_empty() && !sid.contains('/') && !item.is_empty() && !item.contains('/')
+            }))
+        || (*method == Method::DELETE
+            && route
+                .strip_prefix("/api/session/")
+                .and_then(|r| r.strip_suffix("/revert"))
+                .is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
             && route.contains("/instructions/entries/"))
@@ -91,11 +162,22 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
     verify_mutation_at(app, &endpoint, id, directory, record).await
 }
 
-pub(super) async fn verify_mutation_at(
+pub(crate) async fn verify_mutation_at(
     app: &App,
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     id: &str,
     directory: &str,
+    record: &Value,
+) -> Result<(), Error> {
+    verify_ordinary_session_at(app, endpoint, id, directory, None, record).await
+}
+
+pub(crate) async fn verify_ordinary_session_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    id: &str,
+    directory: &str,
+    workspace_id: Option<&str>,
     record: &Value,
 ) -> Result<(), Error> {
     if id.starts_with("ses_cn_schedule_") || marker(record) {
@@ -103,12 +185,16 @@ pub(super) async fn verify_mutation_at(
     }
     let uncertain = || error(Status::SERVICE_UNAVAILABLE, "Mission schedule carrier ownership could not be verified");
     let route = endpoint.url.join("/api/rpc/codenomad.missions/scheduleCarrierRead").map_err(|_| uncertain())?;
-    let response = app
+    let mut req = app
         .native
         .client
         .post(route)
         .basic_auth("opencode", Some(&endpoint.password))
-        .query(&[("location[directory]", directory)])
+        .query(&[("location[directory]", directory)]);
+    if let Some(ws_id) = workspace_id {
+        req = req.query(&[("location[workspaceID]", ws_id)]);
+    }
+    let response = req
         .json(&json!({"input":{"sessionID":id}}))
         .timeout(Duration::from_secs(5))
         .send()
@@ -129,11 +215,12 @@ pub(super) async fn verify_mutation_at(
         return Err(uncertain());
     }
     let fresh = crate::opencode::session_record_at(app, endpoint, id).await?;
-    if fresh["id"] != id
-        || fresh["location"]["directory"] != directory
-        || fresh["location"].get("workspaceID").is_some()
-        || marker(&fresh)
-    {
+    let fresh_ws_id = fresh["location"].get("workspaceID");
+    let ws_id_matches = match workspace_id {
+        None => fresh_ws_id.is_none(),
+        Some(expected) => fresh_ws_id.and_then(Value::as_str) == Some(expected),
+    };
+    if fresh["id"] != id || fresh["location"]["directory"] != directory || !ws_id_matches || marker(&fresh) {
         return Err(carrier_denied());
     }
     Ok(())
@@ -231,6 +318,53 @@ pub(super) fn directory_identity(
     };
     let identity = crate::files::host_identity(&anchor).ok()?;
     Some((resolved, anchor, identity))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_target;
+    use serde_json::json;
+
+    #[test]
+    fn same_target_rejects_location_metadata_change_and_accepts_reordered_fork_keys() {
+        let initial = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100, "updated": 100 }
+        });
+        let reordered_fork = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "messageID": "msg_1", "sessionID": "ses_parent" },
+            "time": { "created": 100, "updated": 200 }
+        });
+        assert!(same_target(&initial, &reordered_fork));
+
+        let location_changed = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_2" },
+            "projectID": "proj_1",
+            "parentID": null,
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100, "updated": 100 }
+        });
+        assert!(!same_target(&initial, &location_changed));
+
+        // Absent optional fields and explicit null fields represent the same target state.
+        let absent_parent = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100 }
+        });
+        assert!(same_target(&initial, &absent_parent));
+    }
 }
 
 #[test]

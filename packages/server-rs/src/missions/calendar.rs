@@ -1091,6 +1091,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": dir}),
+            temporary: None,
         };
 
         let detailed = flag(&app, &endpoint, &workspace).await.unwrap();

@@ -160,6 +160,9 @@ impl Preferences {
                 if value { "true" } else { "false" },
             );
             self.revision += 1;
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
         }
     }
 

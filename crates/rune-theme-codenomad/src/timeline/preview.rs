@@ -58,7 +58,7 @@ pub fn surface(
     }
     let dark = layout::dark();
     let t = tokens(dark);
-    let k = kit(dark);
+    let k = &*kit(dark);
     let source = markdown::literal_breaks(text);
     // Rune caps names inferred from descendants; use the full bounded rendered text.
     let label = rendered_words(&source);

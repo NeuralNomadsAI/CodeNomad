@@ -15,8 +15,7 @@ pub(crate) use navigation::{
 pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
-pub(crate) use view::poll_edge;
-pub(crate) use view::{view, watch};
+pub(crate) use view::{notice_key, observe_history_scroll, observe_history_wheel, poll_edge, view};
 
 use crate::{State, backend::Backend, platform, transport::Event};
 use codenomad_client::{
@@ -111,11 +110,113 @@ pub(crate) struct Timeline {
     search: search::Search,
 }
 
+impl Timeline {
+    pub(crate) fn excerpt_scope(&self) -> Option<u64> {
+        self.previews.cache_scope()
+    }
+
+    /// Resolves the hovered/focused marker ID to the message ID key used by `ExcerptCache`.
+    pub(crate) fn excerpt_target_message(&self) -> Option<&str> {
+        let marker_id = self.previews.active_target()?;
+        self.markers
+            .iter()
+            .find(|marker| marker.id == marker_id)
+            .map(|marker| marker.message.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_excerpt_scope(
+        &mut self,
+        scope: u64,
+        target: Option<(String, String)>,
+    ) {
+        let marker_id = target.map(|(marker_id, message_id)| {
+            self.markers.push(Marker {
+                id: marker_id.clone(),
+                message: message_id,
+                kind: MarkerKind::Assistant,
+                ordinal: 0,
+                continued: false,
+                omitted_before: false,
+                tool: None,
+            });
+            marker_id
+        });
+        self.previews.fixture_set_scope(scope, marker_id);
+    }
+
+    pub(crate) fn outline_ptr(&self) -> Option<usize> {
+        self.outline
+            .as_ref()
+            .map(|outline| Arc::as_ptr(outline) as usize)
+    }
+
+    pub(crate) fn outline_retained_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.outline.as_ref().map_or(0, |outline| {
+            if seen_outlines.insert(Arc::as_ptr(outline) as usize) {
+                outline_weight(outline)
+            } else {
+                0
+            }
+        })
+    }
+
+    pub(crate) fn evictable_outline_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        self.outline.as_ref().map_or(0, |outline| {
+            let ptr = Arc::as_ptr(outline) as usize;
+            if active_outline_ptr == Some(ptr) {
+                0
+            } else {
+                outline_weight(outline)
+            }
+        })
+    }
+
+    pub(crate) fn evict_inactive_outline(&mut self) {
+        if self.outline.is_none() && self.markers.is_empty() && self.resident.is_empty() {
+            return;
+        }
+        self.outline = None;
+        self.markers.clear();
+        self.folded.clear();
+        self.has_raw_markers = false;
+        self.resident.clear();
+        self.refresh = true;
+        self.version = self.version.wrapping_add(1);
+        self.changed = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_outline(&mut self, outline: Arc<Outline>) {
+        self.outline = Some(outline);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_outline(&self) -> bool {
+        self.outline.is_some()
+    }
+}
+
 #[cfg(test)]
 impl Timeline {
     pub(crate) fn is_online(&self) -> bool {
         self.online
     }
+}
+
+pub(crate) fn outline_weight(outline: &Outline) -> usize {
+    outline.saved_weight().unwrap_or_else(|| {
+        outline.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(size_of::<codenomad_client::timeline::Entry>())
+                .saturating_add(entry.id.len())
+                .saturating_add(entry.layout.as_ref().map_or(0, String::len))
+                .saturating_add(entry.tool_name.as_ref().map_or(0, String::len))
+        })
+    })
 }
 
 fn owner(s: &mut State) -> &mut Timeline {
@@ -286,6 +387,33 @@ pub(crate) fn demanded(s: &State) -> bool {
         && rune_theme_codenomad::timeline::fits(t.width)
 }
 
+pub(crate) fn rail_layout_pending(s: &State, history_w: f32) -> bool {
+    if !history_w.is_finite() || history_w <= 0.0 || !conversation_shown(s) {
+        return false;
+    }
+    let t = &s.transcript_display.timeline;
+    let enabled = crate::settings::show_timeline(s);
+    let container_w = if t.width.is_finite() && t.width > 0.0 {
+        t.width
+    } else {
+        history_w
+    };
+    let rail_should_mount = enabled
+        && rune_theme_codenomad::timeline::fits(container_w)
+        && (t.has_raw_markers || !t.markers.is_empty());
+    if enabled
+        && rune_theme_codenomad::timeline::fits(history_w)
+        && (!rune_theme_codenomad::timeline::fits(t.width)
+            || ((!t.visible || t.changed) && !s.messages.is_empty()))
+    {
+        return true;
+    }
+    if rail_should_mount && history_w >= container_w - 1.0 {
+        return true;
+    }
+    !rail_should_mount && t.width.is_finite() && t.width > 0.0 && history_w < t.width - 1.0
+}
+
 fn reproject(s: &mut State) -> bool {
     let t = &s.transcript_display.timeline;
     let blocks: Vec<_> = s
@@ -367,6 +495,12 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
+    if s.reader
+        .as_ref()
+        .is_some_and(crate::chat::reader::Reader::defers_scroll)
+    {
+        return;
+    }
     if owner(s).keep_passage_deferred.is_none()
         && let Some(target) = crate::chat::reading::passage_target(s)
     {
@@ -379,6 +513,10 @@ pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
 
 fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     let on_conversation = conversation_shown(s);
+    let deferring = s
+        .reader
+        .as_ref()
+        .is_some_and(crate::chat::reader::Reader::defers_scroll);
     let t = owner(s);
     if t.keep_passage_deferred.is_none() {
         return false;
@@ -386,7 +524,7 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
     let scroll = t.scroll.get();
     let scrolled =
         scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail == Some(false);
-    if scrolled || !on_conversation || t.jump.align.is_some() {
+    if deferring || scrolled || !on_conversation || t.jump.align.is_some() {
         t.keep_passage_deferred = None;
         return false;
     }
@@ -395,6 +533,9 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
         return false;
     }
     if let Some((key, offset)) = t.keep_passage_deferred.take() {
+        s.transcript_display
+            .reading_mut()
+            .note_programmatic_scroll();
         tx.scroll_key_to(key, offset);
         true
     } else {

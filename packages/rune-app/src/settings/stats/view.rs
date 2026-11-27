@@ -37,7 +37,7 @@ pub(in crate::settings) fn view<S: 'static>(
     let name = format!("{period} · {}", selected.unwrap_or_default());
     #[cfg(not(target_arch = "wasm32"))]
     let name = period;
-    let picker = chrome::picker("stats-period", name.as_ref(), &options)
+    let picker = chrome::stepping_picker("stats-period", name.as_ref(), &options)
         .current(selected)
         .open(stats.picker)
         .on_toggle(move |s| {

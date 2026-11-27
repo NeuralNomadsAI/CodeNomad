@@ -54,7 +54,7 @@ fn decodes_a_toast_duration_without_changing_the_default_for_invalid_values() {
     }
 }
 
-pub(super) fn session_attention(event: &Value, session: &str) -> Option<WorkspaceEvent> {
+pub(crate) fn session_attention(event: &Value, session: &str) -> Option<WorkspaceEvent> {
     let data = &event["data"];
     let kind = event["type"].as_str()?;
     if kind == "form.created" {
@@ -68,6 +68,17 @@ pub(super) fn session_attention(event: &Value, session: &str) -> Option<Workspac
     }
     if kind == "permission.asked" {
         return attention_request(false, data.get("id").unwrap_or(&data["permissionID"]));
+    }
+    if matches!(kind, "form.replied" | "form.cancelled") {
+        return attention_request_resolved(true, &data["id"]);
+    }
+    if kind == "permission.replied" {
+        return attention_request_resolved(
+            false,
+            data.get("requestID")
+                .filter(|value| value.is_string())
+                .unwrap_or(&data["id"]),
+        );
     }
     let notice = match kind {
         "session.execution.succeeded" | "session.execution.failed" => Some(event["id"].as_str()?),
@@ -97,6 +108,47 @@ fn attention_request(form: bool, id: &Value) -> Option<WorkspaceEvent> {
             .filter(|id| crate::history::valid_id(id))?
             .into(),
     })
+}
+
+fn attention_request_resolved(form: bool, id: &Value) -> Option<WorkspaceEvent> {
+    Some(WorkspaceEvent::SessionRequestResolved {
+        form,
+        id: id
+            .as_str()
+            .filter(|id| crate::history::valid_id(id))?
+            .into(),
+    })
+}
+
+#[test]
+fn request_resolution_events_decode_only_for_matching_session() {
+    for (event, expected_form, expected_id) in [
+        (
+            json!({"type":"permission.replied","data":{"sessionID":"session","requestID":"perm_1"}}),
+            false,
+            "perm_1",
+        ),
+        (
+            json!({"type":"form.replied","data":{"sessionID":"session","id":"form_1"}}),
+            true,
+            "form_1",
+        ),
+        (
+            json!({"type":"form.cancelled","data":{"sessionID":"session","id":"form_2"}}),
+            true,
+            "form_2",
+        ),
+    ] {
+        assert!(
+            matches!(
+                session_attention(&event, "session"),
+                Some(WorkspaceEvent::SessionRequestResolved { form, ref id })
+                    if form == expected_form && id == expected_id
+            ),
+            "expected resolution for {event}"
+        );
+        assert!(session_attention(&event, "other").is_none());
+    }
 }
 
 #[test]

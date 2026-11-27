@@ -1,7 +1,7 @@
 //! Serialized command and SSE transport, epoch ownership and reconnect scheduling.
 use super::{
     Input, ReadingLane,
-    reader::{Lane, Reader, Turn, can_restart, reader_event},
+    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event, reader_inbox_delta},
     receipts,
 };
 use crate::{
@@ -18,6 +18,182 @@ use std::{
     time::Duration,
 };
 
+async fn reject_command(command: Command, out: &Sender<Event>, wake: &crate::Wake) {
+    let attempted = match command {
+        Command::Prompt(prompt) => prompt.id,
+        Command::Slash { attempt, .. } => Some(attempt),
+        _ => None,
+    };
+    if let Some(attempted) = attempted {
+        publish(
+            out,
+            wake,
+            Event::PromptAcknowledged {
+                attempted,
+                outcome: PromptOutcome::Rejected,
+            },
+        )
+        .await;
+    }
+}
+
+async fn close_and_reject_queued(
+    commands: &Receiver<Command>,
+    rx: &Receiver<Input>,
+    forward_done: &Receiver<()>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+) {
+    // Close admission before draining so no caller can enqueue after revocation starts.
+    commands.close();
+    loop {
+        while let Ok(queued) = rx.try_recv() {
+            if let Input::Command(command) = queued {
+                reject_command(command, out, wake).await;
+            }
+        }
+        if forward_done.is_closed() {
+            break;
+        }
+        if let Some(Input::Command(command)) =
+            runtime::recv_timeout(rx, Duration::from_millis(5)).await
+        {
+            reject_command(command, out, wake).await;
+        }
+    }
+    while let Ok(queued) = rx.try_recv() {
+        if let Input::Command(command) = queued {
+            reject_command(command, out, wake).await;
+        }
+    }
+    while let Ok(command) = commands.try_recv() {
+        reject_command(command, out, wake).await;
+    }
+}
+
+async fn finish_authentication_required(
+    commands: &Receiver<Command>,
+    rx: &Receiver<Input>,
+    forward_done: &Receiver<()>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    backend: &Backend,
+    confirmed: bool,
+) {
+    close_and_reject_queued(commands, rx, forward_done, out, wake).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed,
+        }),
+    )
+    .await;
+}
+
+fn can_admit_send(
+    backend: &Backend,
+    wire: &stream::State,
+    reading: Option<&ReadingLane>,
+    reader: &Reader,
+    ever_opened: bool,
+    out: &Sender<Event>,
+) -> bool {
+    !out.is_closed()
+        && !backend.client.server_identity_mismatch()
+        && !wire.placement_closed()
+        && !wire.auth_expired.load(SeqCst)
+        && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
+        && (reading.is_some() || !reader.historical && ever_opened)
+}
+
+pub(super) async fn next_input(
+    rx: &Receiver<Input>,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    active_reader: bool,
+    deadline: Option<Instant>,
+) -> Option<Input> {
+    if let Ok(input) = rx.try_recv() {
+        return Some(input);
+    }
+    let wait = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+    if wait.is_some_and(|duration| duration.is_zero()) {
+        return None;
+    }
+    let receive = async { Some(rx.recv().await.unwrap_or(Input::Command(Command::Close))) };
+    let demand = async {
+        if let Some(reading) = reading {
+            let changed = reading.demand.changed_after(generation).await;
+            if changed.is_some() || active_reader {
+                return None;
+            }
+        }
+        std::future::pending::<Option<Input>>().await
+    };
+    let timer = async {
+        if let Some(duration) = wait {
+            runtime::sleep(duration).await;
+            None
+        } else {
+            std::future::pending::<Option<Input>>().await
+        }
+    };
+    futures_lite::future::or(receive, futures_lite::future::or(demand, timer)).await
+}
+
+pub(super) const MAX_RX_BURST_BEFORE_INBOX: u8 = 8;
+
+pub(super) async fn select_input(
+    rx: &Receiver<Input>,
+    inbox_rx: &Receiver<InboxReply>,
+    rx_burst: &mut u8,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    active_reader: bool,
+    deadline: Option<Instant>,
+) -> (Option<Input>, Option<InboxReply>) {
+    if *rx_burst >= MAX_RX_BURST_BEFORE_INBOX
+        && let Ok(reply) = inbox_rx.try_recv()
+    {
+        *rx_burst = 0;
+        return (None, Some(reply));
+    }
+    if let Ok(input) = rx.try_recv() {
+        if !inbox_rx.is_empty() {
+            *rx_burst = rx_burst.saturating_add(1);
+        } else {
+            *rx_burst = 0;
+        }
+        return (Some(input), None);
+    }
+    if let Ok(reply) = inbox_rx.try_recv() {
+        *rx_burst = 0;
+        return (None, Some(reply));
+    }
+    *rx_burst = 0;
+    let selected = futures_lite::future::or(
+        async {
+            (
+                next_input(rx, reading, generation, active_reader, deadline).await,
+                None,
+            )
+        },
+        async {
+            match inbox_rx.recv().await {
+                Ok(reply) => (None, Some(reply)),
+                Err(_) => std::future::pending().await,
+            }
+        },
+    )
+    .await;
+    if selected.0.is_some() && !inbox_rx.is_empty() {
+        *rx_burst = 1;
+    }
+    selected
+}
+
 pub(crate) async fn run_with_reading(
     backend: Backend,
     out: Sender<Event>,
@@ -26,7 +202,9 @@ pub(crate) async fn run_with_reading(
     reading: Option<ReadingLane>,
 ) -> history::Result<()> {
     let reading = reading.as_ref();
+    let pending_commands = commands.clone();
     let (tx, rx) = crate::bounded(128);
+    let (forward_done_tx, forward_done) = crate::bounded(1);
     let forward = tx.clone();
     runtime::spawn(async move {
         while let Ok(command) = commands.recv().await {
@@ -35,6 +213,7 @@ pub(crate) async fn run_with_reading(
             }
         }
         let _ = forward.send(Input::Command(Command::Close)).await;
+        drop(forward_done_tx);
     });
     let mut epoch = 1;
     let provider_usage = backend
@@ -55,14 +234,64 @@ pub(crate) async fn run_with_reading(
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
+    let mut ever_opened = false;
+    let mut stream_gap = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
-    let mut retry = None;
+    let mut retry: Option<Instant> = None;
     let mut attempts = 0u32;
     let mut reader = Reader::new();
+    let (inbox_tx, inbox_rx) = crate::bounded::<InboxReply>(8);
+    let mut rx_burst = 0u8;
     loop {
-        let input = runtime::recv_timeout(&rx, Duration::from_millis(25)).await;
         reader.demand(reading);
+        let deadline = [
+            retry,
+            reader.next_sync_at(opened, &wire, reading),
+            reader.inbox_deadline(opened, &wire, reading),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let (input, inbox_reply) = select_input(
+            &rx,
+            &inbox_rx,
+            &mut rx_burst,
+            reading,
+            reader.generation,
+            reader.active_reader,
+            deadline,
+        )
+        .await;
+        reader.demand(reading);
+        if let Some(reply) = inbox_reply {
+            let lane = Lane {
+                backend: &backend,
+                reading,
+                rx: &rx,
+                wire: &wire,
+                out: &out,
+                wake: &wake,
+            };
+            match reader.finish_inbox_read(&lane, epoch, reply).await? {
+                Turn::Process => {}
+                Turn::Next => continue,
+                Turn::Stop => return Ok(()),
+                Turn::AuthenticationExpired => {
+                    finish_authentication_required(
+                        &pending_commands,
+                        &rx,
+                        &forward_done,
+                        &out,
+                        &wake,
+                        &backend,
+                        true,
+                    )
+                    .await;
+                    return Ok(());
+                }
+            }
+        }
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
             connection_closed = false;
@@ -75,74 +304,128 @@ pub(crate) async fn run_with_reading(
         }
         match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
+                let stopped = matches!(event, crate::transport::WorkspaceEvent::Stopped { .. });
                 if !publish(&out, &wake, Event::Workspace(event)).await {
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
+                    return Ok(());
+                }
+                if stopped {
+                    wire.close_placement();
+                    wire.cancel();
+                    ReadingLane::invalidate_connection(reading);
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
+                    publish(&out, &wake, Event::Failed).await;
                     return Ok(());
                 }
             }
             Some(Input::Command(Command::Close)) => {
-                wire.cancelled.store(true, SeqCst);
+                wire.cancel();
                 return Ok(());
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
-                attempts = 0;
+                ever_opened = true;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::from_millis(100));
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
+                stream_gap = opened && attempts == 0;
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
                 reader.dirty = true;
+                reader.invalidate_inbox_flight();
+                reader.inbox_published = false;
                 publish(&out, &wake, Event::ConnectionLost).await;
                 attempts = attempts.saturating_add(1);
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
-                if attempts <= 6 {
-                    publish(&out, &wake, Event::Reconnecting).await;
-                } else if attempts == 7 && reading.is_none() {
-                    // Keep the same subscription owner after showing the outage.
-                    publish(&out, &wake, Event::Failed).await;
+                if !stream_gap {
+                    if attempts <= 6 {
+                        publish(&out, &wake, Event::Reconnecting).await;
+                    } else if attempts == 7 && reading.is_none() && !ever_opened {
+                        // Only fail an unestablished direct transport; once established, SSE outages
+                        // must not revoke HTTP send authority.
+                        publish(&out, &wake, Event::Failed).await;
+                    }
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(&out, &wake, Event::authentication_required(backend.clone())).await;
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    false,
+                )
+                .await;
                 return Ok(());
             }
-            Some(Input::Unavailable(e)) if e == epoch => {
+            Some(Input::Unavailable(e, mark)) if e == epoch => {
+                // Upstream SSE unavailability over an open backend SSE stream is always a stream gap,
+                // never a revocation of HTTP send authority. Always publish ConnectionLost so detached
+                // history also reflects stream_offline for pagination buttons.
+                stream_gap = opened;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
-                if reading.is_some() || !reader.historical {
-                    publish(&out, &wake, Event::Reconnecting).await;
-                }
+                reader.invalidate_inbox_flight();
+                reader.inbox_published = false;
+                publish(
+                    &out,
+                    &wake,
+                    if stream_gap || reading.is_some() || reader.historical {
+                        Event::ConnectionLost
+                    } else {
+                        Event::Reconnecting
+                    },
+                )
+                .await;
+                wire.inbox.advance_applied(mark);
             }
-            Some(Input::Available(e, v)) if e == epoch => {
+            Some(Input::Available(e, v, mark)) if e == epoch => {
                 if reading.is_some() {
+                    publish(&out, &wake, Event::UpstreamReady).await;
                     publish(&out, &wake, Event::AgentHint(true)).await;
-                } else if v > reader.fence && !reader.historical {
+                } else if !stream_gap && v > reader.fence && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::from_millis(100));
+                wire.inbox.advance_applied(mark);
             }
-            Some(Input::Hint(e, v)) if e == epoch && v > reader.fence => {
-                reader.dirty = true;
-                reader.quiet = Instant::now() + Duration::from_millis(100);
-                if reading.is_none() && !reader.historical {
-                    publish(&out, &wake, Event::Reconnecting).await;
+            Some(Input::Hint(e, v, mark)) if e == epoch => {
+                reader.schedule_inbox_sync(Duration::from_millis(100));
+                if v > reader.fence {
+                    reader.dirty = true;
+                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                    if !stream_gap && reading.is_none() && !reader.historical {
+                        publish(&out, &wake, Event::Reconnecting).await;
+                    }
                 }
+                wire.inbox.advance_applied(mark);
             }
             Some(Input::Command(Command::Retry)) => {
+                stream_gap = false;
                 ReadingLane::invalidate_connection(reading);
                 attempts = 0;
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
+                reader.invalidate_inbox_flight();
+                wire.inbox.invalidate_published();
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {
                     retry = Some(Instant::now());
                 }
@@ -161,7 +444,22 @@ pub(crate) async fn run_with_reading(
                 };
                 let (edge, cancellation) = match command {
                     Command::Anchor(jump) => {
-                        reader.anchor(&lane, opened, jump).await;
+                        if matches!(
+                            reader.anchor(&lane, opened, jump).await,
+                            Turn::AuthenticationExpired
+                        ) {
+                            finish_authentication_required(
+                                &pending_commands,
+                                &rx,
+                                &forward_done,
+                                &out,
+                                &wake,
+                                &backend,
+                                true,
+                            )
+                            .await;
+                            return Ok(());
+                        }
                         continue;
                     }
                     Command::Page(edge, signal) => (edge, Some(signal)),
@@ -174,13 +472,33 @@ pub(crate) async fn run_with_reading(
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),
+                    Turn::AuthenticationExpired => {
+                        finish_authentication_required(
+                            &pending_commands,
+                            &rx,
+                            &forward_done,
+                            &out,
+                            &wake,
+                            &backend,
+                            true,
+                        )
+                        .await;
+                        return Ok(());
+                    }
                 }
             }
+            Some(Input::Command(Command::SyncInbox(min_epoch))) => {
+                reader.inbox_sync_epoch = reader.inbox_sync_epoch.max(min_epoch);
+                reader.schedule_inbox_sync(Duration::ZERO);
+            }
             Some(Input::Command(Command::Latest)) => {
+                stream_gap = false;
                 reader.clear_window();
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now();
+                reader.inbox_published = false;
+                reader.schedule_inbox_sync(Duration::ZERO);
                 if connection_closed {
                     retry = Some(Instant::now());
                 }
@@ -191,24 +509,63 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
-                if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
-                    .await
+                let admitted = can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out);
+                if let receipts::SlashReceipt::AuthenticationRequired { confirmed } =
+                    receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
+                        .await
                 {
+                    finish_authentication_required(
+                        &pending_commands,
+                        &rx,
+                        &forward_done,
+                        &out,
+                        &wake,
+                        &backend,
+                        confirmed,
+                    )
+                    .await;
                     return Ok(());
                 }
             }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
-                let Some(outcome) =
-                    receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
-                else {
-                    return Ok(());
+                let encoded =
+                    if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) {
+                        crate::prompt::encode(&prompt).ok()
+                    } else {
+                        None
+                    };
+                // Re-check placement and revocation right after encoding, before dispatching the POST.
+                let outcome = match encoded {
+                    Some(body)
+                        if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) =>
+                    {
+                        match receipts::prompt_encoded(&backend, &out, &wake, &wire, id, body).await
+                        {
+                            receipts::PromptReceipt::Outcome(outcome) => outcome,
+                            receipts::PromptReceipt::AuthenticationRequired { confirmed } => {
+                                finish_authentication_required(
+                                    &pending_commands,
+                                    &rx,
+                                    &forward_done,
+                                    &out,
+                                    &wake,
+                                    &backend,
+                                    confirmed,
+                                )
+                                .await;
+                                return Ok(());
+                            }
+                        }
+                    }
+                    _ => PromptOutcome::Rejected,
                 };
+                if !matches!(outcome, PromptOutcome::Rejected)
+                    && (reader.busy || prompt.delivery == Some(crate::prompt::Delivery::Queue))
+                {
+                    reader.schedule_inbox_sync(Duration::from_millis(50));
+                }
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && !reader.busy
                     && prompt.delivery != Some(crate::prompt::Delivery::Queue)
@@ -231,7 +588,14 @@ pub(crate) async fn run_with_reading(
                 )
                 .await;
             }
-            Some(Input::Native(e, v, native)) if e == epoch => {
+            Some(Input::Native(e, v, mark, native)) if e == epoch => {
+                struct AdvanceApplied<'a>(&'a crate::inbox::InboxWire, u64);
+                impl Drop for AdvanceApplied<'_> {
+                    fn drop(&mut self) {
+                        self.0.advance_applied(self.1);
+                    }
+                }
+                let _applied = AdvanceApplied(&wire.inbox, mark);
                 let kind = native["type"].as_str().unwrap_or_default();
                 if native["data"]["sessionID"] != backend.session
                     && let Some(change) = content::FamilyChange::decode(&native)
@@ -243,7 +607,9 @@ pub(crate) async fn run_with_reading(
                     if native["data"]["sessionID"] != backend.session {
                         continue;
                     }
-                    wire.cancelled.store(true, SeqCst);
+                    wire.cancel();
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
                     publish(
                         &out,
                         &wake,
@@ -255,11 +621,37 @@ pub(crate) async fn run_with_reading(
                     .await;
                     return Err("session scope changed".into());
                 }
-                if kind.starts_with("permission.")
-                    || kind.starts_with("form.")
-                    || kind.contains("model")
-                {
-                    publish(&out, &wake, Event::AgentHint(false)).await;
+                let attention_handled = crate::history::valid_id(&backend.session)
+                    && matches!(
+                        crate::stream::session_attention(&native, &backend.session),
+                        Some(
+                            crate::transport::WorkspaceEvent::SessionRequest { .. }
+                                | crate::transport::WorkspaceEvent::SessionRequestResolved { .. }
+                        )
+                    );
+                if !attention_handled {
+                    if kind.starts_with("permission.") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Permissions),
+                        )
+                        .await;
+                    } else if kind.starts_with("form.") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Forms),
+                        )
+                        .await;
+                    } else if kind.contains("model") {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::AgentControl(crate::transport::AgentLane::Session),
+                        )
+                        .await;
+                    }
                 }
                 if kind == "session.usage.updated" {
                     if let Some(usage) = content::Usage::decode(&native["data"]) {
@@ -278,13 +670,174 @@ pub(crate) async fn run_with_reading(
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
+                        close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                            .await;
                         return Err("session scope changed".into());
                     }
                     reader.clear_window_on_revert();
                     reader.parked = false;
                     reader.dirty = reader.active_reader;
                     reader.quiet = Instant::now();
+                    continue;
+                }
+                if kind.starts_with("session.inbox.") {
+                    if reader.active_reader {
+                        reader.inbox_supported = true;
+                        reader.inbox_retries = 0;
+                        match kind {
+                            "session.inbox.enqueued" => {
+                                if let Some(item) = crate::inbox::decode_enqueued(&native) {
+                                    let collides = reader.known.contains(&item.id);
+                                    if !collides {
+                                        if let Some(existing) =
+                                            reader.inbox.iter_mut().find(|row| row.id == item.id)
+                                        {
+                                            *existing = item.clone();
+                                        } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
+                                            reader.inbox.push(item.clone());
+                                        }
+                                        reader_inbox_delta(
+                                            reading,
+                                            reader.generation,
+                                            &out,
+                                            &wake,
+                                            crate::inbox::InboxDelta::Upsert(item),
+                                        )
+                                        .await;
+                                    } else if !reader.historical && reader.inbox_overlap_repairs < 2
+                                    {
+                                        reader.inbox_overlap_repairs += 1;
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now();
+                                    }
+                                    reader.schedule_inbox_sync(Duration::from_millis(100));
+                                } else {
+                                    reader.schedule_inbox_sync(Duration::from_millis(100));
+                                    if !reader.historical {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
+                                }
+                            }
+                            "session.inbox.delivery.changed" => {
+                                if let Some((inbox_id, delivery)) =
+                                    crate::inbox::decode_delivery_changed(&native)
+                                {
+                                    if let Some(existing) =
+                                        reader.inbox.iter_mut().find(|row| row.id == inbox_id)
+                                    {
+                                        existing.delivery = delivery;
+                                    }
+                                    reader_inbox_delta(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        crate::inbox::InboxDelta::Delivery {
+                                            id: inbox_id,
+                                            delivery,
+                                        },
+                                    )
+                                    .await;
+                                }
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
+                            }
+                            "session.inbox.delivered" => {
+                                if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
+                                    reader.inbox.retain(|row| row.id != inbox_id);
+                                    reader_inbox_delta(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
+                                    )
+                                    .await;
+                                }
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
+                                if !reader.parked {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
+                            }
+                            "session.inbox.cancelled" => {
+                                let inbox_id = crate::inbox::decode_inbox_id(&native);
+                                let was_known =
+                                    inbox_id.is_some_and(|id| reader.known.contains(id));
+                                if let Some(inbox_id) = inbox_id {
+                                    reader.inbox.retain(|row| row.id != inbox_id);
+                                    reader_inbox_delta(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
+                                    )
+                                    .await;
+                                }
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
+                                if !reader.parked && (was_known || !reader.historical) {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
+                            }
+                            _ => {
+                                reader.schedule_inbox_sync(Duration::from_millis(100));
+                            }
+                        }
+                    } else {
+                        match kind {
+                            "session.inbox.enqueued" => {
+                                if let Some(item) = crate::inbox::decode_enqueued(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Upsert(item)),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivery.changed" => {
+                                if let Some((inbox_id, delivery)) =
+                                    crate::inbox::decode_delivery_changed(&native)
+                                {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                            id: inbox_id,
+                                            delivery,
+                                        }),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivered" | "session.inbox.cancelled" => {
+                                if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
+                                            inbox_id.to_owned(),
+                                        )),
+                                    )
+                                    .await;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                if kind == "server.connected" {
+                    if reader.active_reader {
+                        reader.schedule_inbox_sync(Duration::from_millis(100));
+                        if !reader.historical && !reader.parked && v > reader.fence {
+                            reader.dirty = true;
+                            reader.quiet = Instant::now() + Duration::from_millis(100);
+                        }
+                    }
                     continue;
                 }
                 if !reader.active_reader || reading.is_some() && reader.historical {
@@ -367,6 +920,9 @@ pub(crate) async fn run_with_reading(
                 match kind {
                     "session.step.started" => {
                         reader.execution_settlement = 0;
+                        if !reader.inbox.is_empty() {
+                            reader.schedule_inbox_sync(Duration::from_millis(100));
+                        }
                         let mut reconciled = false;
                         let turn_start = reader
                             .resident
@@ -654,10 +1210,6 @@ pub(crate) async fn run_with_reading(
                         reader.dirty = true;
                         reader.quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
-                        reader.dirty = true;
-                        reader.quiet = Instant::now() + Duration::from_millis(100);
-                    }
                     _ => {}
                 }
             }
@@ -671,11 +1223,33 @@ pub(crate) async fn run_with_reading(
             out: &out,
             wake: &wake,
         };
-        if matches!(
-            reader.sync(&lane, opened, &mut connection_lost).await?,
-            Turn::Stop
-        ) {
-            return Ok(());
+        match reader.sync(&lane, opened, &mut connection_lost).await? {
+            Turn::Stop => return Ok(()),
+            Turn::AuthenticationExpired => {
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    true,
+                )
+                .await;
+                return Ok(());
+            }
+            Turn::Process | Turn::Next => {}
         }
+        if reader.parked {
+            stream_gap = false;
+        }
+        if opened
+            && wire.upstream.load(SeqCst)
+            && (!reader.active_reader || reader.historical || (!reader.dirty && !reader.parked))
+        {
+            attempts = 0;
+            stream_gap = false;
+        }
+        reader.maybe_start_inbox(epoch, &backend, reading, &wire, opened, &inbox_tx);
     }
 }

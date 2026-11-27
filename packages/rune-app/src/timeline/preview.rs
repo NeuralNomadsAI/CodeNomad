@@ -58,6 +58,79 @@ pub(crate) struct ExcerptCache {
 }
 
 impl ExcerptCache {
+    fn excerpt_bytes(entry: Option<&Excerpt>) -> usize {
+        entry.map_or(0, |excerpt| {
+            excerpt
+                .text
+                .len()
+                .saturating_add(excerpt.id.len())
+                .saturating_add(excerpt.tools.len())
+                .saturating_add(64)
+        })
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.entries.values().fold(0usize, |total, scope_map| {
+            scope_map.iter().fold(total, |acc, (id, (excerpt, _))| {
+                acc.saturating_add(id.len())
+                    .saturating_add(Self::excerpt_bytes(excerpt.as_ref()))
+            })
+        })
+    }
+
+    pub(crate) fn evict_inactive_scopes(&mut self, active_scope: Option<u64>) -> usize {
+        let before = self.retained_bytes();
+        self.entries.retain(|scope, _| Some(*scope) == active_scope);
+        self.order.retain(|(scope, _)| Some(*scope) == active_scope);
+        before.saturating_sub(self.retained_bytes())
+    }
+
+    pub(crate) fn evict_oldest_except(
+        &mut self,
+        keep_scope: Option<u64>,
+        keep_id: Option<&str>,
+        bytes_to_free: usize,
+    ) -> usize {
+        if bytes_to_free == 0 || self.order.is_empty() {
+            return 0;
+        }
+        let mut freed = 0usize;
+        let mut kept = VecDeque::with_capacity(self.order.len());
+        while let Some((scope, id)) = self.order.pop_front() {
+            let protected = Some(scope) == keep_scope && keep_id == Some(id.as_str());
+            if freed < bytes_to_free && !protected {
+                if let Some(entries) = self.entries.get_mut(&scope) {
+                    if let Some((excerpt, _)) = entries.remove(&id) {
+                        freed = freed
+                            .saturating_add(id.len())
+                            .saturating_add(Self::excerpt_bytes(excerpt.as_ref()));
+                    }
+                    if entries.is_empty() {
+                        self.entries.remove(&scope);
+                    }
+                }
+            } else {
+                kept.push_back((scope, id));
+            }
+        }
+        self.order = kept;
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_remember(&mut self, scope: u64, id: String, text: String, now: f64) {
+        self.remember(
+            scope,
+            id.clone(),
+            Some(Excerpt {
+                id,
+                text,
+                tools: String::new(),
+            }),
+            now,
+        );
+    }
+
     fn scope(&mut self) -> u64 {
         let scope = self.next_scope;
         self.next_scope += 1;
@@ -89,6 +162,20 @@ impl ExcerptCache {
 }
 
 impl Previews {
+    pub(super) fn cache_scope(&self) -> Option<u64> {
+        self.cache_scope
+    }
+
+    pub(super) fn active_target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_set_scope(&mut self, scope: u64, target: Option<String>) {
+        self.cache_scope = Some(scope);
+        self.target = target;
+    }
+
     pub(super) fn hide(&mut self) {
         self.hover = None;
         self.focus = None;

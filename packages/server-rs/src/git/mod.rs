@@ -2,6 +2,7 @@
 //! the user's Git configuration.
 mod branches;
 mod config_guard;
+pub use config_guard::filter_disables;
 mod history;
 mod repository_source;
 mod status_read;
@@ -68,9 +69,6 @@ impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
-    pub fn stderr_contains(&self, needle: &str) -> bool {
-        String::from_utf8_lossy(&self.err).contains(needle)
-    }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
     }
@@ -115,6 +113,10 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
             "-c",
             "commit.gpgSign=false",
             "-c",
+            "log.showSignature=false",
+            "-c",
+            "diff.external=",
+            "-c",
             "submodule.recurse=false",
         ])
         .args(args)
@@ -128,6 +130,10 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
             && !matches!(
                 name.as_str(),
                 "GIT_CEILING_DIRECTORIES"
+                    | "GIT_CONFIG_GLOBAL"
+                    | "GIT_CONFIG_SYSTEM"
+                    | "GIT_CONFIG_NOSYSTEM"
+                    | "GIT_ATTR_NOSYSTEM"
                     | "GIT_AUTHOR_NAME"
                     | "GIT_AUTHOR_EMAIL"
                     | "GIT_AUTHOR_DATE"
@@ -142,9 +148,6 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
-        .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_LITERAL_PATHSPECS", "1");
@@ -171,15 +174,43 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     .map_err(|_| bad("Git output unavailable or too large"))?;
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
+pub async fn run_with_stdin(dir: &Path, args: &[&str], stdin_bytes: &[u8], max: usize) -> Result<Output, Error> {
+    let _slot = SLOTS.acquire().await.unwrap();
+    let mut cmd = command(dir, args);
+    cmd.stdin(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_git() } else { bad("Git could not start") })?;
+    let mut stdin = child.stdin.take().unwrap();
+    let out = child.stdout.take().unwrap();
+    let err = child.stderr.take().unwrap();
+    let write_stdin = async {
+        use tokio::io::AsyncWriteExt;
+        match stdin.write_all(stdin_bytes).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+            Err(e) => return Err(e),
+        }
+        let _ = stdin.shutdown().await;
+        drop(stdin);
+        Ok(())
+    };
+    let (_, bytes, err, status) = tokio::time::timeout(Duration::from_secs(15), async {
+        tokio::try_join!(write_stdin, read_capped(out, max), read_capped(err, 32 * 1024), child.wait())
+    })
+    .await
+    .map_err(|_| bad("Git operation timed out"))?
+    .map_err(|_| bad("Git output unavailable or too large"))?;
+    Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
+}
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
-    Ok(repo_target(app, id, slug, true).await?.0)
+    Ok(repo_target(app, id, slug).await?.0)
 }
 
 async fn repo_target(
     app: &crate::App,
     id: &str,
     slug: &str,
-    guard: bool,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
     let hit = crate::worktrees::linked::http_read(app, &w, crate::worktrees::linked::ReadMode::Validated).await?;
@@ -254,29 +285,11 @@ async fn repo_target(
             }
         }
     }
-    if guard {
-        guard_config(&cat.main).await?;
-    }
     let tree = cat.get(slug)?;
     if !tree.direct_folder() {
         return Err(error(Status::NOT_FOUND, "Worktree folder is missing"));
     }
-    // The directory Git runs in may read its own `config.worktree`.
-    if guard && tree.path != cat.main {
-        config_guard::effective(&tree.path).await?;
-    }
     Ok((crate::worktrees::linked::scope(w, tree), tree.clone()))
-}
-pub async fn guard_config(main: &Path) -> Result<(), Error> {
-    for path in [".git/objects/info/alternates", ".git/objects/info/http-alternates"] {
-        if !matches!(std::fs::symlink_metadata(main.join(path)),Err(e) if e.kind()==io::ErrorKind::NotFound) {
-            return Err(error(Status::FORBIDDEN, "Repository uses external object storage"));
-        }
-    }
-    // Config capable of executing external filters (or importing more
-    // config) is out of scope for passive Git reads and linked worktree lifecycle commands.
-    config_guard::effective(main).await?;
-    config_guard::submodules(main).await
 }
 pub fn sha(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
@@ -309,33 +322,38 @@ async fn apply_paths_with(
     verify_live: impl Fn() -> Result<(), Error>,
     configure: impl Fn(&mut Command),
 ) -> Result<(), Error> {
-    let mut args = if stage {
-        vec!["add", "--"]
+    let args: &[&str] = if stage {
+        &["add", "--pathspec-from-file=-", "--pathspec-file-nul"]
     } else {
         let mut head_cmd = user_command::literal_command(dir, &["rev-parse", "--verify", "HEAD"]);
         configure(&mut head_cmd);
         if user_command::execute(head_cmd).await?.code == 0 {
-            vec!["restore", "--staged", "--"]
+            &["restore", "--staged", "--pathspec-from-file=-", "--pathspec-file-nul"]
         } else {
-            vec!["rm", "--cached", "--quiet", "--"]
+            &["rm", "--cached", "--quiet", "--pathspec-from-file=-", "--pathspec-file-nul"]
         }
     };
     verify_live()?;
-    args.extend(validated.iter().map(String::as_str));
-    let mut cmd = user_command::literal_command(dir, &args);
+    let mut stdin_bytes = Vec::with_capacity(validated.iter().map(|p| p.len() + 1).sum());
+    for path in validated {
+        stdin_bytes.extend_from_slice(path.as_bytes());
+        stdin_bytes.push(0);
+    }
+    let mut cmd = user_command::literal_command(dir, args);
     configure(&mut cmd);
-    user_command::execute(cmd).await?.mutation()
+    user_command::execute_with_stdin(cmd, stdin_bytes).await?.mutation()
 }
 
 async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage: bool) -> Result<Json<Value>, Error> {
-    if items.is_empty() || items.len() > 256 {
+    if items.is_empty() {
         return Err(bad("Invalid path count"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     files::root(&w)?;
-    let mut validated = Vec::new();
+    let mut seen = std::collections::HashSet::with_capacity(items.len());
+    let mut validated = Vec::with_capacity(items.len());
     for p in items {
         let p = files::relative(p.trim(), false)?;
         crate::files::links::guard(&w.path, &p)?;
@@ -343,12 +361,9 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         if std::fs::symlink_metadata(crate::files::links::target(&w.path, &p)).is_ok_and(|m| m.is_dir()) {
             return Err(bad("Staging requires individual files"));
         }
-        if !validated.contains(&p) {
+        if seen.insert(p.clone()) {
             validated.push(p);
         }
-    }
-    if validated.iter().map(String::len).sum::<usize>() > 16000 {
-        return Err(bad("Git paths exceed limit"));
     }
     tokio::spawn(async move {
         let _admitted = admitted;
@@ -393,7 +408,7 @@ pub async fn commit(
     if message.is_empty() || message.len() > 16384 || message.contains('\0') {
         return Err(bad("Invalid commit message"));
     }
-    let (w, tree) = repo_target(&app, &id, &slug, false).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     if !tree.contains_live(&w.path) {
@@ -637,14 +652,33 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         });
         let id_str = id.to_string();
 
-        // Passive reads stay protected by `config_guard` against unqualified local filters.
-        let Err(read_err) = repo(&app, &id_str, "root").await else {
-            panic!("expected passive read to be refused for unqualified local filter");
-        };
-        assert_eq!(read_err.0, Status::FORBIDDEN);
+        // Passive status read succeeds on a repo with local LFS filter without executing the filter.
+        let marker = dir.join("passive-filter-ran");
+        raw_git(
+            &repo_dir,
+            &[
+                "config",
+                "filter.testlfs.smudge",
+                &format!("sh -c 'touch \"{}\" && cat'", marker.to_string_lossy().replace('\\', "/")),
+            ],
+        );
+        let status_rows = status_read::status(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            status_rows.as_array().unwrap().iter().any(|r| r["path"] == "asset.bin"),
+            "status must include asset.bin: {status_rows}"
+        );
+        assert!(!marker.exists(), "passive status read must neutralize local filter drivers");
 
         // Explicit stage honors the local LFS filter and indexes the pointer, not raw binary bytes.
         assert_eq!(
@@ -697,5 +731,429 @@ mod tests {
         assert_eq!(committed["ok"], true);
         assert!(committed["commitSha"].as_str().is_some_and(sha), "{committed}");
         assert_eq!(raw_git(&repo_dir, &["show", "HEAD:asset.bin"]), pointer.as_bytes());
+    }
+
+    #[test]
+    fn read_command_preserves_global_and_system_git_config() {
+        let dir = crate::shared::test_dir("git-read-preserves-config");
+        let cmd = command(&dir, &["rev-parse", "--show-toplevel"]);
+        let envs: Vec<(String, Option<String>)> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|s| s.to_string_lossy().into_owned())))
+            .collect();
+        for forbidden_override in ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_ATTR_NOSYSTEM"]
+        {
+            assert!(
+                !envs.iter().any(|(k, _)| k.eq_ignore_ascii_case(forbidden_override)),
+                "git::command must not override or strip {forbidden_override}: {envs:?}"
+            );
+        }
+        assert!(
+            envs.iter().any(|(k, v)| k == "GIT_TERMINAL_PROMPT" && v.as_deref() == Some("0")),
+            "git::command must keep GIT_TERMINAL_PROMPT=0"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    async fn build_git_fixture(label: &str, repo_dir: &Path) -> (Shared, String, FixtureGuard) {
+        let dir = repo_dir.parent().unwrap().to_path_buf();
+        let root = dunce::canonicalize(repo_dir).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native = opencode::Native::test_connection(listener.local_addr().unwrap());
+        let stub_root = root.clone();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(stub_root)).await.unwrap()
+        });
+        let guard = FixtureGuard { dir: dir.clone(), http };
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            root.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            files::watch::Watches::new(tx),
+            None,
+        ));
+        let id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id,
+            request_id: None,
+            path: root.clone(),
+            name: Some(label.into()),
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+            temporary: None,
+        });
+        (app, id.to_string(), guard)
+    }
+
+    #[tokio::test]
+    async fn common_repos_with_include_if_worktree_config_partial_clone_and_alternates_read_cleanly() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m4-common-repos");
+        let origin_dir = dir.join("origin");
+        let clone_dir = dir.join("shared-clone");
+        let included = dir.join("conditional.gitconfig");
+        let marker = dir.join("filter-executed");
+        let gpg_marker = dir.join("gpg-executed");
+        std::fs::create_dir_all(&origin_dir).unwrap();
+
+        raw_git(&origin_dir, &["init", "-q"]);
+        raw_git(&origin_dir, &["config", "user.name", "test"]);
+        raw_git(&origin_dir, &["config", "user.email", "test@example.com"]);
+        std::fs::write(origin_dir.join("file.txt"), "hello\n").unwrap();
+        std::fs::write(origin_dir.join(".gitattributes"), "*.txt filter=cond -text\n").unwrap();
+        raw_git(&origin_dir, &["add", "."]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "initial"]);
+
+        // Create a commit with a synthetic `gpgsig` header so `log.showSignature=true` would invoke `gpg.program`.
+        let tree_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD^{tree}"])).unwrap().trim().to_owned();
+        let parent_oid = String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        let signed_commit_raw = format!(
+            "tree {tree_oid}\nparent {parent_oid}\nauthor test <test@example.com> 1700000000 +0000\ncommitter test <test@example.com> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n fake\n -----END PGP SIGNATURE-----\n\nsigned commit\n"
+        );
+        let mut hash_cmd = std::process::Command::new("git");
+        hash_cmd
+            .arg("-C")
+            .arg(&origin_dir)
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = hash_cmd.spawn().unwrap();
+        std::io::Write::write_all(child.stdin.as_mut().unwrap(), signed_commit_raw.as_bytes()).unwrap();
+        let hash_out = child.wait_with_output().unwrap();
+        assert!(hash_out.status.success(), "{}", String::from_utf8_lossy(&hash_out.stderr));
+        let signed_oid = String::from_utf8(hash_out.stdout).unwrap().trim().to_owned();
+        raw_git(&origin_dir, &["reset", "--hard", "-q", &signed_oid]);
+
+        // Clone with `--shared` to create `.git/objects/info/alternates`.
+        raw_git(&dir, &["clone", "--quiet", "--shared", origin_dir.to_str().unwrap(), clone_dir.to_str().unwrap()]);
+        assert!(clone_dir.join(".git/objects/info/alternates").is_file(), "shared clone must create alternates");
+
+        // Add an extra commit ONLY in `origin_dir` after cloning: present in alternates, unreachable from `clone_dir`.
+        std::fs::write(origin_dir.join("secret.txt"), "origin-only\n").unwrap();
+        raw_git(&origin_dir, &["add", "secret.txt"]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "origin-only"]);
+        let origin_only_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+
+        // Configure `includeIf` (with `filter` + `log.showSignature` + executable `gpg.program`),
+        // `extensions.worktreeConfig`, `config.worktree` filter, and partial clone promisor.
+        let marker_posix = marker.to_string_lossy().replace('\\', "/");
+        #[cfg(windows)]
+        let fake_gpg = {
+            let script = dir.join("fake-gpg.cmd");
+            std::fs::write(&script, format!("@echo off\r\necho ran > \"{}\"\r\nexit /b 1\r\n", gpg_marker.display()))
+                .unwrap();
+            script
+        };
+        #[cfg(not(windows))]
+        let fake_gpg = {
+            use std::os::unix::fs::PermissionsExt;
+            let script = dir.join("fake-gpg.sh");
+            std::fs::write(&script, format!("#!/bin/sh\ntouch \"{}\"\nexit 1\n", gpg_marker.display())).unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            script
+        };
+        let fake_gpg_posix = fake_gpg.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            &included,
+            format!(
+                "[filter \"cond\"]\n\tclean = sh -c 'touch \"{marker_posix}\" && cat'\n\trequired = true\n[log]\n\tshowSignature = true\n[gpg]\n\tprogram = {fake_gpg_posix}\n"
+            ),
+        )
+        .unwrap();
+        let clone_posix = clone_dir.to_string_lossy().replace('\\', "/");
+        raw_git(
+            &clone_dir,
+            &[
+                "config",
+                &format!("includeIf.gitdir:{clone_posix}/.path"),
+                &included.to_string_lossy().replace('\\', "/"),
+            ],
+        );
+        raw_git(&clone_dir, &["config", "extensions.worktreeConfig", "true"]);
+        raw_git(
+            &clone_dir,
+            &["config", "--worktree", "filter.wt.clean", &format!("sh -c 'touch \"{marker_posix}\" && cat'")],
+        );
+        raw_git(&clone_dir, &["config", "extensions.partialClone", "origin"]);
+        raw_git(&clone_dir, &["config", "remote.origin.promisor", "true"]);
+        raw_git(&clone_dir, &["config", "user.name", "test"]);
+        raw_git(&clone_dir, &["config", "user.email", "test@example.com"]);
+
+        // Positive control for the `includeIf` filter driver via plain `git add`.
+        std::fs::write(clone_dir.join("rebased.txt"), "mid\n").unwrap();
+        raw_git(&clone_dir, &["add", "rebased.txt"]);
+        assert!(marker.exists(), "positive control: plain git add must execute includeIf filter");
+        let mid_tree = String::from_utf8(raw_git(&clone_dir, &["write-tree"])).unwrap().trim().to_owned();
+        let clone_base_oid = String::from_utf8(raw_git(&clone_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        // Create `clone_mid_oid` + `clone_rebased_oid` with `commit-tree` and advance HEAD directly to
+        // `clone_rebased_oid`, then reset back: `clone_mid_oid` never enters `HEAD` reflog directly and
+        // is reachable ONLY as an ancestor of `clone_rebased_oid` in the `HEAD` reflog.
+        let clone_mid_oid = String::from_utf8(raw_git(
+            &clone_dir,
+            &["commit-tree", &mid_tree, "-p", &clone_base_oid, "-m", "mid-not-in-reflog"],
+        ))
+        .unwrap()
+        .trim()
+        .to_owned();
+        let clone_rebased_oid = String::from_utf8(raw_git(
+            &clone_dir,
+            &["commit-tree", &mid_tree, "-p", &clone_mid_oid, "-m", "tip-in-reflog"],
+        ))
+        .unwrap()
+        .trim()
+        .to_owned();
+        raw_git(&clone_dir, &["reset", "--hard", "-q", &clone_rebased_oid]);
+        raw_git(&clone_dir, &["reset", "--hard", "-q", &clone_base_oid]);
+        let reflog_entries =
+            String::from_utf8(raw_git(&clone_dir, &["log", "--no-show-signature", "-g", "--format=%H", "HEAD"]))
+                .unwrap();
+        assert!(
+            !reflog_entries.lines().any(|line| line.trim() == clone_mid_oid),
+            "clone_mid_oid must not be a direct HEAD reflog entry"
+        );
+        let _ = std::fs::remove_file(&marker);
+
+        std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();
+
+        let (app, id_str, _guard) = build_git_fixture("m4-common", &clone_dir).await;
+        let status = status_read::status(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            status.as_array().unwrap().iter().any(|r| r["path"] == "file.txt" && r["unstagedStatus"] == "modified"),
+            "status must report modified file.txt: {status}"
+        );
+        let diff = status_read::diff(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"path": "file.txt", "scope": "unstaged"})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(diff["before"], "hello\n");
+        assert_eq!(diff["after"], "hello updated\n");
+        let hist = history::history(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(hist["commits"].as_array().unwrap().len(), 2);
+        let details = history::commit_details(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into(), signed_oid.clone())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(details["id"], signed_oid);
+
+        // Pinned pagination anchor AND intermediate ancestor commits from this clone's HEAD reflog stay readable.
+        let rebased_hist = history::history(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": clone_rebased_oid})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(rebased_hist["head"], clone_rebased_oid);
+        let mid_details = history::commit_details(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into(), clone_mid_oid.clone())),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(mid_details["id"], clone_mid_oid);
+
+        // Unreachable commit present only in alternate object store must be rejected on both history routes.
+        let alt_hist = history::history(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": origin_only_oid})).unwrap()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(alt_hist.0, Status::BAD_REQUEST, "unreachable alternate head must be rejected");
+        let alt_details = history::commit_details(
+            State(app.clone()),
+            Route((id_str, "root".into(), origin_only_oid)),
+            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(alt_details.0, Status::BAD_REQUEST, "unreachable alternate commit must be rejected");
+
+        assert!(!marker.exists(), "passive Git reads must never execute included or worktree filter drivers");
+        assert!(!gpg_marker.exists(), "passive Git history reads must never invoke gpg.program via log.showSignature");
+
+        // Positive control: plain `git log` in `clone_dir` DOES execute `fake_gpg` via included `log.showSignature=true`.
+        let control =
+            std::process::Command::new("git").arg("-C").arg(&clone_dir).args(["log", "-n", "1"]).output().unwrap();
+        assert!(control.status.success(), "{}", String::from_utf8_lossy(&control.stderr));
+        assert!(gpg_marker.exists(), "positive control must confirm included log.showSignature invokes fake-gpg");
+
+        // Non-alternates repo: pinned pagination anchor after reset (even with reflog expired) stays readable like TS.
+        std::fs::write(origin_dir.join("detached.txt"), "v1\n").unwrap();
+        raw_git(&origin_dir, &["add", "detached.txt"]);
+        raw_git(&origin_dir, &["commit", "-q", "-m", "to-be-rebased"]);
+        let origin_rebased_oid =
+            String::from_utf8(raw_git(&origin_dir, &["rev-parse", "HEAD"])).unwrap().trim().to_owned();
+        raw_git(&origin_dir, &["reset", "--hard", "-q", "HEAD~1"]);
+        raw_git(&origin_dir, &["reflog", "expire", "--expire=now", "--all"]);
+        let (origin_app, origin_id, _origin_guard) = build_git_fixture("m4-origin", &origin_dir).await;
+        let origin_page = history::history(
+            State(origin_app),
+            Route((origin_id, "root".into())),
+            axum::extract::Query(serde_json::from_value(json!({"head": origin_rebased_oid})).unwrap()),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(origin_page["head"], origin_rebased_oid);
+    }
+
+    #[tokio::test]
+    async fn stage_and_unstage_handle_more_than_256_paths_above_16kb() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m13-many-paths");
+        let repo_dir = dir.join("repo");
+        let nested = repo_dir.join("deeply_nested_directory_segment_for_path_budget_testing");
+        std::fs::create_dir_all(&nested).unwrap();
+        raw_git(&repo_dir, &["init", "-q"]);
+        raw_git(&repo_dir, &["config", "user.name", "test"]);
+        raw_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+
+        let mut file_paths = Vec::with_capacity(320);
+        for i in 0..320 {
+            let rel = format!("deeply_nested_directory_segment_for_path_budget_testing/item_{i:04}.txt");
+            std::fs::write(repo_dir.join(&rel), format!("v1-{i}\n")).unwrap();
+            file_paths.push(rel);
+        }
+        assert!(file_paths.len() > 256);
+        assert!(file_paths.iter().map(String::len).sum::<usize>() > 16_000);
+
+        let (app, id_str, _guard) = build_git_fixture("m13-many", &repo_dir).await;
+
+        // 1. Stage > 256 paths (> 16 KiB total) without HEAD.
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        let staged = String::from_utf8(raw_git(&repo_dir, &["ls-files", "--cached"])).unwrap();
+        assert_eq!(staged.lines().count(), 320);
+
+        // 2. Unstage > 256 paths without HEAD (`git rm --cached --pathspec-from-file=-`).
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert!(raw_git(&repo_dir, &["ls-files", "--cached"]).is_empty());
+
+        // 3. Re-stage, commit, modify all 320, re-stage, and unstage with HEAD (`git restore --staged --pathspec-from-file=-`).
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() })
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(
+            commit(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Commit { message: "add 320 files".into() }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        for (i, rel) in file_paths.iter().enumerate() {
+            std::fs::write(repo_dir.join(rel), format!("v2-{i}\n")).unwrap();
+        }
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: file_paths.clone() })
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        let staged_diff = String::from_utf8(raw_git(&repo_dir, &["diff", "--cached", "--name-only"])).unwrap();
+        assert_eq!(staged_diff.lines().count(), 320);
+
+        assert_eq!(
+            unstage(State(app.clone()), Route((id_str, "root".into())), Json(Paths { paths: file_paths }))
+                .await
+                .unwrap()
+                .0["ok"],
+            true
+        );
+        let staged_after = String::from_utf8(raw_git(&repo_dir, &["diff", "--cached", "--name-only"])).unwrap();
+        assert!(staged_after.is_empty(), "all 320 modified files must be unstaged");
     }
 }

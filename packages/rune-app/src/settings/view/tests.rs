@@ -1,4 +1,5 @@
 use super::*;
+mod palettes_startup;
 use rune::{Env, Runtime};
 use serde_json::Value;
 
@@ -38,6 +39,45 @@ fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
     });
     rt.frame(0.02);
     assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Focus existing window on second launch" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    let states = switch["states"].as_array().unwrap();
+    assert!(!states.contains(&Value::from("disabled")));
+    assert!(!states.contains(&Value::from("checked")));
+
+    rt.state
+        .shared
+        .borrow_mut()
+        .set_advanced_toggle(crate::settings::advanced::Toggle::SecondLaunch, true);
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .advanced_pending(crate::settings::advanced::Toggle::SecondLaunch)
+    );
 }
 
 #[test]
@@ -584,6 +624,7 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
         "Tab navigation still includes the pending control"
     );
     press(&mut rt, rune::Key::Enter);
+    press(&mut rt, rune::Key::Down);
     let (x, y) = rt.find(KEY).unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -592,6 +633,40 @@ fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
     assert_eq!(
         rt.state.shared.borrow().new_conversation_permissions(),
         "autonomous"
+    );
+}
+
+#[test]
+fn behavior_permissions_picker_steps_closed_without_opening_popup() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    assert!(
+        !rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
+    );
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Down,
+        mods: Default::default(),
+    });
+    rt.frame(0.02);
+    assert!(listbox(&rt.accessibility_json()).is_none());
+    assert!(
+        rt.state
+            .shared
+            .borrow()
+            .new_conversation_permissions_pending()
     );
 }
 
@@ -610,19 +685,19 @@ fn native_preferences_close_requires_discard_consent_from_both_paths() {
         spec().poll.unwrap()(s, 0.0, tx);
     });
     runtime.frame(0.02);
-    assert!(runtime.state.confirm_close);
+    assert!(runtime.state.confirm_close.is_some());
     assert!(runtime.find("file-decision-cancel").is_some());
     let (x, y) = runtime.find("file-decision-cancel").unwrap();
     runtime.pointer_down(x, y);
     runtime.pointer_up(x, y);
     runtime.frame(0.02);
-    assert!(!runtime.state.confirm_close && runtime.state.memory_editor.has_unsaved());
+    assert!(runtime.state.confirm_close.is_none() && runtime.state.memory_editor.has_unsaved());
     // Rune calls its OS close hook after hiding; the draft is held until the parent reopens.
     assert!(runtime.state.retain_editor_on_native_close());
     let editor = request.reopen.borrow_mut().take().unwrap();
     let restored =
         Window::new(shared, Rc::new(Cell::new(false))).with_close_request(request, Some(editor));
-    assert!(restored.confirm_close && restored.memory_editor.has_unsaved());
+    assert!(restored.confirm_close.is_some() && restored.memory_editor.has_unsaved());
     let mut runtime = Runtime::new(restored, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
     runtime.frame(0.02);
     let (x, y) = runtime.find("file-decision-confirm").unwrap();
@@ -755,7 +830,7 @@ fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web(
         },
         |s, cx| {
             let prefs = s.shared.borrow();
-            render_with(cx, &prefs, false, |_| {
+            render_with(cx, &prefs, false, false, |_| {
                 let mut layers = Vec::new();
                 s.behavior
                     .view(&s.shared, false, &mut layers, |s: &mut WebCard| {

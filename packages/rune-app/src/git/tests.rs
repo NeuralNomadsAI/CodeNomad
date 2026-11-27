@@ -1115,3 +1115,691 @@ fn diff_preferences_follow_the_window_when_an_occurrence_is_restored() {
     state.git = previous;
     assert!(diff_preferences(&state) == preferences);
 }
+
+#[test]
+fn closing_git_preview_restores_scrolled_up_reading_position() {
+    use codenomad_client::git::Diff;
+    use rune::{Env, ImageCache, Key, KeyEvent, Mods, Runtime};
+    use std::sync::Arc;
+
+    let mut state = crate::init();
+    crate::gallery::shell::fixture(&mut state);
+    let project = state.screen.launcher().unwrap().project.clone().unwrap();
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::opened(&mut state, &project);
+    crate::workspace::set_right_panel_tab(&mut state, crate::workspace::RightPanelTab::Files);
+    state.messages = (0..32)
+        .map(|i| {
+            Arc::new(crate::Message {
+                id: format!("git-msg-{i:02}"),
+                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                completed: true,
+                body: format!(
+                    "Git reading passage {i:02} — enough prose to span multiple lines in the transcript."
+                ),
+                parts: Vec::new(),
+                usage: None,
+            })
+        })
+        .collect();
+    let mut git_ui = ui();
+    git_ui.online = true;
+    git_ui.shown = true;
+    git_ui.mode = Mode::Changes;
+    statuses(&mut git_ui, vec![change("src/lib.rs", false, false, 1)]);
+    let preview_target = Preview::local(
+        git_ui
+            .changes
+            .find(git_ui.changes.current.as_ref().unwrap())
+            .unwrap(),
+    );
+    state.git.owner = Some(git_ui);
+
+    let mut rt = Runtime::new(state, crate::view, (1400.0, 520.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    for _ in 0..30 {
+        rt.frame(0.02);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("git-msg-14", 12.0);
+    });
+    for _ in 0..30 {
+        rt.frame(0.02);
+    }
+    let anchor_offset = |rt: &Runtime<crate::State>| {
+        let elements = rt.elements();
+        let hist = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .expect("history mounted");
+        let msg = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("git-msg-14"))
+            .expect("git-msg-14 mounted");
+        msg.rect[1] - hist.rect[1]
+    };
+    let before = anchor_offset(&rt);
+    assert!(
+        (before - 12.0).abs() <= 1.0,
+        "expected git-msg-14 anchored at +12px, got {before}"
+    );
+
+    #[derive(Clone, Copy, Debug)]
+    enum CloseMode {
+        Escape,
+        Button,
+        Worktree,
+        BackgroundNotice,
+        PendingResumeEscape,
+        WorkspaceStopped,
+    }
+    for close_mode in [
+        CloseMode::Escape,
+        CloseMode::PendingResumeEscape,
+        CloseMode::Button,
+        CloseMode::BackgroundNotice,
+        CloseMode::Worktree,
+        CloseMode::WorkspaceStopped,
+    ] {
+        let target = preview_target.clone();
+        rt.update(move |s, _| {
+            let cache = ImageCache::new(s.wake.clone());
+            let ui = s.git.owner.as_mut().unwrap();
+            ui.replace_preview(target.clone());
+            let _ = ui.reader.replace(
+                Diff::Text {
+                    before: "fn a() {}\n".into(),
+                    after: "fn a() { 1 }\n".into(),
+                },
+                "src/lib.rs",
+                true,
+                &cache,
+            );
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        assert!(has_preview(&rt.state));
+        assert!(
+            rt.find("history").is_none(),
+            "Git diff preview must unmount transcript history"
+        );
+        match close_mode {
+            CloseMode::Escape => {
+                let esc = KeyEvent {
+                    key: Key::Escape,
+                    mods: Mods::default(),
+                };
+                rt.key(esc.clone());
+                rt.key_up(esc);
+            }
+            CloseMode::Button => {
+                let (x, y) = rt.find("git-diff-close").expect("git-diff-close button");
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+            }
+            CloseMode::Worktree => {
+                if rt.find("git-worktree-trigger").is_none() {
+                    if let Some((rx, ry)) = rt.find("right-panel-tab-1") {
+                        rt.pointer_down(rx, ry);
+                        rt.pointer_up(rx, ry);
+                    } else {
+                        let (rx, ry) = rt.find("right-panel-toggle").expect("right-panel-toggle");
+                        rt.pointer_down(rx, ry);
+                        rt.pointer_up(rx, ry);
+                        for _ in 0..20 {
+                            rt.frame(0.02);
+                        }
+                        if let Some((tx, ty)) = rt.find("right-panel-tab-1") {
+                            rt.pointer_down(tx, ty);
+                            rt.pointer_up(tx, ty);
+                        }
+                    }
+                    for _ in 0..20 {
+                        rt.frame(0.02);
+                    }
+                }
+                let (wx, wy) = rt
+                    .find("git-worktree-trigger")
+                    .expect("git-worktree-trigger picker button");
+                rt.pointer_down(wx, wy);
+                rt.pointer_up(wx, wy);
+                for _ in 0..15 {
+                    rt.frame(0.02);
+                }
+                let option = rt
+                    .elements()
+                    .into_iter()
+                    .find(|e| {
+                        e.role == "option"
+                            && e.label.as_deref().is_some_and(|l| l.starts_with("other"))
+                    })
+                    .expect("other worktree option");
+                let (ox, oy) = (
+                    option.rect[0] + option.rect[2] / 2.0,
+                    option.rect[1] + option.rect[3] / 2.0,
+                );
+                rt.pointer_down(ox, oy);
+                rt.pointer_up(ox, oy);
+            }
+            CloseMode::BackgroundNotice => {
+                rt.update(|s, tx| {
+                    let ui = s.git.owner.as_mut().unwrap();
+                    let rev = ui.index_revision;
+                    ui.requests
+                        .deliver_read(Lane::Changes, Ok(Value::Changes(vec![], None, rev)));
+                    assert!(poll_notices(s, tx));
+                });
+            }
+            CloseMode::PendingResumeEscape => {
+                let (reader, _lane) = crate::chat::reader::Reader::open();
+                rt.update(|s, tx| {
+                    s.reader = Some(reader);
+                    crate::chat::suspend(s);
+                    crate::chat::resume(s, tx);
+                });
+                let esc = KeyEvent {
+                    key: Key::Escape,
+                    mods: Mods::default(),
+                };
+                rt.key(esc.clone());
+                rt.key_up(esc);
+            }
+            CloseMode::WorkspaceStopped => {
+                rt.update(|s, tx| {
+                    let workspace_id = s.git.owner.as_ref().unwrap().backend.workspace.clone();
+                    super::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
+                    assert!(super::poll(s, 1.0, tx));
+                });
+            }
+        }
+        for _ in 0..40 {
+            rt.frame(0.02);
+        }
+        if matches!(close_mode, CloseMode::PendingResumeEscape) {
+            rt.state.reader = None;
+        }
+        assert!(
+            !has_preview(&rt.state),
+            "preview must close for {close_mode:?}"
+        );
+        if matches!(close_mode, CloseMode::Worktree) {
+            assert_eq!(rt.state.git.owner.as_ref().unwrap().slug, "other");
+        }
+        assert_eq!(
+            rt.scroll_at_bottom("history"),
+            Some(false),
+            "closing Git preview ({close_mode:?}) must not snap back to bottom"
+        );
+        let after = anchor_offset(&rt);
+        assert!(
+            (after - before).abs() <= 1.0,
+            "closing Git preview ({close_mode:?}) must preserve reading anchor: before={before}, after={after}"
+        );
+    }
+}
+
+#[test]
+fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_closes_preview() {
+    use codenomad_client::git::Diff;
+    use rune::{Env, ImageCache, Runtime};
+
+    let make_tab_rows = |prefix: &str| -> Vec<crate::history::Row> {
+        (0..32)
+            .map(|i| {
+                crate::Message {
+                    usage: None,
+                    id: format!("{prefix}-{i:02}"),
+                    role: "assistant".into(),
+                    completed: true,
+                    body: format!("{prefix} passage {i:02} line one.\nLine two for scroll depth."),
+                    parts: vec![],
+                }
+                .into()
+            })
+            .collect()
+    };
+    let tab_a_rows = make_tab_rows("git-tab-a");
+    let tab_b_rows = make_tab_rows("git-tab-b");
+
+    let mut s = crate::init();
+    let mut ws = crate::workspace::Ui::new();
+    ws.fixture_ready();
+    s.workspace = Some(ws);
+    s.phase = crate::Phase::Ready;
+    s.messages = tab_a_rows.clone();
+    let (reader_a, lane_a) = crate::chat::reader::Reader::open();
+    s.reader = Some(reader_a);
+    let mut git_ui = ui();
+    git_ui.online = true;
+    git_ui.shown = true;
+    git_ui.mode = Mode::Changes;
+    statuses(&mut git_ui, vec![change("src/lib.rs", false, false, 1)]);
+    let preview_target = Preview::local(
+        git_ui
+            .changes
+            .find(git_ui.changes.current.as_ref().unwrap())
+            .unwrap(),
+    );
+    s.git.owner = Some(git_ui);
+    let mut rt = Runtime::new(s, crate::view, (390.0, 420.0), Env::new(false, 1.0));
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    // Anchor Tab A on git-tab-a-12, then open its Git diff preview.
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("git-tab-a-12", -6.0);
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    let top_row = |rt: &Runtime<crate::State>, prefix: &str| -> Option<(String, f32)> {
+        let h = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))?
+            .rect;
+        let probe = h[1] + 0.5;
+        rt.elements().into_iter().find_map(|e| {
+            let k = e.key?;
+            (k.starts_with(prefix)
+                && e.rect[3] > 0.0
+                && e.rect[1] <= probe
+                && e.rect[1] + e.rect[3] > probe)
+                .then_some((k, e.rect[1] - h[1]))
+        })
+    };
+    let (tab_a_before_id, tab_a_before_off) =
+        top_row(&rt, "git-tab-a-").expect("Tab A anchored on git-tab-a-12");
+    assert_eq!(tab_a_before_id, "git-tab-a-12");
+
+    {
+        let cache = ImageCache::new(rt.state.wake.clone());
+        let owner = rt.state.git.owner.as_mut().unwrap();
+        owner.replace_preview(preview_target.clone());
+        let _ = owner.reader.replace(
+            Diff::Text {
+                before: "fn a() {}\n".into(),
+                after: "fn a() { 1 }\n".into(),
+            },
+            "src/lib.rs",
+            true,
+            &cache,
+        );
+    }
+    assert!(has_preview(&rt.state));
+
+    // Switch to a second tab (Tab B), stashing Tab A in workspace cache with owner.active = false.
+    rt.update(|s, tx| {
+        crate::workspace::new_tab(s, tx);
+        s.screen = crate::Screen::Chat { launcher: None };
+        s.phase = crate::Phase::Ready;
+        s.messages = tab_b_rows.clone();
+        s.revision += 1;
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("git-tab-b-12", -6.0);
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    let (before_b_id, before_b_off) =
+        top_row(&rt, "git-tab-b-").expect("Tab B anchored on git-tab-b-12");
+    assert_eq!(before_b_id, "git-tab-b-12");
+
+    // Deliver an empty Changes read to cached Tab A (already stashed with owner.active = false),
+    // then run real workspace::poll (poll_cached swaps Tab A's cache onto State with shared Tx,
+    // closes Tab A's stale Git preview via git::poll, and restores Tab B).
+    rt.update(|s, tx| {
+        s.workspace
+            .as_mut()
+            .unwrap()
+            .with_cached_git("tab-0", |git| {
+                let owner = git.owner.as_mut().unwrap();
+                assert!(!owner.active);
+                let rev = owner.index_revision;
+                owner
+                    .requests
+                    .deliver_read(Lane::Changes, Ok(Value::Changes(vec![], None, rev)));
+            });
+        assert!(crate::workspace::poll(s, 1.0, tx));
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    let (after_b_id, after_b_off) = top_row(&rt, "git-tab-b-").expect("Tab B still visible");
+    assert_eq!(
+        after_b_id, before_b_id,
+        "cached Tab A Git preview close via workspace::poll must not scroll active Tab B"
+    );
+    assert!((after_b_off - before_b_off).abs() <= 1.0);
+
+    // Return to Tab A: its Git preview must already be closed and git-tab-a-12 must be restored.
+    rt.update(|s, tx| {
+        crate::workspace::select(s, "tab-0", tx);
+    });
+    assert!(
+        !has_preview(&rt.state),
+        "Tab A preview must have been closed while cached in workspace::poll"
+    );
+    let gen_return = rt.state.reader.as_ref().unwrap().generation();
+    let conn_a = lane_a.connection.load(std::sync::atomic::Ordering::SeqCst);
+    lane_a
+        .events
+        .try_send((
+            gen_return,
+            conn_a,
+            crate::transport::Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: tab_a_rows.clone(),
+                    older: None,
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 1,
+            },
+        ))
+        .unwrap();
+    for _ in 0..25 {
+        rt.update(|s, tx| {
+            crate::poll(s, 2.0, tx);
+        });
+        rt.frame(0.02);
+    }
+    let (tab_a_after_id, tab_a_after_off) =
+        top_row(&rt, "git-tab-a-").expect("Tab A restored on return");
+    assert_eq!(tab_a_after_id, tab_a_before_id);
+    assert!((tab_a_after_off - tab_a_before_off).abs() <= 1.0);
+
+    // Exercise SessionMoved delivered through real chat::events::poll_chat closing an open preview
+    // and preserving the saved bookmark across the subsequent rebind ReaderSync.
+    let (tx_ev, rx_ev) = codenomad_client::bounded(4);
+    rt.state.incoming = Some(rx_ev);
+    let workspace_id = rt
+        .state
+        .git
+        .owner
+        .as_ref()
+        .unwrap()
+        .backend
+        .workspace
+        .clone();
+    let session_id = rt.state.git.owner.as_ref().unwrap().backend.session.clone();
+    {
+        let cache = ImageCache::new(rt.state.wake.clone());
+        let owner = rt.state.git.owner.as_mut().unwrap();
+        owner.active = true;
+        statuses(owner, vec![change("src/lib.rs", false, false, 1)]);
+        owner.replace_preview(preview_target);
+        let _ = owner.reader.replace(
+            Diff::Text {
+                before: "fn a() {}\n".into(),
+                after: "fn a() { 1 }\n".into(),
+            },
+            "src/lib.rs",
+            true,
+            &cache,
+        );
+    }
+    assert!(has_preview(&rt.state));
+    tx_ev
+        .try_send(crate::transport::Event::Workspace(
+            WorkspaceEvent::SessionMoved {
+                workspace_id,
+                session_id,
+            },
+        ))
+        .unwrap();
+    assert!(crate::chat::events::poll_chat(&mut rt.state, 16));
+    assert!(
+        !has_preview(&rt.state),
+        "SessionMoved delivered via poll_chat must close open Git preview"
+    );
+    assert!(rt.state.messages.is_empty());
+    rt.update(|s, tx| {
+        crate::chat::reader::resume(s, tx);
+    });
+    let gen_rebind = rt.state.reader.as_ref().unwrap().generation();
+    lane_a
+        .events
+        .try_send((
+            gen_rebind,
+            conn_a,
+            crate::transport::Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: tab_a_rows,
+                    older: None,
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 2,
+            },
+        ))
+        .unwrap();
+    for _ in 0..25 {
+        rt.update(|s, tx| {
+            crate::poll(s, 3.0, tx);
+        });
+        rt.frame(0.02);
+    }
+    let (rebound_id, rebound_off) = top_row(&rt, "git-tab-a-")
+        .expect("Tab A reading anchor restored after SessionMoved rebind");
+    assert_eq!(rebound_id, tab_a_before_id);
+    assert!((rebound_off - tab_a_before_off).abs() <= 1.0);
+}
+
+#[test]
+fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks() {
+    use crate::{
+        platform::workspace_open::OpenError,
+        strings::{t, with_locale},
+    };
+    use codenomad_client::git::{GitError, Refusal};
+
+    for lang in ["fr", "en"] {
+        with_locale(lang, || {
+            let mut owner = ui();
+            let tree = owner.tree().unwrap().clone();
+            let epoch = owner.tree_epoch;
+
+            owner.read_failed(Lane::Changes, GitError::CheckoutUnavailable.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("gitPanel.error.checkoutUnavailable"))
+            );
+
+            owner.read_failed(Lane::Changes, GitError::UnconfirmedMutation.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("gitPanel.error.unconfirmedMutation"))
+            );
+
+            owner.read_failed(Lane::Preview, GitError::OversizedContent.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Preview).error.as_deref(),
+                Some(t("toolCall.output.tooLarge"))
+            );
+
+            owner.read_failed(Lane::Preview, GitError::UnsupportedImageType.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Preview).error.as_deref(),
+                Some(t("filesPanel.binary"))
+            );
+
+            owner.read_failed(Lane::Changes, "raw English transport failure".into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("rune.failed"))
+            );
+
+            owner.read_failed(
+                Lane::Changes,
+                Refusal::new(503, Some("git_required".into()), Some("Git missing".into())).into(),
+            );
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("filesPanel.gitInit.gitRequired"))
+            );
+
+            owner.read_failed(
+                Lane::Changes,
+                Refusal::new(403, None, Some("Custom backend refusal".into())).into(),
+            );
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some("Custom backend refusal")
+            );
+
+            owner.read_failed(Lane::Changes, Refusal::new(502, None, None).into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("rune.failed"))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("gitPanel.error.unconfirmedMutation").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err("raw English commit failure".into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("instanceShell.gitChanges.commit.error").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err(Refusal::new(422, None, Some("pre-commit hook rejected".into())).into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, "pre-commit hook rejected".into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Paths(Section::Unstaged, vec!["a.rs".into()], 1),
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("gitPanel.error.unconfirmedMutation").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err(
+                    Refusal::new(503, Some("git_required".into()), Some("Git missing".into()))
+                        .into(),
+                ),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("filesPanel.gitInit.gitRequired").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((
+                    false,
+                    t("filesPanel.gitInit.error")
+                        .replace("{message}", t("gitPanel.error.unconfirmedMutation"))
+                ))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err("raw English init transport error".into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((
+                    false,
+                    t("filesPanel.gitInit.error").replace("{message}", t("rune.failed"))
+                ))
+            );
+
+            assert_eq!(
+                OpenError::CheckoutUnavailable.localized(lang),
+                t("gitPanel.error.checkoutUnavailable")
+            );
+            assert_eq!(
+                OpenError::WorktreeChanged.localized(lang),
+                t("gitPanel.error.worktreeChanged")
+            );
+            assert_eq!(
+                OpenError::Unavailable.localized(lang),
+                t("gitPanel.error.nativeActionsUnavailable")
+            );
+            assert_eq!(OpenError::Failed.localized(lang), t("rune.failed"));
+            assert_eq!(
+                OpenError::Server("backend denied".into()).localized(lang),
+                "backend denied"
+            );
+
+            if lang == "fr" {
+                assert_ne!(
+                    t("gitPanel.error.checkoutUnavailable"),
+                    "Selected checkout is unavailable"
+                );
+                assert_ne!(
+                    t("gitPanel.error.unconfirmedMutation"),
+                    "Git change was not confirmed"
+                );
+                assert_ne!(t("gitPanel.error.worktreeChanged"), "Worktree changed");
+                assert_ne!(
+                    t("gitPanel.error.nativeActionsUnavailable"),
+                    "Native workspace actions are unavailable"
+                );
+            }
+        });
+    }
+}

@@ -717,3 +717,48 @@ fn local_serve_command_guard_rejects_non_loopback_hosts_and_env() {
         c.env("CNRS_HTTPS_BIND", "0.0.0.0:9898");
     }));
 }
+
+#[tokio::test]
+async fn serve_starts_with_corrupt_config_yaml_and_omits_server_id() {
+    let executable = Path::new(env!("CARGO_BIN_EXE_codenomad-rs"));
+    let args =
+        ["serve", "--host", "127.0.0.1", "--generate-token", "--http", "true", "--http-port", "0", "--https", "false"];
+    let root = scratch("corrupt-config-startup");
+    let config_dir = root.join("config");
+    fs::create_dir_all(&config_dir).unwrap();
+    let config_path = config_dir.join("config.yaml");
+    let corrupt_contents = "server: [\n";
+    fs::write(&config_path, corrupt_contents).unwrap();
+    let mut server = Server::start(root, executable, &args);
+    let (token, url, _) = server.ready().await;
+    let client = client();
+    let token_response = client
+        .post(format!("{url}/api/auth/token"))
+        .json(&serde_json::json!({ "token": token }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(token_response.status(), 200);
+    let cookie = token_response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let meta: serde_json::Value = client
+        .get(format!("{url}/api/meta"))
+        .header("cookie", &cookie)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(meta.get("serverId").is_none(), "corrupt config.yaml must omit serverId from /api/meta: {meta}");
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        corrupt_contents,
+        "corrupt config.yaml must not be overwritten"
+    );
+    assert!(!config_dir.join("config.yaml.server-id").exists(), "corrupt config.yaml must not claim a sidecar id");
+    server.stop(b"").await;
+}

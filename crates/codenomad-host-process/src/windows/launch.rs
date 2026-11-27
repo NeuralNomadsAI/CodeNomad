@@ -40,6 +40,7 @@ impl Process {
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.wait_for(0)
     }
+    #[cfg(test)]
     pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.wait_for(INFINITE)
     }
@@ -64,6 +65,7 @@ impl Process {
 pub(crate) fn launch(
     command: &Command,
     started: Option<Box<dyn FnOnce(u32) + '_>>,
+    inherit_console: bool,
 ) -> io::Result<OwnedProcess> {
     let family = Family::new()?;
     let inherit = started.is_some();
@@ -84,7 +86,8 @@ pub(crate) fn launch(
         ])?;
         (Some(stdin), Some(stdout), Some(stderr), handles)
     };
-    let flags = CREATE_NO_WINDOW | if inherit { CREATE_SUSPENDED } else { 0 };
+    let flags = (if inherit_console { 0 } else { CREATE_NO_WINDOW })
+        | if inherit { CREATE_SUSPENDED } else { 0 };
     let (mut child, thread) = create(command, inherit, &family, &handles, flags)?;
     if let Some(started) = started {
         started(child.id());

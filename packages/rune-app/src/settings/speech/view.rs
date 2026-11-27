@@ -722,5 +722,5 @@ fn text_field<S: 'static>(
     } else {
         input
     };
-    input.build(field_kit(layout::dark())).key(key)
+    input.build(&field_kit(layout::dark())).key(key)
 }

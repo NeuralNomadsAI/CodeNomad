@@ -128,3 +128,5 @@ Rune'da geri alma, boş yazma alanına özgün metni yerleştirir. Geçmişi ger
 Çatallama seçilen noktaya kadar konuşma bağlamını kopyalar; Git çalışma ağacı oluşturmaz veya dosyaları yalıtmaz. Geri alma yalnızca gezinme değildir. Devam etmeden önce dosya etkilerini ve geri alma sınırını inceleyin; özgün akışı yeniden yazmadan alternatif konuşma istiyorsanız çatallama kullanın.
 
 Geri sayım içeren bir **Yeniden deneniyor** durumu, OpenCode'un bir sağlayıcı hatasını kendiliğinden yeniden denediği anlamına gelir; tekrar göndermek yerine bekleyin veya oturumu durdurun. Başarısız çalıştırma araçları zaten yürütmüş olabilir: yeniden denemeden önce [Dosyalar](files.md), bekleyen [istekler](permissions.md) ve OpenCode etkinliğini inceleyin. **Session'ı durdur** yürütmeyi keser, dosya veya dış hizmet değişikliklerini geri almaz.
+
+Rune'da olay akışından kopma, açık konuşmada gönderme olanağını korur. Reddedilen bir gönderim taslağı hatayla birlikte korur; onaylanmamış bir istem alındısı ulaşana veya geçmiş uzlaşana kadar, onaylanmamış bir eğik çizgi komutu ise alındısı ulaşana kadar bekletilir ve yeniden bağlanma bunların hiçbirini tekrar göndermez.

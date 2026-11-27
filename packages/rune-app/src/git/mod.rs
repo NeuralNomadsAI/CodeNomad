@@ -10,18 +10,20 @@ mod request;
 mod view;
 #[cfg(test)]
 pub(crate) use binding::fixture_open_preview;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
-    connected_placed, detach_session, diff_preferences, event, file_link_scope, files_checkout,
-    has_preview, hold_placement, is_composing, mode, online, overlay_open, placeable, placement,
+    connected_placed, conversation_checkout, detach_session, diff_preferences,
+    dismiss_panel_overlays, event, file_link_scope, files_checkout, has_preview, hold_placement,
+    is_composing, mode, online, overlay_open, panel_overlay_open, placeable, placement,
     placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
-    session_directory, set_diff_preferences, set_mode, show,
+    restore_reading_if_closed, session_directory, set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
     fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
+    fixture_open_placement_picker, fixture_unstaged_change, fixture_worktrees,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
@@ -49,7 +51,7 @@ use codenomad_client::{
     Wake,
     backend::Backend,
     catalog::Sessions,
-    git::{Details, Page, Refusal, Repository, Worktree, Worktrees},
+    git::{Details, GitError, Page, Refusal, Repository, Worktree, Worktrees},
     history::Error,
     same_server_path,
 };
@@ -60,7 +62,7 @@ use rune_theme_codenomad::git_diff::{ImageCache, image_cache};
 use rune_theme_codenomad::git_panel::ScrollBookmark;
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Mode {
     Workspace,
     Changes,
@@ -96,6 +98,45 @@ struct History {
 }
 
 impl History {
+    fn retained_bytes(&self) -> usize {
+        let page = self.page.as_ref().map_or(0, |page| {
+            page.commits.iter().fold(0usize, |total, commit| {
+                total
+                    .saturating_add(commit.id.len())
+                    .saturating_add(commit.subject.len())
+                    .saturating_add(commit.author.len())
+                    .saturating_add(commit.date.len())
+                    .saturating_add(commit.refs.len())
+            })
+        });
+        let details = self.details.as_ref().map_or(0, |details| {
+            details
+                .id
+                .len()
+                .saturating_add(details.message.len())
+                .saturating_add(details.files.iter().fold(0usize, |total, file| {
+                    total
+                        .saturating_add(file.path.len())
+                        .saturating_add(file.original_path.as_deref().map_or(0, str::len))
+                        .saturating_add(file.kind.len())
+                }))
+        });
+        let dates = self
+            .dates
+            .borrow()
+            .as_ref()
+            .map_or(0, |(_, list)| list.iter().map(String::len).sum());
+        page.saturating_add(details).saturating_add(dates)
+    }
+
+    fn evict_cached(&mut self) -> usize {
+        let before = self.retained_bytes();
+        self.page = None;
+        self.details = None;
+        self.dates.borrow_mut().take();
+        before
+    }
+
     fn dates(&self, locale: &'static str) -> std::cell::Ref<'_, [String]> {
         let mut cache = self.dates.borrow_mut();
         if cache.as_ref().is_none_or(|(cached, _)| *cached != locale) {
@@ -282,6 +323,8 @@ impl Ui {
             if self.has_local_preview() {
                 self.dirty(&[Lane::Preview]);
             }
+        } else {
+            self.picker = false;
         }
         self.demand();
     }
@@ -317,6 +360,42 @@ impl Ui {
 
     pub(crate) fn mode(&self) -> Mode {
         self.mode
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.reader
+            .retained_bytes()
+            .saturating_add(self.history.retained_bytes())
+    }
+
+    pub(crate) fn draft_bytes(&self) -> usize {
+        self.changes.draft.text.len()
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        let mut freed = self.reader.retained_bytes();
+        if freed > 0 {
+            self.reader.clear();
+            if self.preview.is_some() {
+                self.dirty(&[Lane::Preview]);
+            }
+        }
+        let history_freed = self.history.evict_cached();
+        if history_freed > 0 {
+            self.dirty(&[Lane::History, Lane::Details]);
+            freed = freed.saturating_add(history_freed);
+        }
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_load_diff(&mut self, path: &str, before: String, after: String) {
+        let _ = self.reader.replace(
+            codenomad_client::git::Diff::Text { before, after },
+            path,
+            false,
+            &self.images,
+        );
     }
     pub(crate) fn set_mode(&mut self, mode: Mode) {
         if self.mode != mode {
@@ -463,6 +542,72 @@ impl Ui {
 }
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) fn probe_observable_error(s: &crate::State) -> Option<String> {
+    let ui = s.git.owner.as_ref()?;
+    for (name, lane) in request::LANES {
+        if let Some(error) = ui.requests.slot(lane).error.as_deref() {
+            return Some(format!("git slot {name}: {error}"));
+        }
+    }
+    if let Some((false, message)) = &ui.mutation_message {
+        return Some(format!("git mutation error: {message}"));
+    }
+    None
+}
+
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) fn probe_slots_diagnostic(s: &crate::State) -> String {
+    let Some(ui) = s.git.owner.as_ref() else {
+        return "git_owner=None".into();
+    };
+    let slots = request::LANES
+        .iter()
+        .map(|(name, lane)| {
+            let slot = ui.requests.slot(*lane);
+            format!(
+                "{name}(busy={},dirty={},err={:?})",
+                slot.busy(),
+                slot.dirty,
+                slot.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "online={}, shown={}, mode={:?}, slug={}, session_slug={}, can_change_index={}, can_commit={}, can_place={}, mutation={:?}, mutation_message={:?}, slots=[{slots}]",
+        ui.online,
+        ui.shown,
+        ui.mode,
+        ui.slug,
+        ui.session_slug,
+        ui.can_change_index(),
+        ui.can_commit(),
+        can_place(s),
+        ui.requests.mutation,
+        ui.mutation_message
+    )
+}
+
+#[cfg(all(test, feature = "test-support", not(target_arch = "wasm32")))]
+impl Ui {
+    pub(crate) fn fixture_set_mutation_error(&mut self, message: &str) {
+        self.mutation_message = Some((false, message.into()));
+    }
+
+    pub(crate) fn fixture_set_index_stale(&mut self, stale: bool) {
+        self.index_checked = if stale {
+            None
+        } else {
+            Some(self.index_revision)
+        };
+    }
+
+    pub(crate) fn fixture_set_history_dirty(&mut self, dirty: bool) {
+        self.requests.slot_mut(Lane::History).dirty = dirty;
+    }
+}
+
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 impl Ui {
     pub(crate) fn load_scene(
         &mut self,
@@ -508,7 +653,10 @@ impl Ui {
         if self.mode == Mode::Changes {
             self.changes = Changes::default();
             if let Some(error) = error {
-                self.read_failed(Lane::Changes, error.into());
+                self.read_failed(
+                    Lane::Changes,
+                    Refusal::new(500, None, Some(error.into())).into(),
+                );
             } else {
                 self.accept(
                     Lane::Changes,
@@ -518,7 +666,10 @@ impl Ui {
         } else if self.mode == Mode::History {
             self.history = History::default();
             if let Some(error) = error {
-                self.read_failed(Lane::History, error.into());
+                self.read_failed(
+                    Lane::History,
+                    Refusal::new(500, None, Some(error.into())).into(),
+                );
             } else {
                 self.accept(
                     Lane::History,

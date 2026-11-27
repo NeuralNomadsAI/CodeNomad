@@ -23,6 +23,17 @@ pub(super) enum Lane {
     InitSessions,
 }
 
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(super) const LANES: [(&str, Lane); 7] = [
+    ("Worktrees", Lane::Worktrees),
+    ("Changes", Lane::Changes),
+    ("History", Lane::History),
+    ("Details", Lane::Details),
+    ("Preview", Lane::Preview),
+    ("Preferences", Lane::Preferences),
+    ("InitSessions", Lane::InitSessions),
+];
+
 pub(super) enum Read {
     Preferences,
     InitSessions(Worktree),
@@ -107,7 +118,7 @@ pub(super) enum Mutation {
     Init(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum MutationKind {
     Paths,
     Commit,
@@ -206,6 +217,18 @@ impl Requests {
             slot.cancel();
             slot.dirty |= index != Lane::InitSessions as usize;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn deliver_read(&mut self, lane: Lane, outcome: Result<Value>) {
+        let (token, _rx) = bounded(1);
+        self.slots[lane as usize].token = Some(token.clone());
+        self.slots[lane as usize].dirty = false;
+        let _ = self.out.try_send(Event::Read {
+            lane,
+            token,
+            outcome,
+        });
     }
 
     pub fn slot(&self, lane: Lane) -> &Slot {

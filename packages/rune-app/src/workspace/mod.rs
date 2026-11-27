@@ -1,20 +1,28 @@
 use std::collections::{BTreeMap, BTreeSet};
 mod cache;
+pub(crate) mod memory_budget;
+#[cfg(test)]
+mod memory_budget_tests;
 pub(crate) mod opening;
 pub(crate) mod outlines;
 mod persistence;
 mod save_snapshot;
 mod snapshot_budget;
 mod state;
+pub(crate) use memory_budget::enforce as enforce_memory_budget;
 pub(crate) use persistence::finish;
 pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state::has_wake_lock_eligible_work;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::revoke_cached_sessions;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
@@ -23,20 +31,27 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
-    close, connected, conversation_stream_clients, draft_changed, file_draft_status, file_wrap,
-    files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width, poll,
-    poll_file_drafts, prepare_open, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative, status,
-    strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    MAX_WINDOW_DEVICE_FILES, StashedTemporary, TemporaryTabInfo, Ui, active_project_title,
+    active_session, active_temporary_workspace, attachment_draft_admissible, bound,
+    can_close_active, can_new, can_switch_tabs, capture, capture_files_mode, clear_temporary_mark,
+    close, close_after_keep, close_ordinary, confirm_unconfirmed, connected,
+    conversation_stream_clients, detach_dead_temporary, detach_stopped_temporary, draft_changed,
+    file_draft_status, file_wrap, files_tab, finish_discarded, has_conversation_stream,
+    has_temporary_tabs, has_unconfirmed, input_ready, new_tab, note_unconfirmed, opened,
+    panel_width, poll, poll_file_drafts, prepare_open, reconcile_temporary_folders,
+    remove_cleaned_session, rename_tab, renew_connection, restore_files_mode, restore_stashed,
+    resume, retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
+    select_relative, session_cleanup_protected, stash_for_discard, stashed_has_in_memory_state,
+    status, strip, tab_rename_seed, temporary_tab_info, toggle_file_wrap, unconfirmed_drafts_full,
+    unselect_missing, window_inline_usage_without_history,
 };
 pub(crate) use state::{
-    close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
-    mission_observation_project, mission_panel, mission_reader, mission_supported,
-    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
-    suspend_missions,
+    close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,
+    has_detached_panels, has_unopened_detached_panels, mission_confirmation, mission_event,
+    mission_has_reader, mission_observation_project, mission_panel, mission_reader,
+    mission_supported, missions_composing, reconcile_detached_online, restore_mission_reader_focus,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_mission_briefing, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;
@@ -46,9 +61,11 @@ use serde_json::{Map, Value, json};
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 const MAX_TABS: usize = 32;
+pub(crate) const MAX_TABS_LIMIT: usize = MAX_TABS;
 const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
+pub(super) const MAX_PROJECT_NAME: usize = 4096;
 pub(crate) const MAX_PANEL_WIDTH: u16 = 16_384;
 const PANEL_WIDTH_KEYS: [&str; 2] = [
     "opencode-session-sidebar-width-v8",
@@ -77,6 +94,8 @@ pub struct Workspace {
     pub backend_id: Option<String>,
     pub server_id: Option<String>,
     pub folder: String,
+    pub project_name: Option<String>,
+    pub temporary: bool,
     pub occurrence: u64,
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
@@ -183,7 +202,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         };
         (tabs, active)
     };
-    let snapshot = Snapshot {
+    let mut snapshot = Snapshot {
         revision,
         saved_at,
         panel_widths,
@@ -191,6 +210,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         tabs,
         active,
     };
+    drop_excess_project_names(&mut snapshot)?;
     validate(&snapshot)?;
     Ok(snapshot)
 }
@@ -220,12 +240,16 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                 for (key, entry) in [
                     ("backendId", &workspace.backend_id),
                     ("serverId", &workspace.server_id),
+                    ("projectName", &workspace.project_name),
                     ("workspaceId", &workspace.workspace_id),
                     ("activeSessionId", &workspace.active_session_id),
                 ] {
                     if let Some(entry) = entry {
                         value[key] = Value::String(entry.clone());
                     }
+                }
+                if workspace.temporary {
+                    value["temporary"] = Value::Bool(true);
                 }
                 if !workspace.attachment_drafts.is_empty() {
                     value["attachmentDrafts"] = json!(workspace.attachment_drafts);
@@ -282,6 +306,8 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "backendId",
                     "serverId",
                     "folder",
+                    "projectName",
+                    "temporary",
                     "occurrence",
                     "workspaceId",
                     "activeSessionId",
@@ -350,6 +376,11 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     .as_str()
                     .ok_or(Error::Malformed)?
                     .to_owned(),
+                project_name: decode_project_name(value.get("projectName")),
+                temporary: value
+                    .get("temporary")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 occurrence: value
                     .get("occurrence")
                     .map(|v| integer(Some(v)))
@@ -427,6 +458,47 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
     })
 }
 
+pub(super) fn valid_project_name(name: &str) -> bool {
+    !name.is_empty()
+        && name == name.trim()
+        && !name.chars().any(char::is_control)
+        && name.encode_utf16().nth(MAX_PROJECT_NAME).is_none()
+}
+
+pub(super) fn normalize_project_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    valid_project_name(trimmed).then(|| trimmed.to_owned())
+}
+
+fn decode_project_name(value: Option<&Value>) -> Option<String> {
+    value?.as_str().and_then(normalize_project_name)
+}
+
+pub(super) fn project_name_drop_order(snapshot: &Snapshot) -> Vec<usize> {
+    let tab_count = snapshot.tabs.len();
+    let active = snapshot.active;
+    (0..tab_count)
+        .filter(|&index| Some(index) != active)
+        .chain(active.into_iter().filter(|&index| index < tab_count))
+        .collect()
+}
+
+pub(super) fn drop_excess_project_names(snapshot: &mut Snapshot) -> Result<(), Error> {
+    if snapshot_string_units(snapshot)? <= MAX_STRINGS {
+        return Ok(());
+    }
+    for index in project_name_drop_order(snapshot) {
+        let changed = match &mut snapshot.tabs[index] {
+            Tab::Workspace(saved) => saved.project_name.take().is_some(),
+            Tab::Blank => false,
+        };
+        if changed && snapshot_string_units(snapshot)? <= MAX_STRINGS {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
     if snapshot_string_units(snapshot)? > MAX_STRINGS {
         return Err(Error::Limit);
@@ -470,6 +542,12 @@ fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
         take(&workspace.folder, 4096, false, &mut remaining)?;
         if !codenomad_client::absolute_server_path(&workspace.folder) {
             return Err(Error::Malformed);
+        }
+        if let Some(name) = &workspace.project_name {
+            take(name, MAX_PROJECT_NAME, false, &mut remaining)?;
+            if !valid_project_name(name) {
+                return Err(Error::Malformed);
+            }
         }
         if let Some(id) = &workspace.backend_id {
             take(id, 64, false, &mut remaining)?;

@@ -14,7 +14,13 @@ pub fn available() -> bool {
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
     #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
     let init = spec.init;
-    let app = shell::app(spec, closing, available(), locale());
+    let app = shell::app(
+        spec,
+        crate::settings::close_request,
+        closing,
+        available(),
+        locale(),
+    );
     #[cfg(target_os = "windows")]
     let app = {
         let delivery = crate::shell::notifications::native_delivery();
@@ -26,7 +32,10 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
         })
         .on_ready(move |window| {
             let window = window.clone();
-            handle.update(move |s, _| s.notifications.window = Some(window));
+            handle.update(move |s, _| {
+                s.notifications.window = Some(window.clone());
+                crate::platform::launch::attach(s, window);
+            });
         })
     };
     #[cfg(target_arch = "wasm32")]
@@ -50,9 +59,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.native_locale_repaint.set(true);
         (s.wake)();
     }
+    let skip_tab = s.shell.has_floating();
     #[cfg(not(target_os = "windows"))]
-    let _ = s;
-    shell::titlebar(cx, t("window.title.main"), rtl, menus(locale))
+    let _ = skip_tab;
+    shell::titlebar(cx, t("window.title.main"), rtl, menus(locale, skip_tab))
 }
 
 pub fn poll(s: &State) -> bool {
@@ -75,7 +85,7 @@ pub(crate) fn sync_locale(s: &State, locale: &'static str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn menus(locale: &'static str) -> El {
+fn menus(locale: &'static str, skip_tab: bool) -> El {
     let menu_look = rune_theme_codenomad::layout::popup_menu_look();
     row()
         .role("navigation")
@@ -129,7 +139,14 @@ fn menus(locale: &'static str) -> El {
                         menu_look.clone(),
                         items,
                         move |s: &mut State, choice, tx| match choice {
-                            Some("close") => tx.close_window(),
+                            Some("close") => {
+                                if matches!(
+                                    crate::settings::close_request(s, tx),
+                                    shell::CloseResponse::Close
+                                ) {
+                                    tx.close_window();
+                                }
+                            }
                             Some("fullscreen") => tx.toggle_full_screen(),
                             Some("minimize") => tx.minimize(),
                             Some("maximize") => tx.toggle_maximized(),
@@ -146,6 +163,7 @@ fn menus(locale: &'static str) -> El {
                     );
                 })
                 .key(key)
+                .tab_index(if skip_tab { -1 } else { 0 })
             }),
         )
 }
@@ -159,6 +177,6 @@ enum Menu {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn menus(_: &'static str) -> El {
+fn menus(_: &'static str, _: bool) -> El {
     row()
 }

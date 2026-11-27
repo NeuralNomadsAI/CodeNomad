@@ -130,7 +130,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             );
         let trigger = rune_kit::Button::new("Fixture menu")
             .variant(rune_kit::ButtonVariant::Ghost)
-            .build(rune_theme_codenomad::kit(cx.system_dark()));
+            .build(&rune_theme_codenomad::kit(cx.system_dark()));
         let (trigger, menu_surface) =
             action_menu::view(&s.menu, menu_at, menu_descriptor(), trigger, 1000.0);
         root = root.child(trigger);

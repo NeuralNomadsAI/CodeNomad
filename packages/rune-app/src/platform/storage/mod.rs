@@ -30,6 +30,26 @@ pub(crate) fn set_browser_file_wrap(wrap: bool) {
 
 const FILE_DRAFT_BYTES: usize = 256 * 1024;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RestoreMode {
+    Enabled,
+    Disabled,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClearOutcome {
+    pub state_ok: bool,
+    pub outlines_ok: bool,
+    pub drafts_ok: bool,
+}
+
+impl ClearOutcome {
+    pub fn all_ok(self) -> bool {
+        self.state_ok && self.outlines_ok && self.drafts_ok
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn configured_directory() -> Option<std::path::PathBuf> {
     crate::platform::setting("CODENOMAD_PROFILE")

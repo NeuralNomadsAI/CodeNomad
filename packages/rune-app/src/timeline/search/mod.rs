@@ -264,6 +264,15 @@ pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     false
 }
 
+pub(crate) fn open(s: &mut State, tx: &mut Tx) {
+    if !visible(s) {
+        return;
+    }
+    state(s).open = true;
+    state(s).query.focused = true;
+    tx.focus_when_shown(FOCUS, true);
+}
+
 pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if crate::shell::shortcut_blocked(s, event, tx) {
         return false;
@@ -282,9 +291,7 @@ pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         && visible(s)
     {
         if !tx.key_repeat() {
-            state(s).open = true;
-            state(s).query.focused = true;
-            tx.focus_when_shown(FOCUS, true);
+            open(s, tx);
         }
         return true;
     }
@@ -546,6 +553,10 @@ fn open_result(s: &mut State, _: &mut Tx) {
     let Some(project) = s.screen.launcher().and_then(|l| l.project.clone()) else {
         return;
     };
+    if crate::shell::blank_cleanup::is_deleting_session(s, &project.id, &hit.session) {
+        return;
+    }
+    crate::shell::blank_cleanup::abort_for_session(s, &hit.session);
     let reads = s.reads.clone();
     let wake = s.wake.clone();
     let (signal, cancelled) = bounded(1);

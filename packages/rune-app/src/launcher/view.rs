@@ -30,7 +30,7 @@ pub fn view(s: &State) -> El {
                     .disabled(l.authentication_required)
                     .label(t("rune.server"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("server-address"),
             );
         if password {
@@ -40,7 +40,7 @@ pub fn view(s: &State) -> El {
                     .secure()
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Password))
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("server-password"),
             );
         }
@@ -64,6 +64,31 @@ pub fn view(s: &State) -> El {
                 "browse-folder",
             ));
         }
+        let mut actions = rune_theme_codenomad::layout::action_row()
+            .separate(Space::Sm)
+            .child(browse)
+            .child(button_tx(
+                "open-folder",
+                t("directoryBrowser.openCurrent"),
+                l.pending || waiting || l.folder.text.trim().is_empty(),
+                crate::screen::action_tx(&scope, launcher::open),
+            ));
+        if crate::shell::temporary::host_supports_temporary(s) {
+            let temporary = button_tx(
+                "new-temporary-tab",
+                t("folderSelection.temporary.button"),
+                !crate::shell::temporary::can_create(s),
+                crate::screen::action_tx(&scope, |s, tx| {
+                    crate::shell::temporary::create(s, tx);
+                }),
+            )
+            .help(crate::settings::with_shortcut_label(
+                s,
+                t("folderSelection.temporary.button"),
+                "new-temporary-instance",
+            ));
+            actions = actions.child(temporary);
+        }
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
             .child(
@@ -72,20 +97,10 @@ pub fn view(s: &State) -> El {
                     .label(t("instanceInfo.labels.folder"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Folder))
                     .on_submit(crate::screen::action_tx(&scope, launcher::open))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("folder-path"),
             )
-            .child(
-                rune_theme_codenomad::layout::action_row()
-                    .separate(Space::Sm)
-                    .child(browse)
-                    .child(button_tx(
-                        "open-folder",
-                        t("directoryBrowser.openCurrent"),
-                        l.pending || waiting || l.folder.text.trim().is_empty(),
-                        crate::screen::action_tx(&scope, launcher::open),
-                    )),
-            );
+            .child(actions);
         if l.projects_stale {
             body = body.child(button_tx(
                 "refresh-projects",

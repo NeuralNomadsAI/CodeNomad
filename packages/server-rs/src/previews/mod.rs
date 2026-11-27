@@ -57,6 +57,7 @@ fn referred_preview(app: &Shared, req: &Request) -> Option<(Uuid, Preview, Strin
 #[derive(Default)]
 pub struct Previews {
     live: Mutex<HashMap<Uuid, Preview>>,
+    device_logout: Mutex<HashMap<Uuid, u64>>,
     rewrites: rewrite::Budget,
     pub owners: backend::Owners,
     remote: remote::Remote,
@@ -74,6 +75,7 @@ struct Preview {
     target: Url,
     until: CancellationToken,
     source_device: Option<crate::auth::Principal>,
+    source_device_id: Option<Uuid>,
     relay_done: Option<std::sync::Arc<CancelOnDrop>>,
 }
 pub fn routes() -> Router<Shared> {
@@ -126,6 +128,25 @@ impl Previews {
                 true
             }
         });
+    }
+    pub fn revoke_device(&self, id: Uuid) {
+        {
+            let mut epochs = self.device_logout.lock().unwrap();
+            let epoch = epochs.entry(id).or_default();
+            *epoch = epoch.wrapping_add(1);
+        }
+        self.remote.revoke_device(id);
+        self.live.lock().unwrap().retain(|_, p| {
+            if p.source_device_id == Some(id) {
+                p.until.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
+    pub(crate) fn logout_epoch(&self, id: Uuid) -> u64 {
+        self.device_logout.lock().unwrap().get(&id).copied().unwrap_or(0)
     }
 }
 
@@ -241,14 +262,21 @@ fn parse(body: &Value) -> Result<(&str, &str), Error> {
         Err(invalid_target(&serde_json::to_string_pretty(&issues).unwrap()))
     }
 }
-async fn create(State(app): State<Shared>, request: Request) -> Result<Json<Value>, Error> {
-    let source_device = if crate::auth::tls::https_only(&request).is_some() {
+pub(crate) async fn create(State(app): State<Shared>, request: Request) -> Result<Json<Value>, Error> {
+    let (source_device, source_device_id, logout_epoch) = if crate::auth::tls::https_only(&request).is_some() {
         if !device_allowed(&app) {
             return Err(error(Status::NOT_FOUND, "Not found"));
         }
-        Some(request.extensions().get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?)
+        let principal =
+            request.extensions().get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
+        let admission = request.extensions().get::<crate::auth::remote::DeviceAdmission>().copied();
+        let device_id = admission
+            .map(|a| a.id)
+            .or_else(|| request.extensions().get::<crate::auth::remote::BrowserDevice>().map(|d| d.0));
+        let epoch = admission.map(|a| a.logout_epoch).or_else(|| device_id.map(|id| app.previews.logout_epoch(id)));
+        (Some(principal), device_id, epoch)
     } else {
-        None
+        (None, None, None)
     };
     let (head, body) = request.into_parts();
     let bytes = axum::body::to_bytes(body, 1024 * 1024)
@@ -273,7 +301,13 @@ async fn create(State(app): State<Shared>, request: Request) -> Result<Json<Valu
     let answer =
         json!({"token":token,"sessionId":session,"targetUrl":target.as_str(),"proxyUrl":proxy_url,"createdAt":now()});
     let until = source_device.as_ref().map_or_else(CancellationToken::new, |p| p.0.child_token());
-    app.previews.live.lock().unwrap().insert(token, Preview { target, until, source_device, relay_done: None });
+    {
+        let mut live = app.previews.live.lock().unwrap();
+        if source_device_id.is_some_and(|id| app.previews.logout_epoch(id) != logout_epoch.unwrap_or(0)) {
+            return Err(crate::auth::unauthorized());
+        }
+        live.insert(token, Preview { target, until, source_device, source_device_id, relay_done: None });
+    }
     Ok(Json(answer))
 }
 async fn remove(State(app): State<Shared>, Path(token): Path<String>) -> Result<Status, Error> {
@@ -336,13 +370,24 @@ pub async fn admit_local(State(app): State<Shared>, req: Request, next: Next) ->
     {
         // Host-based capabilities do not admit application controls or shared UI assets.
         if !safe_request(&req, Some(&format!("http://{host}")))
+            || crate::integrations::is_integrations_path(request_path)
             || ["/api", "/workspaces", "/sidecars", "/auth", "/login", "/previews"].iter().any(|prefix| {
                 request_path == *prefix || request_path.strip_prefix(prefix).is_some_and(|s| s.starts_with('/'))
             })
         {
-            return not_found();
+            let mut resp = not_found();
+            if crate::integrations::is_integrations_path(request_path) {
+                resp.headers_mut().insert(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+            }
+            return resp;
         }
-        let Some(preview) = lookup(&app, token) else { return not_found() };
+        let Some(preview) = lookup(&app, token) else {
+            let mut resp = not_found();
+            if crate::integrations::is_integrations_path(request_path) {
+                resp.headers_mut().insert(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+            }
+            return resp;
+        };
         let path = if proxy::upgrade(&req) {
             Some(request_path.to_owned())
         } else {
@@ -407,6 +452,7 @@ pub async fn admit_remote(app: &Shared, req: Request) -> Response {
         target: preview.target,
         until: combined,
         source_device: preview.source_device,
+        source_device_id: preview.source_device_id,
         relay_done: Some(guard.clone()),
     };
     let response = content_with_preview(app, req, Some(scoped)).await;

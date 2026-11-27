@@ -101,8 +101,8 @@ pub(crate) fn apply_tool_checked(
     (fit, true)
 }
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
-pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
+pub(crate) use user::{decode_payload as decode_user_payload, digest as attachment_digest};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),

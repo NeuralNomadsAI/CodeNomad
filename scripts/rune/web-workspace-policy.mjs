@@ -1,22 +1,145 @@
 import assert from 'node:assert/strict'
-import {readFile,realpath,lstat} from 'node:fs/promises'
+import {constants as fsConstants} from 'node:fs'
+import {lstat,mkdir,open,readdir,readFile,realpath} from 'node:fs/promises'
 import path from 'node:path'
+import {privateEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
+
+export async function privateChromiumEnv(profile){
+  const env=await privateEnvironment(profile)
+  for(const key of ['DISPLAY','WAYLAND_DISPLAY','XAUTHORITY','DBUS_SESSION_BUS_ADDRESS','XDG_RUNTIME_DIR','LANG','LC_ALL','TZ']){
+    if(process.env[key])env[key]=process.env[key]
+  }
+  return env
+}
+
+export async function assertWorktreeTestRoot(root){
+  const rootReal=await realpath(root)
+  const targetPath=path.join(rootReal,'target')
+  const targetStat=await lstat(targetPath).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(targetStat){
+    assert(!targetStat.isSymbolicLink()&&targetStat.isDirectory(),`Fixture target path must be a real directory inside the worktree: ${targetPath}`)
+    assert(inside(rootReal,await realpath(targetPath)),`Fixture target path escapes canonical worktree: ${targetPath}`)
+  }
+  const testsPath=path.join(targetPath,'rune-web-tests')
+  const testsStat=await lstat(testsPath).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(testsStat){
+    assert(!testsStat.isSymbolicLink()&&testsStat.isDirectory(),`Fixture test root must be a real directory inside the worktree: ${testsPath}`)
+    assert(inside(rootReal,await realpath(testsPath)),`Fixture test root escapes canonical worktree: ${testsPath}`)
+  }
+  await mkdir(testsPath,{recursive:true})
+  const testsReal=await realpath(testsPath)
+  assert(inside(rootReal,testsReal),`Fixture test root escapes canonical worktree: ${testsReal}`)
+  return {rootReal,testsReal}
+}
+
+export function assertPrivateDirStat(stat,label){
+  assert(!stat.isSymbolicLink()&&stat.isDirectory(),`Output path must be a non-symlink directory: ${label}`)
+  if(process.platform!=='win32'){
+    assert.equal(Number(stat.uid),process.getuid(),`Output directory must be owned by current user: ${label}`)
+    assert.equal(Number(stat.mode)&0o077,0,`Output directory must not be group/world accessible: ${label}`)
+  }
+}
+
+export async function createPrivateOutputDir(out,allowedRoot){
+  const rootReal=await realpath(allowedRoot)
+  const resolved=path.resolve(out)
+  const parentReal=await realpath(path.dirname(resolved))
+  assert(parentReal===rootReal||inside(rootReal,parentReal),`Output parent escapes allowed fixture root: ${parentReal}`)
+  const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(existing){
+    assertPrivateDirStat(existing,resolved)
+    const entries=await readdir(resolved)
+    assert.equal(entries.length,0,`Refusing to write into non-empty output directory: ${resolved}`)
+  }else{
+    await mkdir(resolved,{mode:0o700})
+    assertPrivateDirStat(await lstat(resolved),resolved)
+  }
+  const outReal=await realpath(resolved)
+  assert(inside(rootReal,outReal),`Output link escapes fixture root: ${outReal}`)
+  return outReal
+}
+
+async function openVerifiedPrivateFile(filePath,allowedRoot,extraFlags=0,expectedDirIdentity=null){
+  const rootReal=await realpath(allowedRoot)
+  const resolved=path.resolve(filePath)
+  const parentPath=path.dirname(resolved)
+  const dirReal=await realpath(parentPath)
+  assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
+  if(expectedDirIdentity){
+    const dirStat=await lstat(parentPath,{bigint:true})
+    assertPrivateDirStat(dirStat,parentPath)
+    assert(dirStat.dev===expectedDirIdentity.dev&&dirStat.ino===expectedDirIdentity.ino,`Output directory identity changed before open: ${parentPath}`)
+  }
+  const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()&&existing.nlink===1),`Refusing to overwrite symlink, hardlink, or non-file output: ${resolved}`)
+  const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|extraFlags|(fsConstants.O_NOFOLLOW??0)
+  const handle=await open(resolved,flags,0o600)
+  try{
+    const fdStat=await handle.stat()
+    assert(fdStat.isFile()&&fdStat.nlink===1,`Opened output file failed link/type verification: ${resolved}`)
+    const recheckDir=await realpath(parentPath)
+    assert(recheckDir===dirReal&&(recheckDir===rootReal||inside(rootReal,recheckDir)),`Output parent shifted during open: ${resolved}`)
+    if(expectedDirIdentity){
+      const afterDirStat=await lstat(parentPath,{bigint:true})
+      assertPrivateDirStat(afterDirStat,parentPath)
+      assert(afterDirStat.dev===expectedDirIdentity.dev&&afterDirStat.ino===expectedDirIdentity.ino,`Output directory identity shifted during open: ${parentPath}`)
+    }
+    return handle
+  }catch(error){
+    await handle.close().catch(()=>{})
+    throw error
+  }
+}
+
+export async function writePrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,0,expectedDirIdentity)
+  try{
+    await handle.truncate(0)
+    await handle.writeFile(content)
+  }finally{await handle.close()}
+}
+
+export async function writeExclusivePrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_EXCL,expectedDirIdentity)
+  try{
+    await handle.writeFile(content)
+  }finally{await handle.close()}
+}
+
+export async function appendPrivateFile(filePath,content,allowedRoot,expectedDirIdentity=null){
+  const handle=await openVerifiedPrivateFile(filePath,allowedRoot,fsConstants.O_APPEND,expectedDirIdentity)
+  try{
+    await handle.writeFile(content)
+  }finally{await handle.close()}
+}
+
 export async function privateWebFixture({root,project,storageState,out,origin}){
-  const target=await realpath(path.join(root,'target/rune-web-tests'))
+  const rootReal=await realpath(root)
+  const target=await realpath(path.join(rootReal,'target/rune-web-tests'))
+  assert(inside(rootReal,target),'Fixture test root must stay inside the canonical worktree')
   const directory=await realpath(project),profile=path.dirname(path.dirname(directory))
   assert(inside(target,profile)&&path.basename(profile).startsWith('launcher-')&&path.basename(directory)==='synthetic','Use the isolated launcher fixture project')
   const storage=await realpath(storageState)
   assert(inside(profile,storage),'Cookies must come from this private fixture profile')
   const auth=JSON.parse(await readFile(storage,'utf8'))
-  assert(auth.cookies.length>0&&auth.cookies.every(c=>['127.0.0.1','localhost','::1'].includes(c.domain))&&(auth.origins??[]).every(o=>o.origin===origin),'Private loopback cookie state only')
+  const parsedOrigin=new URL(origin)
+  assert(parsedOrigin.hostname==='127.0.0.1'&&['http:','https:'].includes(parsedOrigin.protocol),'Private 127.0.0.1 fixture origin required')
+  assert(Array.isArray(auth.cookies)&&auth.cookies.length>0,'Private 127.0.0.1 cookie state only')
+  const seenNames=new Set()
+  for(const c of auth.cookies){
+    assert(c.domain==='127.0.0.1'&&(!c.path||c.path==='/'),'Private 127.0.0.1 root-scoped cookie state only')
+    assert(typeof c.name==='string'&&c.name.length>0&&!seenNames.has(c.name),'Ambiguous duplicate cookie name in fixture storage state')
+    seenNames.add(c.name)
+  }
+  assert((auth.origins??[]).every(o=>o.origin===origin),'Private 127.0.0.1 cookie state only')
   const output=path.resolve(out)
   const parent=await realpath(path.dirname(output))
   const leaf=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error})
   assert((parent===profile||inside(profile,parent))&&(!leaf||leaf.isDirectory()&&!leaf.isSymbolicLink()),
     'Output must stay in the private fixture profile')
-  return {profile,storage,project:directory,inside}
+  return {profile,storage,project:directory,inside,rootReal}
 }
 export async function bundleAssetPaths(directory){
   const manifest=JSON.parse(await readFile(path.join(directory,'bundle-manifest.json'),'utf8'))
@@ -45,9 +168,9 @@ function hidesFixtureThinking(body){
       /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
 }
 
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,menuPrompt,missions=false,mobilePreferences=false,markerFilters=false,allowOwned}){
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,menuPrompt,missions=false,mobilePreferences=false,markerFilters=false,keyboardActions=false,allowOwned}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
-  const historyKeys=new Set([project,path.join(path.dirname(project),'linked')])
+  const historyKeys=new Set(project?[project,path.join(path.dirname(project),'linked')]:[])
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
   return {workspaces,
@@ -76,7 +199,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
           Object.keys(body).every(key=>['messageHistory','agentModelSelections'].includes(key))
       }
       if(method==='POST'&&p==='/api/client-connections/pong')return true
-      if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
+      if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(keyboardActions&&(workspaces.size>0||claims.size>0)&&!claims.has(body.requestId))return false;if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
       if(scoped&&workspaces.has(scoped[1])&&allowOwned)
@@ -87,7 +210,11 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
           body.files?.length===1&&body.files[0].name==='mobile-menu.txt'&&body.files[0].uri==='data:text/plain;base64,bWVudSBmaWxl'
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
       }
-      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
+      if(keyboardActions&&scoped&&workspaces.size===1&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/permission/permission-keyboard/reply')
+        return body?.decision==='reject'&&typeof body?.message==='string'
+      if(keyboardActions&&scoped&&workspaces.size===1&&workspaces.has(scoped[1])&&method==='DELETE'&&scoped[2]==='session/ses_another/form/form-keyboard')
+        return true
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form|inbox))?$/.test(scoped[2])
        const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
        if(!owned||!workspaces.has(owned[1]))return false
        if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
@@ -124,6 +251,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       assert(!Object.hasOwn(body.location,'workspaceID'),'Foreign native workspace location')
       assert(!owners.has(body.id)||owners.get(body.id)===input.requestId,'Workspace identity belongs to another claim')
       assert(claims.get(input.requestId)===null||claims.get(input.requestId)===body.id,'Creation claim changed workspace identity')
+      assert(!keyboardActions||workspaces.size===0||workspaces.has(body.id),'Keyboard viewport policy admits one workspace per context')
       claims.set(input.requestId,body.id);owners.set(body.id,input.requestId);workspaces.add(body.id)
       return body.id
     },

@@ -2,7 +2,7 @@
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 
 #[derive(Default)]
-pub(super) struct Visibility {
+pub(in crate::settings) struct Visibility {
     #[cfg(target_arch = "wasm32")]
     listener: Option<(web_sys::Document, Closure<dyn FnMut()>)>,
 }

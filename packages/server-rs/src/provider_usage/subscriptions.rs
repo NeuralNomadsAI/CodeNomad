@@ -181,6 +181,34 @@ pub async fn claude(state: &State, provider: &Provider, auth: &Value) -> Quota {
         return slot.usage.clone().ok_or(FAILED);
     }
     let p = response.checked_json()?;
+    let u = parse_claude_usage(&p)?;
+    if let Some(slot) = state.claude.lock().unwrap().get_mut(provider.id).filter(|s| s.identity == identity) {
+        slot.usage = Some(u.clone());
+    }
+    Ok(u)
+}
+
+/// Stateless Claude quota read for account selection (no shared cooldown or fallback snapshot).
+pub(super) async fn claude_fresh(auth: &Value, http: &Http) -> Quota {
+    let entry = oauth(auth, &["anthropic", "claude"]);
+    let access = access(entry).ok_or(MISSING)?;
+    if timestamp(&entry["expires"]).is_some_and(|n| n <= (now_ms() + 120_000) as f64) {
+        return Err(FAILED);
+    }
+    let authorization = format!("Bearer {access}");
+    let response = http
+        .send(
+            "https://api.anthropic.com/api/oauth/usage",
+            &[("Authorization", &authorization), ("anthropic-beta", "oauth-2025-04-20")],
+            None,
+            false,
+        )
+        .await?;
+    let p = response.checked_json()?;
+    parse_claude_usage(&p)
+}
+
+fn parse_claude_usage(p: &Value) -> Quota {
     let mut u = Usage::default();
     let limits = arr(&p["limits"]);
     for s in limits {
@@ -236,9 +264,6 @@ pub async fn claude(state: &State, provider: &Provider, auth: &Value) -> Quota {
     }
     if u.windows.is_empty() && u.models.is_empty() {
         return Err(INVALID);
-    }
-    if let Some(slot) = state.claude.lock().unwrap().get_mut(provider.id).filter(|s| s.identity == identity) {
-        slot.usage = Some(u.clone());
     }
     Ok(u)
 }

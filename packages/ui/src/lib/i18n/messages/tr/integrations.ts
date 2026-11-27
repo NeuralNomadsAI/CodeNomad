@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "Entegrasyonu kur",
   "integrations.install.confirm": "{name} ({scope}) kurulsun mu? Kod, OpenCode'da sizin yetkilerinizle çalışacak.",
   "integrations.install.error": "Doğrulanmadı. Kontrol etmek için yenileyin.",
+  "settings.nav.integrations": "Entegrasyonlar",
 }

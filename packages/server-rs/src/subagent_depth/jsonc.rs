@@ -399,12 +399,16 @@ pub fn keys(path: &[&str]) -> Vec<Seg> {
     path.iter().map(|k| key(k)).collect()
 }
 
+const MAX_PARSE_DEPTH: usize = 512;
+
 struct Parser<'a> {
     scanner: Scanner<'a>,
     nodes: Vec<Node>,
     current: usize,
     errors: usize,
     trailing: bool,
+    depth: usize,
+    overflow: bool,
 }
 impl Parser<'_> {
     fn push(&mut self, kind: NodeType, offset: i64, value: Option<J>) -> usize {
@@ -527,11 +531,17 @@ impl Parser<'_> {
         self.complete_property(o + l);
     }
     fn object(&mut self) -> bool {
+        if self.overflow || self.depth >= MAX_PARSE_DEPTH {
+            self.errors += 1;
+            self.overflow = true;
+            return false;
+        }
+        self.depth += 1;
         let (o, _) = self.tok();
         self.current = self.push(NodeType::Object, o, None);
         self.next();
         let mut needs_comma = false;
-        while !matches!(self.scanner.token(), Kind::CloseBrace | Kind::Eof) {
+        while !self.overflow && !matches!(self.scanner.token(), Kind::CloseBrace | Kind::Eof) {
             if self.scanner.token() == Kind::Comma {
                 if !needs_comma {
                     self.error(&[], &[]);
@@ -544,25 +554,34 @@ impl Parser<'_> {
             } else if needs_comma {
                 self.error(&[], &[]);
             }
-            if !self.property() {
+            if !self.property() && !self.overflow {
                 self.error(&[], &[Kind::CloseBrace, Kind::Comma]);
             }
             needs_comma = true;
         }
         self.end();
-        if self.scanner.token() != Kind::CloseBrace {
-            self.error(&[Kind::CloseBrace], &[]);
-        } else {
-            self.next();
+        if !self.overflow {
+            if self.scanner.token() != Kind::CloseBrace {
+                self.error(&[Kind::CloseBrace], &[]);
+            } else {
+                self.next();
+            }
         }
-        true
+        self.depth -= 1;
+        !self.overflow
     }
     fn array(&mut self) -> bool {
+        if self.overflow || self.depth >= MAX_PARSE_DEPTH {
+            self.errors += 1;
+            self.overflow = true;
+            return false;
+        }
+        self.depth += 1;
         let (o, _) = self.tok();
         self.current = self.push(NodeType::Array, o, None);
         self.next();
         let mut needs_comma = false;
-        while !matches!(self.scanner.token(), Kind::CloseBracket | Kind::Eof) {
+        while !self.overflow && !matches!(self.scanner.token(), Kind::CloseBracket | Kind::Eof) {
             if self.scanner.token() == Kind::Comma {
                 if !needs_comma {
                     self.error(&[], &[]);
@@ -575,7 +594,7 @@ impl Parser<'_> {
             } else if needs_comma {
                 self.error(&[], &[]);
             }
-            if !self.value() {
+            if !self.value() && !self.overflow {
                 self.error(&[], &[Kind::CloseBracket, Kind::Comma]);
             }
             needs_comma = true;
@@ -586,14 +605,20 @@ impl Parser<'_> {
         n.length = o + l - n.offset;
         self.current = n.parent.unwrap_or(0);
         self.complete_property(o + l);
-        if self.scanner.token() != Kind::CloseBracket {
-            self.error(&[Kind::CloseBracket], &[]);
-        } else {
-            self.next();
+        if !self.overflow {
+            if self.scanner.token() != Kind::CloseBracket {
+                self.error(&[Kind::CloseBracket], &[]);
+            } else {
+                self.next();
+            }
         }
-        true
+        self.depth -= 1;
+        !self.overflow
     }
     fn value(&mut self) -> bool {
+        if self.overflow {
+            return false;
+        }
         match self.scanner.token() {
             Kind::OpenBracket => self.array(),
             Kind::OpenBrace => self.object(),
@@ -609,7 +634,15 @@ impl Parser<'_> {
 pub fn parse_tree(text: &[u16], trailing: bool) -> Tree {
     let artificial =
         Node { kind: NodeType::Array, offset: -1, length: -1, parent: None, children: Vec::new(), value: None };
-    let mut p = Parser { scanner: Scanner::new(text), nodes: vec![artificial], current: 0, errors: 0, trailing };
+    let mut p = Parser {
+        scanner: Scanner::new(text),
+        nodes: vec![artificial],
+        current: 0,
+        errors: 0,
+        trailing,
+        depth: 0,
+        overflow: false,
+    };
     p.next();
     if p.scanner.token() == Kind::Eof {
         p.errors += 1;

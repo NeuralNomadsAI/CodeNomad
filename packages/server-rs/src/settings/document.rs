@@ -648,6 +648,15 @@ pub fn write(file: &Path, doc: &Doc) -> io::Result<()> {
 }
 
 pub fn write_with_history_order(file: &Path, doc: &Doc, history_order: Option<&[String]>) -> io::Result<()> {
+    write_with_history_order_checked(file, doc, history_order, || Ok(()))
+}
+
+pub fn write_with_history_order_checked(
+    file: &Path,
+    doc: &Doc,
+    history_order: Option<&[String]>,
+    before_rename: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
     let target = destination(file)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
@@ -680,6 +689,7 @@ pub fn write_with_history_order(file: &Path, doc: &Doc, history_order: Option<&[
             handle.write_all(text.as_bytes())?;
             handle.sync_all()?;
         }
+        before_rename()?;
         fs::rename(&temp, &target)
     })();
     if result.is_err() {
