@@ -262,6 +262,11 @@ fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
                 json!({"error":"  pre-commit hook rejected  ","code":"hook_failed"}),
             ),
             (500, json!({"error":"   "})),
+            (
+                409,
+                json!({"error":"   ","message":"  Repository locked  "}),
+            ),
+            (200, json!({"padding":"x".repeat(65 * 1024)})),
         ];
         for (status, response) in entries {
             let (mut socket, _) = listener.accept().unwrap();
@@ -328,6 +333,17 @@ fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
             let blank = blank_err.downcast_ref::<Refusal>().unwrap();
             assert_eq!(blank.status, 500);
             assert_eq!(blank.message(), None);
+
+            let fallback_err = backend.git_commit("root", "hello").await.unwrap_err();
+            let fallback = fallback_err.downcast_ref::<Refusal>().unwrap();
+            assert_eq!(fallback.status, 409);
+            assert_eq!(fallback.message(), Some("Repository locked"));
+
+            let oversized_err = backend.git_commit("root", "hello").await.unwrap_err();
+            assert_eq!(
+                oversized_err.downcast_ref::<GitError>(),
+                Some(&GitError::OversizedContent)
+            );
 
             let empty_msg = backend.git_commit("root", "   ").await.unwrap_err();
             assert_eq!(

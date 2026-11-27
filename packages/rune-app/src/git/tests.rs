@@ -640,7 +640,7 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
     );
     assert!(!ui.can_commit());
     ui.requests.slot_mut(Lane::Changes).dirty = false;
-    ui.requests.slot_mut(Lane::Changes).error = Some("read failed".into());
+    ui.requests.slot_mut(Lane::Changes).error = Some(GitMessage::Raw("read failed".into()));
     assert!(!ui.can_commit());
     ui.requests.slot_mut(Lane::Changes).error = None;
     statuses(&mut ui, changes);
@@ -1088,13 +1088,14 @@ fn switching_modes_and_refresh_owe_failed_reads_but_stale_preferences_cannot_sta
     statuses(&mut ui, vec![change("a", true, false, 1)]);
     ui.changes.draft = TextEdit::new("a");
     assert!(ui.can_commit());
-    ui.requests.slot_mut(Lane::Preferences).error = Some("preferences unreadable".into());
+    ui.requests.slot_mut(Lane::Preferences).error =
+        Some(GitMessage::Raw("preferences unreadable".into()));
     assert!(!ui.can_commit());
     ui.online = false;
     ui.refresh();
     assert!(ui.requests.slot(Lane::Preferences).dirty);
     ui.requests.slot_mut(Lane::Changes).dirty = false;
-    ui.requests.slot_mut(Lane::Changes).error = Some("status unreadable".into());
+    ui.requests.slot_mut(Lane::Changes).error = Some(GitMessage::Raw("status unreadable".into()));
     ui.set_mode(Mode::History);
     assert!(!ui.requests.slot(Lane::Changes).dirty);
     ui.set_mode(Mode::Changes);
@@ -1619,31 +1620,85 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
 
             owner.read_failed(Lane::Changes, GitError::CheckoutUnavailable.into());
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("gitPanel.error.checkoutUnavailable"))
             );
 
             owner.read_failed(Lane::Changes, GitError::UnconfirmedMutation.into());
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("gitPanel.error.unconfirmedMutation"))
             );
 
             owner.read_failed(Lane::Preview, GitError::OversizedContent.into());
             assert_eq!(
-                owner.requests.slot(Lane::Preview).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Preview)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("toolCall.output.tooLarge"))
             );
 
             owner.read_failed(Lane::Preview, GitError::UnsupportedImageType.into());
             assert_eq!(
-                owner.requests.slot(Lane::Preview).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Preview)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("filesPanel.binary"))
+            );
+
+            owner.read_failed(Lane::Changes, GitError::InvalidRequest.into());
+            assert_eq!(
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
+                Some(t("settings.info.actions.failed"))
+            );
+
+            owner.read_failed(Lane::Changes, GitError::UnexpectedResponse.into());
+            assert_eq!(
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
+                Some(t("settings.info.actions.failed"))
             );
 
             owner.read_failed(Lane::Changes, "raw English transport failure".into());
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("rune.failed"))
             );
 
@@ -1652,7 +1707,13 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Refusal::new(503, Some("git_required".into()), Some("Git missing".into())).into(),
             );
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("filesPanel.gitInit.gitRequired"))
             );
 
@@ -1661,13 +1722,25 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Refusal::new(403, None, Some("Custom backend refusal".into())).into(),
             );
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some("Custom backend refusal")
             );
 
             owner.read_failed(Lane::Changes, Refusal::new(502, None, None).into());
             assert_eq!(
-                owner.requests.slot(Lane::Changes).error.as_deref(),
+                owner
+                    .requests
+                    .slot(Lane::Changes)
+                    .error
+                    .as_ref()
+                    .map(GitMessage::localized)
+                    .as_deref(),
                 Some(t("rune.failed"))
             );
 
@@ -1681,7 +1754,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err(GitError::UnconfirmedMutation.into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((false, t("gitPanel.error.unconfirmedMutation").into()))
             );
 
@@ -1695,7 +1771,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err("raw English commit failure".into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((false, t("instanceShell.gitChanges.commit.error").into()))
             );
 
@@ -1709,7 +1788,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err(Refusal::new(422, None, Some("pre-commit hook rejected".into())).into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((false, "pre-commit hook rejected".into()))
             );
 
@@ -1720,7 +1802,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err(GitError::UnconfirmedMutation.into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((false, t("gitPanel.error.unconfirmedMutation").into()))
             );
 
@@ -1734,7 +1819,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 ),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((false, t("filesPanel.gitInit.gitRequired").into()))
             );
 
@@ -1745,7 +1833,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err(GitError::UnconfirmedMutation.into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((
                     false,
                     t("filesPanel.gitInit.error")
@@ -1760,7 +1851,10 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 Err("raw English init transport error".into()),
             );
             assert_eq!(
-                owner.mutation_message,
+                owner
+                    .mutation_message
+                    .as_ref()
+                    .map(|(ok, msg)| (*ok, msg.localized())),
                 Some((
                     false,
                     t("filesPanel.gitInit.error").replace("{message}", t("rune.failed"))
@@ -1779,7 +1873,14 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 OpenError::Unavailable.localized(lang),
                 t("gitPanel.error.nativeActionsUnavailable")
             );
-            assert_eq!(OpenError::Failed.localized(lang), t("rune.failed"));
+            assert_eq!(
+                OpenError::ConnectionFailed.localized(lang),
+                t("rune.failed")
+            );
+            assert_eq!(
+                OpenError::Failed.localized(lang),
+                t("settings.info.actions.failed")
+            );
             assert_eq!(
                 OpenError::Server("backend denied".into()).localized(lang),
                 "backend denied"
@@ -1799,7 +1900,85 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                     t("gitPanel.error.nativeActionsUnavailable"),
                     "Native workspace actions are unavailable"
                 );
+                assert_ne!(
+                    t("settings.info.actions.failed"),
+                    "Could not complete the action. Try again."
+                );
             }
         });
     }
+}
+
+#[test]
+fn stored_git_errors_and_mutation_messages_follow_live_locale_switches() {
+    use crate::strings::{t, with_locale};
+    use codenomad_client::git::GitError;
+
+    let mut owner = ui();
+    let tree = owner.tree().unwrap().clone();
+    let epoch = owner.tree_epoch;
+
+    with_locale("en", || {
+        owner.read_failed(Lane::Changes, GitError::CheckoutUnavailable.into());
+        owner.settle_mutation(
+            epoch,
+            &tree,
+            Mutation::Init("D:/repo".into()),
+            Err(GitError::UnexpectedResponse.into()),
+        );
+        assert_eq!(
+            owner
+                .requests
+                .slot(Lane::Changes)
+                .error
+                .as_ref()
+                .map(GitMessage::localized)
+                .as_deref(),
+            Some(t("gitPanel.error.checkoutUnavailable"))
+        );
+        assert_eq!(
+            owner
+                .mutation_message
+                .as_ref()
+                .map(|(ok, msg)| (*ok, msg.localized())),
+            Some((
+                false,
+                t("filesPanel.gitInit.error")
+                    .replace("{message}", t("settings.info.actions.failed"))
+            ))
+        );
+    });
+
+    with_locale("fr", || {
+        let fr_read = owner
+            .requests
+            .slot(Lane::Changes)
+            .error
+            .as_ref()
+            .map(GitMessage::localized);
+        assert_eq!(
+            fr_read.as_deref(),
+            Some(t("gitPanel.error.checkoutUnavailable"))
+        );
+        assert_ne!(fr_read.as_deref(), Some("Selected checkout is unavailable"));
+        let fr_mutation = owner
+            .mutation_message
+            .as_ref()
+            .map(|(ok, msg)| (*ok, msg.localized()));
+        assert_eq!(
+            fr_mutation,
+            Some((
+                false,
+                t("filesPanel.gitInit.error")
+                    .replace("{message}", t("settings.info.actions.failed"))
+            ))
+        );
+        assert_eq!(
+            owner
+                .mutation_notice
+                .as_ref()
+                .map(|(ok, msg)| (*ok, msg.localized())),
+            fr_mutation
+        );
+    });
 }

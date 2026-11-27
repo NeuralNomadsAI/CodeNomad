@@ -19,12 +19,16 @@ pub async fn open(
     owner: Weak<()>,
 ) -> Result<(), OpenError> {
     let checkout = backend.workspace_checkout(&slug).await.map_err(|error| {
-        if error.downcast_ref::<GitError>() == Some(&GitError::CheckoutUnavailable) {
-            OpenError::CheckoutUnavailable
+        if let Some(git_error) = error.downcast_ref::<GitError>() {
+            match git_error {
+                GitError::CheckoutUnavailable => OpenError::CheckoutUnavailable,
+                GitError::InvalidRequest | GitError::UnexpectedResponse => OpenError::Failed,
+                _ => OpenError::ConnectionFailed,
+            }
         } else if let Some(message) = error.downcast_ref::<Refusal>().and_then(Refusal::message) {
             OpenError::Server(message.to_owned())
         } else {
-            OpenError::Failed
+            OpenError::ConnectionFailed
         }
     })?;
     if !codenomad_client::same_server_path(&checkout, &directory) {

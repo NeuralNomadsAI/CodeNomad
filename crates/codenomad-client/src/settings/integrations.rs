@@ -555,9 +555,15 @@ async fn send_post_json(
     query: &[(&str, &str)],
     body: &Value,
 ) -> IntegrationResult<Value> {
+    use js_sys::{Reflect, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::{AbortController, Headers, Request, RequestCredentials, RequestInit, Response};
+    use web_sys::{
+        AbortController, Headers, ReadableStreamDefaultReader, Request, RequestCredentials,
+        RequestInit, Response,
+    };
+
+    const MAX_MUTATION_BODY: usize = 1_048_576;
 
     struct AbortGuard {
         controller: AbortController,
@@ -610,13 +616,13 @@ async fn send_post_json(
     init.set_body(&JsValue::from_str(&payload));
     init.set_signal(Some(&abort.controller.signal()));
     // Reject HTTP redirects (including 307/308) so single-shot mutations are never replayed.
-    js_sys::Reflect::set(
+    Reflect::set(
         &init,
         &JsValue::from_str("redirect"),
         &JsValue::from_str("error"),
     )
     .map_err(|_| IntegrationError::Failed)?;
-    js_sys::Reflect::set(
+    Reflect::set(
         &init,
         &JsValue::from_str("cache"),
         &JsValue::from_str("no-store"),
@@ -630,14 +636,53 @@ async fn send_post_json(
         .map_err(|_| IntegrationError::Failed)?;
     let status =
         reqwest::StatusCode::from_u16(response.status()).map_err(|_| IntegrationError::Failed)?;
-    let text = JsFuture::from(response.text().map_err(|_| IntegrationError::Failed)?)
-        .await
+    let parsed = if response
+        .headers()
+        .get("content-length")
         .ok()
-        .and_then(|v| v.as_string())
-        .unwrap_or_default();
-    let parsed = (text.len() <= 1_048_576)
-        .then(|| serde_json::from_str::<Value>(&text).ok())
-        .flatten();
+        .flatten()
+        .and_then(|len| len.parse::<usize>().ok())
+        .is_some_and(|len| len > MAX_MUTATION_BODY)
+    {
+        None
+    } else if let Some(reader) = response.body().and_then(|stream| {
+        stream
+            .get_reader()
+            .dyn_into::<ReadableStreamDefaultReader>()
+            .ok()
+    }) {
+        let mut bytes = Vec::new();
+        let mut ok = true;
+        loop {
+            let Ok(chunk) = JsFuture::from(reader.read()).await else {
+                ok = false;
+                break;
+            };
+            if Reflect::get(&chunk, &JsValue::from_str("done"))
+                .ok()
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
+                break;
+            }
+            let Ok(chunk) = Reflect::get(&chunk, &JsValue::from_str("value"))
+                .and_then(JsCast::dyn_into::<Uint8Array>)
+            else {
+                ok = false;
+                break;
+            };
+            if chunk.length() as usize > MAX_MUTATION_BODY.saturating_sub(bytes.len()) {
+                let _ = reader.cancel();
+                ok = false;
+                break;
+            }
+            bytes.extend_from_slice(&chunk.to_vec());
+        }
+        ok.then(|| serde_json::from_slice::<Value>(&bytes).ok())
+            .flatten()
+    } else {
+        None
+    };
     classify_json_response(status, parsed)
 }
 

@@ -132,6 +132,7 @@ pub enum OpenError {
     CheckoutUnavailable,
     WorktreeChanged,
     Server(String),
+    ConnectionFailed,
     Failed,
 }
 
@@ -154,7 +155,14 @@ impl OpenError {
                 &[],
             ),
             Self::Server(message) => message.clone(),
-            Self::Failed => rune_theme_codenomad::catalogue::format(language, "rune.failed", &[]),
+            Self::ConnectionFailed => {
+                rune_theme_codenomad::catalogue::format(language, "rune.failed", &[])
+            }
+            Self::Failed => rune_theme_codenomad::catalogue::format(
+                language,
+                "settings.info.actions.failed",
+                &[],
+            ),
         }
     }
 }
