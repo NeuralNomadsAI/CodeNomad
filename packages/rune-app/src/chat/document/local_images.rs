@@ -21,6 +21,8 @@ use std::{
 #[cfg(test)]
 mod tests;
 
+pub(in crate::chat) type ToolImageShadows = Box<[Box<[Box<str>]>]>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::chat) enum Conversation<'a> {
     Root,
@@ -460,12 +462,36 @@ fn strip_leading_drive_slash(path: &str) -> Cow<'_, str> {
     Cow::Borrowed(path)
 }
 
+fn is_windows_style_path(value: &str) -> bool {
+    has_windows_drive_prefix(value) || value.starts_with("\\\\") || value.starts_with("//")
+}
+
 fn normalize_path(value: &str) -> String {
-    if value.starts_with('/') && !value.starts_with("//") {
-        value.trim_end_matches('/').to_owned()
-    } else {
+    if is_windows_style_path(value) {
         value.replace('\\', "/").trim_end_matches('/').to_owned()
+    } else {
+        value.trim_end_matches('/').to_owned()
     }
+}
+
+fn comparable_relative_windows(value: &str) -> Option<String> {
+    let replaced = value.replace('\\', "/");
+    let mut out = String::with_capacity(replaced.len());
+    let mut has_segment = false;
+    for segment in replaced.trim_end_matches('/').split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return None;
+        }
+        if has_segment {
+            out.push('/');
+        }
+        has_segment = true;
+        out.push_str(segment);
+    }
+    has_segment.then(|| out.to_lowercase())
 }
 
 fn has_parent_segment(normalized: &str) -> bool {
@@ -621,7 +647,8 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
         return Match::Miss;
     }
     let rel = format!("/{stripped}");
-    let rel_lower = rel.to_lowercase();
+    let win_stripped = comparable_relative_windows(path);
+    let win_rel = win_stripped.as_deref().map(|s| format!("/{s}"));
     let mut matched_paths: HashMap<&str, (Option<u64>, Option<&'a Candidate>)> = HashMap::new();
     for candidate in candidates {
         let mut best: Option<&str> = None;
@@ -630,11 +657,15 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
             while let Some(rest) = known_key.strip_prefix("./") {
                 known_key = rest;
             }
-            let exact = known_key == stripped;
-            let suffix = if known.windows {
-                known.comparable.ends_with(&rel_lower)
+            let (exact, suffix) = if known.windows {
+                (
+                    win_stripped.as_deref() == Some(known_key),
+                    win_rel
+                        .as_deref()
+                        .is_some_and(|rel| known.comparable.ends_with(rel)),
+                )
             } else {
-                known.comparable.ends_with(&rel)
+                (known_key == stripped, known.comparable.ends_with(&rel))
             };
             if (exact || suffix) && best.is_none_or(|prev| known_key.len() > prev.len()) {
                 best = Some(known_key);
@@ -665,9 +696,9 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     }
 }
 
-pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> Vec<Vec<String>> {
+pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
     if tool.status != "completed" || tool.pictures.is_empty() {
-        return Vec::new();
+        return Box::default();
     }
     let input_path = tool
         .input
@@ -676,23 +707,23 @@ pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> Vec<Vec<String>> {
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty());
     let single = tool.pictures.len() == 1;
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(tool.pictures.len());
     for picture in &tool.pictures {
-        let mut paths = Vec::new();
+        let mut paths: Vec<Box<str>> = Vec::with_capacity(if single { 2 } else { 1 });
         if let Some(name) = picture.name.as_deref().filter(|value| !value.is_empty()) {
-            paths.push(name.to_owned());
+            paths.push(name.into());
         }
         if single
             && let Some(path) = input_path
-            && !paths.iter().any(|existing| existing == path)
+            && !paths.iter().any(|existing| existing.as_ref() == path)
         {
-            paths.push(path.to_owned());
+            paths.push(path.into());
         }
         if !paths.is_empty() {
-            out.push(paths);
+            out.push(paths.into_boxed_slice());
         }
     }
-    out
+    out.into_boxed_slice()
 }
 
 fn collect_tool_candidates(tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
@@ -748,35 +779,45 @@ pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     out
 }
 
+fn push_shadow_candidates(shadows: &ToolImageShadows, call: u64, out: &mut Vec<Candidate>) {
+    for raw_paths in shadows.iter() {
+        let paths: Vec<KnownPath> = raw_paths
+            .iter()
+            .filter_map(|raw| KnownPath::new(raw))
+            .collect();
+        if !paths.is_empty() {
+            out.push(Candidate {
+                paths,
+                source: PictureSource::Unavailable,
+                mime: String::new(),
+                call: Some(call),
+            });
+        }
+    }
+}
+
 fn child_candidates(
     steps: &[(String, Arc<Tool>)],
-    truncated_images: Option<&HashMap<(String, String), Vec<Vec<String>>>>,
+    truncated_images: &[(Box<str>, Box<str>, ToolImageShadows)],
+    dropped_images: &[ToolImageShadows],
 ) -> Vec<Candidate> {
     let mut out = Vec::new();
     let mut next_call = 1u64;
     for (row_id, tool) in steps.iter().rev() {
         let call = next_call;
         next_call += 1;
-        if let Some(shadows) =
-            truncated_images.and_then(|map| map.get(&(row_id.clone(), tool.id.clone())))
-        {
-            for raw_paths in shadows {
-                let paths: Vec<KnownPath> = raw_paths
-                    .iter()
-                    .filter_map(|raw| KnownPath::new(raw))
-                    .collect();
-                if !paths.is_empty() {
-                    out.push(Candidate {
-                        paths,
-                        source: PictureSource::Unavailable,
-                        mime: String::new(),
-                        call: Some(call),
-                    });
-                }
-            }
+        if let Ok(idx) = truncated_images.binary_search_by(|(m, t, _)| {
+            (m.as_ref(), t.as_ref()).cmp(&(row_id.as_str(), tool.id.as_str()))
+        }) {
+            push_shadow_candidates(&truncated_images[idx].2, call, &mut out);
             continue;
         }
         collect_tool_candidates(tool, call, &mut out);
+    }
+    for shadows in dropped_images {
+        let call = next_call;
+        next_call += 1;
+        push_shadow_candidates(shadows, call, &mut out);
     }
     out
 }
@@ -820,11 +861,11 @@ pub(super) fn prepare(
     let candidates = match conversation {
         Conversation::Root => session_candidates(crate::chat::anchors::visible_rows(s)),
         Conversation::Child { parent, id } => {
-            let (steps, truncated_images) = s
+            let (steps, truncated_images, dropped_images) = s
                 .transcript_display
                 .children
                 .verified_tool_state(parent, id);
-            child_candidates(steps, truncated_images)
+            child_candidates(steps, truncated_images, dropped_images)
         }
         Conversation::None => Vec::new(),
     };

@@ -16,7 +16,7 @@ pub struct LiftedImage {
 pub enum ImageSearch {
     /// Keep the image's alt text in prose search (non-lifted or unresolved images).
     Inline,
-    /// Omit the image's alt text from prose search (image pixels are rendered).
+    /// Rendered image pixels: omit highlight spans while keeping alt text discoverable for visibility checks.
     Hidden,
     /// Match against a custom fallback label rendered by `image_frame`.
     Fallback { key: String, label: String },
@@ -421,14 +421,10 @@ fn prose_ranges_with_images(
                 }
                 skipped_image_depth = 1;
                 match image_search_text(dest_url) {
-                    ImageSearch::Inline => {
+                    ImageSearch::Inline | ImageSearch::Hidden => {
                         skipped_image_fallback = None;
                         skipped_image_collect_alt = true;
                         skipped_image_alt.clear();
-                    }
-                    ImageSearch::Hidden => {
-                        skipped_image_fallback = None;
-                        skipped_image_collect_alt = false;
                     }
                     ImageSearch::Fallback { key, label } => {
                         skipped_image_fallback = Some((key, label));
@@ -1246,6 +1242,22 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         remote_query,
         &|_, _| None,
         &|_| ImageSearch::Inline,
+    ));
+    // Rendered local image pixels keep their alt discoverable for hidden-input visibility checks
+    // without claiming a highlight span.
+    assert!(prose_has_match_with_images(
+        "![Plan réseau](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden,
+    ));
+    assert!(!prose_has_highlight_with_images(
+        "![Plan réseau](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden,
     ));
     let html_alt = literal_breaks_with_images("![<chart>](missing.png)", false, &|src, _| {
         Some(src.to_owned())

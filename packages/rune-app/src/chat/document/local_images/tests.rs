@@ -144,7 +144,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         Some(&PictureSource::Inline("posix".into()))
     );
     let posix_backslash = vec![
-        candidate(&[r"/tmp/a\b.png"], "literal-backslash"),
+        candidate(&[r"a\b.png", r"/tmp/a\b.png"], "literal-backslash"),
         candidate(&["/tmp/a/b.png"], "nested-slash"),
     ];
     assert_eq!(
@@ -159,6 +159,23 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         match_local_image(&posix_backslash, "a/b.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("nested-slash".into()))
     );
+    assert_eq!(
+        match_local_image(&posix_backslash, "./a%5Cb.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("literal-backslash".into()))
+    );
+    let only_nested_slash = vec![candidate(&["/tmp/a/b.png"], "nested-slash")];
+    assert_eq!(
+        match_local_image(&only_nested_slash, "./a%5Cb.png", true),
+        None
+    );
+    // Relative Windows paths with backslashes still match Windows candidates, while parent
+    // traversal with backslashes is rejected.
+    let win_rel = vec![candidate(&[r"C:\Work\Sub\Spec.PNG"], "win-spec")];
+    assert_eq!(
+        match_local_image(&win_rel, r".\sub\spec.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("win-spec".into()))
+    );
+    assert_eq!(match_local_image(&win_rel, r"..\Spec.PNG", true), None);
     // Ambiguous relative suffix returns None; explicit path still resolves.
     assert_eq!(match_local_image(&items, "dup.png", true), None);
     assert_eq!(match_local_image(&items, "./dup.png", true), None);
@@ -1389,11 +1406,12 @@ fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels
         },
     );
     assert!(child_state.transcript_display.children.poll());
-    let (steps, shadows) = child_state
+    let (steps, shadows, dropped) = child_state
         .transcript_display
         .children
         .verified_tool_state(None, "child-trunc");
     assert_eq!(steps.len(), 5);
+    assert!(dropped.is_empty());
     assert!(
         !steps[0].1.pictures.is_empty(),
         "older small read must stay intact under water-filling"
@@ -1403,7 +1421,9 @@ fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels
         "oversized newer reread must have its pictures truncated"
     );
     assert!(
-        shadows.is_some_and(|map| map.contains_key(&("c5".into(), "call-new".into()))),
+        shadows
+            .iter()
+            .any(|(m, t, _)| m.as_ref() == "c5" && t.as_ref() == "call-new"),
         "truncated newer reread must record its image path shadow"
     );
     let child_plan = prepare(
@@ -1422,4 +1442,229 @@ fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels
         Some("child-chart.png"),
         "truncated newer child reread must shadow older kept pixels"
     );
+}
+
+#[test]
+fn dropped_child_tool_over_step_limit_keeps_short_name_ambiguous() {
+    let read_img = |id: &str, call: &str, ts: u64, path: &str, png: &str| {
+        history::decode_message(&json!({
+            "id": id, "type": "assistant", "time": {"completed": ts},
+            "content": [{
+                "type": "tool", "id": call, "name": "read",
+                "state": {
+                    "status": "completed",
+                    "input": {"filePath": path},
+                    "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": format!("data:image/png;base64,{png}")}]
+                }
+            }]
+        }))
+        .unwrap()
+    };
+    let noop = |idx: usize| {
+        history::decode_message(&json!({
+            "id": format!("noop-{idx}"), "type": "assistant", "time": {"completed": idx + 2},
+            "content": [{
+                "type": "tool", "id": format!("call-noop-{idx}"), "name": "bash",
+                "state": {"status": "completed", "content": [{"type": "text", "text": "ok"}]}
+            }]
+        }))
+        .unwrap()
+    };
+
+    // 201 tools: tool #1 (dropped past STEP_LIMIT=200) read `/a/chart.png`, tool #201 (kept) read
+    // `/b/chart.png`. Short name `chart.png` must remain ambiguous; explicit `/b/chart.png` resolves.
+    let mut rows = Vec::with_capacity(201);
+    rows.push(read_img("m0", "call-0", 1, "/a/chart.png", PNG_A).into());
+    for i in 0..199 {
+        rows.push(noop(i).into());
+    }
+    rows.push(read_img("m200", "call-200", 201, "/b/chart.png", PNG_B).into());
+
+    let mut state = init();
+    let _lease = state.transcript_display.children.install(
+        "child-201-ambig",
+        history::Page {
+            rows,
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        },
+    );
+    assert!(state.transcript_display.children.poll());
+    let (steps, _, dropped) = state
+        .transcript_display
+        .children
+        .verified_tool_state(None, "child-201-ambig");
+    assert_eq!(steps.len(), 200);
+    assert_eq!(dropped.len(), 1);
+    let plan = prepare(
+        &state,
+        "task-201",
+        "![Short](chart.png)\n\n![Exact](/b/chart.png)",
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "child-201-ambig",
+        },
+    );
+    let fallback = plan.fallback_label();
+    assert_eq!(
+        fallback("chart.png", true).as_deref(),
+        Some("chart.png"),
+        "dropped older tool image must keep shared short name ambiguous"
+    );
+    assert_eq!(
+        fallback("/b/chart.png", true),
+        None,
+        "kept newer exact path must still resolve"
+    );
+
+    // Same file reread in tool #201 after tool #1 was dropped still resolves uniquely.
+    let mut reread_rows = Vec::with_capacity(201);
+    reread_rows.push(read_img("r0", "call-r0", 1, "/a/chart.png", PNG_A).into());
+    for i in 0..199 {
+        reread_rows.push(noop(i).into());
+    }
+    reread_rows.push(read_img("r200", "call-r200", 201, "/a/chart.png", PNG_B).into());
+    let _reread_lease = state.transcript_display.children.install(
+        "child-201-reread",
+        history::Page {
+            rows: reread_rows,
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        },
+    );
+    assert!(state.transcript_display.children.poll());
+    let reread_plan = prepare(
+        &state,
+        "task-201-reread",
+        "![Short](chart.png)",
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "child-201-reread",
+        },
+    );
+    assert_eq!(reread_plan.fallback_label()("chart.png", true), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn rendered_local_image_in_task_prompt_stays_visible_with_hidden_inputs() {
+    use rune::{Env, Runtime};
+
+    let read_msg = history::decode_message(&json!({
+        "id": "m1", "type": "assistant", "time": {"completed": 1},
+        "content": [{
+            "type": "tool", "id": "call-read", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![read_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                super::super::prose_pane_search(
+                    s,
+                    "m2",
+                    "task-card",
+                    "task-card-task-prompt".into(),
+                    "![Plan](chart.png)",
+                    false,
+                    4096,
+                    Conversation::Root,
+                    None,
+                )
+            })
+        },
+        (800.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(1.0 / 60.0);
+    // Decode the inline PNG so `slot.image` becomes `Some(image)` (`ImageSearch::Hidden`).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let mut ready = false;
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+            let plan = prepare(
+                s,
+                "task-card-task-prompt",
+                "![Plan](chart.png)",
+                false,
+                Conversation::Root,
+            );
+            ready = plan
+                .stamp
+                .iter()
+                .any(|(_, _, stamp)| matches!(stamp, SlotStamp::Ready(_)));
+        });
+        rt.frame(1.0 / 60.0);
+        if ready {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "local image did not decode"
+        );
+        std::thread::yield_now();
+    }
+    rt.update(|s, _| {
+        let plan = prepare(
+            s,
+            "task-card-task-prompt",
+            "![Plan](chart.png)",
+            false,
+            Conversation::Root,
+        );
+        assert!(
+            plan.stamp
+                .iter()
+                .any(|(_, _, stamp)| matches!(stamp, SlotStamp::Ready(_))),
+            "local image must be decoded and rendered as pixels"
+        );
+        let terms = vec!["Plan".into()];
+        let query = rune_theme_codenomad::timeline::search::Query {
+            terms: &terms,
+            ranked: false,
+            active: true,
+            claimed: None,
+        };
+        assert!(
+            super::super::bounded_prose_matches_for(
+                s,
+                "task-card",
+                "task-card-task-prompt",
+                "![Plan](chart.png)",
+                4096,
+                Conversation::Root,
+                query,
+            ),
+            "decoded local image alt must stay visible for hidden-input probing"
+        );
+        assert!(
+            !super::super::bounded_prose_highlights_for(
+                s,
+                "task-card",
+                "task-card-task-prompt",
+                "![Plan](chart.png)",
+                4096,
+                Conversation::Root,
+                query,
+            ),
+            "decoded local image alt must not steal active highlight from paintable output"
+        );
+    });
 }

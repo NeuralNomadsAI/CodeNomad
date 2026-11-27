@@ -32,25 +32,32 @@ pub(super) const STEP_BYTES: usize = 2 << 20;
 pub(super) const MAX_TRUNCATED_IMAGE_PATH_BYTES: usize = 4 * 1024;
 pub(super) const MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES: usize = 32 * 1024;
 
-pub(super) fn truncated_image_entry_bytes(
-    msg_id: &str,
-    tool_id: &str,
-    groups: &[Vec<String>],
-) -> usize {
-    let base = std::mem::size_of::<(String, String, Vec<Vec<String>>)>()
-        .saturating_add(msg_id.len())
-        .saturating_add(tool_id.len())
-        .saturating_add(
-            groups
-                .len()
-                .saturating_mul(std::mem::size_of::<Vec<String>>()),
-        );
+pub(super) fn tool_image_shadows_bytes(groups: &crate::chat::document::ToolImageShadows) -> usize {
+    let base = groups
+        .len()
+        .saturating_mul(std::mem::size_of::<Box<[Box<str>]>>());
     groups.iter().fold(base, |acc, paths| {
         paths.iter().fold(
-            acc.saturating_add(paths.len().saturating_mul(std::mem::size_of::<String>())),
+            acc.saturating_add(paths.len().saturating_mul(std::mem::size_of::<Box<str>>())),
             |inner, path| inner.saturating_add(path.len()),
         )
     })
+}
+
+pub(super) fn truncated_image_entry_bytes(
+    msg_id: &str,
+    tool_id: &str,
+    groups: &crate::chat::document::ToolImageShadows,
+) -> usize {
+    std::mem::size_of::<(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)>()
+        .saturating_add(msg_id.len())
+        .saturating_add(tool_id.len())
+        .saturating_add(tool_image_shadows_bytes(groups))
+}
+
+pub(super) fn dropped_image_entry_bytes(groups: &crate::chat::document::ToolImageShadows) -> usize {
+    std::mem::size_of::<crate::chat::document::ToolImageShadows>()
+        .saturating_add(tool_image_shadows_bytes(groups))
 }
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
@@ -141,7 +148,8 @@ struct Snapshot {
     steps_truncated: bool,
     steps_incomplete: bool,
     truncated_tools: HashSet<(String, String)>,
-    truncated_tool_images: HashMap<(String, String), Vec<Vec<String>>>,
+    truncated_tool_images: Box<[(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)]>,
+    dropped_tool_images: Box<[crate::chat::document::ToolImageShadows]>,
     truncated_tool_images_overflow: bool,
     reports: Reports,
 }
@@ -314,8 +322,11 @@ impl Children {
                     .saturating_add(report.report.state.len())
                     .saturating_add(report.report.body.len());
             }
-            for ((msg_id, tool_id), groups) in &entry.snapshot.truncated_tool_images {
+            for (msg_id, tool_id, groups) in entry.snapshot.truncated_tool_images.iter() {
                 total = total.saturating_add(truncated_image_entry_bytes(msg_id, tool_id, groups));
+            }
+            for groups in entry.snapshot.dropped_tool_images.iter() {
+                total = total.saturating_add(dropped_image_entry_bytes(groups));
             }
         }
         total
@@ -426,19 +437,21 @@ impl Children {
         id: &str,
     ) -> (
         &[(String, Arc<Tool>)],
-        Option<&HashMap<(String, String), Vec<Vec<String>>>>,
+        &[(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)],
+        &[crate::chat::document::ToolImageShadows],
     ) {
         let key = child_key(parent, id);
         if self.unavailable.contains(&key) {
-            return (&[], None);
+            return (&[], &[], &[]);
         }
         self.entries
             .get(&key)
             .filter(|entry| !entry.load_error && !entry.snapshot.truncated_tool_images_overflow)
-            .map_or((&[], None), |entry| {
+            .map_or((&[], &[], &[]), |entry| {
                 (
                     entry.snapshot.steps.as_slice(),
-                    Some(&entry.snapshot.truncated_tool_images),
+                    entry.snapshot.truncated_tool_images.as_ref(),
+                    entry.snapshot.dropped_tool_images.as_ref(),
                 )
             })
     }

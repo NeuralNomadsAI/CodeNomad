@@ -64,13 +64,19 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         })
         .collect();
     let mut steps_truncated = raw_tools.len() > STEP_LIMIT;
-    let kept_tools: Vec<_> = raw_tools.into_iter().take(STEP_LIMIT).collect();
+    let mut raw_iter = raw_tools.into_iter();
+    let kept_tools: Vec<_> = raw_iter.by_ref().take(STEP_LIMIT).collect();
     let total_tool_bytes: usize = kept_tools
         .iter()
         .map(|(_, tool)| tool.retained_bytes())
         .sum();
     let mut truncated_tools = HashSet::new();
-    let mut truncated_tool_images = HashMap::new();
+    let mut truncated_tool_images_vec: Vec<(
+        Box<str>,
+        Box<str>,
+        crate::chat::document::ToolImageShadows,
+    )> = Vec::new();
+    let mut dropped_tool_images_vec: Vec<crate::chat::document::ToolImageShadows> = Vec::new();
     let mut truncated_image_bytes = 0usize;
     let mut truncated_tool_images_overflow = false;
     let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
@@ -100,13 +106,13 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
                 let bounded = if tool.retained_bytes() <= cap {
                     tool.clone()
                 } else {
-                    truncated_tools.insert((row.id.clone(), tool.id.clone()));
-                    if !truncated_tool_images_overflow {
+                    let newly_truncated = truncated_tools.insert((row.id.clone(), tool.id.clone()));
+                    if newly_truncated && !truncated_tool_images_overflow {
                         let shadows = crate::chat::document::tool_image_paths(tool);
                         if !shadows.is_empty() {
                             let too_long = shadows
                                 .iter()
-                                .flatten()
+                                .flat_map(|group| group.iter())
                                 .any(|p| p.len() > MAX_TRUNCATED_IMAGE_PATH_BYTES);
                             let bytes = truncated_image_entry_bytes(&row.id, &tool.id, &shadows);
                             if too_long
@@ -114,11 +120,14 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
                                     > MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES
                             {
                                 truncated_tool_images_overflow = true;
-                                truncated_tool_images.clear();
+                                truncated_tool_images_vec.clear();
                             } else {
                                 truncated_image_bytes += bytes;
-                                truncated_tool_images
-                                    .insert((row.id.clone(), tool.id.clone()), shadows);
+                                truncated_tool_images_vec.push((
+                                    row.id.as_str().into(),
+                                    tool.id.as_str().into(),
+                                    shadows,
+                                ));
                             }
                         }
                     }
@@ -128,6 +137,32 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
             })
             .collect()
     };
+    if !truncated_tool_images_overflow {
+        for (_, tool) in raw_iter {
+            let shadows = crate::chat::document::tool_image_paths(tool);
+            if shadows.is_empty() {
+                continue;
+            }
+            let too_long = shadows
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|p| p.len() > MAX_TRUNCATED_IMAGE_PATH_BYTES);
+            let bytes = dropped_image_entry_bytes(&shadows);
+            if too_long
+                || truncated_image_bytes.saturating_add(bytes) > MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES
+            {
+                truncated_tool_images_overflow = true;
+                truncated_tool_images_vec.clear();
+                dropped_tool_images_vec.clear();
+                break;
+            }
+            truncated_image_bytes += bytes;
+            dropped_tool_images_vec.push(shadows);
+        }
+    }
+    truncated_tool_images_vec.sort_unstable_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    let truncated_tool_images = truncated_tool_images_vec.into_boxed_slice();
+    let dropped_tool_images = dropped_tool_images_vec.into_boxed_slice();
     tools.reverse();
     let raw_reports: Vec<_> =
         page.rows
@@ -186,6 +221,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         steps_incomplete: steps_truncated || page.older.is_some(),
         truncated_tools,
         truncated_tool_images,
+        dropped_tool_images,
         truncated_tool_images_overflow,
         reports,
     }

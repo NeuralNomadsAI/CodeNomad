@@ -14,7 +14,7 @@ use std::borrow::Cow;
 mod local_images;
 mod mermaid;
 
-pub(super) use local_images::{Conversation, tool_image_paths};
+pub(super) use local_images::{Conversation, ToolImageShadows, tool_image_paths};
 
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
