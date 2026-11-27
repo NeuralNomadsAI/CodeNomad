@@ -580,6 +580,13 @@ impl Reader {
     ) -> bool {
         if std::mem::take(&mut self.pending_scroll) {
             self.awaiting_manual_probe = ManualProbeWait::Idle;
+            if reading.awaiting_wheel_replay() {
+                self.reconciled_manual_scroll = false;
+                self.bookmark_width = 0.0;
+                self.width_grew_while_deferred = false;
+                self.resume_manual_seq = None;
+                return false;
+            }
             let trimmed_laid_out = self
                 .sync_undo
                 .as_ref()
@@ -5026,7 +5033,7 @@ mod resume_tests {
                 })
                 .collect()
         };
-        let run_wheel = |dx: f32, dy: f32| -> (usize, usize, Option<Target>) {
+        let run_wheel = |dx: f32, dy: f32| -> (usize, usize, Option<Target>, f32, f32) {
             let mut s = init();
             s.phase = Phase::Ready;
             s.messages = make_rows("Full40", 0..40);
@@ -5037,7 +5044,9 @@ mod resume_tests {
             for _ in 0..20 {
                 rt.frame(0.02);
             }
-            rt.update(|_, tx| {
+            rt.update(|s, tx| {
+                // Unwrap the wide code block so it mounts its real horizontal scroller (.scroll_x).
+                crate::transcript_state::Display::toggle_code(s, "body-hpan-20", 0);
                 tx.instant();
                 tx.scroll_key_to("hpan-20", 0.0);
             });
@@ -5076,25 +5085,42 @@ mod resume_tests {
             assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
             assert_eq!(rt.state.messages.len(), 4);
 
-            let target_rect = rt
-                .elements()
-                .into_iter()
-                .find(|e| e.key.as_deref() == Some("hpan-20"))
-                .or_else(|| {
-                    rt.elements()
-                        .into_iter()
-                        .find(|e| e.key.as_deref() == Some("history"))
-                })
-                .unwrap()
-                .rect;
+            let find_code_el = |rt: &Runtime<State>| {
+                rt.elements()
+                    .into_iter()
+                    .find(|e| {
+                        e.text
+                            .as_deref()
+                            .is_some_and(|t| t.contains("horizontal_scroll_segment_"))
+                            && e.visible[2] > 0.0
+                            && e.visible[3] > 0.0
+                    })
+                    .expect("visible horizontally overflowing code scroller content in hpan-20")
+            };
+            let code_before = find_code_el(&rt);
+            assert!(
+                code_before.rect[2] > code_before.visible[2] + 20.0,
+                "unwrapped code block must overflow horizontally: rect={:?} visible={:?}",
+                code_before.rect,
+                code_before.visible
+            );
             let (wx, wy) = (
-                target_rect[0] + target_rect[2] / 2.0,
-                target_rect[1] + target_rect[3] / 2.0,
+                code_before.visible[0] + code_before.visible[2] / 2.0,
+                code_before.visible[1] + code_before.visible[3] / 2.0,
             );
             rt.wheel_event(rune::WheelEvent::new(dx, dy).at(wx, wy));
             for _ in 0..30 {
                 rt.frame(0.02);
             }
+            let code_after_x = rt
+                .elements()
+                .into_iter()
+                .find(|e| {
+                    e.text
+                        .as_deref()
+                        .is_some_and(|t| t.contains("horizontal_scroll_segment_"))
+                })
+                .map_or(code_before.rect[0], |e| e.rect[0]);
             let hist = rt
                 .elements()
                 .into_iter()
@@ -5116,11 +5142,14 @@ mod resume_tests {
                 rt.state.messages.len(),
                 dest_idx,
                 lane.demand.current().target,
+                code_before.rect[0],
+                code_after_x,
             )
         };
 
-        // Horizontal-dominant pan (dx=-120, dy=5) must NOT undo the trimmed sync.
-        let (h_len, h_idx, h_target) = run_wheel(-120.0, 5.0);
+        // Horizontal-dominant pan (dx=-120, dy=5) over the unwrapped code scroller must NOT undo
+        // the trimmed sync AND must actually scroll the code block horizontally.
+        let (h_len, h_idx, h_target, code_before_x, code_after_x) = run_wheel(-120.0, 5.0);
         assert_eq!(
             h_len, 4,
             "horizontal-dominant pan must not roll back trimmed rows"
@@ -5134,9 +5163,13 @@ mod resume_tests {
             Some(Target::Around("hpan-20".into())),
             "horizontal-dominant pan must not re-request an older target"
         );
+        assert!(
+            code_after_x < code_before_x - 20.0,
+            "horizontal-dominant pan must actually advance the code block horizontal scroller: before={code_before_x} after={code_after_x}"
+        );
 
         // On the exact same state, a vertical upward wheel (dx=0, dy=360) must still roll back.
-        let (v_len, v_idx, v_target) = run_wheel(0.0, 360.0);
+        let (v_len, v_idx, v_target, _, _) = run_wheel(0.0, 360.0);
         assert_eq!(
             v_len, 40,
             "vertical upward wheel on the same state must restore cached rows"
@@ -5236,6 +5269,290 @@ mod resume_tests {
             lane2.demand.current().target,
             Some(Target::Around("hpan-20".into())),
             "fresh horizontal Began must not re-request an older target"
+        );
+    }
+
+    #[test]
+    fn probe_delivery_frame_reversal_cancels_first_delta_while_sync_undo_armed() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("prev-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full36", 0..36);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("prev-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        // Older-only trim around prev-20, laid out on a viewport change so cur.seq != saved_seq.
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_36", 16..36),
+                        older: Some(serde_json::json!("older-prev")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert_eq!(rt.state.messages.len(), 20);
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: start a phased downward scroll away from either edge (does not undo older-only trim).
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, -80.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt.frame(0.016);
+        assert!(
+            rt.state.reader.as_ref().unwrap().has_sync_undo(),
+            "SyncUndo must remain armed while the downward replay probe is in flight"
+        );
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe(),
+            "first downward delta must mount the replay probe"
+        );
+
+        // Frame B (probe-delivery frame): equal-and-opposite upward reversal in the same gesture.
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 80.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Moved),
+        );
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 0.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Ended),
+        );
+        rt.frame(0.016);
+        assert_eq!(
+            rt.state.messages.len(),
+            36,
+            "upward reversal on probe-delivery frame must roll back older-only trim before replaying"
+        );
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe(),
+            "rollback reversal on probe-delivery frame must re-arm replay probe for [-80, +80]"
+        );
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let anchor_row = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("prev-20"))
+            .expect("prev-20 must remain visible after equal-and-opposite wheel deltas");
+        let anchor_rel_y = anchor_row.rect[1] - hist[1];
+        assert!(
+            anchor_rel_y.abs() <= 1.0,
+            "equal-and-opposite -80/+80 deltas across probe delivery must cancel out at prev-20 (y=0), got {anchor_rel_y}"
+        );
+    }
+
+    #[test]
+    fn horizontal_jitter_on_probe_delivery_frame_preserves_rebound_after_rollback() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("jreb-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full40", 0..40);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("jreb-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim18_22", 18..22),
+                        older: Some(serde_json::json!("older-jreb")),
+                        newer: Some(serde_json::json!("newer-jreb")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: phased upward overshoot rolls back to cached 40 rows and mounts replay probe.
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 10_000.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt.frame(0.016);
+        assert_eq!(rt.state.messages.len(), 40);
+        assert!(!rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe(),
+            "rollback must have a pending replay probe for the top jump"
+        );
+
+        // Frame B (probe-delivery frame): horizontal-only jitter sample followed by downward
+        // rebound in the SAME phased gesture over plain transcript text.
+        rt.wheel_event(
+            rune::WheelEvent::new(10.0, 0.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Moved),
+        );
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, -240.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Moved),
+        );
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 0.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Ended),
+        );
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_offset > 100.0,
+            "downward rebound after horizontal jitter on probe-delivery frame must not be overwritten by top jump: offset={final_offset}"
+        );
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let dest = rt
+            .elements()
+            .into_iter()
+            .filter_map(|e| {
+                let k = e.key?;
+                k.starts_with("jreb-").then_some((k, e.rect))
+            })
+            .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+            .map(|(k, _)| k)
+            .expect("visible row after jitter + rebound");
+        let dest_idx: usize = dest.strip_prefix("jreb-").unwrap().parse().unwrap();
+        assert!(
+            dest_idx > 0 && dest_idx < 18,
+            "rebound after horizontal jitter must land below jreb-00 and above trimmed page: got {dest}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(dest)),
+            "rebound after horizontal jitter must re-request Target::Around(dest)"
         );
     }
 }
