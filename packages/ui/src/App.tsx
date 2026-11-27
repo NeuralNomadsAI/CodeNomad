@@ -287,9 +287,9 @@ const App: Component = () => {
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
     const livenessTimer = window.setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden"
       for (const instance of instances().values()) {
-        if (instance.status === "ready" && instance.client && needsPendingRequestLiveness(instance.id)) {
+        if (instance.status === "ready" && instance.client && needsPendingRequestLiveness(instance.id, hidden)) {
           void reconcilePendingRequestLiveness(instance.id).catch((error) => {
             log.warn("Failed to reconcile pending request liveness", { instanceId: instance.id, error })
           })

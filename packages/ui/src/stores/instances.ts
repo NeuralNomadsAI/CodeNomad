@@ -1304,8 +1304,9 @@ createRoot(() => {
  * queued requests, or an incomplete previous recovery. Idle projects rely on
  * live SSE events, foreground refresh on wake/reconnect, and session activation,
  * avoiding cold Location wakeups and plugin reloads. */
-function needsPendingRequestLiveness(instanceId: string): boolean {
+function needsPendingRequestLiveness(instanceId: string, hidden = false): boolean {
   if (incompletePendingRecovery().has(instanceId)) return true
+  if (hidden) return false
   if (getPermissionQueue(instanceId).length > 0 || getFormQueue(instanceId).length > 0) return true
   const instanceSessions = sessions().get(instanceId)
   if (Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending")) return true

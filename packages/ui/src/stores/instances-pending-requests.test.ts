@@ -568,6 +568,13 @@ test("needsPendingRequestLiveness skips idle recovered projects and activates fo
     serverApi.getPendingRequests = async () => { throw new HttpResponseError("Unavailable", 503, null, "timeout") }
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(needsPendingRequestLiveness(h.id), true, "incomplete recovery needs liveness retries")
+    assert.equal(needsPendingRequestLiveness(h.id, true), true, "hidden windows keep retrying incomplete recovery")
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })),
+    })
+    await syncPendingRequests(h.id)
+    setSessions(previous => new Map(previous).set(h.id, new Map([[working.id, working]])))
+    assert.equal(needsPendingRequestLiveness(h.id, true), false, "hidden windows skip already-recovered projects")
   } finally { h.cleanup() }
 })
 
