@@ -329,6 +329,8 @@ try {
         if(network)await network.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1})
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
+        const viewportMeta = await page.locator('meta[name="viewport"]').getAttribute('content')
+        assert(viewportMeta?.split(',').includes('viewport-fit=cover'), `App viewport must include viewport-fit=cover: ${viewportMeta}`)
         if(values.connected){
           const present=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           if(values.mobile)await page.waitForFunction(()=>['web.handover.done','web.gpu.failed','web.handover.failed']
@@ -513,8 +515,8 @@ try {
               linkedContinuationRecovered=true
             }
             assert.equal(await row('Another session').count(),0)
-            await openSessionSearch(page, sessions, messages, tap)
-            await page.locator('textarea:focus').fill('Another session')
+            const searchEditor = await openSessionSearch(page, sessions, messages, tap)
+            await searchEditor.fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])

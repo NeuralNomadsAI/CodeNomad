@@ -93,6 +93,8 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
     assert.equal(guide.headers.get('referrer-policy'), 'no-referrer')
     await page.goto(`${origin}/remote-pair?locale=he`)
     await page.waitForFunction(() => document.documentElement.lang==='he' && document.documentElement.dir==='rtl')
+    const pairViewport = await page.locator('meta[name="viewport"]').getAttribute('content')
+    assert(pairViewport?.split(',').includes('viewport-fit=cover'), `Pairing viewport must include viewport-fit=cover: ${pairViewport}`)
     assert(await page.getByRole('heading').textContent())
     assert(await page.locator('main').evaluate(el => {
       const sample=document.createElement('div')

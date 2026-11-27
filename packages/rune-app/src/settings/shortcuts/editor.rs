@@ -80,6 +80,7 @@ pub(in crate::settings) fn view<S: 'static>(
                 .child(
                     layout::hinted_field(filter, t("hotkeys.filter"))
                         .label(t("hotkeys.filter"))
+                        .input_mode(rune::InputMode::Search)
                         .on_edit(filter_edit)
                         .build(&field_kit(layout::dark()))
                         .on_input_change(move |s: &mut S, _| {
