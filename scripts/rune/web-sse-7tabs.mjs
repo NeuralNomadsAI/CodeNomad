@@ -140,10 +140,8 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     || f.eventName === 'session.text.delta'
     || f.delta != null
     || Boolean(f.hasStrayDelta)
-    || (f.type !== 'instance.event' && (
-      (typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID))
-      || (Array.isArray(f.strayAssistantMessageIDs) && f.strayAssistantMessageIDs.some(id => injectedIds.has(id)))
-    )),
+    || (Array.isArray(f.strayAssistantMessageIDs) && f.strayAssistantMessageIDs.some(id => injectedIds.has(id)))
+    || (f.type !== 'instance.event' && typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID)),
   )
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
@@ -155,6 +153,10 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     assert.equal(typeof frame.sessionID, 'string', 'Injected SSE frame sessionID must be a string')
     assert.equal(typeof frame.delta, 'string', 'Injected SSE frame delta must be a string')
     assert(!frame.hasStrayDelta, `Injected SSE frame for ${frame.assistantMessageID} carried stray delta outside event.data`)
+    assert(
+      !Array.isArray(frame.strayAssistantMessageIDs) || !frame.strayAssistantMessageIDs.some(id => injectedIds.has(id)),
+      `Injected SSE frame for ${frame.assistantMessageID} carried stray assistantMessageID outside event.data`,
+    )
   }
   const key = ({assistantMessageID, workspaceId, sessionID, text}) =>
     `${assistantMessageID}\0${workspaceId}\0${sessionID}\0${text}`
