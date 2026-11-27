@@ -553,11 +553,11 @@ pub(crate) async fn owns_location(
         if !crate::plugin_controls::engine::pin_still_live_sync(&root, &dir, &pin_clone) {
             return Some(false);
         }
-        if let Some(ref target) = pin_clone.target_canonical {
-            if !target.starts_with(&scope) {
+        if let crate::plugin_controls::engine::PinnedTarget::Existing { ref canonical, .. } = pin_clone.target {
+            if !canonical.starts_with(&scope) {
                 return Some(false);
             }
-            if target == &root {
+            if canonical == &root {
                 return Some(true);
             }
         }

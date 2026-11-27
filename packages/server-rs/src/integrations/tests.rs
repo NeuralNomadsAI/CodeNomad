@@ -2014,4 +2014,23 @@ async fn round2_pinning_body_cancel_content_type_param_limit_trailing_slash_and_
         !crate::plugin_controls::engine::pin_still_live_sync(&root_canon, &wt_str, &pin),
         "swapped workspace root must fail pre-write commit pin check even when linked worktree stays untouched"
     );
+
+    // 10. A missing target subfolder pins its nearest existing ancestor's physical identity:
+    // replacing that parent at the same path while root stays untouched invalidates the pin.
+    let missing_root = TempDir(crate::shared::test_dir("int-pin-missing-ancestor"));
+    let m_root = dunce::canonicalize(&missing_root.0).unwrap();
+    let parent_dir = m_root.join("parent");
+    fs::create_dir_all(&parent_dir).unwrap();
+    let missing_leaf = parent_dir.join("absent-child").to_string_lossy().into_owned();
+    let mut missing_ws = h.app.workspace(&h.ws_id.to_string()).unwrap();
+    missing_ws.path = m_root.clone();
+    let missing_pin = crate::plugin_controls::engine::capture_location_pin(&missing_ws, &missing_leaf).await.unwrap();
+    assert!(crate::plugin_controls::engine::pin_still_live_sync(&m_root, &missing_leaf, &missing_pin));
+    let parent_moved = m_root.join("parent-moved");
+    fs::rename(&parent_dir, &parent_moved).unwrap();
+    fs::create_dir_all(&parent_dir).unwrap();
+    assert!(
+        !crate::plugin_controls::engine::pin_still_live_sync(&m_root, &missing_leaf, &missing_pin),
+        "swapped nearest existing ancestor of a missing location must invalidate the pin"
+    );
 }

@@ -116,11 +116,30 @@ fn revision_eq(expected: &str, actual: &str) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PinnedTarget {
+    /// Existing target directory: exact canonical path and OS directory identity.
+    Existing { canonical: std::path::PathBuf, identity: String },
+    /// Missing target directory: nearest existing ancestor's exact canonical path and OS identity.
+    Missing { ancestor: std::path::PathBuf, ancestor_identity: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LocationPin {
     pub(crate) root_canonical: std::path::PathBuf,
     pub(crate) root_identity: String,
-    pub(crate) target_canonical: Option<std::path::PathBuf>,
-    pub(crate) target_identity: Option<String>,
+    pub(crate) target: PinnedTarget,
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<std::path::PathBuf> {
+    let mut cur = path.parent();
+    while let Some(ancestor) = cur {
+        match dunce::canonicalize(ancestor) {
+            Ok(canon) => return (canon == ancestor).then_some(canon),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = ancestor.parent(),
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str) -> Option<LocationPin> {
@@ -133,23 +152,25 @@ pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str)
         }
         let root_identity = crate::files::directory_identity(&root_canonical).ok()?;
         let dir_path = Path::new(&dir);
-        let (target_canonical, target_identity) = match dunce::canonicalize(dir_path) {
+        let target = match dunce::canonicalize(dir_path) {
             Ok(canon) => {
                 if canon != dir_path {
                     return None;
                 }
-                let id = crate::files::directory_identity(&canon).ok()?;
-                (Some(canon), Some(id))
+                let identity = crate::files::directory_identity(&canon).ok()?;
+                PinnedTarget::Existing { canonical: canon, identity }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 if ownership::resolve_directory(&dir).as_deref() != Some(dir_path) {
                     return None;
                 }
-                (None, None)
+                let ancestor = nearest_existing_ancestor(dir_path)?;
+                let ancestor_identity = crate::files::directory_identity(&ancestor).ok()?;
+                PinnedTarget::Missing { ancestor, ancestor_identity }
             }
             Err(_) => return None,
         };
-        Some(LocationPin { root_canonical, root_identity, target_canonical, target_identity })
+        Some(LocationPin { root_canonical, root_identity, target })
     })
     .await
     .ok()
@@ -164,14 +185,17 @@ pub(crate) fn pin_still_live_sync(root: &Path, dir: &str, pin: &LocationPin) -> 
         return false;
     }
     let dir_path = Path::new(dir);
-    match (&pin.target_canonical, &pin.target_identity) {
-        (Some(expected_target), Some(expected_id)) => {
-            dunce::canonicalize(dir_path).ok().as_ref() == Some(expected_target)
-                && expected_target == dir_path
-                && crate::files::directory_identity(expected_target).ok().as_deref() == Some(expected_id.as_str())
+    match &pin.target {
+        PinnedTarget::Existing { canonical, identity } => {
+            dunce::canonicalize(dir_path).ok().as_ref() == Some(canonical)
+                && canonical == dir_path
+                && crate::files::directory_identity(canonical).ok().as_deref() == Some(identity.as_str())
         }
-        (None, None) => ownership::resolve_directory(dir).as_deref() == Some(dir_path),
-        _ => false,
+        PinnedTarget::Missing { ancestor, ancestor_identity } => {
+            ownership::resolve_directory(dir).as_deref() == Some(dir_path)
+                && dunce::canonicalize(ancestor).ok().as_ref() == Some(ancestor)
+                && crate::files::directory_identity(ancestor).ok().as_deref() == Some(ancestor_identity.as_str())
+        }
     }
 }
 
@@ -492,6 +516,8 @@ pub(super) async fn read_context(
     {
         return Err(foreign);
     }
+    check_cancelled(cancel)?;
+    assert_current(app, &endpoint, &workspace, principal)?;
 
     let query = [("location[directory]", location.directory.as_str())];
     let (config, plugin) = tokio::join!(
@@ -723,6 +749,7 @@ pub(crate) async fn read_bound(
     if !pin_still_live(&ctx.workspace, &ctx.location.directory, &ctx.location_pin).await {
         return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
     }
+    assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     Ok((snapshot, ctx.workspace, ctx.endpoint, ctx.location_pin))
 }
 
