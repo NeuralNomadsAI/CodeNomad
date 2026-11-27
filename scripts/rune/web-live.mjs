@@ -92,6 +92,7 @@ const SSE_RETRY1_MIN_MS=750
 const SSE_RETRY1_MAX_MS=2250
 const SSE_RETRY2_MIN_MS=1600
 const SSE_RETRY2_MAX_MS=3500
+const HANDOVER_SAME_FRAME_MS=100
 
 function probeDelayMs(probes, index){
   return probes[index].receivedAt-probes[index-1].fulfilledAt
@@ -105,29 +106,55 @@ function inRetry2Window(delayMs, delay1Ms){
   return delayMs>=SSE_RETRY2_MIN_MS&&delayMs<=SSE_RETRY2_MAX_MS&&delayMs>delay1Ms
 }
 
-export function shouldServeSse503(probes){
-  if(probes.length<=2)return true
-  if(probes.length===3){
-    const delay1=probeDelayMs(probes,1)
-    const delay2=probeDelayMs(probes,2)
-    return !(inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))
+function hasMultiplexHandover(probes, handover, targetIndex){
+  if(!handover||handover.sseOpenedAt==null)return false
+  const targetAt=probes[targetIndex].receivedAt
+  if(handover.sseOpenedAt>targetAt)return false
+  const syncs=handover.conversationSyncTimes||[]
+  const nextAt=probes[targetIndex+1]?.receivedAt??Infinity
+  const latestAt=Math.min(targetAt+HANDOVER_SAME_FRAME_MS,nextAt)
+  if(targetIndex===1){
+    const delay=probeDelayMs(probes,1)
+    if(delay<SSE_RETRY1_MIN_MS)return syncs.some(at=>at<=latestAt)
+    return delay<1000&&syncs.some(at=>at>probes[0].fulfilledAt&&at<=latestAt)
   }
-  if(probes.length===4){
-    const delay1=probeDelayMs(probes,2)
-    const delay2=probeDelayMs(probes,3)
-    if(inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))return false
-    return inRetry1Window(probeDelayMs(probes,1))&&inRetry1Window(delay2)
+  if(targetIndex===2){
+    return probeDelayMs(probes,2)<SSE_RETRY2_MIN_MS&&
+      syncs.some(at=>at>probes[0].fulfilledAt&&at<=latestAt)
   }
   return false
 }
 
-export function assertSse503Backoff(probes){
+export function shouldServeSse503(probes, handover){
+  if(probes.length<=2)return true
+  if(probes.length===3){
+    const delay1=probeDelayMs(probes,1)
+    const delay2=probeDelayMs(probes,2)
+    if(inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))return false
+    return hasMultiplexHandover(probes,handover,1)||
+      (inRetry1Window(delay1)&&hasMultiplexHandover(probes,handover,2))
+  }
+  if(probes.length===4){
+    const delay1=probeDelayMs(probes,2)
+    const delay2=probeDelayMs(probes,3)
+    if(hasMultiplexHandover(probes,handover,1)&&inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))return false
+    return inRetry1Window(probeDelayMs(probes,1))&&hasMultiplexHandover(probes,handover,2)&&inRetry1Window(delay2)
+  }
+  return false
+}
+
+export function assertSse503Backoff(probes, handover){
   assert(probes.length>=3&&probes.length<=5,
     `Expected 3 to 5 /api/auth/status probes for one multiplexed SSE episode, observed ${probes.length}`)
-  if(probes.length===5){
+  if(probes.length===4){
+    assert(hasMultiplexHandover(probes,handover,1),
+      '4-probe SSE 503 recovery requires independent proof of a two-slot multiplexed handover before retry 1')
+  } else if(probes.length===5){
     const priorRetry1Ms=probeDelayMs(probes,1)
     assert(inRetry1Window(priorRetry1Ms),
       `Expected 5-probe multiplexed handover to follow a ~1 s first retry (${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(priorRetry1Ms)} ms`)
+    assert(hasMultiplexHandover(probes,handover,2),
+      '5-probe SSE 503 recovery requires independent proof of a two-slot multiplexed handover before retry 2')
   }
   const start=probes.length-3
   const retryDelay1Ms=probeDelayMs(probes,start+1)
@@ -162,9 +189,26 @@ async function verifySseAuthenticated503Recovery({
       await page.bringToFront()
       let injectTransient503=false
       let sseGate='pass'
+      let sseAdmitted=false
+      let recovered=false
       let routeError=null
       let sseBeforeFirstProbe=0
       const statusProbes=[]
+      const handover={sseOpenedAt:null,conversationSyncTimes:[]}
+      let notifyHandoverSync=null
+      const waitForSameFrameHandover=async(probes)=>{
+        if(probes.length!==3||shouldServeSse503(probes,handover))return
+        const delay1=probeDelayMs(probes,1),delay2=probeDelayMs(probes,2)
+        if(inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))return
+        if(!(delay1<1000||(inRetry1Window(delay1)&&delay2<SSE_RETRY2_MIN_MS)))return
+        const waiter=Promise.withResolvers()
+        notifyHandoverSync=()=>{ if(!injectTransient503||shouldServeSse503(probes,handover))waiter.resolve() }
+        try {
+          await settleWithin(waiter.promise,forbiddenDone,HANDOVER_SAME_FRAME_MS)
+        } finally {
+          notifyHandoverSync=null
+        }
+      }
       const first503Served=Promise.withResolvers()
       const releaseRecovered=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
@@ -177,21 +221,55 @@ async function verifySseAuthenticated503Recovery({
         forbiddenError??=err
         forbiddenRejected.reject(err)
       }
+      const failRoute=err=>{
+        routeError??=err
+        first503Served.reject(err)
+        recoveredCaptured.reject(err)
+      }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise])
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
+      const onSseResponse=res=>{
+        if(!injectTransient503||handover.sseOpenedAt!==null)return
+        const req=res.request()
+        if(req.resourceType()==='eventsource'&&res.status()===200){
+          const target=new URL(res.url())
+          if(target.origin===url.origin&&target.pathname==='/api/events'){
+            handover.sseOpenedAt=performance.now()
+            notifyHandoverSync?.()
+          }
+        }
+      }
+      const onConversationRequest=req=>{
+        if(!injectTransient503||!sseAdmitted)return
+        const target=new URL(req.url())
+        if(target.origin!==url.origin)return
+        if((req.method()==='GET'&&(/^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+$/.test(target.pathname)||
+            /^\/api\/workspaces\/[^/]+\/worktrees$/.test(target.pathname)))||
+          (req.method()==='POST'&&/^\/api\/workspaces\/[^/]+\/session-history\/window$/.test(target.pathname))){
+          handover.conversationSyncTimes.push(performance.now())
+          notifyHandoverSync?.()
+        }
+      }
       const routeEvents=async route=>{
         if(sseGate==='pass')return route.fallback()
+        if(sseGate==='abort')return route.abort().catch(()=>{})
         if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
         if(sseGate==='pass')return route.fallback()
+        if(sseGate==='abort')return route.abort().catch(()=>{})
         if(sseGate==='admit-one'){
           sseGate='hold'
+          sseAdmitted=true
           return route.fallback()
         }
         if(sseGate==='hold'){
-          await releaseHeldSse.promise
-          return route.fallback().catch(()=>{})
+          const pass=await releaseHeldSse.promise
+          return (pass?route.fallback():route.abort()).catch(()=>{})
         }
-        return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+        try {
+          await route.fulfill({status:503,contentType:'application/json',body:'{}'})
+        } catch (err) {
+          if(injectTransient503)failRoute(err)
+        }
       }
       const routeStatus=async route=>{
         const receivedAt=performance.now()
@@ -203,15 +281,25 @@ async function verifySseAuthenticated503Recovery({
         const attempt=statusProbes.length
         if(attempt===1)sseBeforeFirstProbe=eventSources()
         if(recoveredStatuses>0||attempt>5){
-          routeError??=new Error(`Unexpected /api/auth/status probe #${attempt} after bounded SSE 503 recovery`)
+          failRoute(new Error(`Unexpected /api/auth/status probe #${attempt} after bounded SSE 503 recovery`))
           await route.abort().catch(()=>{})
           return
         }
-        if(shouldServeSse503(statusProbes)){
+        await waitForSameFrameHandover(statusProbes)
+        if(!injectTransient503){
+          await route.abort().catch(()=>{})
+          return
+        }
+        if(shouldServeSse503(statusProbes,handover)){
           transient503s++
-          await route.fulfill({status:503,contentType:'application/json',body:'{}'})
-          probe.fulfilledAt=performance.now()
-          if(attempt===1)first503Served.resolve()
+          try {
+            await route.fulfill({status:503,contentType:'application/json',body:'{}'})
+            probe.fulfilledAt=performance.now()
+            if(attempt===1)first503Served.resolve()
+          } catch (err) {
+            if(injectTransient503)failRoute(err)
+            await route.abort().catch(()=>{})
+          }
           return
         }
         try {
@@ -232,14 +320,15 @@ async function verifySseAuthenticated503Recovery({
           probe.fulfilledAt=performance.now()
           recoveredCaptured.resolve()
         } catch (err) {
-          routeError??=err
-          recoveredCaptured.reject(err)
+          failRoute(err)
           await route.abort().catch(()=>{})
         }
       }
-      await page.route(eventsUrl,routeEvents)
-      await page.route(authStatusUrl,routeStatus)
       try {
+        page.on('response',onSseResponse)
+        page.on('request',onConversationRequest)
+        await page.route(eventsUrl,routeEvents)
+        await page.route(authStatusUrl,routeStatus)
         await step(command('revoke'))
         await step(dialog.waitFor({timeout:15_000}))
         await step(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
@@ -283,20 +372,25 @@ async function verifySseAuthenticated503Recovery({
         const accidentalSignals=await step(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[]))
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
         assert(sseBeforeFirstProbe>beforeSseAuth,'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
-        ;({retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes}=assertSse503Backoff(statusProbes))
+        ;({retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes}=assertSse503Backoff(statusProbes,handover))
         assert.equal(transient503s,statusProbes.length-1,'Every pre-recovery /api/auth/status probe must receive 503')
         assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
+        recovered=true
       } catch (err) {
         if(forbiddenError)throw forbiddenError
+        if(routeError)throw routeError
         throw err
       } finally {
         injectTransient503=false
+        sseGate=recovered?'pass':'abort'
+        notifyHandoverSync?.()
         releaseRecovered.resolve(false)
+        releaseHeldSse.resolve(recovered)
+        page.off('response',onSseResponse)
+        page.off('request',onConversationRequest)
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
-        await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),forbiddenDone)
-        sseGate='pass'
-        releaseHeldSse.resolve()
         await page.unroute(eventsUrl,routeEvents).catch(()=>{})
+        await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),forbiddenDone)
       }
     } finally { await pairFlow.dispose() }
   } finally { await tab.close().catch(()=>{}) }
@@ -433,8 +527,6 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleCaptured.promise.catch(()=>{})
         void followUpCaptured.promise.catch(()=>{})
         void staleReceivedByBrowser.promise.catch(()=>{})
-        page.on('requestfailed',onAuthFailed)
-        page.on('response',onAuthResponse)
         const focusForbiddenRejected=Promise.withResolvers()
         const focusForbiddenDone=focusForbiddenRejected.promise.catch(()=>{})
         const failFocusForbidden=err=>{
@@ -454,7 +546,15 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           if(!blockEvents)return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
           if(!blockEvents)return route.fallback()
-          return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+          try {
+            await route.fulfill({status:503,contentType:'application/json',body:'{}'})
+          } catch (err) {
+            if(blockEvents){
+              staleError??=err
+              staleCaptured.reject(err)
+              followUpCaptured.reject(err)
+            }
+          }
         }
         const holdStaleStatus=async route=>{
           if(route.request().method()!=='GET')return route.fallback()
@@ -503,9 +603,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         }
         // Intercept the VERY FIRST /api/auth/status triggered by device revocation (before #pairing-recovery opens),
         // then block SSE reconnects until the pairing overlay dismisses so focus/visibility alone drives recovery.
-        await page.route(eventsUrl,holdEvents)
-        await page.route(authStatusUrl,holdStaleStatus)
         try {
+          page.on('requestfailed',onAuthFailed)
+          page.on('response',onAuthResponse)
+          await page.route(eventsUrl,holdEvents)
+          await page.route(authStatusUrl,holdStaleStatus)
           try {
             await focusStep(page.evaluate(()=>{
               globalThis.__runeReturnSignal=null
@@ -544,9 +646,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             assert.equal(authStatusRequests,1,'No follow-up /api/auth/status may start before the held probe is delivered')
             assert.equal(eventSources(),beforeRevoke,'SSE must remain blocked so focus/visibility alone drives recovery')
           } finally {
-            await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusForbiddenDone)
             staleReleased=true
             releaseStale.resolve()
+            await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusForbiddenDone)
             if(!focusForbiddenError&&heldStale)await settleWithin(staleSettled.promise,focusForbiddenDone)
           }
           if(focusForbiddenError)throw focusForbiddenError
@@ -582,9 +684,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           staleReleased=true
           releaseStale.resolve()
           releaseFollowUp.resolve()
-          await settleFollowUp()
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
+          await settleFollowUp()
           await page.unroute(eventsUrl,holdEvents).catch(()=>{})
           await page.unroute(authStatusUrl,holdStaleStatus).catch(()=>{})
         }
