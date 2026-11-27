@@ -167,6 +167,15 @@ try {
       signal: AbortSignal.timeout(15000),
     })
   }
+  const attestedPatch = async (pathname, body, ctx) => {
+    const cookie = await cookieHeaderFor(ctx)
+    return attestedFetch(new URL(pathname, url).href, {
+      method: 'PATCH',
+      headers: {'content-type': 'application/json', ...(cookie ? {cookie} : {})},
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    })
+  }
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
@@ -775,13 +784,13 @@ try {
             await page.getByRole('paragraph').filter({hasText:'Fixture passage 181'}).waitFor()
             await press(messages['rune.latest'])
             await reading()
-            await markerFilters(page,messages,url,values.project,{touch:false,pages})
+            await markerFilters(page,messages,url,values.project,{touch:false,pages,attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context)})
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)
           }
           if(values.timeline&&name==='tablet'){
             const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
-            await markerFilters(page,messages,url,values.project,{touch:true,pages})
+            await markerFilters(page,messages,url,values.project,{touch:true,pages,attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context)})
           }
           if(missions)await missions.check(press)
           if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
@@ -910,6 +919,7 @@ try {
             assert(routes.some(row=>row.query.includes('cursor=')))
           }
            if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,{
+             attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context),
              holdNextAnchor(){
                const held={release:Promise.withResolvers()}
                holdAnchor=held

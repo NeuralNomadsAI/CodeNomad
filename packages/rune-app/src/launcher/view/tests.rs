@@ -234,7 +234,6 @@ fn direct_recovery_fields_mount_inside_dialog_without_leaking_password() {
     let has_intervening_scope = |field_path: &str| {
         elements.iter().any(|n| {
             n.path.starts_with(&dialog_prefix)
-                && n.path != field_path
                 && field_path.starts_with(&format!("{}/", n.path))
                 && matches!(n.role, "form" | "dialog" | "alertdialog")
         })

@@ -376,9 +376,11 @@ export async function revokedLauncher({context,url,messages}){
       assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
       const {nodes}=await accessibility.send('Accessibility.getFullAXTree')
       assert(!nodes.some(node=>!node.ignored&&node.name?.value==='Password input'),'The inactive password proxy must stay out of the accessibility tree')
+      return generic[0]?.autocomplete??null
     }
     const serverAddress=page.locator('[data-rune-a11y]').getByRole('textbox',{name:messages['rune.server'],exact:true})
     await serverAddress.waitFor()
+    assert.notEqual(await serverAddress.getAttribute('aria-disabled'),'true','Launcher server address must be enabled before tapping')
     const addressBox=await serverAddress.boundingBox()
     assert(addressBox&&addressBox.width>0&&addressBox.height>0,`Launcher server address missing bounds: ${JSON.stringify(addressBox)}`)
     await page.touchscreen.tap(addressBox.x+addressBox.width/2,addressBox.y+addressBox.height/2)
@@ -406,14 +408,14 @@ export async function revokedLauncher({context,url,messages}){
       await page.keyboard.press('Tab')
       assert.equal(await page.locator('input[type=password]:focus').count(),0,'No launcher gesture may activate a password field')
     }
-    await observePassword()
+    const hiddenPasswordAutocomplete=await observePassword()
     await command('revoke')
     const box=await connect.boundingBox();assert(box)
     await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
     await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
     await observePassword()
     assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
-    return {launcherRevokedNoPassword:true,launcherUrlInputMode:'url',hiddenPasswordAutocomplete:'current-password'}
+    return {launcherRevokedNoPassword:true,launcherUrlInputMode:urlSemantics.inputMode,hiddenPasswordAutocomplete}
   } finally {
     await page.evaluate(()=>globalThis.__fixtureFlushTouches?.()).catch(()=>{})
     await page.close()
