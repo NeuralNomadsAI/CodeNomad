@@ -965,4 +965,75 @@ fn unconfirmed_queued_prompt_reconciles_on_authoritative_inbox_and_confirmed_can
             .iter()
             .any(|item| item.id == fourth_id)
     );
+
+    // Consecutive Steer prompts A then B before A's InboxDelta arrives must keep A tracked as
+    // optimistic so A's Upsert replaces A's optimistic row instead of hiding A from the queue.
+    rt.state.draft = rune::edit::TextEdit::new("Steer A");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(steer_a) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected steer A prompt command");
+    };
+    let steer_a_id = steer_a.id.expect("steer A id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(
+            s,
+            &steer_a_id,
+            crate::transport::PromptOutcome::Confirmed(steer_a_id.clone()),
+        );
+    });
+    rt.state.draft = rune::edit::TextEdit::new("Steer B");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(steer_b) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected steer B prompt command");
+    };
+    let steer_b_id = steer_b.id.expect("steer B id");
+    ev_tx
+        .try_send(Event::InboxDelta(
+            codenomad_client::inbox::InboxDelta::Upsert(queued(
+                &steer_a_id,
+                Delivery::Steer,
+                "Steer A",
+            )),
+        ))
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_chat(s, 8));
+    });
+    assert!(!rt.state.composer.is_optimistic(&steer_a_id));
+    assert!(rt.state.composer.is_optimistic(&steer_b_id));
+    assert!(!rt.state.messages.iter().any(|row| row.id == steer_a_id));
+    assert!(
+        rt.state
+            .transcript_display
+            .queue
+            .items()
+            .iter()
+            .any(|item| item.id == steer_a_id)
+    );
+
+    // A hidden tab receiving Event::InboxDelta(Removed) for an unconfirmed prompt clears its lock
+    // and duplicate draft without mutating suspended queue rows.
+    rt.update(|s, _| {
+        crate::composer::acknowledge(s, &steer_b_id, crate::transport::PromptOutcome::Unconfirmed);
+    });
+    assert_eq!(
+        rt.state.composer.unconfirmed_id(),
+        Some(steer_b_id.as_str())
+    );
+    let queue_len_before = rt.state.transcript_display.queue.items().len();
+    ev_tx
+        .try_send(Event::InboxDelta(
+            codenomad_client::inbox::InboxDelta::Removed(steer_b_id.clone()),
+        ))
+        .unwrap();
+    rt.update(|s, _| {
+        assert!(crate::chat::events::poll_hidden_chat(s, 8, false));
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), None);
+    assert!(rt.state.draft.text.is_empty());
+    assert!(!rt.state.messages.iter().any(|row| row.id == steer_b_id));
+    assert_eq!(
+        rt.state.transcript_display.queue.items().len(),
+        queue_len_before
+    );
 }

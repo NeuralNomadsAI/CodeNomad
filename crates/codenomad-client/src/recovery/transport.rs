@@ -792,6 +792,47 @@ pub(crate) async fn run_with_reading(
                                 reader.schedule_inbox_sync(Duration::from_millis(100));
                             }
                         }
+                    } else {
+                        match kind {
+                            "session.inbox.enqueued" => {
+                                if let Some(item) = crate::inbox::decode_enqueued(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Upsert(item)),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivery.changed" => {
+                                if let Some((inbox_id, delivery)) =
+                                    crate::inbox::decode_delivery_changed(&native)
+                                {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                            id: inbox_id,
+                                            delivery,
+                                        }),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivered" | "session.inbox.cancelled" => {
+                                if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
+                                            inbox_id.to_owned(),
+                                        )),
+                                    )
+                                    .await;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     continue;
                 }

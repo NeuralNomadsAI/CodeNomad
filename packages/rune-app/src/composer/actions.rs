@@ -17,7 +17,7 @@ pub struct Owner {
     pub send_error: bool,
     pub(crate) announce_send_error: bool,
     pub(crate) announce_unconfirmed: bool,
-    optimistic_id: Option<String>,
+    optimistic_ids: Vec<String>,
     unconfirmed: Option<UnconfirmedPrompt>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -65,12 +65,31 @@ impl Owner {
         }
         (files, bytes)
     }
+    #[cfg(test)]
     pub(crate) fn optimistic_id(&self) -> Option<&str> {
-        self.optimistic_id.as_deref()
+        self.optimistic_ids.last().map(String::as_str)
+    }
+    pub(crate) fn is_optimistic(&self, id: &str) -> bool {
+        self.optimistic_ids.iter().any(|item| item == id)
+    }
+    pub(crate) fn record_optimistic(&mut self, id: String) {
+        if !self.is_optimistic(&id) {
+            if self.optimistic_ids.len() >= codenomad_client::inbox::MAX_ITEMS {
+                self.optimistic_ids.remove(0);
+            }
+            self.optimistic_ids.push(id);
+        }
+    }
+    pub(crate) fn replace_optimistic(&mut self, old: &str, new: String) {
+        if let Some(slot) = self.optimistic_ids.iter_mut().find(|item| *item == old) {
+            *slot = new;
+        }
     }
     pub(crate) fn clear_optimistic(&mut self, id: Option<&str>) {
-        if id.is_none() || self.optimistic_id.as_deref() == id {
-            self.optimistic_id = None;
+        if let Some(id) = id {
+            self.optimistic_ids.retain(|item| item != id);
+        } else {
+            self.optimistic_ids.clear();
         }
     }
     pub(crate) fn has_confirmed_user_message(
@@ -78,7 +97,7 @@ impl Owner {
         messages: &[crate::history::Row],
         id: &str,
     ) -> bool {
-        self.optimistic_id.as_deref() != Some(id)
+        !self.is_optimistic(id)
             && messages
                 .iter()
                 .any(|row| row.id == id && row.role == "user")
@@ -481,7 +500,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     s.composer.picker.reset();
     renew_editor(s, tx);
     if !queued {
-        s.composer.optimistic_id = Some(id.clone());
+        s.composer.record_optimistic(id.clone());
         if let Some(reader) = &mut s.reader {
             reader.clear_sync_undo();
         }
@@ -636,8 +655,8 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
                     }
                 }
                 row.id = confirmed.clone();
-                if s.composer.optimistic_id() == Some(attempted) {
-                    s.composer.optimistic_id = Some(confirmed);
+                if s.composer.is_optimistic(attempted) {
+                    s.composer.replace_optimistic(attempted, confirmed);
                 }
             }
         } else {

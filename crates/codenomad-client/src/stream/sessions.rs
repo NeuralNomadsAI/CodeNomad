@@ -39,7 +39,13 @@ pub(super) fn note_inbox_frame(
 }
 
 fn matches_history_boundary(workspace: &str, session: &str, value: &Value) -> bool {
-    if value["instanceId"] != workspace || value["type"] != "instance.event" {
+    if value["instanceId"] != workspace {
+        return false;
+    }
+    if value["type"] == "instance.eventStatus" {
+        return value["status"] != "connected";
+    }
+    if value["type"] != "instance.event" {
         return false;
     }
     let native = &value["event"];
@@ -547,5 +553,23 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                     "{kind} must invalidate history_revision"
                 );
             }
+
+            let before_disconnect = state.history_revision.load(SeqCst);
+            let disconnect_frame = json!({
+                "type": "instance.eventStatus",
+                "instanceId": "project",
+                "status": "disconnected"
+            });
+            let _ = note_inbox_frame(
+                &backend.workspace,
+                &backend.session,
+                &state.inbox,
+                Some(state.history_revision.as_ref()),
+                &disconnect_frame.to_string(),
+            );
+            assert!(
+                !state.history_current(before_disconnect),
+                "instance.eventStatus disconnect must invalidate history_revision synchronously on wire ingress"
+            );
         });
 }

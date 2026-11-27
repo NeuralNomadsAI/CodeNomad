@@ -923,7 +923,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
-            if !l.authentication_required && !stale_connection {
+            if !l.authentication_required && !pairing_required && !stale_connection {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
                 let stopped_in_flight = stopped_during_pending.contains(&id);

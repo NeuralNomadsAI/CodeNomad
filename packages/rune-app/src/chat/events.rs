@@ -371,21 +371,18 @@ fn drain_chat(
                     changed = true;
                     continue;
                 }
-                let optimistic_id = s.composer.optimistic_id().map(str::to_owned);
                 let sync_undo = if let Some(version) = reader_version
                     && !s.messages.is_empty()
                     && s.reader
                         .as_ref()
                         .is_some_and(chat::reader::Reader::is_resuming)
                 {
-                    let authoritative_first = s
-                        .messages
-                        .iter()
-                        .find(|r| optimistic_id.as_deref() != Some(r.id.as_str()));
+                    let authoritative_first =
+                        s.messages.iter().find(|r| !s.composer.is_optimistic(&r.id));
                     let authoritative_last = s
                         .messages
                         .iter()
-                        .rfind(|r| optimistic_id.as_deref() != Some(r.id.as_str()));
+                        .rfind(|r| !s.composer.is_optimistic(&r.id));
                     let trimmed_older = page.older.is_some()
                         && authoritative_first
                             .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
@@ -394,9 +391,7 @@ fn drain_chat(
                             .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
                     (trimmed_older || trimmed_newer).then(|| {
                         let mut prev_rows = std::mem::take(&mut s.messages);
-                        if let Some(id) = optimistic_id.as_deref() {
-                            prev_rows.retain(|r| r.id != id);
-                        }
+                        prev_rows.retain(|r| !s.composer.is_optimistic(&r.id));
                         (
                             version,
                             page.clone(),
@@ -658,7 +653,7 @@ fn drain_chat(
                 match &delta {
                     codenomad_client::inbox::InboxDelta::Upsert(item) => {
                         local_changed |= composer::confirm_unconfirmed_id(s, &item.id);
-                        if s.composer.optimistic_id() == Some(item.id.as_str()) {
+                        if s.composer.is_optimistic(&item.id) {
                             s.composer.clear_optimistic(Some(&item.id));
                             if let Some(index) = s.messages.iter().position(|row| row.id == item.id)
                             {
@@ -676,7 +671,7 @@ fn drain_chat(
                     }
                     codenomad_client::inbox::InboxDelta::Removed(id) => {
                         local_changed |= composer::confirm_unconfirmed_id(s, id);
-                        if s.composer.optimistic_id() == Some(id.as_str()) {
+                        if s.composer.is_optimistic(id) {
                             s.composer.clear_optimistic(Some(id));
                             if let Some(index) = s.messages.iter().position(|row| row.id == *id) {
                                 s.messages.remove(index);
@@ -685,6 +680,10 @@ fn drain_chat(
                             }
                         }
                     }
+                }
+                if !visible {
+                    changed |= local_changed;
+                    continue;
                 }
                 let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
                     changed |= local_changed;

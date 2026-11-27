@@ -353,9 +353,12 @@ pub(super) fn receive_authoritative(
         return false;
     }
     s.transcript_display.queue.deferred_snapshot = None;
-    if let Some(opt) = s.composer.optimistic_id().map(str::to_owned)
-        && items.iter().any(|item| item.id == opt)
-    {
+    let replaced: Vec<String> = items
+        .iter()
+        .filter(|item| s.composer.is_optimistic(&item.id))
+        .map(|item| item.id.clone())
+        .collect();
+    for opt in replaced {
         s.composer.clear_optimistic(Some(&opt));
         if let Some(index) = s.messages.iter().position(|row| row.id == opt) {
             s.messages.remove(index);
@@ -364,7 +367,7 @@ pub(super) fn receive_authoritative(
     items.retain(|item| {
         !s.messages
             .iter()
-            .any(|row| row.id == item.id && s.composer.optimistic_id() != Some(row.id.as_str()))
+            .any(|row| row.id == item.id && !s.composer.is_optimistic(&row.id))
     });
     super::reader::preserve_anchor_on_inbox_change(s, &items);
     super::reader::reconcile_queued_bookmark(s, &items);
