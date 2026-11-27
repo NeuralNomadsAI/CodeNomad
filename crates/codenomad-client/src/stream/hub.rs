@@ -1,9 +1,11 @@
 //! Connection-scoped SSE multiplexer: one physical `/api/events` stream per `(Http, base)`
 //! shared across all open tabs, `CatalogueWatch`, and `PreferencesWatch`.
+#[cfg(test)]
+use super::opened;
 use super::{
     Backend, Input, Result, Sender, State,
     limits::{FRAME_LIMIT, reread_marked},
-    opened,
+    opened_at,
     routing::dispatch_marked,
 };
 use crate::{Receiver, bounded, http::StreamDropGuard, runtime};
@@ -79,6 +81,7 @@ struct SubscriberSignals {
     inbox: Option<crate::inbox::InboxWire>,
     history_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
     upstream: Option<Arc<std::sync::atomic::AtomicBool>>,
+    disconnect_mark: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 struct Subscriber {
@@ -170,6 +173,7 @@ impl Subscriber {
                 inbox,
                 self.signals.history_revision.as_deref(),
                 self.signals.upstream.as_deref(),
+                self.signals.disconnect_mark.as_deref(),
                 data,
             )
         } else {
@@ -192,7 +196,12 @@ impl Subscriber {
         if queue.closed {
             return false;
         }
-        queue.items.push_back((HubItem::Opened, 0));
+        let opened_mark = self
+            .signals
+            .inbox
+            .as_ref()
+            .map_or(0, crate::inbox::InboxWire::current_ingress);
+        queue.items.push_back((HubItem::Opened, opened_mark));
         let mut skipped = false;
         for frame in replays {
             let size = frame.0.len().saturating_add(frame.1.len());
@@ -201,7 +210,7 @@ impl Subscriber {
             {
                 queue.items.clear();
                 queue.bytes = 0;
-                queue.items.push_back((HubItem::Opened, 0));
+                queue.items.push_back((HubItem::Opened, opened_mark));
                 let mark = self.note_inbox_skipped();
                 queue.items.push_back((HubItem::Skipped, mark));
                 skipped = true;
@@ -225,7 +234,12 @@ impl Subscriber {
         if queue.closed {
             return;
         }
-        queue.items.push_back((HubItem::Opened, 0));
+        let opened_mark = self
+            .signals
+            .inbox
+            .as_ref()
+            .map_or(0, crate::inbox::InboxWire::current_ingress);
+        queue.items.push_back((HubItem::Opened, opened_mark));
         let _ = self.wake_tx.try_send(());
     }
 
@@ -903,6 +917,10 @@ pub(super) async fn read_shared(
             .is_none()
             .then(|| state.history_revision.clone()),
         upstream: state.catalogue.is_none().then(|| state.upstream.clone()),
+        disconnect_mark: state
+            .catalogue
+            .is_none()
+            .then(|| state.disconnect_mark.clone()),
     };
     enum SubscribeStep {
         Ready(Subscription),
@@ -931,9 +949,9 @@ pub(super) async fn read_shared(
         async {
             loop {
                 match sub.sub.recv_marked().await {
-                    (HubItem::Opened, _) => {
+                    (HubItem::Opened, mark) => {
                         backend.client.children().invalidate_all(backend);
-                        opened(epoch, out, state).await?;
+                        opened_at(epoch, out, state, mark).await?;
                     }
                     (HubItem::Frame(frame), mark) => {
                         dispatch_marked(

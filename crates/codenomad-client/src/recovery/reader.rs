@@ -965,6 +965,43 @@ async fn read_fenced<T>(
     }
 }
 
+pub(super) async fn reader_inbox_delta(
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    delta: crate::inbox::InboxDelta,
+) -> bool {
+    let Some(reading) = reading else {
+        return publish(out, wake, Event::InboxDelta(delta)).await;
+    };
+    let connection = reading.connection.load(SeqCst);
+    let delivered = futures_lite::future::race(
+        async {
+            reading.demand.changed_after(generation).await;
+            None
+        },
+        async {
+            Some(
+                reading
+                    .events
+                    .send((generation, connection, Event::InboxDelta(delta.clone())))
+                    .await
+                    .is_ok(),
+            )
+        },
+    )
+    .await;
+    match delivered {
+        Some(true) => {
+            wake();
+            true
+        }
+        Some(false) => false,
+        None => publish(out, wake, Event::InboxDelta(delta)).await,
+    }
+}
+
 pub(super) async fn reader_event(
     reading: Option<&ReadingLane>,
     generation: u64,

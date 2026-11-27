@@ -563,6 +563,7 @@ async fn receive_chunk(
                             &state.inbox,
                             Some(state.history_revision.as_ref()),
                             Some(state.upstream.as_ref()),
+                            Some(state.disconnect_mark.as_ref()),
                             data,
                         )
                     } else {

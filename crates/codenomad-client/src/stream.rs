@@ -39,6 +39,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub running: AtomicBool,
     pub upstream: Arc<AtomicBool>,
+    pub(crate) disconnect_mark: Arc<AtomicU64>,
     pub(crate) auth_expired: AtomicBool,
     pub(crate) history_revision: Arc<AtomicU64>,
     pub(crate) inbox: crate::inbox::InboxWire,
@@ -60,6 +61,7 @@ impl Default for State {
             alive: AtomicBool::new(false),
             running: AtomicBool::new(false),
             upstream: Arc::new(AtomicBool::new(false)),
+            disconnect_mark: Arc::new(AtomicU64::new(0)),
             auth_expired: AtomicBool::new(false),
             history_revision: Arc::new(AtomicU64::new(0)),
             inbox: crate::inbox::InboxWire::default(),
@@ -345,11 +347,22 @@ pub(crate) async fn read(
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    opened_at(epoch, out, state, state.inbox.current_ingress()).await
+}
+
+pub(super) async fn opened_at(
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    mark: u64,
+) -> Result<()> {
     if let Some(signals) = &state.catalogue {
         signals.reconnected();
     }
     state.alive.store(true, SeqCst);
-    state.upstream.store(true, SeqCst);
+    if mark >= state.disconnect_mark.load(SeqCst) {
+        state.upstream.store(true, SeqCst);
+    }
     out.send(Input::Opened(epoch)).await?;
     if state.preferences.is_some() {
         state

@@ -1,7 +1,7 @@
 //! Serialized command and SSE transport, epoch ownership and reconnect scheduling.
 use super::{
     Input, ReadingLane,
-    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event},
+    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event, reader_inbox_delta},
     receipts,
 };
 use crate::{
@@ -697,14 +697,12 @@ pub(crate) async fn run_with_reading(
                                         } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
                                             reader.inbox.push(item.clone());
                                         }
-                                        reader_event(
+                                        reader_inbox_delta(
                                             reading,
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::InboxDelta(crate::inbox::InboxDelta::Upsert(
-                                                item,
-                                            )),
+                                            crate::inbox::InboxDelta::Upsert(item),
                                         )
                                         .await;
                                     } else if !reader.historical && reader.inbox_overlap_repairs < 2
@@ -731,15 +729,15 @@ pub(crate) async fn run_with_reading(
                                     {
                                         existing.delivery = delivery;
                                     }
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                        crate::inbox::InboxDelta::Delivery {
                                             id: inbox_id,
                                             delivery,
-                                        }),
+                                        },
                                     )
                                     .await;
                                 }
@@ -748,14 +746,12 @@ pub(crate) async fn run_with_reading(
                             "session.inbox.delivered" => {
                                 if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
                                     reader.inbox.retain(|row| row.id != inbox_id);
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
-                                            inbox_id.to_owned(),
-                                        )),
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
                                     )
                                     .await;
                                 }
@@ -771,14 +767,12 @@ pub(crate) async fn run_with_reading(
                                     inbox_id.is_some_and(|id| reader.known.contains(id));
                                 if let Some(inbox_id) = inbox_id {
                                     reader.inbox.retain(|row| row.id != inbox_id);
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
-                                            inbox_id.to_owned(),
-                                        )),
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
                                     )
                                     .await;
                                 }

@@ -12,6 +12,7 @@ pub(super) fn note_inbox_frame(
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
     upstream: Option<&AtomicBool>,
+    disconnect_mark: Option<&AtomicU64>,
     data: &str,
 ) -> u64 {
     if data.len() > super::limits::FRAME_LIMIT {
@@ -41,6 +42,7 @@ pub(super) fn note_inbox_frame(
                 inbox,
                 history_revision,
                 upstream,
+                disconnect_mark,
                 &value,
             )
         })
@@ -105,25 +107,31 @@ pub(super) fn note_inbox_value(
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
     upstream: Option<&AtomicBool>,
+    disconnect_mark: Option<&AtomicU64>,
     value: &Value,
 ) -> u64 {
+    let mark = if matches_inbox_value(workspace, session, value) {
+        inbox.record_ingress()
+    } else {
+        0
+    };
     if value["instanceId"] == workspace
         && value["type"] == "instance.eventStatus"
         && value["status"] != "connected"
-        && let Some(up) = upstream
     {
-        up.store(false, SeqCst);
+        if let Some(dm) = disconnect_mark {
+            dm.fetch_max(mark, SeqCst);
+        }
+        if let Some(up) = upstream {
+            up.store(false, SeqCst);
+        }
     }
     if let Some(rev) = history_revision
         && matches_history_boundary(workspace, session, value)
     {
         rev.fetch_add(1, SeqCst);
     }
-    if matches_inbox_value(workspace, session, value) {
-        inbox.record_ingress()
-    } else {
-        0
-    }
+    mark
 }
 
 pub(super) async fn relay(
@@ -302,11 +310,20 @@ pub(super) async fn relay(
         .await?;
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
-        let was_ready = state.upstream.swap(ready, SeqCst);
-        if ready != was_ready {
+        let apply_ready = ready && inbox_mark >= state.disconnect_mark.load(SeqCst);
+        let was_ready = if ready {
+            if apply_ready {
+                state.upstream.swap(true, SeqCst)
+            } else {
+                state.upstream.load(SeqCst)
+            }
+        } else {
+            state.upstream.swap(false, SeqCst)
+        };
+        if (ready && apply_ready != was_ready) || (!ready && was_ready) {
             state.history_revision.fetch_add(1, SeqCst);
         }
-        if ready && !was_ready {
+        if apply_ready && !was_ready {
             out.send(Input::Workspace(
                 epoch,
                 WorkspaceEvent::ComposerCataloguesChanged,
@@ -557,6 +574,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                     &state.inbox,
                     Some(state.history_revision.as_ref()),
                     Some(state.upstream.as_ref()),
+                    Some(state.disconnect_mark.as_ref()),
                     &frame.to_string(),
                 );
                 assert!(
@@ -571,32 +589,98 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 );
             }
 
+            let connected_frame = json!({
+                "type": "instance.eventStatus",
+                "instanceId": "project",
+                "status": "connected"
+            });
+            let earlier_connected_mark = note_inbox_frame(
+                &backend.workspace,
+                &backend.session,
+                &state.inbox,
+                Some(state.history_revision.as_ref()),
+                Some(state.upstream.as_ref()),
+                Some(state.disconnect_mark.as_ref()),
+                &connected_frame.to_string(),
+            );
             let before_disconnect = state.history_revision.load(SeqCst);
             let disconnect_frame = json!({
                 "type": "instance.eventStatus",
                 "instanceId": "project",
                 "status": "disconnected"
             });
-            let _ = note_inbox_frame(
+            let disconnect_mark = note_inbox_frame(
                 &backend.workspace,
                 &backend.session,
                 &state.inbox,
                 Some(state.history_revision.as_ref()),
                 Some(state.upstream.as_ref()),
+                Some(state.disconnect_mark.as_ref()),
                 &disconnect_frame.to_string(),
             );
+            assert!(disconnect_mark > earlier_connected_mark);
             assert!(
                 !state.upstream.load(SeqCst),
                 "instance.eventStatus disconnect must clear upstream synchronously on wire ingress"
             );
-            assert!(
-                !state.history_current(before_disconnect),
-                "instance.eventStatus disconnect must invalidate history_revision synchronously on wire ingress"
-            );
             let after_disconnect = state.history_revision.load(SeqCst);
+            assert_ne!(
+                after_disconnect, before_disconnect,
+                "instance.eventStatus disconnect must increment history_revision synchronously on wire ingress"
+            );
             assert!(
                 !state.history_current(after_disconnect),
                 "history_current must stay false even with the post-disconnect revision while upstream is false"
+            );
+            // A queued earlier connected status or Opened must NOT flip upstream back to true
+            // while a newer wire disconnect is pending in the queue.
+            while inbox.try_recv().is_ok() {}
+            relay(
+                &backend,
+                1,
+                &out,
+                &state,
+                &connected_frame,
+                earlier_connected_mark,
+            )
+            .await
+            .unwrap();
+            assert!(
+                !state.upstream.load(SeqCst),
+                "stale queued connected status must not re-enable upstream past a newer wire disconnect"
+            );
+            while inbox.try_recv().is_ok() {}
+            super::opened_at(1, &out, &state, earlier_connected_mark)
+                .await
+                .unwrap();
+            assert!(
+                !state.upstream.load(SeqCst),
+                "stale queued Opened must not re-enable upstream past a newer wire disconnect"
+            );
+            // A later connected status after the disconnect cleanly restores upstream.
+            while inbox.try_recv().is_ok() {}
+            let later_connected_mark = note_inbox_frame(
+                &backend.workspace,
+                &backend.session,
+                &state.inbox,
+                Some(state.history_revision.as_ref()),
+                Some(state.upstream.as_ref()),
+                Some(state.disconnect_mark.as_ref()),
+                &connected_frame.to_string(),
+            );
+            relay(
+                &backend,
+                1,
+                &out,
+                &state,
+                &connected_frame,
+                later_connected_mark,
+            )
+            .await
+            .unwrap();
+            assert!(
+                state.upstream.load(SeqCst),
+                "a newer connected status after disconnect must restore upstream"
             );
         });
 }
