@@ -169,3 +169,12 @@ test('the mobile menu scene admits only its queued prompt, fixture file and hist
   assert(p.allows('PUT',storage(project),history))
   assert(!p.allows('PUT',storage('D:/other'),history))
 })
+test('session inbox reads stay read-only on admitted fixture sessions',()=>{
+  const p=workspacePolicy({origin,project}),input=creation('own')
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  assert(p.allows('GET','/workspaces/one/instance/api/session/ses_existing/inbox'))
+  assert(p.allows('GET','/workspaces/one/instance/api/session/ses_linked/inbox'))
+  assert(!p.allows('DELETE','/workspaces/one/instance/api/session/ses_existing/inbox'))
+  assert(!p.allows('GET','/workspaces/foreign/instance/api/session/ses_existing/inbox'))
+  assert(!p.allows('GET','/workspaces/one/instance/api/session/ses_foreign/inbox'))
+})

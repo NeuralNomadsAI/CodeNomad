@@ -1,4 +1,9 @@
-use super::{Choice, Preferences};
+use super::{
+    Choice, Preferences,
+    document::{
+        OpenCodeBinariesOp, OpenCodeBinaryEntry, normalize_opencode_binary, parse_opencode_binaries,
+    },
+};
 
 pub(in crate::settings) const LEVELS: [(&str, &str); 4] = [
     ("DEBUG", "settings.opencode.logLevel.option.debug"),
@@ -72,6 +77,133 @@ impl Preferences {
     pub(in crate::settings) fn retry_log_level(&mut self) {
         if self.show_server && self.can_retry() {
             self.server.retry(|choice| choice == Choice::LogLevel);
+        }
+    }
+
+    pub(in crate::settings) fn opencode_binary(&self) -> Option<String> {
+        let document = self.server.snapshot.as_ref()?;
+        Some(normalize_opencode_binary(document))
+    }
+
+    pub(in crate::settings) fn opencode_binaries(&self) -> Vec<OpenCodeBinaryEntry> {
+        self.state
+            .snapshot
+            .as_ref()
+            .map(parse_opencode_binaries)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| entry.path != "opencode" && entry.path != "opencode2")
+            .collect()
+    }
+
+    pub(in crate::settings) fn opencode_binary_available(&self) -> bool {
+        self.show_server
+            && self.can_retry()
+            && self.server.snapshot.is_some()
+            && !self.server.read_failed()
+            && self.state.snapshot.is_some()
+            && !self.state.read_failed()
+    }
+
+    pub(in crate::settings) fn opencode_binary_pending(&self) -> bool {
+        self.server.choice_pending(Choice::OpenCodeBinary)
+            || self.state.choice_pending(Choice::OpenCodeBinaries)
+    }
+
+    pub(in crate::settings) fn opencode_transport_generation(&self) -> Option<(String, u64)> {
+        self.backend
+            .as_ref()
+            .filter(|_| self.can_retry() && !self.is_transport_lost())
+            .map(|backend| (backend.client_id.clone(), self.server.transport_epoch()))
+    }
+
+    pub(in crate::settings) fn opencode_binary_failed(&self) -> Option<&'static str> {
+        if self.server.choice_failed(Choice::OpenCodeBinary)
+            || self.state.choice_failed(Choice::OpenCodeBinaries)
+        {
+            Some("settings.preferenceSaveFailed")
+        } else if self.server.read_failed() || self.state.read_failed() {
+            Some("rune.connect_error")
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::settings) fn select_opencode_binary(
+        &mut self,
+        path: &str,
+        version: Option<String>,
+        last_used: u64,
+    ) -> bool {
+        if !self.opencode_binary_available() || self.opencode_binary_pending() {
+            return false;
+        }
+        let target = {
+            let trimmed = path.trim();
+            if trimmed.is_empty() || trimmed == "opencode" {
+                "opencode2"
+            } else {
+                trimmed
+            }
+        };
+        if !self.server.transport_revalidated() && !self.server.refreshing() {
+            self.server.invalidate();
+        }
+        if self.opencode_binary().as_deref() != Some(target) {
+            self.server.stage_opencode_binary(target.to_owned());
+        }
+        if target != "opencode2" {
+            if !self.state.transport_revalidated() && !self.state.refreshing() {
+                self.state.invalidate();
+            }
+            self.state
+                .stage_opencode_binaries(OpenCodeBinariesOp::Upsert {
+                    path: target.to_owned(),
+                    version,
+                    last_used,
+                });
+        }
+        self.revision += 1;
+        if let Some(wake) = &self.main_wake {
+            wake();
+        }
+        true
+    }
+
+    pub(in crate::settings) fn remove_opencode_binary(&mut self, path: &str) -> bool {
+        if !self.opencode_binary_available() || self.opencode_binary_pending() {
+            return false;
+        }
+        let trimmed = path.trim();
+        if trimmed.is_empty() || trimmed == "opencode" || trimmed == "opencode2" {
+            return false;
+        }
+        self.server.clear_failed_opencode_binary(trimmed);
+        if !self.state.transport_revalidated() && !self.state.refreshing() {
+            self.state.invalidate();
+        }
+        self.state
+            .stage_opencode_binaries(OpenCodeBinariesOp::Remove {
+                path: trimmed.to_owned(),
+            });
+        if self.opencode_binary().as_deref() == Some(trimmed) {
+            if !self.server.transport_revalidated() && !self.server.refreshing() {
+                self.server.invalidate();
+            }
+            self.server.stage_opencode_binary("opencode2".to_owned());
+        }
+        self.revision += 1;
+        if let Some(wake) = &self.main_wake {
+            wake();
+        }
+        true
+    }
+
+    pub(in crate::settings) fn retry_opencode_binary(&mut self) {
+        if self.show_server && self.can_retry() {
+            self.server.retry(|choice| choice == Choice::OpenCodeBinary);
+            self.state
+                .retry(|choice| choice == Choice::OpenCodeBinaries);
         }
     }
 

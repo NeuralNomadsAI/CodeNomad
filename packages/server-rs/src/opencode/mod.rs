@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod install;
 pub mod launch;
 pub(crate) mod login_start;
+mod logs;
 mod prompt;
 pub mod proxy;
 mod proxy_body;
@@ -317,6 +318,7 @@ pub fn routes() -> Router<Shared> {
         .route("/workspaces/{id}/instance/{*route}", any(proxy::relay))
         .route("/api/opencode/update", get(update::status))
         .route("/api/opencode/login-start", get(login_start::read).post(login_start::set))
+        .route("/api/opencode/logs", get(logs::read))
         .route("/api/storage/binaries/validate", post(update::validate))
 }
 
@@ -336,6 +338,10 @@ pub fn valid_id(value: &str) -> bool {
 
 pub fn upstream_error() -> Error {
     error(Status::BAD_GATEWAY, "Workspace instance proxy failed")
+}
+
+pub fn pre_dispatch_unavailable() -> Error {
+    error(Status::BAD_GATEWAY, "opencode_unavailable_before_send")
 }
 
 pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, ()> {

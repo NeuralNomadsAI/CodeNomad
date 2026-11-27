@@ -57,6 +57,9 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT",r"^/api/workspaces/[^/]+/(?:websearch-settings|image-settings|subagent-depth)$"),
     ("GET PATCH",r"^/api/workspaces/[^/]+/plugin-controls$"),
     ("POST DELETE",r"^/api/workspaces/[^/]+/plugin-sources$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:hosts|binding)$"),
+    ("POST",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:install|attach|detach|install-host)$"),
     ("GET POST",r"^/api/sidecars$"),
     ("POST",r"^/api/previews$"),
     ("DELETE",r"^/api/previews/[^/]+$"),
@@ -174,9 +177,10 @@ pub async fn admit(
     req: Request,
     next: Next,
 ) -> Response {
-    let no_store = is_no_store_account_path(req.uri().path());
+    let no_store_account = is_no_store_account_path(req.uri().path());
+    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
     let mut response = admit_inner(state, req, next).await;
-    if no_store && !response.status().is_success() {
+    if no_store_integrations || (no_store_account && !response.status().is_success()) {
         response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     response
@@ -355,7 +359,9 @@ async fn admit_inner(
     {
         let response = bundle.serve(req, asset).await;
         let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
-            reply(Status::UNAUTHORIZED, "This device is not paired")
+            let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+            r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+            r
         } else {
             response
         };
@@ -387,7 +393,9 @@ async fn admit_inner(
         );
     }
     let Some((id, principal)) = owner else {
-        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+        let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+        r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+        return cors(r, supplied);
     };
     {
         let mut socket = channel.principal.lock().unwrap();

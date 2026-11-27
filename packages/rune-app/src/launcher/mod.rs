@@ -88,6 +88,7 @@ pub struct Launcher {
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
     close_mission_reader_on_bind: bool,
+    rebinding_failed: bool,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
@@ -223,6 +224,7 @@ impl Launcher {
             pending_connection_generation: 0,
             selection_ticket: None,
             close_mission_reader_on_bind: false,
+            rebinding_failed: false,
             boot,
             host: None,
             managed_renewal: None,
@@ -621,6 +623,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     for id in &checked.deleted {
         crate::workspace::recover_missing_session_draft(s, id);
     }
+    #[cfg(target_arch = "wasm32")]
+    let pairing_required = crate::platform::pairing::required(s);
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -640,11 +644,15 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
     let close_mission_reader = std::mem::take(&mut l.close_mission_reader_on_bind);
+    let rebinding_failed = std::mem::take(&mut l.rebinding_failed);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
         l.adopt_recovered_for = None;
+        if rebinding_failed && s.phase == Phase::Reconnecting {
+            s.phase = Phase::Failed;
+        }
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
@@ -661,6 +669,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::AuthenticationExpired(expired)) => {
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             crate::settings::authentication_required(s, &expired);
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
@@ -917,10 +928,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             {
                 l.adopt_recovered_for = None;
             }
-            if let Some(id) = selected
-                .as_deref()
-                .filter(|id| s.phase == Phase::Failed && unavailable_ids.iter().any(|m| m == id))
-            {
+            if let Some(id) = selected.as_deref().filter(|id| {
+                (s.phase == Phase::Failed || rebinding_failed)
+                    && unavailable_ids.iter().any(|m| m == id)
+            }) {
                 let is_deleted = missing.iter().any(|(m, deleted)| m == id && *deleted);
                 retire_session(s, id, is_deleted);
                 for (other, deleted) in &missing {
@@ -941,12 +952,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .screen
                 .launcher()
                 .is_some_and(|l| l.authentication_required);
+            #[cfg(target_arch = "wasm32")]
+            let auth_required = auth_required || pairing_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
                     && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&b.workspace)
                     && (!selection_blocked
-                        || s.phase == Phase::Failed
+                        || (s.phase == Phase::Failed || rebinding_failed)
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 let retry_ticket = if let Some(l) = s.screen.launcher_mut() {
@@ -966,6 +979,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     None
                 };
                 if stale_connection {
+                    if rebinding_failed && s.phase == Phase::Reconnecting {
+                        s.phase = Phase::Failed;
+                    }
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
                         retry_mission_conversation(s, b.session);
@@ -982,6 +998,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.adopt_recovered_for = None;
+                }
+                if rebinding_failed && s.phase == Phase::Reconnecting {
+                    s.phase = Phase::Failed;
                 }
                 if !selection_blocked {
                     if let Some(l) = s.screen.launcher_mut() {
@@ -1001,7 +1020,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
-            if !l.authentication_required && !stale_connection {
+            if !l.authentication_required && !pairing_required && !stale_connection {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
                 let stopped_in_flight = stopped_during_pending.contains(&id);
@@ -1051,6 +1070,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         spawn_detached_reconcile(l, current_stream_generation);
                     }
                 }
+            } else if pairing_required && !stale_connection {
+                s.phase = Phase::WorkspaceMissing;
             }
         }
         Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
@@ -1096,6 +1117,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Err(error) => {
             l.adopt_recovered_for = None;
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             if stale_connection && l.resume_after_job {
                 l.error = None;
             } else {

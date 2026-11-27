@@ -21,6 +21,8 @@ pub(crate) use state::has_wake_lock_eligible_work;
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::revoke_cached_sessions;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
@@ -29,15 +31,16 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, bound_with_adopt, can_new, capture,
-    capture_files_mode, check_restored_draft_sessions, close, connected,
-    conversation_stream_clients, draft_changed, file_draft_status, file_wrap, files_tab,
-    has_conversation_stream, input_ready, new_tab, note_restored_draft_sessions_present,
-    note_session_deleted, opened, panel_width, poll, poll_file_drafts, prepare_open,
-    recover_missing_session_draft, renew_connection, restore_files_mode, resume,
-    resume_restored_draft_checks, retry, schedule_catalogue, schedule_catalogue_refresh, select,
-    select_index, select_relative, session_deleted_hook, status, strip, toggle_file_wrap,
-    unconfirmed_drafts_full, unselect_missing, unselect_session,
+    MAX_WINDOW_DEVICE_FILES, Ui, active_session, attachment_draft_admissible, bound,
+    bound_with_adopt, can_new, capture, capture_files_mode, check_restored_draft_sessions, close,
+    confirm_unconfirmed, connected, conversation_stream_clients, draft_changed, file_draft_status,
+    file_wrap, files_tab, has_conversation_stream, has_unconfirmed, input_ready, new_tab,
+    note_restored_draft_sessions_present, note_session_deleted, note_unconfirmed, opened,
+    panel_width, poll, poll_file_drafts, prepare_open, recover_missing_session_draft,
+    renew_connection, restore_files_mode, resume, resume_restored_draft_checks, retry,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
+    session_deleted_hook, status, strip, toggle_file_wrap, unconfirmed_drafts_full,
+    unselect_missing, unselect_session, window_inline_usage_without_history,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,

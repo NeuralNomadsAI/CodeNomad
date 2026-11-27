@@ -57,7 +57,10 @@ pub fn available(s: &State) -> bool {
         && s.composer.recall.is_none()
         && !s.composer.editing_locked()
         && s.composer.picker.attachments_supported()
-        && matches!(s.phase, Phase::Ready | Phase::Streaming)
+        && matches!(
+            s.phase,
+            Phase::Ready | Phase::Streaming | Phase::StreamDisconnected { .. }
+        )
 }
 
 pub fn enqueue(s: &mut State, offers: impl IntoIterator<Item = Offer>) {

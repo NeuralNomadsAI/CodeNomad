@@ -67,6 +67,16 @@ impl Picker {
         self.backend.as_ref()
     }
 
+    #[cfg(test)]
+    pub(crate) fn add_test_command(&mut self, name: &str) {
+        self.commands.items.push(Item::Command(Named {
+            id: name.into(),
+            name: name.into(),
+            description: String::new(),
+            primary: false,
+        }));
+    }
+
     pub fn bind(&mut self, backend: Backend) {
         let intent = self.commands.intent.take();
         *self = Self {

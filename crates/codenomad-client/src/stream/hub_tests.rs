@@ -1021,6 +1021,9 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
                 placement: state.placement_signal(),
                 inbox: Some(state.inbox.clone()),
                 session_deleted: state.session_deleted_hook(),
+                history_revision: Some(state.history_revision.clone()),
+                upstream: Some(state.upstream.clone()),
+                disconnect_mark: Some(state.disconnect_mark.clone()),
             },
         )
     };
@@ -1129,7 +1132,10 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             closed: Some(state.closed_signal()),
             placement: None,
             inbox: Some(state.inbox.clone()),
-            ..SubscriberSignals::default()
+            session_deleted: None,
+            history_revision: None,
+            upstream: None,
+            disconnect_mark: None,
         },
     );
     let shared = Arc::new(SharedStream {
@@ -1184,7 +1190,10 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             closed: Some(state2.closed_signal()),
             placement: None,
             inbox: Some(state2.inbox.clone()),
-            ..SubscriberSignals::default()
+            session_deleted: None,
+            history_revision: None,
+            upstream: None,
+            disconnect_mark: None,
         },
     );
     let (stop_tx2, _stop_rx2) = bounded(1);
@@ -1252,7 +1261,10 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
             closed: Some(state.closed_signal()),
             placement: state.placement_signal(),
             inbox: Some(state.inbox.clone()),
-            ..SubscriberSignals::default()
+            session_deleted: None,
+            history_revision: Some(state.history_revision.clone()),
+            upstream: Some(state.upstream.clone()),
+            disconnect_mark: Some(state.disconnect_mark.clone()),
         },
     );
     let shared = Arc::new(SharedStream {

@@ -3,7 +3,8 @@ use serde_json::json;
 
 impl Backend {
     pub async fn prompt_command(&self, name: &str, text: &str) -> Result<(), PromptError> {
-        if !crate::history::valid_id(&self.workspace)
+        if self.client.server_identity_mismatch()
+            || !crate::history::valid_id(&self.workspace)
             || !crate::history::valid_id(&self.session)
             || name.is_empty()
             || name.len() > 1024
@@ -12,28 +13,27 @@ impl Backend {
         {
             return Err(PromptError::Rejected);
         }
-        let response = self
+        let mut request = self
             .client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/command",
                 self.base, self.workspace, self.session
             ))
-            .json(&json!({"name":name,"text":text,"delivery":"steer"}))
+            .json(&json!({"name":name,"text":text,"delivery":"steer"}));
+        if let Some(directory) = &self.session_directory {
+            request = request.query(&[("directory", directory.as_str())]).header(
+                "x-codenomad-session-directory",
+                crate::backend::percent_encode_header(directory),
+            );
+        }
+        let response = request
             .send()
             .await
-            .map_err(|_| PromptError::Unconfirmed)?;
-        if cfg!(not(target_arch = "wasm32"))
-            && response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            Err(PromptError::AuthenticationRequired)
-        } else if response.status().is_success() {
+            .map_err(|error| crate::backend::send_transport_error(&error))?;
+        if response.status().is_success() {
             Ok(())
-        } else if response.status().is_client_error()
-            || response.status() == reqwest::StatusCode::NOT_IMPLEMENTED
-        {
-            Err(PromptError::Rejected)
         } else {
-            Err(PromptError::Unconfirmed)
+            Err(crate::backend::classify_http_error(response).await)
         }
     }
 }

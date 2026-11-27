@@ -115,12 +115,104 @@ fn revision_eq(expected: &str, actual: &str) -> bool {
     expected.len() == actual.len() && bool::from(expected.as_bytes().ct_eq(actual.as_bytes()))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PinnedTarget {
+    /// Existing target directory: exact canonical path and OS directory identity.
+    Existing { canonical: std::path::PathBuf, identity: String },
+    /// Missing target directory: nearest existing ancestor's exact canonical path and OS identity.
+    Missing { ancestor: std::path::PathBuf, ancestor_identity: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LocationPin {
+    pub(crate) root_canonical: std::path::PathBuf,
+    pub(crate) root_identity: String,
+    pub(crate) target: PinnedTarget,
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<std::path::PathBuf> {
+    let mut cur = path.parent();
+    while let Some(ancestor) = cur {
+        match dunce::canonicalize(ancestor) {
+            Ok(canon) => return (canon == ancestor).then_some(canon),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = ancestor.parent(),
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str) -> Option<LocationPin> {
+    let root = workspace.path.clone();
+    let dir = directory.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let root_canonical = dunce::canonicalize(&root).ok()?;
+        if root_canonical != root {
+            return None;
+        }
+        let root_identity = crate::files::directory_identity(&root_canonical).ok()?;
+        let dir_path = Path::new(&dir);
+        let target = match dunce::canonicalize(dir_path) {
+            Ok(canon) => {
+                if canon != dir_path {
+                    return None;
+                }
+                let identity = crate::files::directory_identity(&canon).ok()?;
+                PinnedTarget::Existing { canonical: canon, identity }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if ownership::resolve_directory(&dir).as_deref() != Some(dir_path) {
+                    return None;
+                }
+                let ancestor = nearest_existing_ancestor(dir_path)?;
+                let ancestor_identity = crate::files::directory_identity(&ancestor).ok()?;
+                PinnedTarget::Missing { ancestor, ancestor_identity }
+            }
+            Err(_) => return None,
+        };
+        Some(LocationPin { root_canonical, root_identity, target })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+pub(crate) fn pin_still_live_sync(root: &Path, dir: &str, pin: &LocationPin) -> bool {
+    if dunce::canonicalize(root).ok().as_ref() != Some(&pin.root_canonical) {
+        return false;
+    }
+    if crate::files::directory_identity(&pin.root_canonical).ok().as_deref() != Some(pin.root_identity.as_str()) {
+        return false;
+    }
+    let dir_path = Path::new(dir);
+    match &pin.target {
+        PinnedTarget::Existing { canonical, identity } => {
+            dunce::canonicalize(dir_path).ok().as_ref() == Some(canonical)
+                && canonical == dir_path
+                && crate::files::directory_identity(canonical).ok().as_deref() == Some(identity.as_str())
+        }
+        PinnedTarget::Missing { ancestor, ancestor_identity } => {
+            ownership::resolve_directory(dir).as_deref() == Some(dir_path)
+                && dunce::canonicalize(ancestor).ok().as_ref() == Some(ancestor)
+                && crate::files::directory_identity(ancestor).ok().as_deref() == Some(ancestor_identity.as_str())
+        }
+    }
+}
+
+pub(crate) async fn pin_still_live(workspace: &Workspace, directory: &str, pin: &LocationPin) -> bool {
+    let root = workspace.path.clone();
+    let dir = directory.to_owned();
+    let pin = pin.clone();
+    tokio::task::spawn_blocking(move || pin_still_live_sync(&root, &dir, &pin)).await.unwrap_or(false)
+}
+
 pub(super) struct ReadContext {
     pub(super) workspace: Workspace,
     pub(super) endpoint: Arc<Endpoint>,
     pub(super) entries: Vec<Value>,
     pub(super) runtime: Vec<Value>,
     pub(super) location: ControlLocation,
+    pub(super) location_pin: LocationPin,
     pub(super) style: Style,
     pub(super) global_dir: String,
     pub(super) targets: Vec<ResolvedTarget>,
@@ -199,6 +291,32 @@ fn check_cancelled(cancel: Option<&CancellationToken>) -> Result<(), Fail> {
         return Err(fail(Status::SERVICE_UNAVAILABLE, "OpenCode did not answer in time"));
     }
     Ok(())
+}
+
+/// Resolves an owned service directory without spawning `git rev-parse` for the unused checkout
+/// path when `directory` is already the canonical workspace root (`worktrees::ownership::resolve`).
+async fn resolve_owned_directory(app: &App, workspace: &Workspace, directory: &str) -> Option<String> {
+    if !crate::files::paths::under(&app.scope, Path::new(directory)) {
+        return None;
+    }
+    let dir = directory.to_owned();
+    let root = workspace.path.clone();
+    let scope = app.scope.clone();
+    let is_root = tokio::task::spawn_blocking(move || {
+        let target = dunce::canonicalize(&dir).ok()?;
+        if !target.starts_with(&scope) {
+            return Some(false);
+        }
+        (target == root && dunce::canonicalize(&root).ok().as_ref() == Some(&root)).then_some(true)
+    })
+    .await
+    .ok()
+    .flatten();
+    match is_root {
+        Some(true) => Some(workspace.path.to_string_lossy().into_owned()),
+        Some(false) => None,
+        None => ownership::resolve(app, workspace, directory).await.map(|owned| owned.directory),
+    }
 }
 
 async fn native_get_cancellable(
@@ -387,12 +505,19 @@ pub(super) async fn read_context(
     if ws_selector.is_some() || input.unrepresentable_workspace_id || input.unrepresentable_directory {
         return Err(foreign);
     }
-    let resolved = ownership::resolve(app, &workspace, &directory).await.ok_or(foreign.clone())?;
-    let location_dir = resolved.directory;
-    if ownership::resolve(app, &workspace, &location_dir).await.is_none() {
+    let location_dir = resolve_owned_directory(app, &workspace, &directory).await.ok_or(foreign.clone())?;
+    let location = ControlLocation::new(location_dir, None);
+    // Pin root and target physical identities BEFORE native `/api/config` & `/api/plugin` reads,
+    // refusing redirected paths and re-confirming ownership while the captured pin stays live.
+    let location_pin = capture_location_pin(&workspace, &location.directory).await.ok_or(foreign.clone())?;
+    if resolve_owned_directory(app, &workspace, &location.directory).await.as_deref()
+        != Some(location.directory.as_str())
+        || !pin_still_live(&workspace, &location.directory, &location_pin).await
+    {
         return Err(foreign);
     }
-    let location = ControlLocation::new(location_dir, None);
+    check_cancelled(cancel)?;
+    assert_current(app, &endpoint, &workspace, principal)?;
 
     let query = [("location[directory]", location.directory.as_str())];
     let (config, plugin) = tokio::join!(
@@ -417,6 +542,9 @@ pub(super) async fn read_context(
     );
     check_cancelled(cancel)?;
     assert_current(app, &endpoint, &workspace, principal)?;
+    if !pin_still_live(&workspace, &location.directory, &location_pin).await {
+        return Err(foreign);
+    }
     let (entries, runtime) = match (config, plugin) {
         (Ok(Value::Array(entries)), Ok(p)) if p["data"].is_array() => {
             (entries, p["data"].as_array().cloned().unwrap_or_default())
@@ -479,6 +607,7 @@ pub(super) async fn read_context(
         entries,
         runtime,
         location,
+        location_pin,
         style,
         global_dir,
         targets,
@@ -556,13 +685,26 @@ async fn compute_discovery_loaders(ctx: &ReadContext) -> Option<Vec<Vec<String>>
 }
 
 /// `PluginControls.read`: `GET /api/workspaces/:id/plugin-controls`.
-pub(super) async fn read(
+pub(crate) async fn read(
     app: &App,
     workspace_id: &str,
     location: &ControlLocation,
     principal: Option<&CancellationToken>,
     cancel: Option<&CancellationToken>,
 ) -> Result<Snapshot, Fail> {
+    read_bound(app, workspace_id, location, principal, cancel).await.map(|(snapshot, _, _, _)| snapshot)
+}
+
+/// `PluginControls.read` returning the bound `Workspace`, `Endpoint` and pre-read `LocationPin`
+/// that produced the snapshot, so integration routes re-verify the exact same connection and
+/// physical directory identity after catalog waits and follow-up RPCs.
+pub(crate) async fn read_bound(
+    app: &App,
+    workspace_id: &str,
+    location: &ControlLocation,
+    principal: Option<&CancellationToken>,
+    cancel: Option<&CancellationToken>,
+) -> Result<(Snapshot, Workspace, Arc<Endpoint>, LocationPin), Fail> {
     let mut ctx = read_context(app, workspace_id, location, principal, cancel).await?;
     let base = snapshot_base(&ctx.eval_ctx())?;
     let mut snapshot = evaluate_documents(&base, &ctx.eval_ctx(), None).snapshot;
@@ -604,7 +746,12 @@ pub(super) async fn read(
     }
     assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     check_cancelled(cancel)?;
-    Ok(snapshot)
+    if !pin_still_live(&ctx.workspace, &ctx.location.directory, &ctx.location_pin).await {
+        return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
+    }
+    check_cancelled(cancel)?;
+    assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
+    Ok((snapshot, ctx.workspace, ctx.endpoint, ctx.location_pin))
 }
 
 /// `PluginControls.readConfigDocuments` (`strictDocuments = false`) for `sources::add`.
@@ -821,11 +968,30 @@ pub(super) async fn mutate(
     Ok(ActivationMutationResponse { snapshot, rule, target: out_target, changed: true, reload_pending: true })
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PinnedLocation {
+    pub(crate) workspace_root: std::path::PathBuf,
+    pub(crate) directory: String,
+    pub(crate) pin: LocationPin,
+}
+
+fn check_pinned_location_sync(pinned: Option<&PinnedLocation>) -> Result<(), Fail> {
+    let Some(pinned) = pinned else {
+        return Ok(());
+    };
+    if !pin_still_live_sync(&pinned.workspace_root, &pinned.directory, &pinned.pin) {
+        return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
+    }
+    Ok(())
+}
+
 pub(super) struct EditTarget<'a> {
     pub(super) workspace_id: &'a str,
     pub(super) location: &'a ControlLocation,
     pub(super) scope: Scope,
     pub(super) principal: Option<CancellationToken>,
+    pub(super) pinned_endpoint: Option<Arc<Endpoint>>,
+    pub(super) pinned_location: Option<PinnedLocation>,
 }
 
 /// Shared commit-admission state for `POST /plugin-sources` deadline arbitration:
@@ -851,7 +1017,7 @@ where
     E: Send + 'static,
     F: FnOnce(&Document, &[PluginConfigEntry]) -> Result<jsonc::Text, E> + Send + 'static,
 {
-    let EditTarget { workspace_id, location, scope, principal } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint, pinned_location } = target_req;
     let queue_key = match scope {
         Scope::Global => format!("{workspace_id}\nglobal"),
         Scope::Project => fence::project_key(workspace_id, &location.directory),
@@ -862,6 +1028,12 @@ where
     }
 
     let ctx = read_context(app, workspace_id, location, principal.as_ref(), Some(&cancel)).await.map_err(map_fail)?;
+    if let Some(ref pinned) = pinned_endpoint {
+        assert_current(app, pinned, &ctx.workspace, principal.as_ref()).map_err(map_fail)?;
+    }
+    if pinned_location.as_ref().is_some_and(|p| p.directory != ctx.location.directory || p.pin != ctx.location_pin) {
+        return Err(map_fail(fail(Status::FORBIDDEN, "Location is not owned by this workspace")));
+    }
     let target =
         ctx.targets.into_iter().find(|t| t.scope == scope).ok_or_else(|| {
             map_fail(fail(Status::SERVICE_UNAVAILABLE, "OpenCode configuration scope is unavailable"))
@@ -870,6 +1042,9 @@ where
     let owner = ownership::resolve(app, &ctx.workspace, &ctx.location.directory)
         .await
         .ok_or_else(|| map_fail(fail(Status::FORBIDDEN, "Location is not owned by an active worktree")))?;
+    if pinned_location.as_ref().is_some_and(|p| p.directory != owner.directory) {
+        return Err(map_fail(fail(Status::FORBIDDEN, "Location is not owned by this workspace")));
+    }
     let admitted = fence::enter(&[fence::identity(&owner.checkout)])
         .ok_or_else(|| map_fail(fail(Status::CONFLICT, "Worktree deletion is in progress")))?;
 
@@ -881,14 +1056,22 @@ where
         if cancel.is_cancelled() || Instant::now() >= deadline {
             return Err(timeout_err());
         }
+        check_pinned_location_sync(pinned_location.as_ref()).map_err(map_fail)?;
         let doc = fs::load(&target.io_path).map_err(|e| map_fail(mapped(e)))?;
         let plugins = document_plugins(&doc).map_err(|e| map_fail(mapped(e)))?;
+        if let Some(ref pinned) = pinned_endpoint {
+            assert_current(&app_commit, pinned, &workspace, principal.as_ref()).map_err(map_fail)?;
+        }
         assert_current(&app_commit, &endpoint, &workspace, principal.as_ref()).map_err(map_fail)?;
         let updated = edit(&doc, &plugins)?;
         let mut prepared = fs::prepare(&doc, &updated).map_err(|e| map_fail(mapped(e)))?;
         prepared.commit_in_place(
             |e| map_fail(mapped(e)),
-            || guard_current(&app_commit, &endpoint, None, &workspace, principal.as_ref()).map_err(map_fail),
+            || {
+                check_pinned_location_sync(pinned_location.as_ref()).map_err(map_fail)?;
+                guard_current(&app_commit, &endpoint, pinned_endpoint.as_ref(), &workspace, principal.as_ref())
+                    .map_err(map_fail)
+            },
             || {
                 use std::sync::atomic::Ordering;
                 if Instant::now() >= deadline {
@@ -926,7 +1109,7 @@ where
     E: Send + 'static,
     F: FnOnce(&PluginDocumentsView<'_>) -> Result<Vec<(Scope, jsonc::Text)>, E>,
 {
-    let EditTarget { workspace_id, location, scope, principal } = target_req;
+    let EditTarget { workspace_id, location, scope, principal, pinned_endpoint: _, pinned_location: _ } = target_req;
     // Global and Project queues are always held in that fixed order.
     let global_guard = fence::serialize(format!("{workspace_id}\nglobal")).await;
     let project_guard = fence::serialize(fence::project_key(workspace_id, &location.directory)).await;

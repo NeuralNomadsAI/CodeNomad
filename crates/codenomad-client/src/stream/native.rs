@@ -578,7 +578,15 @@ async fn receive_chunk(
                     quota.frame(data);
                 }
                 if state.catalogue.is_none() {
-                    super::sessions::note_inbox_frame(&b.workspace, &b.session, &state.inbox, data)
+                    super::sessions::note_inbox_frame(
+                        &b.workspace,
+                        &b.session,
+                        &state.inbox,
+                        Some(state.history_revision.as_ref()),
+                        Some(state.upstream.as_ref()),
+                        Some(state.disconnect_mark.as_ref()),
+                        data,
+                    )
                 } else {
                     0
                 }
@@ -588,6 +596,7 @@ async fn receive_chunk(
                     quota.skipped();
                 }
                 if state.catalogue.is_none() {
+                    state.history_revision.fetch_add(1, SeqCst);
                     state.inbox.record_ingress()
                 } else {
                     0

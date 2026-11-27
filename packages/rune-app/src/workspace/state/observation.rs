@@ -1,4 +1,4 @@
-use super::{Cache, State, Tx, Ui, drafts, notification};
+use super::{Cache, State, Tab, Tx, Ui, drafts, notification};
 
 pub(super) fn poll_cached(
     s: &mut State,
@@ -12,6 +12,7 @@ pub(super) fn poll_cached(
     let mut drafts_changed = false;
     let mut projection_sync: Vec<(super::ProjectScope, String)> = Vec::new();
     let mut deleted_by_tab: Vec<(usize, String)> = Vec::new();
+    let mut unconfirmed_updates = Vec::new();
     for index in 0..ui.entries.len() {
         let other_healthy_stream = active_has_healthy_stream
             || ui.entries.iter().enumerate().any(|(other_index, other)| {
@@ -32,7 +33,7 @@ pub(super) fn poll_cached(
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
             let awaiting_prompt = s.composer.pending();
-            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
+            let prev_unconfirmed = s.composer.unconfirmed_id().map(str::to_owned);
             let (hidden_changed, session_deleted) =
                 crate::chat::events::poll_hidden_chat(s, 8, other_healthy_stream);
             changed |= hidden_changed;
@@ -69,9 +70,24 @@ pub(super) fn poll_cached(
             }
             changed |= crate::files::poll_notices(s);
             crate::shell::notifications::collect(s, |s| notification::entry_target(item, s));
-            if awaiting_prompt && !s.composer.pending()
-                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
+            let next_unconfirmed = s.composer.unconfirmed_id().map(str::to_owned);
+            let unconfirmed_cleared = prev_unconfirmed.is_some() && next_unconfirmed.is_none();
+            if prev_unconfirmed != next_unconfirmed
+                && let Tab::Workspace(saved) = &item.saved
+                && let Some(session_id) = saved.active_session_id.as_deref()
+                && item
+                    .binding
+                    .as_ref()
+                    .is_some_and(|b| b.session == session_id)
             {
+                unconfirmed_updates.push((
+                    saved.clone(),
+                    session_id.to_owned(),
+                    prev_unconfirmed,
+                    next_unconfirmed,
+                ));
+            }
+            if awaiting_prompt && !s.composer.pending() || unconfirmed_cleared {
                 capture_here(item, s);
             }
             if let Some(now) = now {
@@ -89,6 +105,13 @@ pub(super) fn poll_cached(
     for (scope, id) in projection_sync {
         drafts::sync_pending_closed_projections(ui, &scope, &id);
     }
+    for (saved, session_id, prev, next) in unconfirmed_updates {
+        if let Some(attempt_id) = next {
+            drafts::note_unconfirmed_for(s, ui, &saved, &session_id, &attempt_id);
+        } else if let Some(attempt_id) = prev {
+            drafts::confirm_unconfirmed_for(s, ui, &saved, &session_id, &attempt_id);
+        }
+    }
     if drafts_changed {
         ui.changed();
     }
@@ -100,8 +123,10 @@ pub(crate) fn poll_cached_notifications(s: &mut State, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
         return false;
     };
+    crate::platform::pairing::set_defer_checks(s, true);
     let (mut changed, deleted_by_tab) = poll_cached(s, &mut ui, None, tx);
     s.workspace = Some(ui);
+    crate::platform::pairing::flush_deferred_checks(s);
     for (index, id) in deleted_by_tab {
         changed |= drafts::recover_missing_session_draft_in(s, Some(index), &id);
     }

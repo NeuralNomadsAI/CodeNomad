@@ -174,6 +174,91 @@ pub fn embedded_section<S: 'static>(
         .modal_click_outside(false)
 }
 
+pub fn output_window<S: 'static>(
+    key: &'static str,
+    title: &str,
+    subtitle: Option<&str>,
+    return_focus: &'static str,
+    actions: El,
+    body: El,
+    close: impl Fn(&mut S) + 'static,
+) -> El {
+    let dark = layout::dark();
+    let t = tokens(dark);
+    let mut header = col().grow(1.0).shrink().child(
+        text(title)
+            .text_role(TextRole::Title)
+            .role("heading")
+            .truncate(),
+    );
+    if let Some(subtitle) = subtitle {
+        header = header.child(
+            text(subtitle)
+                .text_role(TextRole::Small)
+                .literal_direction()
+                .truncate(),
+        );
+    }
+    el().key(key)
+        .absolute(0.0, 0.0)
+        .full_width()
+        .full_height()
+        .pad(Space::Lg)
+        .center()
+        .fill(crate::kit(dark).c.scrim)
+        .child(
+            col()
+                .role("dialog")
+                .label(title)
+                .focus_return(return_focus)
+                .full_width()
+                .full_height()
+                .max_w(860.0)
+                .fill(t.color("surface-overlay"))
+                .border(1.0, t.color("border-base"))
+                .child(
+                    row()
+                        .full_width()
+                        .center_y()
+                        .separate(Space::Sm)
+                        .px(t.space(Space::Md).px())
+                        .py(t.space(Space::Sm).px())
+                        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
+                        .child(header)
+                        .child(actions),
+                )
+                .child(
+                    col()
+                        .full_width()
+                        .remaining()
+                        .scroll(ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .pad(Space::Md)
+                        .separate(Space::Sm)
+                        .child(body),
+                )
+                .modal(true, close)
+                .modal_click_outside(false),
+        )
+}
+
+pub fn log_block(content: &str) -> El {
+    let t = tokens(layout::dark());
+    col()
+        .full_width()
+        .pad(Space::Sm)
+        .fill(t.color("surface-inset"))
+        .border(1.0, t.color("border-divider"))
+        .child(
+            text(content)
+                .text_role(TextRole::Mono)
+                .literal_direction()
+                .wrap()
+                .selectable(true),
+        )
+}
+
 #[cfg(target_os = "windows")]
 pub fn placed_window<S: 'static>(
     spec: rune::WindowSpec<S>,
@@ -606,6 +691,47 @@ pub fn card(child: El) -> El {
         .separate(Space::Sm)
         .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
         .child(child)
+}
+
+pub fn card_header(title: &str, status: Option<&str>) -> El {
+    let mut header = row()
+        .full_width()
+        .center_y()
+        .justify_between()
+        .separate(Space::Sm)
+        .child(text(title).role("heading").text_role(TextRole::Button));
+    if let Some(status) = status {
+        header = header.child(text(status).text_role(TextRole::Small).role("status"));
+    }
+    header
+}
+
+pub fn input_action_row(input: El, action: El) -> El {
+    layout::action_row().child(input.grow(1.0)).child(action)
+}
+
+pub fn binary_row(button: El, path: Option<&str>, caption: Option<&str>, remove: Option<El>) -> El {
+    let mut info = col().grow(1.0).shrink().child(button);
+    if let Some(path) = path {
+        info = info.child(
+            text(path)
+                .text_role(TextRole::Small)
+                .literal_direction()
+                .truncate(),
+        );
+    }
+    if let Some(caption) = caption {
+        info = info.child(text(caption).text_role(TextRole::Small).role("status"));
+    }
+    let mut line = row()
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .child(info);
+    if let Some(remove) = remove {
+        line = line.child(remove);
+    }
+    line
 }
 
 pub fn setting_row(label: &str, control: El) -> El {
