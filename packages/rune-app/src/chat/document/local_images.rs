@@ -487,6 +487,9 @@ fn normalize_path(value: &str) -> String {
 }
 
 fn comparable_relative_windows(value: &str) -> Option<String> {
+    if value.starts_with('\\') {
+        return None;
+    }
     let replaced = value.replace('\\', "/");
     let mut out = String::with_capacity(replaced.len());
     let mut has_segment = false;

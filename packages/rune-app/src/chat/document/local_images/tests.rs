@@ -177,6 +177,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         Some(&PictureSource::Inline("win-spec".into()))
     );
     assert_eq!(match_local_image(&win_rel, r"..\Spec.PNG", true), None);
+    assert_eq!(match_local_image(&win_rel, r"\Sub\Spec.PNG", true), None);
     // Ambiguous relative suffix returns None; explicit path still resolves.
     assert_eq!(match_local_image(&items, "dup.png", true), None);
     assert_eq!(match_local_image(&items, "./dup.png", true), None);

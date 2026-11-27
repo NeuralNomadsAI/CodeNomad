@@ -61,10 +61,12 @@ struct Entry {
 
 fn decoded_bytes(image: &Image, frames: usize) -> usize {
     attachment::decoded_size(image).map_or(0, |[w, h]| {
-        (w as usize)
+        let base = (w as usize)
             .saturating_mul(h as usize)
             .saturating_mul(4)
-            .saturating_mul(frames.max(1))
+            .saturating_mul(frames.max(1));
+        // Account for mipmap storage (~1/3 of base pixel area).
+        base.saturating_add(base / 3)
     })
 }
 
@@ -414,17 +416,22 @@ impl Pictures {
             }
             if !in_view {
                 self.waiting.retain(|queued| queued != key);
+                if entry.request.take().is_some() {
+                    return !self.waiting.is_empty();
+                }
             }
             false
         } else {
+            let mut freed = false;
             if let Some(entry) = self.images.get_mut(key) {
                 entry.visible = false;
+                freed = entry.request.take().is_some();
                 self.waiting.retain(|queued| queued != key);
                 if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
                     self.hover = None;
                 }
             }
-            false
+            freed && !self.waiting.is_empty()
         }
     }
 
@@ -474,6 +481,9 @@ impl Pictures {
         }
         if !in_view {
             self.waiting.retain(|queued| queued != key);
+            if entry.request.take().is_some() {
+                return !self.waiting.is_empty();
+            }
         }
         false
     }
@@ -502,9 +512,9 @@ impl Pictures {
         mime: &str,
         lease: &Rc<()>,
         visible: bool,
-    ) {
+    ) -> bool {
         if matches!(media, PictureSource::Unavailable) {
-            return;
+            return false;
         }
         if visible {
             self.access_tick = self.access_tick.wrapping_add(1);
@@ -528,13 +538,18 @@ impl Pictures {
                 self.waiting.push_back(key.into());
             }
             entry.visible = true;
+            true
         } else if let Some(entry) = self.images.get_mut(key) {
             // Keep the acquired height and image until the card actually unmounts.
             entry.visible = false;
+            let freed = entry.request.take().is_some();
             self.waiting.retain(|queued| queued != key);
             if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
                 self.hover = None;
             }
+            freed && !self.waiting.is_empty()
+        } else {
+            false
         }
     }
 
@@ -587,6 +602,8 @@ impl Pictures {
         for entry in self.images.values_mut() {
             if entry_in_view(entry, view) {
                 entry.last_seen = tick;
+            } else if entry.request.is_some() {
+                entry.request = None;
             }
             if let Some(bytes) = entry
                 .request
@@ -822,11 +839,9 @@ fn view_on_platform(
         || entry.is_some_and(|entry| {
             entry.settled && image.is_none_or(|image| image.error().is_some())
         });
-    let placeholder_size = if image.is_none() && !unavailable {
-        entry.and_then(|entry| entry.last_size)
-    } else {
-        None
-    };
+    let placeholder_size = (!unavailable)
+        .then(|| entry.and_then(|entry| entry.last_size))
+        .flatten();
     let external = external_url(source, unavailable, web);
     let mut content = attachment::picture_with_placeholder(
         image,
@@ -900,13 +915,12 @@ fn view_on_platform(
     content
         .key(key)
         .on_visible(move |s: &mut State, visible, tx| {
-            if s.current_scope(&scope) {
-                s.transcript_display
+            if s.current_scope(&scope)
+                && s.transcript_display
                     .pictures
-                    .visibility(&target, &request, &mime, &lease, visible);
-                if visible {
-                    tx.wake_after(std::time::Duration::ZERO);
-                }
+                    .visibility(&target, &request, &mime, &lease, visible)
+            {
+                tx.wake_after(std::time::Duration::ZERO);
             }
             tx.live_only();
         })

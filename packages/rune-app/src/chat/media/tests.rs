@@ -297,8 +297,9 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
             },
         );
     }
-    // 3 images = 384 bytes; budget 256 evicts only oldest offscreen (`off-old`) and keeps visible.
-    assert!(pictures.evict_offscreen_decoded(None, 256));
+    // 3 images = 3 * 170 = 510 bytes (with 1/3 mipmap overhead); budget 340 evicts only oldest
+    // offscreen (`off-old`) and keeps visible.
+    assert!(pictures.evict_offscreen_decoded(None, 340));
     assert!(pictures.images["off-old"].image.is_none());
     assert!(!pictures.images["off-old"].settled);
     assert_eq!(
@@ -308,13 +309,13 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
     );
     assert!(pictures.images["off-new"].image.is_some());
     assert!(pictures.images["on-screen"].image.is_some());
-    // Budget 64 evicts the remaining offscreen image (`off-new`) but never evicts `on-screen`.
-    assert!(pictures.evict_offscreen_decoded(None, 64));
+    // Budget 100 evicts the remaining offscreen image (`off-new`) but never evicts `on-screen`.
+    assert!(pictures.evict_offscreen_decoded(None, 100));
     assert!(pictures.images["off-new"].image.is_none());
     assert_eq!(pictures.images["off-new"].last_size, Some([8, 4]));
     assert!(pictures.images["on-screen"].image.is_some());
 
-    // Multi-frame animation accounting: a 32-frame 8x4 entry accounts for 32 * 128 = 4096 bytes.
+    // Multi-frame animation accounting: a 32-frame 8x4 entry accounts for 5461 bytes with mipmaps.
     let anim_lease = Rc::new(());
     pictures.images.insert(
         "off-gif".into(),
@@ -332,9 +333,93 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
             last_seen: 4,
         },
     );
-    // Budget 1024 exceeds a single frame (128) but is exceeded by 32 frames (4096) -> evicts `off-gif`.
+    // Budget 1024 exceeds a single frame (170) but is exceeded by 32 frames (5461) -> evicts `off-gif`.
     assert!(pictures.evict_offscreen_decoded(None, 1024));
     assert!(pictures.images["off-gif"].image.is_none());
+
+    // An in-flight download that leaves the viewport cancels immediately so its slot is freed.
+    let (cancel_tx, cancel_rx) = bounded(1);
+    let (_out_tx, res_rx) = bounded(1);
+    let req_lease = Rc::new(());
+    pictures.images.insert(
+        "off-req".into(),
+        Entry {
+            lease: Rc::downgrade(&req_lease),
+            media: PictureSource::Http("https://example.test/slow.png".into()),
+            mime: "image/png".into(),
+            visible: true,
+            clip_gate: None,
+            request: Some((cancel_tx, res_rx)),
+            image: None,
+            frames: 1,
+            last_size: None,
+            settled: false,
+            last_seen: 5,
+        },
+    );
+    pictures.visibility(
+        "off-req",
+        &PictureSource::Http("https://example.test/slow.png".into()),
+        "image/png",
+        &req_lease,
+        false,
+    );
+    assert!(pictures.images["off-req"].request.is_none());
+    assert!(cancel_rx.is_closed());
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn evicted_tool_picture_keeps_placeholder_height_while_redecoding() {
+    use rune::{Env, Runtime};
+    const URL: &str = "https://example.invalid/redecode.png";
+    let source = PictureSource::Http(URL.into());
+    let mut state = crate::init();
+    let lease = Rc::new(());
+    let key = source_key("tool-pic", &source, "image/png");
+    // Simulate an image whose download just completed and returned an unready decode handle
+    // (`image.size() == None`) while `last_size` retains the pre-eviction dimensions.
+    let pending_handle = ImageCache::new(Arc::new(|| {})).load(Vec::new());
+    state.transcript_display.pictures.images.insert(
+        key.clone(),
+        Entry {
+            lease: Rc::downgrade(&lease),
+            media: source,
+            mime: "image/png".into(),
+            visible: true,
+            clip_gate: None,
+            request: None,
+            image: Some(pending_handle),
+            frames: 1,
+            last_size: Some([640, 320]),
+            settled: false,
+            last_seen: 1,
+        },
+    );
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                view_on_platform(
+                    s,
+                    "tool-pic".into(),
+                    &PictureSource::Http(URL.into()),
+                    "Re-decoding chart",
+                    "image/png",
+                    false,
+                    false,
+                )
+            })
+        },
+        (640.0, 480.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("\"role\":\"image\"") && tree.contains("Re-decoding chart"),
+        "evicted tool picture must keep its image placeholder box while re-decoding: {tree}"
+    );
 }
 
 #[test]
