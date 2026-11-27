@@ -657,11 +657,22 @@ pub fn client_id() -> Result<String> {
     }
 }
 
-/// Cryptographic lowercase RFC 4122 v4 UUID for native control correlation.
-#[cfg(not(target_arch = "wasm32"))]
+/// Cryptographic lowercase RFC 4122 v4 UUID for native control correlation and recovered drafts.
 pub fn random_uuid_v4() -> Result<String> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|_| "random source unavailable")?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        getrandom::fill(&mut bytes).map_err(|_| "random source unavailable")?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .ok_or("browser window required")?
+            .crypto()
+            .map_err(|_| "browser crypto unavailable")?
+            .get_random_values_with_u8_array(&mut bytes)
+            .map_err(|_| "browser entropy unavailable")?;
+    }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(format!(

@@ -197,6 +197,23 @@ impl UnconfirmedPrompt {
             edited: true,
         }
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_unedited_text(id: String, text: &str) -> Self {
+        let (text_len, text_hash) = hash_text(text);
+        let edit = TextEdit::new(text);
+        let draft = super::draft::Draft::default();
+        let (attachments_len, attachments_hash) = hash_attachments(&edit, &draft.attachments);
+        Self {
+            id,
+            text_len,
+            text_hash,
+            attachments_len,
+            attachments_hash,
+            saved_parts_fingerprint: None,
+            had_device_attachments: false,
+            edited: false,
+        }
+    }
     pub(crate) fn id(&self) -> &str {
         &self.id
     }
@@ -1152,6 +1169,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1277,6 +1295,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1471,6 +1490,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1548,6 +1568,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);

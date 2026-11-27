@@ -188,6 +188,7 @@ pub fn list(s: &mut State, more: bool) {
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
+            p.id.clone(),
             b.sessions(&p, cursor.as_deref()).await?,
             cursor,
         ))
@@ -341,6 +342,7 @@ pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
+    crate::shell::blank_cleanup::abort_for_session(s, &id);
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -362,7 +364,7 @@ fn choose_from(
 }
 fn choose_from_inner(
     s: &mut State,
-    candidates: Vec<(String, Option<usize>)>,
+    mut candidates: Vec<(String, Option<usize>)>,
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
@@ -388,12 +390,27 @@ fn choose_from_inner(
     if l.pending {
         return;
     }
+    candidates.retain(|(id, _)| !crate::shell::blank_cleanup::is_deleting_session(s, &p.id, id));
+    if candidates.is_empty() {
+        return;
+    }
+    for (id, _) in &candidates {
+        crate::shell::blank_cleanup::abort_for_session(s, id);
+    }
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     l.selection_ticket = ticket;
     l.close_mission_reader_on_bind = close_mission_reader;
+    if l.adopt_recovered_for
+        .as_ref()
+        .is_some_and(|(id, expected_ticket)| {
+            !(candidates.len() == 1 && candidates[0].0 == *id && *expected_ticket == ticket)
+        })
+    {
+        l.adopt_recovered_for = None;
+    }
     l.rebinding_failed = recovery;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
@@ -408,7 +425,11 @@ fn choose_from_inner(
                         allow_streaming,
                     ));
                 }
-                Err(err) if err.is::<SessionMissing>() => missing.push(id),
+                Err(err) if err.is::<SessionMissing>() => missing.push((
+                    id,
+                    err.downcast_ref::<SessionMissing>()
+                        .is_some_and(|reason| reason.is_deleted()),
+                )),
                 Err(err) if missing.is_empty() => return Err(err),
                 Err(_) => break,
             }
@@ -526,7 +547,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         let Some(id) = active else {
             return false;
         };
-        crate::workspace::unselect_missing(s, &id);
+        crate::workspace::unselect_session(s, &id);
     } else if !s.draft.text.is_empty()
         || !s.composer.draft.attachments.is_empty()
         || s.composer.unconfirmed_id().is_some()
@@ -551,8 +572,13 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     true
 }
 
-pub(super) fn retire_session(s: &mut State, id: &str) {
-    if !crate::workspace::unselect_missing(s, id) {
+pub(super) fn retire_session(s: &mut State, id: &str, recover_draft: bool) {
+    let unselected = if recover_draft {
+        crate::workspace::unselect_missing(s, id)
+    } else {
+        crate::workspace::unselect_session(s, id)
+    };
+    if !unselected {
         return;
     }
     clear_conversation_only(s);
@@ -571,7 +597,11 @@ pub(super) fn bind(
     slug: &str,
     tx: &mut Tx,
 ) {
-    bind_at(s, b, title, visit, slug, None, tx);
+    bind_at(s, b, title, visit, slug, None, false, tx);
+}
+
+pub(super) fn bind_created(s: &mut State, b: Backend, title: String, slug: &str, tx: &mut Tx) {
+    bind_at(s, b, title, None, slug, None, true, tx);
 }
 
 pub(crate) fn bind_search(
@@ -582,9 +612,10 @@ pub(crate) fn bind_search(
     message: String,
     tx: &mut Tx,
 ) {
-    bind_at(s, b, title, None, slug, Some(message), tx);
+    bind_at(s, b, title, None, slug, Some(message), false, tx);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bind_at(
     s: &mut State,
     b: Backend,
@@ -592,10 +623,20 @@ fn bind_at(
     visit: Option<usize>,
     slug: &str,
     anchor: Option<String>,
+    adopt_recovered: bool,
     tx: &mut Tx,
 ) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
+    let should_adopt = adopt_recovered
+        || s.screen
+            .launcher_mut()
+            .and_then(|l| l.adopt_recovered_for.take())
+            .is_some_and(|(id, expected_ticket)| {
+                id == b.session
+                    && expected_ticket
+                        .is_none_or(|ticket| ticket == s.notifications.navigation_ticket())
+            });
     if let Some(l) = s.screen.launcher_mut() {
         l.visits
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
@@ -613,7 +654,7 @@ fn bind_at(
             );
         }
     }
-    let draft = crate::workspace::bound(s, &b);
+    let draft = crate::workspace::bound_with_adopt(s, &b, should_adopt);
     s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     if !same_session {

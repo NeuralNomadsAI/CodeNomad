@@ -1,10 +1,15 @@
-use codenomad_client::{Receiver, runtime::Instant};
+use codenomad_client::{Receiver, catalog::SessionAbsence, runtime::Instant};
 use std::collections::{HashMap, HashSet};
 
 type Checks = (
-    Receiver<(String, Instant)>,
+    Receiver<(String, Instant, SessionAbsence)>,
     HashMap<String, Option<Instant>>,
 );
+
+pub struct PollChecks {
+    pub changed: bool,
+    pub deleted: Vec<String>,
+}
 
 struct Visit {
     id: String,
@@ -76,7 +81,11 @@ impl Visits {
             (visit.listed && seen.insert(id)).then_some(id)
         })
     }
-    pub fn start_checks(&mut self, ids: &[String], rx: Receiver<(String, Instant)>) {
+    pub fn start_checks(
+        &mut self,
+        ids: &[String],
+        rx: Receiver<(String, Instant, SessionAbsence)>,
+    ) {
         self.checks = Some((rx, ids.iter().map(|id| (id.clone(), None)).collect()));
     }
     pub fn cancel_checks(&mut self) {
@@ -89,23 +98,34 @@ impl Visits {
             *stamp = Some(at);
         }
     }
-    pub fn poll_checks(&mut self) -> bool {
+    pub fn poll_checks(&mut self) -> PollChecks {
         let Some((checks, verified)) = &self.checks else {
-            return false;
+            return PollChecks {
+                changed: false,
+                deleted: Vec::new(),
+            };
         };
-        let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok())
-            .filter(|(id, start)| {
-                verified
-                    .get(id)
-                    .is_some_and(|stamp| stamp.is_none_or(|stamp| *start > stamp))
-            })
-            .map(|(id, _)| id)
-            .collect();
+        let mut unavailable = Vec::new();
+        let mut deleted = Vec::new();
+        for (id, start, absence) in std::iter::from_fn(|| checks.try_recv().ok()) {
+            if verified
+                .get(&id)
+                .is_some_and(|stamp| stamp.is_none_or(|stamp| start > stamp))
+            {
+                if absence == SessionAbsence::NotFound {
+                    deleted.push(id.clone());
+                }
+                unavailable.push(id);
+            }
+        }
         if checks.is_closed() && checks.is_empty() {
             self.checks = None;
         }
-        self.forget(&missing);
-        !missing.is_empty()
+        self.forget(&unavailable);
+        PollChecks {
+            changed: !unavailable.is_empty(),
+            deleted,
+        }
     }
 }
 
@@ -140,17 +160,24 @@ mod tests {
         let started = Instant::now();
         visits.record("b", Some(1), true);
         visits.verified("b", started);
-        out.try_send(("a".into(), started)).unwrap();
-        out.try_send(("b".into(), started)).unwrap();
-        assert!(visits.poll_checks());
+        out.try_send(("a".into(), started, SessionAbsence::NotFound))
+            .unwrap();
+        out.try_send(("b".into(), started, SessionAbsence::NotFound))
+            .unwrap();
+        let first = visits.poll_checks();
+        assert!(first.changed);
+        assert_eq!(first.deleted, vec!["a"]);
         assert_eq!(visits.steps(true, None).next(), Some((1, "b")));
         assert!(visits.steps(true, Some("b")).next().is_none());
         out.try_send((
             "b".into(),
             Instant::now() + std::time::Duration::from_secs(1),
+            SessionAbsence::LocatedElsewhere,
         ))
         .unwrap();
-        assert!(visits.poll_checks());
+        let second = visits.poll_checks();
+        assert!(second.changed);
+        assert!(second.deleted.is_empty());
         assert!(visits.steps(true, None).next().is_none());
     }
 }

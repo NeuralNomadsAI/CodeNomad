@@ -536,6 +536,7 @@ fn binding_returns_the_validated_native_session_without_a_list_or_second_read() 
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let (bound, session) = backend
             .bind_session(&project, "off-page", false)
@@ -612,6 +613,7 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let results = backend.search_sessions(&project, "Off page").await.unwrap();
         assert_eq!(results.len(), 1);
@@ -696,21 +698,21 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
-        for (id, missing) in [
-            ("missing", true),
-            ("other", false),
-            ("unready", false),
-            ("moved", true),
-            ("forbidden", false),
+        for (id, missing, deleted) in [
+            ("missing", true, true),
+            ("other", false, false),
+            ("unready", false, false),
+            ("moved", true, false),
+            ("forbidden", false, false),
         ] {
+            let err = backend.bind_session(&project, id, false).await.unwrap_err();
+            assert_eq!(err.is::<crate::catalog::SessionMissing>(), missing);
             assert_eq!(
-                backend
-                    .bind_session(&project, id, false)
-                    .await
-                    .unwrap_err()
-                    .is::<crate::catalog::SessionMissing>(),
-                missing
+                err.downcast_ref::<crate::catalog::SessionMissing>()
+                    .is_some_and(|reason| reason.is_deleted()),
+                deleted
             );
         }
     });
@@ -734,6 +736,7 @@ fn malformed_catalogue_data_is_not_a_terminal_session_page() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         assert!(backend.sessions(&project, None).await.is_err());
         assert!(backend.sessions(&project, None).await.is_err());
@@ -776,18 +779,37 @@ fn catalogue_omissions_require_targeted_absence() {
                 404,
                 json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
             ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/moved",
+                None,
+                403,
+                json!({"reason":"session_located_elsewhere"}),
+            ),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
-        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let ids = [
+            "unresponsive",
+            "reordered",
+            "unavailable",
+            "deleted",
+            "moved",
+        ]
+        .map(str::to_owned);
         let (out, results) = async_channel::bounded(ids.len());
         backend
             .confirm_missing_sessions(&project, ids.into(), out, || {})
             .await;
-        assert_eq!(results.try_recv().unwrap().0, "deleted");
+        let first = results.try_recv().unwrap();
+        assert_eq!(first.0, "deleted");
+        assert_eq!(first.2, crate::catalog::SessionAbsence::NotFound);
+        let second = results.try_recv().unwrap();
+        assert_eq!(second.0, "moved");
+        assert_eq!(second.2, crate::catalog::SessionAbsence::LocatedElsewhere);
         assert!(results.try_recv().is_err());
     });
 }
@@ -814,6 +836,7 @@ fn a_linked_session_requires_the_owned_proxy_placement() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         assert!(
             backend
@@ -847,6 +870,7 @@ fn linked_session_page_marks_403_as_location_unavailable() {
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let transient = backend
             .linked_session_page(&project, "/linked", None)
@@ -879,6 +903,7 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
+            temporary: false,
         };
         let rejected = backend
             .create_untitled_session(&project, "/linked")

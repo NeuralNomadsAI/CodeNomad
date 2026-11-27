@@ -307,7 +307,7 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn observe(s: &mut State, event: &Event) {
-    if matches!(event, Event::HistoryInvalidated)
+    if matches!(event, Event::HistoryInvalidated | Event::SessionDeleted)
         && let Some(backend) = s.transcript_display.timeline.backend.clone()
     {
         crate::workspace::outlines::invalidate(s, &backend);
@@ -338,7 +338,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.backend = Some(backend.clone());
             t.refresh = true;
         }
-        Event::HistoryInvalidated => invalidate_outline(s),
+        Event::HistoryInvalidated | Event::SessionDeleted => invalidate_outline(s),
         Event::ConnectionLost
         | Event::Reconnecting
         | Event::AuthenticationRequired(_)

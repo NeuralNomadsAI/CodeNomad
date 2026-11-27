@@ -1309,7 +1309,14 @@ fn closing_git_preview_restores_scrolled_up_reading_position() {
             CloseMode::WorkspaceStopped => {
                 rt.update(|s, tx| {
                     let workspace_id = s.git.owner.as_ref().unwrap().backend.workspace.clone();
-                    super::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    super::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
                     assert!(super::poll(s, 1.0, tx));
                 });
             }

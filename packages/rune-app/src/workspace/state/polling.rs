@@ -40,18 +40,22 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     #[cfg(target_arch = "wasm32")]
     platform::pairing::set_defer_checks(s, true);
-    changed |= poll_cached(s, &mut ui, Some(now), tx);
+    let (cached_changed, deleted_by_tab) = poll_cached(s, &mut ui, Some(now), tx);
+    changed |= cached_changed;
     changed |= crate::timeline::sync_outline_mutation(s);
     let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;
-    ui.stage();
+    let stashed = s.temporary.stashed_for_snapshot();
+    ui.stage_with_stashed(stashed);
     let previous_error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.partial,
     );
-    let snapshot = ui.snapshot();
-    ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
+    if ui.persistence.poll_save_ready(ui.revision, now, tx) {
+        let snapshot = ui.snapshot_with_stashed(stashed);
+        ui.persistence.start_save(&snapshot, s.wake.clone());
+    }
     let error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
@@ -71,10 +75,16 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             crate::platform::pairing::observe(s);
         }
     }
+    changed |= catalogue::poll(s, now, tx);
+    for (index, id) in deleted_by_tab {
+        changed |= super::drafts::recover_missing_session_draft_in(s, Some(index), &id);
+    }
+    changed |= super::drafts::drain_window_deleted_sessions(s);
+    changed |= super::drafts::poll_restored_draft_checks(s);
+    changed |= super::drafts::poll_pending_deleted(s);
     if became_ready {
         resume(s, tx);
     }
-    changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error
 }
 pub fn poll_file_drafts(s: &mut State, now: f64, tx: &mut Tx) -> bool {

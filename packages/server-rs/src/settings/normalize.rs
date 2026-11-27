@@ -171,7 +171,6 @@ pub(super) fn speech_pairing(patch: &Value, current: &Doc) -> Value {
     let mut patch = patch.clone();
     let Some(Value::Object(speech)) = patch.get_mut("speech") else { return patch };
     let current = current.get("speech").and_then(Value::as_object);
-    let current = current.and_then(|c| c.get("speech").and_then(Value::as_object)).or(current);
     let url = |o: Option<&Doc>| o.and_then(|o| o.get("baseUrl")).filter(|v| !v.is_null()).cloned().unwrap_or(json!(""));
     let unpaired = |patch: &Doc, current: Option<&Doc>| {
         patch.contains_key("baseUrl") && !patch.contains_key("apiKey") && url(Some(patch)) != url(current)

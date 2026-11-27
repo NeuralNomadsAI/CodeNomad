@@ -251,6 +251,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             s.composer.picker.set_attachments_supported(false);
             let _ = crate::composer::menu::poll(s, tx);
             s.renew_scope();
+            s.blank_cleanup.cancel();
             if let Some(reader) = &s.reader {
                 reader.revoke();
             }

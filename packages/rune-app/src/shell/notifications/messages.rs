@@ -18,6 +18,13 @@ pub(super) struct Message {
     bubble: BubbleOptions,
 }
 
+#[cfg(test)]
+impl Message {
+    pub(super) fn summary(&self) -> (Category, String) {
+        (self.category, self.body.clone())
+    }
+}
+
 pub(crate) fn emit(
     s: &mut State,
     category: Category,

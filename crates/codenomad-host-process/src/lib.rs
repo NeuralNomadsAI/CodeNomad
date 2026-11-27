@@ -23,6 +23,8 @@ pub mod procargs;
 mod second_launch;
 #[cfg(unix)]
 mod unix;
+#[cfg(any(unix, test))]
+mod unix_signal;
 mod wake_lock;
 #[cfg(windows)]
 mod windows;

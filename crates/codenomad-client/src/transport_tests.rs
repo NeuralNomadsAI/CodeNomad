@@ -310,11 +310,25 @@ fn prompt_during_stream_gap(with_reading: bool) {
             demand.publish(None);
             let task = if with_reading {
                 tokio::spawn(crate::transport::run_backend_reading(
-                    backend, out, input, Arc::new(|| {}), ReadingLane {
-                    demand: observer, events: content, connection: Default::default(), revoked: Default::default()
-                }))
+                    backend,
+                    out,
+                    input,
+                    Arc::new(|| {}),
+                    ReadingLane {
+                        demand: observer,
+                        events: content,
+                        connection: Default::default(),
+                        on_session_deleted: None,
+                        revoked: Default::default(),
+                    },
+                ))
             } else {
-                tokio::spawn(crate::transport::run_backend(backend, out, input, Arc::new(|| {})))
+                tokio::spawn(crate::transport::run_backend(
+                    backend,
+                    out,
+                    input,
+                    Arc::new(|| {}),
+                ))
             };
             let (socket, _) = listener.accept().await.unwrap();
             let mut stream = BufReader::new(socket);
@@ -497,6 +511,94 @@ fn publishing_to_a_dropped_display_channel_returns_without_waking_it() {
         });
         assert!(!crate::transport::publish(&out, &wake, crate::transport::Event::Done).await);
         assert!(!woke.load(SeqCst));
+    });
+}
+
+#[test]
+fn sse_session_deleted_notifies_hook_at_ingress_even_after_conversation_receiver_drops() {
+    use crate::recovery::{ReadingLane, demand};
+    use crate::transport::Event;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    run(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "project-1".into();
+            backend.session = "ses-del-1".into();
+            // Send a blocking `codenomad.client.ping` (pong never answered) followed immediately by
+            // `session.deleted`, then drop BOTH `events` and `commands` (manual close cancelling the
+            // routing queue). The frame-ingress observer must still fire before the cancellable queue.
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(1);
+            let (demand, observer) = demand::open();
+            let (content, _snapshots) = bounded(1);
+            demand.publish(None);
+            let (deleted_tx, deleted_rx) = bounded::<()>(1);
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                    on_session_deleted: Some(Arc::new(move || {
+                        let _ = deleted_tx.try_send(());
+                    })),
+                    revoked: Default::default(),
+                },
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+data: {\"type\":\"server.connected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            while let Ok(event) = events.recv().await {
+                if matches!(event, Event::AgentHint(true)) {
+                    break;
+                }
+            }
+            // Deliver ping + two filler frames + session.deleted in ONE chunk so ping stalls
+            // routing, filler-1 fills the 1-slot channel, filler-2 parks on `frames.send().await`,
+            // and session.deleted still fires before cancellation drops the routing queue.
+            stream
+                .get_mut()
+                .write_all(
+                    b"event: codenomad.client.ping\ndata: {}\n\n\
+data: {\"type\":\"noop\",\"seq\":1}\n\n\
+data: {\"type\":\"noop\",\"seq\":2}\n\n\
+data: {\"type\":\"instance.event\",\"instanceId\":\"project-1\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"ses-del-1\"}}}\n\n",
+                )
+                .await
+                .unwrap();
+            // Accept the pong TCP connection and leave it stalled while manually closing both
+            // `commands` and `events`.
+            let _stalled_pong = listener.accept().await.unwrap();
+            drop(commands);
+            drop(events);
+            deleted_rx
+                .recv()
+                .await
+                .expect("SSE frame-ingress hook must fire even when queued behind ping and cancelled by close");
+            let _ = task.await;
+        })
+        .await
+        .expect("SSE session.deleted ingress hook test timed out");
     });
 }
 
@@ -1180,7 +1282,7 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 }))
                 .await
                 .unwrap();
-            let mut saw_invalidated = false;
+            let mut saw_deleted = false;
             let mut saw_rejected = false;
             while let Ok(event) = events.recv().await {
                 match event {
@@ -1191,15 +1293,18 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                     Event::PromptAcknowledged { .. } => {
                         panic!("prompt racing with session.deleted must be Rejected")
                     }
-                    Event::HistoryInvalidated => saw_invalidated = true,
+                    Event::SessionDeleted => saw_deleted = true,
                     _ => {}
                 }
-                if saw_rejected && saw_invalidated {
+                if saw_rejected && saw_deleted {
                     break;
                 }
             }
-            assert!(saw_rejected, "queued prompt must receive an explicit Rejected receipt");
-            assert!(saw_invalidated, "session.deleted must publish HistoryInvalidated");
+            assert!(
+                saw_rejected,
+                "queued prompt must receive an explicit Rejected receipt"
+            );
+            assert!(saw_deleted, "session.deleted must publish SessionDeleted");
             assert!(task.await.unwrap().is_err());
             assert!(
                 tokio::time::timeout(Duration::from_millis(30), listener.accept())
@@ -1518,6 +1623,7 @@ fn revoked_reading_lane_rejects_queued_prompt_without_http_post() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    on_session_deleted: None,
                     revoked: revoked.clone(),
                 },
             ));
@@ -1677,7 +1783,7 @@ fn workspace_stopped_rejects_queued_prompt_without_http_post() {
             let mut saw_rejected = false;
             while let Ok(event) = events.recv().await {
                 match event {
-                    Event::Workspace(WorkspaceEvent::Stopped { workspace_id })
+                    Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. })
                         if workspace_id == "workspace" =>
                     {
                         saw_stopped = true;
@@ -2314,6 +2420,7 @@ fn host_open_emits_agent_hint_without_upstream_ready_until_upstream_recovers() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    on_session_deleted: None,
                     revoked: Default::default(),
                 },
             ));

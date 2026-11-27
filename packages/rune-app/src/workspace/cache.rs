@@ -113,6 +113,10 @@ impl Cache {
         self.conversation_client_id.as_deref()
     }
 
+    pub(super) fn is_launcher_visible(&self) -> bool {
+        self.launcher_visible
+    }
+
     fn is_detached(&self) -> bool {
         self.launcher_visible && self.incoming.is_none()
     }
@@ -222,7 +226,11 @@ impl Cache {
             let id = git.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -230,7 +238,11 @@ impl Cache {
             let id = files.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -238,7 +250,11 @@ impl Cache {
             && !live.contains(id.as_str())
         {
             self.status_services
-                .event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id });
+                .event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id: id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
             changed = true;
         }
         changed
@@ -260,6 +276,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -281,6 +299,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -301,7 +321,11 @@ impl Cache {
                     if !opened_after.contains(id.as_str()) && !live.contains(id.as_str()) =>
                 {
                     self.status_services.event(
-                        &codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id },
+                        &codenomad_client::transport::WorkspaceEvent::Stopped {
+                            workspace_id: id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
                     );
                     changed = true;
                 }
@@ -442,6 +466,11 @@ impl Cache {
                 .agent
                 .as_ref()
                 .is_some_and(agent::Ui::navigation_blocked)
+    }
+    pub(super) fn has_unsaved_form_drafts(&self) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(agent::Ui::has_unsaved_form_drafts)
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())

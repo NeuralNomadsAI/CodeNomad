@@ -19,6 +19,10 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         layer.extend(crate::workspace::mission_confirmation(s));
         shell::notifications::app_layers(s, &mut layer);
+        layer.extend(shell::command_palette::overlay(s));
+        layer.extend(shell::tab_rename::overlay(s));
+        layer.extend(shell::temporary::overlay(s));
+        layer.extend(shell::blank_cleanup::overlay(s));
         #[cfg(not(target_arch = "wasm32"))]
         layer.extend(chat::authentication::dialog(s));
         let body = layout::with_overlays(base, layer);
@@ -45,7 +49,11 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
     .on_layout_tx(|s, bounds @ [_, _, w, h], tx| {
         let changed = chat::ToolDiffPreferences::layout(s, w)
             | crate::timeline::preview_window_layout(s, [w, h])
-            | shell::notifications::measure_notices(s, bounds, tx);
+            | shell::notifications::measure_notices(s, bounds, tx)
+            | shell::command_palette::measure(s, bounds, tx)
+            | shell::tab_rename::measure(s, bounds, tx)
+            | shell::temporary::measure(s, bounds, tx)
+            | shell::blank_cleanup::measure(s, bounds, tx);
         if !changed {
             tx.live_only();
         }

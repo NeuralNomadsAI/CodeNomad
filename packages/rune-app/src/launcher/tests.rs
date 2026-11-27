@@ -113,8 +113,12 @@ fn terminal_omission_is_not_enough_to_retire_a_visit() {
             .visits
             .start_checks(&["a".into()], input);
         assert!(
-            out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
-                .is_ok()
+            out.try_send((
+                "a".into(),
+                codenomad_client::runtime::Instant::now(),
+                codenomad_client::catalog::SessionAbsence::NotFound,
+            ))
+            .is_ok()
         );
         assert!(poll(s, tx));
         assert!(!can_visit(s, true));
@@ -301,6 +305,7 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
         launcher.project = Some(Project {
             id: "project".into(),
             path: "/fixture".into(),
+            temporary: false,
         });
         launcher.sessions = vec![Session {
             id: "existing".into(),
@@ -425,6 +430,7 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         if let Some(l) = s.screen.launcher_mut() {
             l.connection = Some(backend.clone());
@@ -560,6 +566,7 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
     let project = Project {
         id: "proj-1".into(),
         path: "/repo".into(),
+        temporary: false,
     };
     crate::workspace::opened(&mut s, &project);
     let bound = Backend {
@@ -946,10 +953,12 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
+            temporary: false,
         };
         let project_b = Project {
             id: "proj-b".into(),
             path: "/repo-b".into(),
+            temporary: false,
         };
         let bound_a = Backend {
             workspace: project_a.id.clone(),
@@ -1123,6 +1132,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_c = Project {
             id: "proj-c".into(),
             path: "/repo-c".into(),
+            temporary: false,
         };
         let opening_c = rt
             .state
@@ -1147,7 +1157,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             l.authentication_required = false;
             l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
             l.pending_stream_generation = 1;
-            l.stopped_during_pending.insert(project_c.id.clone());
+            l.stopped_during_pending
+                .insert(project_c.id.clone(), (false, false));
             l.result = Some(opened_in);
             l.pending = true;
         }
@@ -1187,6 +1198,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_d = Project {
             id: "proj-d".into(),
             path: "/repo-d".into(),
+            temporary: false,
         };
         let opening_d = rt
             .state
@@ -1252,7 +1264,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.sessions.clear();
-            l.stopped_during_pending.insert("proj-stopped".into());
+            l.stopped_during_pending
+                .insert("proj-stopped".into(), (false, false));
             l.result = Some(created_in);
             l.pending = true;
         }
@@ -1300,6 +1313,7 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
+            temporary: false,
         };
         let bound_a = Backend {
             workspace: project_a.id.clone(),
@@ -1390,6 +1404,7 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         let project_d = Project {
             id: "proj-d".into(),
             path: "/repo-d".into(),
+            temporary: false,
         };
         let opening_d = rt
             .state
@@ -1485,6 +1500,7 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
     let project = Project {
         id: "proj-att".into(),
         path: "/repo-att".into(),
+        temporary: false,
     };
     let mut draft = crate::composer::draft::Draft::default();
     draft
@@ -1505,6 +1521,8 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
                 backend_id: Some("external".into()),
                 server_id: Some("srv-att".into()),
                 folder: project.path.clone(),
+                project_name: None,
+                temporary: false,
                 occurrence: 0,
                 workspace_id: Some(project.id.clone()),
                 active_session_id: Some("ses-att".into()),
