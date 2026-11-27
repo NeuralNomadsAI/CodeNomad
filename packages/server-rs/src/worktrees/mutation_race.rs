@@ -198,6 +198,7 @@ impl Harness {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory":root}),
+            temporary: None,
         };
         app.inner.lock().unwrap().workspaces.push(ws.clone());
         let catalogue = catalogue(&app, &ws, false).await.unwrap();
@@ -258,6 +259,19 @@ fn new_pause() -> Arc<Pause> {
     Arc::new(Pause { reached: Semaphore::new(0), release: Semaphore::new(0) })
 }
 
+async fn rejected_before_dispatch(outcome: Result<axum::response::Response, crate::Error>) -> (Status, Value) {
+    let response = outcome.expect("send_input pre-dispatch refusal must return a marked HTTP response");
+    assert_eq!(
+        response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()),
+        Some("1"),
+        "send_input pre-dispatch refusal must carry x-codenomad-before-dispatch: 1"
+    );
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    (status, body)
+}
+
 #[tokio::test]
 async fn deletion_finishes_while_a_prospective_prompt_is_held_before_admission() {
     let _git = crate::git::test_git_serial().await;
@@ -276,10 +290,11 @@ async fn deletion_finishes_while_a_prospective_prompt_is_held_before_admission()
     // immediately before admission (http-server.ts:1435–1453).
     h.delete_checkout(principal).await;
     pause.release.add_permits(1);
-    let rejected = bounded(&h.trace, "release prompt after deletion", prompt).await.unwrap().unwrap_err();
+    let rejected =
+        rejected_before_dispatch(bounded(&h.trace, "release prompt after deletion", prompt).await.unwrap()).await;
     let lines = h.trace.lock().unwrap().clone();
     assert_eq!(rejected.0, Status::FORBIDDEN, "{rejected:?}\n{lines:?}");
-    assert_eq!(rejected.1.0, json!({"error":"Location does not belong to workspace"}));
+    assert_eq!(rejected.1, json!({"error":"Location does not belong to workspace"}));
     assert!(lines.iter().any(|line| line == "DELETE checkout fence drained"), "{lines:?}");
     let sent = h.prompt_trace();
     assert!(
@@ -306,11 +321,13 @@ async fn deletion_during_initial_prospective_resolution_is_rejected() {
 
     h.delete_checkout(principal).await;
     pause.release.add_permits(1);
-    let rejected =
-        bounded(&h.trace, "release prompt after initial resolution deletion", prompt).await.unwrap().unwrap_err();
+    let rejected = rejected_before_dispatch(
+        bounded(&h.trace, "release prompt after initial resolution deletion", prompt).await.unwrap(),
+    )
+    .await;
     let lines = h.trace.lock().unwrap().clone();
     assert_eq!(rejected.0, Status::FORBIDDEN, "{rejected:?}\n{lines:?}");
-    assert_eq!(rejected.1.0, json!({"error":"Location does not belong to workspace"}));
+    assert_eq!(rejected.1, json!({"error":"Location does not belong to workspace"}));
     assert!(!lines.iter().any(|line| line == &h.prompt_trace()), "{lines:?}");
 }
 
@@ -356,10 +373,12 @@ async fn deletion_still_holding_fence_returns_409_for_prospective_prompt() {
     let _blocked = crate::worktrees::fence::block(&[crate::worktrees::fence::identity(&h.checkout)]).await.unwrap();
     git_fixture(&h.root, &["worktree", "remove", h.checkout.to_str().unwrap()]).await;
     pause.release.add_permits(1);
-    let rejected = bounded(&h.trace, "release prompt during active deletion", prompt).await.unwrap().unwrap_err();
+    let rejected =
+        rejected_before_dispatch(bounded(&h.trace, "release prompt during active deletion", prompt).await.unwrap())
+            .await;
     let lines = h.trace.lock().unwrap().clone();
     assert_eq!(rejected.0, Status::CONFLICT, "{rejected:?}\n{lines:?}");
-    assert_eq!(rejected.1.0, json!({"error":"Worktree deletion is in progress"}));
+    assert_eq!(rejected.1, json!({"error":"Worktree deletion is in progress"}));
     assert!(!lines.iter().any(|line| line == &h.prompt_trace()), "{lines:?}");
 }
 
@@ -378,10 +397,13 @@ async fn deletion_between_recheck_and_admit_rejects_prospective_prompt() {
 
     h.delete_checkout(principal).await;
     pause.release.add_permits(1);
-    let rejected = bounded(&h.trace, "release prompt after post-recheck deletion", prompt).await.unwrap().unwrap_err();
+    let rejected = rejected_before_dispatch(
+        bounded(&h.trace, "release prompt after post-recheck deletion", prompt).await.unwrap(),
+    )
+    .await;
     let lines = h.trace.lock().unwrap().clone();
     assert_eq!(rejected.0, Status::FORBIDDEN, "{rejected:?}\n{lines:?}");
-    assert_eq!(rejected.1.0, json!({"error":"Location does not belong to workspace"}));
+    assert_eq!(rejected.1, json!({"error":"Location does not belong to workspace"}));
     assert!(!lines.iter().any(|line| line == &h.prompt_trace()), "{lines:?}");
 }
 
@@ -485,11 +507,13 @@ async fn managed_worktree_prospective_prompt_returns_409_during_deletion_and_200
     let _blocked = crate::worktrees::fence::block(&[crate::worktrees::fence::identity(&h.checkout)]).await.unwrap();
     git_fixture(&h.root, &["worktree", "remove", h.checkout.to_str().unwrap()]).await;
     pause.release.add_permits(1);
-    let rejected =
-        bounded(&h.trace, "release managed prompt during active deletion", prompt).await.unwrap().unwrap_err();
+    let rejected = rejected_before_dispatch(
+        bounded(&h.trace, "release managed prompt during active deletion", prompt).await.unwrap(),
+    )
+    .await;
     let lines = h.trace.lock().unwrap().clone();
     assert_eq!(rejected.0, Status::CONFLICT, "{rejected:?}\n{lines:?}");
-    assert_eq!(rejected.1.0, json!({"error":"Worktree deletion is in progress"}));
+    assert_eq!(rejected.1, json!({"error":"Worktree deletion is in progress"}));
     assert!(!lines.iter().any(|line| line == &h.prompt_trace()), "{lines:?}");
 
     let h2 = Harness::with_managed_checkout("mutation-race-managed-git").await;

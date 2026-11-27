@@ -8,7 +8,11 @@ pub(crate) use persistence::poll;
 
 use codenomad_client::prompt_history::MAX_ENTRIES;
 const MAX_WINDOW_ENTRIES: usize = 3200;
+#[cfg(target_arch = "wasm32")]
+const MAX_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_BYTES: usize = 80 * 1024 * 1024;
+const MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum Project {
@@ -103,10 +107,109 @@ pub(crate) struct History {
 }
 
 impl History {
-    fn discard(&mut self, index: usize) {
-        if let Some(entry) = self.entries.remove(index) {
-            self.bytes -= entry.bytes;
+    #[cfg(test)]
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn retained_bytes_dedup(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(entry.edit.text.len())
+                .saturating_add(
+                    entry
+                        .edit
+                        .marks()
+                        .len()
+                        .saturating_mul(size_of::<rune::edit::MarkRange>()),
+                )
+                .saturating_add(entry.resolved.len())
+                .saturating_add(entry.draft.retained_bytes(seen))
+        })
+    }
+
+    pub(crate) fn evict_under_pressure(
+        &mut self,
+        bytes_to_free: usize,
+        active_tab: Option<&str>,
+        active_session: Option<&str>,
+        protected_ids: &[i64],
+    ) -> usize {
+        if bytes_to_free == 0 || self.entries.is_empty() {
+            return 0;
         }
+        let mut freed = 0usize;
+        // Pass 1: evict oldest entries from inactive tabs/sessions first.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            let is_active = active_tab.is_some()
+                && active_session.is_some()
+                && entry.originates_in(
+                    active_tab.unwrap_or_default(),
+                    active_session.unwrap_or_default(),
+                );
+            if !is_active
+                && !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
+            }
+        }
+        // Pass 2: if still over budget, evict oldest remaining entries except protected ones.
+        let mut index = self.entries.len();
+        while index > 0 && freed < bytes_to_free {
+            index -= 1;
+            let entry = &self.entries[index];
+            if !protected_ids.contains(&entry.id)
+                && let Some(removed) = self.discard(index)
+            {
+                freed = freed.saturating_add(entry_sole_owner_bytes(&removed));
+            }
+        }
+        freed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push(&mut self, tab: &str, session: &str, text: String) -> i64 {
+        self.fixture_push_with_draft(tab, session, text, Draft::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_push_with_draft(
+        &mut self,
+        tab: &str,
+        session: &str,
+        text: String,
+        draft: Draft,
+    ) -> i64 {
+        self.next += 1;
+        let bytes = text
+            .len()
+            .saturating_mul(2)
+            .saturating_add(draft.retained_bytes(&mut std::collections::HashSet::new()));
+        let id = self.next;
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.entries.push_front(Entry {
+            project: Project::Unbound,
+            origin: Some((tab.into(), session.into())),
+            edit: TextEdit::new(&text),
+            draft,
+            resolved: text,
+            bytes,
+            id,
+        });
+        id
+    }
+
+    fn discard(&mut self, index: usize) -> Option<Entry> {
+        let entry = self.entries.remove(index)?;
+        self.bytes = self.bytes.saturating_sub(entry.bytes);
+        Some(entry)
     }
 
     fn count(&self, project: &Project) -> usize {
@@ -119,6 +222,34 @@ impl History {
     fn full(&self, additional: usize) -> bool {
         self.entries.len() >= MAX_WINDOW_ENTRIES || self.bytes + additional > MAX_BYTES
     }
+
+    pub(crate) fn unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.entries
+            .iter()
+            .fold((0usize, 0usize), |(files, bytes), entry| {
+                let (f, b) = entry.draft.add_unique_inline_usage(seen);
+                (files.saturating_add(f), bytes.saturating_add(b))
+            })
+    }
+
+    fn inline_usage_with(
+        &self,
+        base_seen: &std::collections::HashSet<usize>,
+        base_files: usize,
+        base_bytes: usize,
+        draft: &Draft,
+    ) -> (usize, usize) {
+        let mut seen = base_seen.clone();
+        let (df, db) = draft.add_unique_inline_usage(&mut seen);
+        let (hf, hb) = self.unique_inline_usage(&mut seen);
+        (
+            base_files.saturating_add(df).saturating_add(hf),
+            base_bytes.saturating_add(db).saturating_add(hb),
+        )
+    }
 }
 
 pub(crate) struct Recall {
@@ -130,7 +261,73 @@ pub(crate) struct Recall {
     fresh_shell_cleared: bool,
 }
 
+impl Recall {
+    pub(crate) fn edit(&self) -> &TextEdit {
+        &self.edit
+    }
+
+    pub(crate) fn draft(&self) -> &Draft {
+        &self.draft
+    }
+
+    pub(crate) fn clear_draft(&mut self) {
+        self.edit.clear();
+        self.draft = Draft::default();
+        self.missing = false;
+    }
+
+    pub(crate) fn id(&self) -> i64 {
+        self.id
+    }
+
+    pub(crate) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.edit
+            .text
+            .len()
+            .saturating_add(self.draft.retained_bytes(seen))
+    }
+}
+
+fn entry_sole_owner_bytes(entry: &Entry) -> usize {
+    entry
+        .edit
+        .text
+        .len()
+        .saturating_add(
+            entry
+                .edit
+                .marks()
+                .len()
+                .saturating_mul(size_of::<rune::edit::MarkRange>()),
+        )
+        .saturating_add(entry.resolved.len())
+        .saturating_add(entry.draft.sole_owner_bytes())
+}
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
+    record_with_limits(
+        s,
+        resolved,
+        slash,
+        crate::workspace::memory_budget::Limits::DEFAULT,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_record(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
+    record_with_limits(s, resolved, slash, limits)
+}
+
+fn record_with_limits(
+    s: &mut State,
+    resolved: String,
+    slash: bool,
+    limits: crate::workspace::memory_budget::Limits,
+) -> bool {
     let Some((project, tab, session)) = scope(s) else {
         return false;
     };
@@ -169,7 +366,17 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
                 } => name.len() + mime.len() + token.as_ref().map_or(0, String::len),
             })
             .sum::<usize>();
-    if bytes > MAX_BYTES {
+    let mut base_seen = std::collections::HashSet::new();
+    let (base_inline_files, base_inline_bytes) =
+        workspace::window_inline_usage_without_history(s, &mut base_seen, false);
+    let mut with_new = base_seen.clone();
+    let (new_files, new_bytes) = draft.add_unique_inline_usage(&mut with_new);
+    let new_inline_files = base_inline_files.saturating_add(new_files);
+    let new_inline_total = base_inline_bytes.saturating_add(new_bytes);
+    if bytes > MAX_BYTES
+        || new_inline_total > MAX_INLINE_BYTES
+        || new_inline_files > workspace::MAX_WINDOW_DEVICE_FILES
+    {
         persistence::append(s, &resolved);
         return false;
     }
@@ -183,11 +390,18 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     {
         history.discard(index);
     }
-    while history.full(bytes) {
+    while !history.entries.is_empty() && {
+        let (total_files, total_bytes) =
+            history.inline_usage_with(&base_seen, base_inline_files, base_inline_bytes, &draft);
+        history.full(bytes)
+            || total_bytes > MAX_INLINE_BYTES
+            || total_files > workspace::MAX_WINDOW_DEVICE_FILES
+    } {
         history.discard(history.entries.len() - 1);
     }
     history.next += 1;
     history.bytes += bytes;
+    let recorded_id = history.next;
     history.entries.push_front(Entry {
         project,
         origin: Some((tab, session)),
@@ -195,9 +409,36 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         draft,
         resolved,
         bytes,
-        id: history.next,
+        id: recorded_id,
     });
+    let _ = crate::workspace::memory_budget::enforce_with_recall(s, limits, Some(recorded_id));
     true
+}
+
+pub(crate) fn forget_tab(s: &mut State, tab_key: &str) {
+    let history = &mut s.prompt_history;
+    let mut index = 0;
+    while index < history.entries.len() {
+        let owned_by_closed_tab = history.entries[index]
+            .origin
+            .as_ref()
+            .is_some_and(|(tab, _)| tab == tab_key);
+        if !owned_by_closed_tab {
+            index += 1;
+            continue;
+        }
+        if history.entries[index].resolved.is_empty() {
+            history.discard(index);
+            continue;
+        }
+        let entry = &mut history.entries[index];
+        entry.origin = None;
+        entry.draft = Draft::default();
+        let next_bytes = entry.edit.text.len() + entry.resolved.len();
+        history.bytes = history.bytes.saturating_sub(entry.bytes) + next_bytes;
+        entry.bytes = next_bytes;
+        index += 1;
+    }
 }
 
 pub(crate) fn fresh(s: &State) -> (&TextEdit, &Draft, bool) {
@@ -342,8 +583,16 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
         }
         edit.set_caret(edit.text.len());
         replace_edit(s, edit);
+        let had_inline = draft.inline_usage().0 > 0;
         s.composer.draft = draft;
         s.composer.attachments_missing = false;
+        if had_inline && !workspace::attachment_draft_admissible(s) {
+            s.composer
+                .draft
+                .attachments
+                .retain(|part| !matches!(part, Attachment::Device { .. }));
+            s.composer.attachments_missing = true;
+        }
     } else if !older && current.is_some() {
         restore(s);
         s.draft.set_caret(s.draft.text.len());

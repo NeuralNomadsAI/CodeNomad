@@ -51,6 +51,7 @@ fn workspace_state(tabs: usize) -> State {
             let next = Project {
                 id: format!("project-{i}"),
                 path: format!("/repo-{i}"),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(next.clone());
@@ -191,6 +192,7 @@ fn session_new_creates_and_binds_session_immediately_and_honors_guards_and_overr
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());
@@ -345,10 +347,26 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         files.document.changed(scope);
     }
 
-    // Unconfirmed prompt and slash command do NOT trap closing/switching, and both locks survive reopen.
+    // Unconfirmed slash command and prompt do NOT trap closing/switching, and both locks survive reopen.
     let (cmd_tx, cmd_rx) = codenomad_client::bounded(2);
     rt.state.commands = Some(cmd_tx);
     rt.state.phase = Phase::Ready;
+    rt.state.composer.picker.add_test_command("compact");
+    rt.state.draft = TextEdit::new("/compact ");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Slash {
+        attempt: slash_id, ..
+    } = cmd_rx.try_recv().unwrap()
+    else {
+        panic!("expected slash command");
+    };
+    crate::composer::acknowledge(
+        &mut rt.state,
+        &slash_id,
+        crate::transport::PromptOutcome::Unconfirmed,
+    );
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
+
     rt.state.draft = TextEdit::new("unsent draft");
     rt.update(|s, tx| crate::composer::send(s, tx, false));
     let crate::transport::Command::Prompt(sent) = cmd_rx.try_recv().unwrap() else {
@@ -365,8 +383,7 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         Some(unconfirmed_id.as_str())
     );
     rt.state.phase = Phase::Ready;
-    rt.state.composer.command_unconfirmed =
-        Some(crate::composer::UnconfirmedCommand::new("compact", ""));
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
     assert!(crate::launcher::can_change_session(&rt.state));
 
     // Streaming blocks close-session.
@@ -405,10 +422,9 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         rt.state.composer.unconfirmed_id(),
         Some(unconfirmed_id.as_str())
     );
-    assert_eq!(
-        rt.state.composer.command_unconfirmed,
-        Some(crate::composer::UnconfirmedCommand::new("compact", ""))
-    );
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
+    rt.state.draft = rune::edit::TextEdit::new("/compact ");
+    assert!(crate::composer::command_held(&rt.state));
 }
 
 #[test]
@@ -421,6 +437,7 @@ fn session_prev_and_next_select_visible_sessions_and_respect_overrides() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());
@@ -501,12 +518,56 @@ fn session_prev_and_next_select_visible_sessions_and_respect_overrides() {
         send_key(&mut rt, Key::Command('{'), primary_mods(true));
         expect_bind(&mut rt, &http, "s-3").await;
 
-        // session-tab-2 remains inactive until subsession/logs tabs exist (must not switch root sessions).
+        // session-tab-2 jumps directly to the 2nd visible session (s-2); out-of-range session-tab-9 is a silent no-op.
+        send_key(&mut rt, Key::Command('2'), primary_mods(true));
+        expect_bind(&mut rt, &http, "s-2").await;
+        send_key(&mut rt, Key::Command('9'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        assert_eq!(workspace::active_session(&rt.state), Some("s-2"));
+
+        // Key repeat on session-tab-1 does not trigger navigation.
+        rt.repeat_key(KeyEvent {
+            key: Key::Command('1'),
+            mods: primary_mods(true),
+        });
+        settle(&mut rt);
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        assert_eq!(workspace::active_session(&rt.state), Some("s-2"));
+
+        // Filtered search restricts session-next and session-tab-1 to matching visible sessions only.
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.show_search = true;
+            l.search = TextEdit::new("Alpha");
+        }
         send_key(&mut rt, Key::Command('2'), primary_mods(true));
         assert!(!rt.state.screen.launcher().unwrap().pending);
-        assert_eq!(workspace::active_session(&rt.state), Some("s-3"));
+        send_key(&mut rt, Key::Command('1'), primary_mods(true));
+        expect_bind(&mut rt, &http, "s-1").await;
 
-        // Filtered search restricts session-next to matching visible sessions only.
+        // Custom override and explicit empty disable work on session-tab-3.
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.show_search = false;
+            l.search = TextEdit::new("");
+        }
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"session-tab-3": [{"key": "f8"}], "session-tab-2": []}),
+        );
+        send_key(&mut rt, Key::Command('2'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        send_key(&mut rt, Key::Function(8), Mods::default());
+        expect_bind(&mut rt, &http, "s-3").await;
+
+        // Streaming blocks session-tab-1 just like session-prev/session-next.
+        rt.state.phase = Phase::Streaming;
+        send_key(&mut rt, Key::Command('1'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        rt.state.phase = Phase::Ready;
+        settings::fixture_shortcuts(&rt.state, json!({}));
+
+        // Re-verify session-next under search filter.
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.show_search = true;
@@ -899,7 +960,8 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     send_key(&mut rt, Key::Function(6), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 
-    // Solid registration priority: session-new wins over app-tab-1 when both share the same key.
+    // Solid registration priority: session-new wins over app-tab-1 when both share the same key,
+    // and app-tab-1 wins over command-palette hotkey new-temporary-instance when both share the same key.
     rt.state.screen.launcher_mut().unwrap().connection =
         Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
     settings::fixture_shortcuts(
@@ -909,6 +971,15 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     send_key(&mut rt, Key::Function(8), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
     assert!(rt.state.screen.launcher().unwrap().pending);
+
+    rt.state.screen.launcher_mut().unwrap().pending = false;
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"app-tab-1": [{"key": "f9"}], "new-temporary-instance": [{"key": "f9"}]}),
+    );
+    send_key(&mut rt, Key::Function(9), Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    assert!(!rt.state.temporary.in_flight());
 }
 
 mod detached;

@@ -56,7 +56,15 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
         drop(prefs);
         if renewing {
             s.phase = crate::Phase::Reconnecting;
+            s.command_palette.dismiss();
+            s.tab_rename.dismiss();
+            s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
+            s.workspace_open.cancel();
         } else {
+            s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
+            s.workspace_open.cancel();
             s.show_launcher();
         }
         crate::workspace::suspend_missions(s);
@@ -104,6 +112,23 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
+fn provider_session_moved(s: &State, workspace: &str, session: &str) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.catalogue_watch.is_some())
+    {
+        return;
+    }
+    let mut prefs = s.settings.shared.borrow_mut();
+    if prefs.provider_target.as_mut().is_some_and(|target| {
+        target.session_moved(workspace, session)
+            | target.integrations_hint(workspace, Some(session))
+    }) && let Some(wake) = &prefs.window_wake
+    {
+        wake();
+    }
+}
+
 pub(crate) fn connection_event(
     s: &State,
     event: &crate::transport::Event,
@@ -135,7 +160,31 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
-        Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
+        Event::Workspace(WorkspaceEvent::IntegrationsChanged {
+            workspace_id,
+            session_id,
+        }) => {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
+            {
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            if prefs
+                .provider_target
+                .as_mut()
+                .is_some_and(|target| target.integrations_hint(workspace_id, session_id.as_deref()))
+                && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
+        Event::Workspace(WorkspaceEvent::SessionMoved {
+            workspace_id,
+            session_id,
+        }) => provider_session_moved(s, workspace_id, session_id),
+        Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. }) => {
             provider_stopped(s, workspace_id)
         }
         Event::AgentHint(true) => {
@@ -143,6 +192,9 @@ pub(crate) fn connection_event(
                 s.settings.shared.borrow_mut().memory.transport(true);
                 provider_transport(s, true);
             }
+        }
+        Event::Reconnecting if affects_preferences => {
+            provider_transport(s, false);
         }
         Event::ConnectionLost => {
             if affects_preferences {

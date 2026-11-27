@@ -16,6 +16,20 @@ struct ChildDeliveries {
 }
 
 impl DeliveryCache {
+    pub(in crate::chat) fn retained_bytes(&self) -> usize {
+        self.by_child.iter().fold(0usize, |total, (id, entry)| {
+            total
+                .saturating_add(id.len())
+                .saturating_add(entry.launches.len().saturating_mul(size_of::<u64>()))
+                .saturating_add(
+                    entry
+                        .reports
+                        .len()
+                        .saturating_mul(size_of::<(u64, usize, usize)>()),
+                )
+        })
+    }
+
     pub(in crate::chat) fn clear(&mut self) {
         self.fingerprint = 0;
         self.by_child.clear();

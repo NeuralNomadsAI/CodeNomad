@@ -1,9 +1,10 @@
 //! One dispatch attempt and its correlated receipt.
 use super::authentication::rejected_by_authentication;
+#[cfg(test)]
+use crate::prompt::Prompt;
 use crate::{
     Sender, Wake,
     backend::Backend,
-    prompt::Prompt,
     prompt_shell::ShellError,
     stream,
     transport::{Event, PromptOutcome, publish},
@@ -15,6 +16,16 @@ pub enum ShellSettlement {
     AuthExpired { outcome: PromptOutcome },
 }
 
+pub(super) enum SlashReceipt {
+    Settled,
+    AuthenticationRequired { confirmed: bool },
+}
+
+pub(crate) enum PromptReceipt {
+    Outcome(PromptOutcome),
+    AuthenticationRequired { confirmed: bool },
+}
+
 pub(super) async fn slash(
     backend: &Backend,
     out: &Sender<Event>,
@@ -24,18 +35,26 @@ pub(super) async fn slash(
     attempt: String,
     name: String,
     text: String,
-) -> bool {
+) -> SlashReceipt {
     use crate::prompt::PromptError;
     let outcome = if admitted {
         match backend.prompt_command(&name, &text).await {
             Ok(()) => PromptOutcome::Confirmed(attempt.clone()),
             Err(PromptError::Rejected) => PromptOutcome::Rejected,
             Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
-            Err(PromptError::AuthenticationRequired) => {
-                if rejected_by_authentication(backend, &attempt, out, wake, wire).await {
-                    return false;
+            Err(PromptError::AuthenticationRequired { before_dispatch }) => {
+                if let Some(confirmed) =
+                    rejected_by_authentication(backend, &attempt, before_dispatch, out, wake, wire)
+                        .await
+                {
+                    return SlashReceipt::AuthenticationRequired { confirmed };
                 }
-                PromptOutcome::Rejected
+                if before_dispatch {
+                    PromptOutcome::Rejected
+                } else {
+                    // Without the pre-dispatch marker, a 401 may come from a detached write or upstream after dispatch.
+                    PromptOutcome::Unconfirmed
+                }
             }
         }
     } else {
@@ -50,7 +69,7 @@ pub(super) async fn slash(
         },
     )
     .await;
-    true
+    SlashReceipt::Settled
 }
 
 pub(super) async fn shell(backend: &Backend, attempt: &str, command: &str) -> ShellSettlement {
@@ -79,7 +98,8 @@ pub(super) async fn shell(backend: &Backend, attempt: &str, command: &str) -> Sh
     }
 }
 
-pub(super) async fn prompt(
+#[cfg(test)]
+pub(crate) async fn prompt(
     backend: &Backend,
     out: &Sender<Event>,
     wake: &Wake,
@@ -87,26 +107,57 @@ pub(super) async fn prompt(
     admitted: bool,
     id: &str,
     prompt: &Prompt,
-) -> Option<PromptOutcome> {
-    let outcome = if admitted {
-        match backend.prompt(prompt).await {
-            Ok(ack) => PromptOutcome::Confirmed(ack.id),
-            Err(error)
-                if error.downcast_ref()
-                    == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
-            {
-                if rejected_by_authentication(backend, id, out, wake, wire).await {
-                    return None;
-                }
-                PromptOutcome::Rejected
-            }
-            Err(error) if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected) => {
-                PromptOutcome::Rejected
-            }
-            Err(_) => PromptOutcome::Unconfirmed,
-        }
-    } else {
-        PromptOutcome::Rejected
+) -> PromptReceipt {
+    if !admitted {
+        return PromptReceipt::Outcome(PromptOutcome::Rejected);
+    }
+    let Ok(body) = crate::prompt::encode(prompt) else {
+        return PromptReceipt::Outcome(PromptOutcome::Rejected);
     };
-    Some(outcome)
+    prompt_encoded(backend, out, wake, wire, id, body).await
+}
+
+pub(super) async fn prompt_encoded(
+    backend: &Backend,
+    out: &Sender<Event>,
+    wake: &Wake,
+    wire: &stream::State,
+    id: &str,
+    body: Vec<u8>,
+) -> PromptReceipt {
+    let outcome = match backend.send_encoded_prompt(Some(id), body).await {
+        Ok(ack) => PromptOutcome::Confirmed(ack.id),
+        Err(error)
+            if matches!(
+                error.downcast_ref::<crate::prompt::PromptError>(),
+                Some(crate::prompt::PromptError::AuthenticationRequired { .. })
+            ) =>
+        {
+            let before_dispatch = matches!(
+                error.downcast_ref::<crate::prompt::PromptError>(),
+                Some(crate::prompt::PromptError::AuthenticationRequired {
+                    before_dispatch: true
+                })
+            );
+            if let Some(confirmed) =
+                rejected_by_authentication(backend, id, before_dispatch, out, wake, wire).await
+            {
+                return PromptReceipt::AuthenticationRequired { confirmed };
+            }
+            if before_dispatch {
+                PromptOutcome::Rejected
+            } else {
+                // Without the pre-dispatch marker, a 401 may come from a detached write or upstream after dispatch.
+                PromptOutcome::Unconfirmed
+            }
+        }
+        Err(error)
+            if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)
+                || error.is::<crate::prompt::EncodeError>() =>
+        {
+            PromptOutcome::Rejected
+        }
+        Err(_) => PromptOutcome::Unconfirmed,
+    };
+    PromptReceipt::Outcome(outcome)
 }

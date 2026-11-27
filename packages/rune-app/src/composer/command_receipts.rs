@@ -1,6 +1,6 @@
 use super::recall::Project;
 use crate::{State, transport::PromptOutcome};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const MAX_UNCONFIRMED: usize = 100;
 
@@ -25,15 +25,29 @@ struct Held {
 }
 
 #[derive(Default)]
-pub(crate) struct CommandReceipts(HashMap<String, Held>);
+pub(crate) struct CommandReceipts {
+    held: HashMap<String, Held>,
+    in_flight: HashSet<String>,
+}
 
 impl CommandReceipts {
     pub(super) fn full(&self) -> bool {
-        self.0.len() >= MAX_UNCONFIRMED
+        self.held.len().saturating_add(self.in_flight.len()) >= MAX_UNCONFIRMED
     }
 
-    pub(super) fn reserve(&mut self, id: String, attempt: CommandAttempt) {
-        self.0.insert(
+    pub(super) fn reserve(&mut self, id: String) -> bool {
+        if self.full() {
+            return false;
+        }
+        self.in_flight.insert(id);
+        true
+    }
+
+    pub(super) fn reserve_shell(&mut self, id: String, attempt: CommandAttempt) -> bool {
+        if self.full() {
+            return false;
+        }
+        self.held.insert(
             id,
             Held {
                 attempt,
@@ -41,10 +55,19 @@ impl CommandReceipts {
                 observed: false,
             },
         );
+        true
+    }
+
+    pub(super) fn release_in_flight(&mut self, id: &str) {
+        self.in_flight.remove(id);
+        if self.held.get(id).is_some_and(|held| !held.unconfirmed) {
+            self.held.remove(id);
+        }
     }
 
     pub(super) fn hold(&mut self, id: String, attempt: CommandAttempt) {
-        self.0.insert(
+        self.in_flight.remove(&id);
+        self.held.insert(
             id,
             Held {
                 attempt,
@@ -56,7 +79,7 @@ impl CommandReceipts {
 
     pub(super) fn target_matches(&self, id: &str, target: Option<&Target>) -> bool {
         target.is_some_and(|active| {
-            self.0
+            self.held
                 .get(id)
                 .is_some_and(|held| held.attempt.target == *active)
         })
@@ -69,27 +92,28 @@ impl CommandReceipts {
         messages: &[crate::history::Row],
         target_matches: bool,
     ) -> bool {
+        self.in_flight.remove(id);
         let is_shell = self
-            .0
+            .held
             .get(id)
             .is_some_and(|held| matches!(held.attempt.kind, CommandKind::Shell { .. }));
         let observed = is_shell
-            && (self.0.get(id).is_some_and(|held| held.observed)
+            && (self.held.get(id).is_some_and(|held| held.observed)
                 || (target_matches
                     && messages
                         .iter()
                         .any(|row| row.role == "shell" && row.id == id)));
         if matches!(outcome, PromptOutcome::Unconfirmed) {
             if observed {
-                self.0.remove(id);
+                self.held.remove(id);
                 return true;
             }
-            if let Some(held) = self.0.get_mut(id) {
+            if let Some(held) = self.held.get_mut(id) {
                 held.unconfirmed = true;
             }
             return false;
         }
-        self.0.remove(id);
+        self.held.remove(id);
         observed
     }
 
@@ -101,10 +125,10 @@ impl CommandReceipts {
         let Some(target) = target else {
             return;
         };
-        if self.0.is_empty() {
+        if self.held.is_empty() {
             return;
         }
-        for (id, held) in &mut self.0 {
+        for (id, held) in &mut self.held {
             if held.attempt.target == *target
                 && matches!(held.attempt.kind, CommandKind::Shell { .. })
                 && messages
@@ -114,13 +138,26 @@ impl CommandReceipts {
                 held.observed = true;
             }
         }
-        self.0
+        self.held
             .retain(|_, held| !(held.unconfirmed && held.observed));
+    }
+
+    pub(crate) fn has_for_state(&self, s: &State) -> bool {
+        let Some(target) = super::recall::command_target(s) else {
+            return false;
+        };
+        self.held.values().any(|held| held.attempt.target == target)
+    }
+
+    pub(crate) fn has_for_session(&self, session_id: &str) -> bool {
+        self.held
+            .values()
+            .any(|held| held.attempt.target.1 == session_id)
     }
 }
 
 fn matches_held(s: &State, unconfirmed_only: bool) -> bool {
-    if s.command_receipts.0.is_empty() {
+    if s.command_receipts.held.is_empty() {
         return false;
     }
     let Some(target) = super::recall::command_target(s) else {
@@ -130,7 +167,7 @@ fn matches_held(s: &State, unconfirmed_only: bool) -> bool {
         let Some(command) = s.composer.draft.resolve_shell(&s.draft) else {
             return false;
         };
-        return s.command_receipts.0.values().any(|held| {
+        return s.command_receipts.held.values().any(|held| {
             (!unconfirmed_only || held.unconfirmed)
                 && held.attempt.target == target
                 && matches!(&held.attempt.kind, CommandKind::Shell { command: cmd } if cmd == &command)
@@ -142,7 +179,7 @@ fn matches_held(s: &State, unconfirmed_only: bool) -> bool {
     let Some(args) = s.composer.draft.resolve_args(&s.draft, args) else {
         return false;
     };
-    s.command_receipts.0.values().any(|held| {
+    s.command_receipts.held.values().any(|held| {
         (!unconfirmed_only || held.unconfirmed)
             && held.attempt.target == target
             && matches!(

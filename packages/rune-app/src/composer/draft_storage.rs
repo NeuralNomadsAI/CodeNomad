@@ -3,14 +3,14 @@ use serde_json::{Value, json};
 use std::ops::Range;
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SavedParts {
     complete: bool,
     parts: Vec<Part>,
     literal_spans: Vec<Range<usize>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Part {
     Pasted {
         id: u64,
@@ -45,6 +45,13 @@ impl SavedParts {
 
     pub(crate) fn mark_incomplete(&mut self) {
         self.complete = false;
+    }
+
+    pub(crate) fn fingerprint(&self) -> (usize, u64) {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        (self.parts.len(), hasher.finish())
     }
     pub(crate) fn encode(&self) -> Value {
         let parts: Vec<_> = self.parts.iter().map(|part| match part {

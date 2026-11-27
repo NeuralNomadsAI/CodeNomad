@@ -704,15 +704,48 @@ pub async fn ready_at(
     if !STATE.lock().unwrap().active {
         return Ok(());
     }
+    ready_strict_at(app, endpoint, directory, deadline, still_valid).await
+}
+
+/// Strict variant requiring an active lifecycle installation bound to `endpoint` with a live
+/// readiness owner, never bypassing readiness when provisioning is inactive.
+pub fn has_strict_ready_lease(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) -> bool {
+    #[cfg(test)]
+    if test_lease_for(endpoint).is_some() {
+        return app.native.current(endpoint);
+    }
+    let state = STATE.lock().unwrap();
+    state.active
+        && app.native.current(endpoint)
+        && state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint))
+        && state.current.and_then(|i| state.installations[i].readiness.as_ref()).is_some()
+}
+
+/// Strict variant of [`ready_at`] requiring an active lifecycle installation bound to `endpoint`.
+pub async fn ready_strict_at(
+    app: &Shared,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    directory: &str,
+    deadline: tokio::time::Instant,
+    still_valid: impl Fn() -> bool,
+) -> Result<(), String> {
     if !still_valid() {
         return Err("Operation is no longer valid".into());
     }
+    #[cfg(test)]
+    if let Some(owner) = test_lease_for(endpoint) {
+        if !app.native.current(endpoint) || !still_valid() {
+            return Err("Pruning lease does not match captured connection".into());
+        }
+        return owner
+            .prepare_while(directory, deadline, || app.native.current(endpoint) && still_valid())
+            .await
+            .map(|_| ());
+    }
     let owner = {
         let state = STATE.lock().unwrap();
-        if !state.active {
-            return Ok(());
-        }
-        if !app.native.current(endpoint)
+        if !state.active
+            || !app.native.current(endpoint)
             || !still_valid()
             || !state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint))
         {
@@ -722,4 +755,36 @@ pub async fn ready_at(
     };
     let owner = owner.ok_or("Pruning presence unavailable for captured connection")?;
     owner.prepare_while(directory, deadline, || app.native.current(endpoint) && still_valid()).await.map(|_| ())
+}
+
+#[cfg(test)]
+static TEST_LEASES: LazyLock<Mutex<std::collections::HashMap<usize, Arc<Owner>>>> = LazyLock::new(Default::default);
+
+#[cfg(test)]
+fn test_lease_for(endpoint: &Arc<crate::opencode::Endpoint>) -> Option<Arc<Owner>> {
+    TEST_LEASES.lock().unwrap().get(&(Arc::as_ptr(endpoint) as usize)).cloned()
+}
+
+#[cfg(test)]
+pub(crate) struct TestReadinessGuard {
+    endpoint: Arc<crate::opencode::Endpoint>,
+}
+
+#[cfg(test)]
+impl Drop for TestReadinessGuard {
+    fn drop(&mut self) {
+        TEST_LEASES.lock().unwrap().remove(&(Arc::as_ptr(&self.endpoint) as usize));
+    }
+}
+
+/// Registers a test-only readiness lease scoped exclusively to `endpoint`, without activating or
+/// mutating the process-wide provisioning lifecycle `STATE` used by unrelated parallel tests.
+#[cfg(test)]
+pub(crate) fn install_test_readiness_lease(
+    endpoint: Arc<crate::opencode::Endpoint>,
+    lease: std::path::PathBuf,
+) -> TestReadinessGuard {
+    let key = Arc::as_ptr(&endpoint) as usize;
+    TEST_LEASES.lock().unwrap().insert(key, Arc::new(Owner::new(lease)));
+    TestReadinessGuard { endpoint }
 }

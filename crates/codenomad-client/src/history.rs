@@ -383,6 +383,24 @@ pub(crate) fn edge_page(
     Ok(())
 }
 
+/// True when every row present in both snapshots keeps the same relative order.
+pub fn order_consistent(left: &[Row], right: &[Row]) -> bool {
+    let mut positions = std::collections::HashMap::with_capacity(left.len());
+    for (index, row) in left.iter().enumerate() {
+        positions.insert(row.id.as_str(), index);
+    }
+    let mut previous = None;
+    for row in right {
+        if let Some(&index) = positions.get(row.id.as_str()) {
+            if previous.is_some_and(|prior| index <= prior) {
+                return false;
+            }
+            previous = Some(index);
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 #[test]
 fn reasoning_heavy_windows_keep_the_tail_and_restore_the_requested_anchor() {

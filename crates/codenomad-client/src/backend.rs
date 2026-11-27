@@ -18,6 +18,90 @@ impl std::fmt::Debug for Backend {
         f.write_str("CodeNomadConnection")
     }
 }
+pub(crate) fn percent_encode_header(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::PromptError {
+    #[cfg(not(target_arch = "wasm32"))]
+    if error.is_connect() || error.is_builder() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if error.is_builder() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    crate::prompt::PromptError::Unconfirmed
+}
+
+pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
+    let status = response.status();
+    let before_dispatch = response
+        .headers()
+        .get("x-codenomad-before-dispatch")
+        .and_then(|value| value.to_str().ok())
+        == Some("1");
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return crate::prompt::PromptError::AuthenticationRequired { before_dispatch };
+    }
+    if !before_dispatch {
+        return crate::prompt::PromptError::Unconfirmed;
+    }
+    if status.is_client_error() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    match status {
+        reqwest::StatusCode::NOT_IMPLEMENTED => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && body["error"].as_str() == Some("Route not implemented in this prototype")
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
+        reqwest::StatusCode::BAD_GATEWAY => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && matches!(
+                    body["error"].as_str(),
+                    Some(
+                        "session_environment_failed"
+                            | "opencode_unavailable_before_send"
+                            | "OpenCode service is not ready"
+                            | "PROVIDER_ACCOUNT_SELECTION_FAILED"
+                    )
+                )
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
+        reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && matches!(
+                    body["error"].as_str(),
+                    Some(
+                        "Mission schedule carrier ownership could not be verified"
+                            | "Conversation permissions unavailable"
+                            | "Git ownership could not be verified"
+                            | "Session mutation transport is unavailable"
+                    )
+                )
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
+        _ => {}
+    }
+    crate::prompt::PromptError::Unconfirmed
+}
+
 impl Backend {
     pub async fn connect(address: &str, password: &str) -> Result<Self> {
         Self::connect_with_bootstrap(address, password, None).await
@@ -89,13 +173,13 @@ impl Backend {
         Ok(())
     }
     pub async fn authentication_status(&self) -> Result<bool> {
-        let response = self
+        let request = self
             .client
             .get(format!("{}api/auth/status", self.base))
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await?
-            .error_for_status()?;
+            .timeout(std::time::Duration::from_secs(5));
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_cache_no_store();
+        let response = request.send().await?.error_for_status()?;
         read_json_limited(response, 4096).await?["authenticated"]
             .as_bool()
             .ok_or_else(|| "Invalid authentication status".into())
@@ -216,38 +300,37 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
-        self.prompt_with_401(input, false).await
-    }
-
-    pub(crate) async fn prompt_with_401(
-        &self,
-        input: &crate::prompt::Prompt,
-        report_wasm_401: bool,
-    ) -> Result<crate::prompt::Acknowledgement> {
         let body = crate::prompt::encode(input)?;
-        let response = self
+        self.send_encoded_prompt(input.id.as_deref(), body).await
+    }
+    pub(crate) async fn send_encoded_prompt(
+        &self,
+        attempted_id: Option<&str>,
+        body: Vec<u8>,
+    ) -> Result<crate::prompt::Acknowledgement> {
+        if self.client.server_identity_mismatch() {
+            return Err(crate::prompt::PromptError::Rejected.into());
+        }
+        let mut request = self
             .client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/prompt",
                 self.base, self.workspace, self.session
             ))
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
+            .body(body);
+        if let Some(directory) = &self.session_directory {
+            request = request.query(&[("directory", directory.as_str())]).header(
+                "x-codenomad-session-directory",
+                percent_encode_header(directory),
+            );
+        }
+        let response = request
             .send()
             .await
-            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
-        if (cfg!(not(target_arch = "wasm32")) || report_wasm_401)
-            && response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            return Err(crate::prompt::PromptError::AuthenticationRequired.into());
-        }
+            .map_err(|error| send_transport_error(&error))?;
         if !response.status().is_success() {
-            let error = if response.status().is_client_error() {
-                crate::prompt::PromptError::Rejected
-            } else {
-                crate::prompt::PromptError::Unconfirmed
-            };
-            return Err(error.into());
+            return Err(classify_http_error(response).await.into());
         }
         let response = crate::prompt_receipt::read(response)
             .await
@@ -263,8 +346,8 @@ impl Backend {
             return Err("prompt acknowledgement belongs to another session".into());
         }
         let id = match native.get("id") {
-            None | Some(Value::Null) => input.id.as_deref(),
-            Some(Value::String(id)) if id.is_empty() => input.id.as_deref(),
+            None | Some(Value::Null) => attempted_id,
+            Some(Value::String(id)) if id.is_empty() => attempted_id,
             Some(id) => id.as_str(),
         }
         .filter(|id| history::valid_id(id))

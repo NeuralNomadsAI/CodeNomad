@@ -209,6 +209,7 @@ impl Harness {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         };
         app.inner.lock().unwrap().workspaces.push(ws);
         Self { dir, root, linked, foreign, native, app, ws_id, http }

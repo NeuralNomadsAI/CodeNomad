@@ -3,7 +3,7 @@ mod cache;
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
-pub use cache::{EventCache, blocking_invalidation, event_catalogue, forget, invalidate, invalidate_blocking};
+pub use cache::{EventCache, blocking_invalidation, event_catalogue_at, forget, invalidate, invalidate_blocking};
 pub(crate) use cache::{HttpSnapshot, ReadMode, emit_worktrees_changed, http_read};
 pub(super) use cache::{event_revision, history_catalogue, http_list, media_http_read, receipt_catalogue, revision};
 use serde_json::{Value, json};
@@ -341,7 +341,10 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
 
 pub(crate) enum RootCheckout {
     Git(Result<Box<Physical>, Error>),
+    /// Confirmed non-Git directory (`git rev-parse` exited 128 with `"not a git repository"`).
     NonGit,
+    /// Non-ENOENT `rev-parse` failure: display falls back to `isGitRepo: false`, while authority checks fail closed.
+    FallbackNonGit,
     MissingGit,
 }
 
@@ -423,15 +426,15 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
         Ok(out) if out.code == 0 => {
             Ok(RootCheckout::Git(parse_checkout(workspace.path.clone(), out.text(), pre).await.map(Box::new)))
         }
-        Ok(out) if out.code == 128 && out.stderr_contains("not a git repository") => Ok(RootCheckout::NonGit),
+        Ok(out) if out.not_a_repository() => Ok(RootCheckout::NonGit),
         Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
         Ok(out) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", out.code));
-            Err(super::probe_error())
+            Ok(RootCheckout::FallbackNonGit)
         }
         Err(_) => {
             crate::bench::route_trace(format_args!("root-proof git failed"));
-            Err(super::probe_error())
+            Ok(RootCheckout::FallbackNonGit)
         }
     }
 }
@@ -471,6 +474,36 @@ pub struct Tree {
     projected_link: Option<Box<(PathBuf, PathBuf, Physical, String)>>,
 }
 impl Tree {
+    #[cfg(test)]
+    pub(super) fn test_stub(root: PathBuf, common: PathBuf, slug: &str, branch: Option<&str>) -> Self {
+        let service = root.to_string_lossy().into_owned();
+        Self {
+            path: root.clone(),
+            service: service.clone(),
+            slug: slug.into(),
+            branch: branch.map(str::to_string),
+            head: None,
+            locked: false,
+            service_root: service,
+            nested_missing: false,
+            removable: true,
+            layout: Physical {
+                admin: root.join(".git"),
+                root,
+                common,
+                root_id: String::new(),
+                common_id: String::new(),
+                admin_id: String::new(),
+                marker: None,
+                backlink: None,
+                common_marker: None,
+                stamp: [None, None],
+                ancestors: Vec::new(),
+            },
+            identity: None,
+            projected_link: None,
+        }
+    }
     pub fn registered(&self) -> &Path {
         &self.layout.root
     }

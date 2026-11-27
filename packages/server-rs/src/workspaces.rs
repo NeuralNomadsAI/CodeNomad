@@ -82,7 +82,7 @@ impl Drop for CreationGuard {
     }
 }
 
-fn request_id_valid(key: &str) -> bool {
+pub(crate) fn request_id_valid(key: &str) -> bool {
     !key.is_empty() && key.chars().count() <= 128
 }
 
@@ -192,6 +192,8 @@ async fn create(
         return cancelled();
     }
     let id = Uuid::new_v4();
+    let temporary = app.temporary_workspaces.as_ref().is_some_and(|t| t.has(&path)).then_some(true);
+    let current_binary = app.current_binary();
     let mut workspace = Workspace {
         id,
         request_id,
@@ -199,11 +201,12 @@ async fn create(
         name: input.name,
         status: "starting",
         proxy_path: format!("/workspaces/{id}/instance"),
-        binary_id: app.binary.clone(),
-        binary_label: app.binary.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        binary_id: current_binary.clone(),
+        binary_label: current_binary.file_name().unwrap_or_default().to_string_lossy().into_owned(),
         created_at: now(),
         updated_at: now(),
         location,
+        temporary,
     };
     app.emit(json!({"type":"workspace.created","workspace":workspace}));
     workspace.status = "ready";
@@ -220,7 +223,7 @@ async fn create(
 async fn delete(State(app): State<Shared>, Path(id): Path<String>) -> Status {
     let mut store = app.inner.lock().unwrap();
     if let Some(index) = store.workspaces.iter().position(|w| w.id.to_string() == id) {
-        app.remove(&mut store, index);
+        app.remove(&mut store, index, true);
     }
     Status::NO_CONTENT
 }
@@ -238,18 +241,7 @@ async fn cancel(
     input: Result<Json<Claim>, JsonRejection>,
 ) -> Result<Status, (Status, &'static str)> {
     let key = read_claim(input)?;
-    let mut store = app.inner.lock().unwrap();
-    if let Some(pending) = store.pending.get(&key) {
-        pending.cancel();
-    } else if !store.released.values().any(|id| id == &key)
-        && !store.workspaces.iter().any(|w| w.request_id.as_deref() == Some(&key))
-    {
-        // A departing client's keepalive can arrive before its creation POST.
-        store.early_cancellations.cancel(key.clone(), Instant::now());
-    }
-    if let Some(index) = store.workspaces.iter().position(|w| w.request_id.as_deref() == Some(&key)) {
-        app.remove(&mut store, index);
-    }
+    app.cancel_workspace_creation(&key);
     Ok(Status::NO_CONTENT)
 }
 
@@ -321,13 +313,32 @@ async fn release(
 }
 
 impl App {
-    fn remove(&self, store: &mut Inventory, index: usize) {
+    pub(crate) fn cancel_workspace_creation(&self, key: &str) {
+        let mut store = self.inner.lock().unwrap();
+        if let Some(pending) = store.pending.get(key) {
+            pending.cancel();
+        } else if !store.released.values().any(|id| id == key)
+            && !store.workspaces.iter().any(|w| w.request_id.as_deref() == Some(key))
+        {
+            // A departing client's keepalive can arrive before its creation POST.
+            store.early_cancellations.cancel(key.to_owned(), Instant::now());
+        }
+        if let Some(index) = store.workspaces.iter().position(|w| w.request_id.as_deref() == Some(key)) {
+            self.remove(&mut store, index, true);
+        }
+    }
+
+    pub(crate) fn remove(&self, store: &mut Inventory, index: usize, temporary_retained: bool) {
         let workspace = store.workspaces.remove(index);
         crate::worktrees::linked::forget(self, workspace.id);
         self.file_watches.lock().unwrap().forget(workspace.id);
         store.released.remove(&workspace.id);
         self.emit_status(workspace.id, "disconnected", store.generation, Some("workspace stopped"));
-        self.emit(json!({"type":"workspace.stopped","workspaceId":workspace.id,"reason":"deleted"}));
+        let mut stopped = json!({"type":"workspace.stopped","workspaceId":workspace.id,"reason":"deleted"});
+        if temporary_retained {
+            stopped["temporaryRetained"] = json!(true);
+        }
+        self.emit(stopped);
         self.workspace_closed.notify_waiters();
     }
 }

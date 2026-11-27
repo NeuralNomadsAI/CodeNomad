@@ -20,6 +20,7 @@ pub(crate) struct Binding {
     pub(super) close: crate::components::window_close_button::WindowCloseState,
     preferences: Rc<Cell<DiffPreferences>>,
     placement_unconfirmed: Rc<RefCell<PlacementHolds>>,
+    preview_closed_by_event: bool,
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
     pub scene: bool,
 }
@@ -32,6 +33,7 @@ impl Default for Binding {
             close: Default::default(),
             preferences: Rc::new(Cell::new(DiffPreferences::default())),
             placement_unconfirmed: Default::default(),
+            preview_closed_by_event: false,
             #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
             scene: false,
         }
@@ -39,6 +41,18 @@ impl Default for Binding {
 }
 
 impl Binding {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::retained_bytes)
+    }
+
+    pub(crate) fn draft_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::draft_bytes)
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        self.owner.as_mut().map_or(0, Ui::evict_inactive_caches)
+    }
+
     pub(crate) fn take(binding: &mut Self) -> Self {
         let taken = std::mem::take(binding);
         binding.preferences = taken.preferences.clone();
@@ -51,10 +65,32 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
     s.git.preferences.get()
 }
 
-pub(crate) fn overlay_open(s: &State) -> bool {
+pub(crate) fn panel_overlay_open(s: &State) -> bool {
     s.git.owner.as_ref().is_some_and(|ui| {
-        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || ui.picker))
+        let picker_visible = ui.picker
+            && ui.online
+            && ui
+                .inventory
+                .as_ref()
+                .is_some_and(|list| list.trees.iter().any(|tree| !tree.missing));
+        let menu_visible = ui.open_menu.is_some() && ui.online;
+        ui.shown && (menu_visible || picker_visible)
     })
+}
+
+pub(crate) fn overlay_open(s: &State) -> bool {
+    s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.placement_picker.is_some())
+        || panel_overlay_open(s)
+}
+
+pub(crate) fn dismiss_panel_overlays(s: &mut State, tx: &mut rune::Tx) {
+    super::menu::clear(s, tx);
+    if let Some(ui) = &mut s.git.owner {
+        ui.picker = false;
+    }
 }
 
 pub(crate) enum SessionDirectory {
@@ -105,14 +141,84 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
 
 #[cfg(test)]
 pub(crate) fn fixture_open_picker(s: &mut State) {
+    if s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.inventory.is_none())
+    {
+        let shown = s.git.owner.as_ref().is_some_and(|ui| ui.shown);
+        fixture_worktrees(s);
+        if let Some(ui) = s.git.owner.as_mut() {
+            ui.shown = shown;
+        }
+    }
     if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
         ui.picker = true;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_worktrees(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
+        ui.shown = true;
+        ui.inventory = Some(codenomad_client::git::Worktrees {
+            repository: codenomad_client::git::Repository::Git,
+            trees: vec![
+                codenomad_client::git::Worktree {
+                    slug: "root".into(),
+                    label: None,
+                    directory: "D:/repo".into(),
+                    service_directory: None,
+                    branch: Some("main".into()),
+                    head: None,
+                    missing: false,
+                },
+                codenomad_client::git::Worktree {
+                    slug: "review".into(),
+                    label: None,
+                    directory: "D:/repo-review".into(),
+                    service_directory: None,
+                    branch: Some("feature".into()),
+                    head: None,
+                    missing: false,
+                },
+            ],
+        });
     }
 }
 
 #[cfg(test)]
 pub(crate) fn fixture_online(s: &State) -> Option<bool> {
     s.git.owner.as_ref().map(|ui| ui.online)
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_unstaged_change(s: &mut State, path: &str) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.changes.replace(
+            vec![codenomad_client::git::Status {
+                path: path.into(),
+                original_path: None,
+                staged: None,
+                unstaged: Some(codenomad_client::git::Change {
+                    kind: "modified".into(),
+                    additions: 1,
+                    deletions: 0,
+                }),
+                whitespace_only: false,
+            }],
+            false,
+        );
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_open_placement_picker(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.placement_picker = Some(vec![("review".into(), "review · feature".into())]);
+    }
 }
 
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
@@ -265,14 +371,20 @@ pub(crate) fn online(s: &mut State, online: bool) {
 }
 
 pub(crate) fn event(s: &mut State, event: &WorkspaceEvent) {
+    let had_preview = has_preview(s);
     if let Some(owner) = &mut s.git.owner {
         owner.event(event);
+    }
+    if had_preview && !has_preview(s) {
+        s.git.preview_closed_by_event = true;
     }
 }
 
 pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     let preference = diff_preferences(s);
     let workspace_preview = crate::files::has_preview(s);
+    let event_closed = std::mem::take(&mut s.git.preview_closed_by_event);
+    let had_preview = has_preview(s) || event_closed;
     let can_place = can_place(s);
     let Some(owner) = &mut s.git.owner else {
         return false;
@@ -328,19 +440,31 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
         launcher.sessions = sessions.rows;
         launcher.next = sessions.next;
     }
-    if changed {
+    let closed_by_event = event_closed && !has_preview(s);
+    if changed || closed_by_event {
         sync_files(s);
         tx.instant();
+        restore_reading_if_closed(s, had_preview, tx);
     }
     publish_notice(s);
-    changed | super::menu::poll(s, tx)
+    changed | closed_by_event | super::menu::poll(s, tx)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn poll_notices(s: &mut State) -> bool {
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn poll_notices(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let event_closed = std::mem::take(&mut s.git.preview_closed_by_event);
+    let had_preview = has_preview(s) || event_closed;
     let changed = s.git.owner.as_mut().is_some_and(Ui::poll_results);
+    let closed_by_event = event_closed && !has_preview(s);
+    if changed || closed_by_event {
+        sync_files(s);
+        if s.git.owner.as_ref().is_none_or(|owner| owner.active) {
+            tx.instant();
+            restore_reading_if_closed(s, had_preview, tx);
+        }
+    }
     publish_notice(s);
-    changed
+    changed || closed_by_event
 }
 
 fn publish_notice(s: &mut State) {
@@ -373,6 +497,110 @@ pub(crate) fn show(s: &mut State, visible: bool) {
 
 pub(crate) fn mode(s: &State) -> Mode {
     s.git.owner.as_ref().map_or(Mode::Workspace, Ui::mode)
+}
+
+pub(crate) fn conversation_checkout(
+    s: &State,
+    workspace_id: &str,
+    project_root: &str,
+) -> Option<(String, Option<String>)> {
+    if let Some(owner) = &s.git.owner
+        && owner.backend.workspace == workspace_id
+    {
+        if owner.session_checkout_removed() {
+            return None;
+        }
+        if !owner.session_slug.is_empty() {
+            if owner.session_slug == "root" {
+                return Some(("root".into(), Some(project_root.to_owned())));
+            }
+            let expected = owner
+                .inventory
+                .as_ref()
+                .and_then(|inv| inv.trees.iter().find(|t| t.slug == owner.session_slug))
+                .map(|t| t.directory.clone())
+                .or_else(|| {
+                    owner
+                        .backend
+                        .session_directory
+                        .as_deref()
+                        .filter(|dir| !dir.is_empty())
+                        .map(str::to_owned)
+                });
+            return Some((owner.session_slug.clone(), expected));
+        }
+    }
+    Some(("root".into(), Some(project_root.to_owned())))
+}
+
+#[cfg(test)]
+mod conversation_checkout_tests {
+    use super::conversation_checkout;
+    use crate::{backend::Backend, git::Ui, init};
+    use codenomad_client::git::{Repository, Worktree, Worktrees};
+
+    #[test]
+    fn conversation_checkout_uses_session_slug_not_browsed_git_slug() {
+        let mut s = init();
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.workspace = "ws-1".into();
+        backend.session = "ses-1".into();
+        backend.session_directory = Some("/repo-wt-a".into());
+        let mut ui = Ui::new(
+            backend,
+            Some("/repo".into()),
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        ui.session_slug = "wt-a".into();
+        ui.slug = "wt-b".into();
+        ui.inventory = Some(Worktrees {
+            repository: Repository::Git,
+            trees: vec![
+                Worktree {
+                    slug: "root".into(),
+                    label: None,
+                    directory: "/repo".into(),
+                    service_directory: None,
+                    branch: Some("main".into()),
+                    head: None,
+                    missing: false,
+                },
+                Worktree {
+                    slug: "wt-a".into(),
+                    label: None,
+                    directory: "/repo-wt-a".into(),
+                    service_directory: None,
+                    branch: Some("feat-a".into()),
+                    head: None,
+                    missing: false,
+                },
+                Worktree {
+                    slug: "wt-b".into(),
+                    label: None,
+                    directory: "/repo-wt-b".into(),
+                    service_directory: None,
+                    branch: Some("feat-b".into()),
+                    head: None,
+                    missing: false,
+                },
+            ],
+        });
+        s.git.owner = Some(ui);
+
+        assert_eq!(
+            conversation_checkout(&s, "ws-1", "/repo"),
+            Some(("wt-a".into(), Some("/repo-wt-a".into())))
+        );
+        // Removed conversation worktree refuses opening instead of falling back to root.
+        s.git.owner.as_mut().unwrap().session_slug = "wt-gone".into();
+        assert_eq!(conversation_checkout(&s, "ws-1", "/repo"), None);
+        // Different workspace falls back to root.
+        assert_eq!(
+            conversation_checkout(&s, "ws-other", "/other"),
+            Some(("root".into(), Some("/other".into())))
+        );
+    }
 }
 
 pub(crate) fn files_checkout(s: &State, directory: &str) -> Option<String> {
@@ -506,8 +734,20 @@ pub(crate) fn has_preview(s: &State) -> bool {
 }
 
 pub(crate) fn close_preview(s: &mut State) {
+    s.git.preview_closed_by_event = false;
     if let Some(owner) = &mut s.git.owner {
         owner.close_preview();
+    }
+}
+
+pub(crate) fn restore_reading_if_closed(s: &mut State, had_preview: bool, tx: &mut rune::Tx) {
+    if had_preview
+        && !has_preview(s)
+        && !s.screen.is_launcher()
+        && !crate::files::has_preview(s)
+        && s.git.owner.as_ref().is_none_or(|owner| owner.active)
+    {
+        crate::chat::reading::restore_position(s, tx);
     }
 }
 

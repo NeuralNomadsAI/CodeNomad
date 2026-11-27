@@ -12,6 +12,9 @@ pub(crate) fn reopen(s: &mut State) -> bool {
     }
     if schedule(s).is_none() {
         s.phase = Phase::RestoreFailed;
+        if let Some(agent) = s.agent.as_mut() {
+            agent.mark_scope_missing();
+        }
     }
     true
 }
@@ -61,6 +64,9 @@ pub(super) fn apply(s: &mut State, opening: Opening, backend: Backend, title: St
     let project = opening.project.clone();
     if opening.adopt().is_err() {
         s.phase = Phase::RestoreFailed;
+        if let Some(agent) = s.agent.as_mut() {
+            agent.mark_scope_missing();
+        }
         return;
     }
     l.project = Some(project.clone());

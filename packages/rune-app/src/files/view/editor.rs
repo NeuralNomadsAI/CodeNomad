@@ -71,7 +71,7 @@ pub(super) fn source(
                 false
             }
         })
-        .build(theme::editor::code_kit(dark))
+        .build(&theme::editor::code_kit(dark))
         .key("file-editor");
     let text = &ui.document.edit().text;
     let source_layout = theme::editor::SourceLayout::new(dark, text, wrap, view_width);

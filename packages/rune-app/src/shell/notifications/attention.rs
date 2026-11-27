@@ -1,12 +1,13 @@
 //! Qualify pending input and terminal activity against the conversation observer.
 use super::{Category, Notice, RETAINED, Target, deliver};
-use crate::{State, agent_api::Snapshot};
+use crate::State;
 use std::collections::HashSet;
 
 #[derive(Default)]
 pub(crate) struct Attention {
     requests: [HashSet<String>; 2],
     hinted: [HashSet<String>; 2],
+    deferred_requests: [Option<(HashSet<String>, bool)>; 2],
     directory: Option<String>,
     compactions: Vec<String>,
     execution: Option<(String, bool)>,
@@ -16,11 +17,28 @@ pub(crate) struct Attention {
 }
 
 impl Attention {
-    pub(crate) fn observe(&mut self, snapshot: &Snapshot, current: bool) {
-        self.directory.clone_from(&snapshot.root_directory);
+    #[cfg(test)]
+    pub(crate) fn take_pending(&mut self) -> Vec<(Category, String)> {
+        std::mem::take(&mut self.pending)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe(&mut self, snapshot: &crate::agent_api::Snapshot, current: bool) {
+        self.observe_session(snapshot.session_known, snapshot.root_directory.as_deref());
+        if let Some(permissions) = snapshot.permissions.as_deref() {
+            self.observe_kind(0, permissions.iter().map(|item| item.id.clone()), current);
+        }
+        if let Some(forms) = snapshot.forms.as_deref() {
+            self.observe_kind(1, forms.iter().map(|item| item.id.clone()), current);
+        }
+    }
+
+    pub(crate) fn observe_session(&mut self, session_known: bool, root_directory: Option<&str>) {
+        self.directory = root_directory.map(str::to_owned);
         if self.directory.is_none() {
-            if snapshot.session_known {
+            if session_known {
                 self.compactions.clear();
+                self.deferred_requests = [None, None];
             }
             return;
         }
@@ -31,11 +49,24 @@ impl Attention {
                 .take(capacity)
                 .map(|id| (Category::Sessions, id)),
         );
-        if let Some(permissions) = &snapshot.permissions {
-            self.observe_requests(0, permissions.iter().map(|item| item.id.clone()), current);
+        for kind in 0..2 {
+            if let Some((ids, authoritative)) = self.deferred_requests[kind].take() {
+                self.observe_requests(kind, ids.into_iter(), authoritative);
+            }
         }
-        if let Some(forms) = &snapshot.forms {
-            self.observe_requests(1, forms.iter().map(|item| item.id.clone()), current);
+    }
+
+    pub(crate) fn observe_kind(
+        &mut self,
+        kind: usize,
+        ids: impl Iterator<Item = String>,
+        current: bool,
+    ) {
+        if self.directory.is_some() {
+            self.deferred_requests[kind] = None;
+            self.observe_requests(kind, ids, current);
+        } else {
+            self.deferred_requests[kind] = Some((ids.collect(), current));
         }
     }
 
@@ -61,10 +92,29 @@ impl Attention {
         Some((id.clone(), directory))
     }
 
+    pub(crate) fn invalidate_kind(&mut self, kind: usize) {
+        self.deferred_requests[kind] = None;
+    }
+
+    pub(crate) fn resolve_request(&mut self, form: bool, id: &str) {
+        let kind = usize::from(form);
+        self.hinted[kind].remove(id);
+        if let Some((ids, _)) = &mut self.deferred_requests[kind] {
+            ids.remove(id);
+        }
+        self.requests[kind].remove(id);
+        self.updated[kind] = true;
+        let key = format!("{kind}:{id}");
+        self.pending.retain(|(category, pending_id)| {
+            *category != Category::NeedsInput || pending_id != &key
+        });
+    }
+
     pub(crate) fn disconnected(&mut self) {
         self.execution = None;
         self.directory = None;
         self.compactions.clear();
+        self.deferred_requests = [None, None];
         self.pending
             .retain(|(category, _)| *category != Category::Sessions);
         self.hinted.iter_mut().for_each(HashSet::clear);
@@ -84,7 +134,11 @@ impl Attention {
     }
 
     pub(crate) fn request(&mut self, form: bool, id: String) {
-        let hinted = &mut self.hinted[usize::from(form)];
+        let kind = usize::from(form);
+        if let Some((_, authoritative)) = &mut self.deferred_requests[kind] {
+            *authoritative = false;
+        }
+        let hinted = &mut self.hinted[kind];
         if hinted.len() < RETAINED {
             hinted.insert(id);
         }

@@ -9,6 +9,7 @@ fn right_panel_exposes_only_the_actions_for_its_host_and_row_kind() {
         let project = crate::catalog::Project {
             id: http.backend.workspace.clone(),
             path: "/private".into(),
+            temporary: false,
         };
         state.screen.launcher_mut().unwrap().project = Some(project.clone());
         state.workspace = Some(crate::workspace::Ui::new());

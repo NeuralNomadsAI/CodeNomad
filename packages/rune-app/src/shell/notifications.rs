@@ -13,7 +13,7 @@ pub(crate) use attention::{Attention, collect};
 mod in_app;
 mod messages;
 pub(crate) use in_app::{
-    entry as history_entry, layers as app_layers, measure as measure_notices,
+    entry as history_entry, layers as app_layers, measure as measure_notices, open_history,
     tick as poll_app_notices,
 };
 pub(crate) use messages::{emit, emit_from, emit_outcome};
@@ -81,6 +81,16 @@ pub(crate) struct Host {
     pub(crate) background: Option<rune_theme_codenomad::shell::WindowFeed<State>>,
     #[cfg(test)]
     recorded: Option<Vec<(u64, String, String)>>,
+}
+
+#[cfg(test)]
+impl Host {
+    pub(crate) fn queued_messages(&self) -> Vec<(Category, String)> {
+        self.messages
+            .iter()
+            .map(messages::Message::summary)
+            .collect()
+    }
 }
 
 struct Click {

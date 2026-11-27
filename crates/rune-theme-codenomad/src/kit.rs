@@ -1,33 +1,117 @@
 //! Map shared CodeNomad surface roles onto rune-kit's generic semantic schema.
 //! Component geometry, glyphs and spring-curve parity remain explicit qualification gaps.
-use crate::{Length, MotionRole, Space, TextRole, document, tokens};
+use crate::{
+    Length, MotionRole, Space, TextRole, document,
+    palettes::{CustomPalette, ResolvedPalette},
+    tokens,
+};
 use rune::{Color, Spring};
 use rune_kit::{
     ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, Kit, Metrics, Motion, Palette,
     Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css, glyphs,
 };
-use std::sync::OnceLock;
+use std::{ops::Deref, rc::Rc, sync::OnceLock};
 
-pub fn kit(dark: bool) -> &'static Kit {
+pub(crate) enum DynamicKit {
+    Base,
+    Field,
+    Code,
+}
+
+enum KitRefInner {
+    Static(&'static Kit),
+    Dynamic(Rc<CustomPalette>, DynamicKit),
+}
+
+pub struct KitRef(KitRefInner);
+
+impl KitRef {
+    pub(crate) fn static_kit(kit: &'static Kit) -> Self {
+        Self(KitRefInner::Static(kit))
+    }
+
+    pub(crate) fn dynamic(palette: Rc<CustomPalette>, variant: DynamicKit) -> Self {
+        Self(KitRefInner::Dynamic(palette, variant))
+    }
+}
+
+impl Deref for KitRef {
+    type Target = Kit;
+    fn deref(&self) -> &Kit {
+        match &self.0 {
+            KitRefInner::Static(kit) => kit,
+            KitRefInner::Dynamic(palette, DynamicKit::Base) => palette.kit(),
+            KitRefInner::Dynamic(palette, DynamicKit::Field) => palette.field_kit(),
+            KitRefInner::Dynamic(palette, DynamicKit::Code) => palette.code_kit(),
+        }
+    }
+}
+
+impl AsRef<Kit> for KitRef {
+    fn as_ref(&self) -> &Kit {
+        self
+    }
+}
+
+pub fn kit(dark: bool) -> KitRef {
     if let Some(palette) = crate::palettes::active(dark) {
-        return palette.kit.get_or_init(|| build(dark));
+        return match palette {
+            ResolvedPalette::BuiltIn(palette) => {
+                KitRef::static_kit(palette.kit.get_or_init(|| build(dark)))
+            }
+            ResolvedPalette::Custom(palette) => KitRef::dynamic(palette, DynamicKit::Base),
+        };
     }
     static KITS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    KITS[crate::palette_index(dark)].get_or_init(|| build(dark))
+    KitRef::static_kit(KITS[crate::palette_index(dark)].get_or_init(|| build(dark)))
 }
-pub fn field_kit(dark: bool) -> &'static Kit {
+pub fn field_kit(dark: bool) -> KitRef {
+    if let Some(palette) = crate::palettes::active(dark) {
+        return match palette {
+            ResolvedPalette::BuiltIn(palette) => {
+                KitRef::static_kit(palette.field.get_or_init(|| {
+                    let mut kit = kit(dark).clone();
+                    kit.c.bg_base = kit.c.surface_base;
+                    kit
+                }))
+            }
+            ResolvedPalette::Custom(palette) => KitRef::dynamic(palette, DynamicKit::Field),
+        };
+    }
     static FIELDS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
-    let cache =
-        crate::palettes::active(dark).map_or(&FIELDS[crate::palette_index(dark)], |p| &p.field);
-    cache.get_or_init(|| {
+    KitRef::static_kit(FIELDS[crate::palette_index(dark)].get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
         kit
-    })
+    }))
 }
-fn build(dark: bool) -> Kit {
+pub(crate) fn build(dark: bool) -> Kit {
     let t = tokens(dark);
-    let c = |name| t.color(name);
+    let shadows = if crate::layout::source_palette() {
+        &document()["product"][t.mode()]["shadows"]
+    } else {
+        &document()["shadows"][t.mode()]
+    };
+    let active = crate::palettes::active(dark);
+    build_from(
+        dark,
+        |name| t.color(name),
+        |name| {
+            active.as_ref().map_or_else(
+                || shadows[name].as_str().expect("generated CSS shadow"),
+                |p| p.shadow(name),
+            )
+        },
+    )
+}
+
+pub(crate) fn build_from(
+    dark: bool,
+    color_of: impl Fn(&str) -> Color,
+    shadow_css: impl Fn(&str) -> &'static str,
+) -> Kit {
+    let t = tokens(dark);
+    let c = |name| color_of(name);
     let state = |bg, fg| StateColors {
         bg: c(bg),
         fg: c(fg),
@@ -105,20 +189,7 @@ fn build(dark: bool) -> Kit {
         std_icon_strong: c("text-primary"),
         std_text: c("text-primary"),
     };
-    let shadows = if crate::layout::source_palette() {
-        &document()["product"][t.mode()]["shadows"]
-    } else {
-        &document()["shadows"][t.mode()]
-    };
-    let shadow = |name| {
-        css::box_shadows(
-            crate::palettes::active(dark).map_or_else(
-                || shadows[name].as_str().expect("generated CSS shadow"),
-                |p| p.shadow(name),
-            ),
-            |color| color,
-        )
-    };
+    let shadow = |name| css::box_shadows(shadow_css(name), |color| color);
     let mut elevation = Elevation::default().with_input(Vec::new());
     elevation.raised = shadow("panel-shadow");
     elevation.floating = shadow("popover-shadow");
@@ -239,6 +310,7 @@ fn build(dark: bool) -> Kit {
             border: c("accent-primary"),
             mark: c("text-on-accent"),
         }),
+        ..Metrics::default()
     };
     Kit {
         dark,
@@ -323,37 +395,42 @@ mod tests {
                     col()
                         .w_full()
                         .h_full()
-                        .child(Button::new("Default").build(k).key("btn-default"))
+                        .child(Button::new("Default").build(&k).key("btn-default"))
                         .child(
                             Button::new("Small")
                                 .control_size(ControlSize::Small)
-                                .build(k)
+                                .build(&k)
                                 .key("btn-small"),
                         )
                         .child(
                             Button::new("Regular")
                                 .control_size(ControlSize::Regular)
-                                .build(k)
+                                .build(&k)
                                 .key("btn-regular"),
                         )
                         .child(
                             TextInput::new(edit)
                                 .label("Field")
-                                .build(field_kit(dark))
+                                .build(&field_kit(dark))
                                 .key("field-box"),
                         )
                         .child(
                             TextInput::new(edit)
                                 .label("Large field")
                                 .large()
-                                .build(field_kit(dark))
+                                .build(&field_kit(dark))
                                 .key("field-large"),
                         )
-                        .child(Switch::new(true).label("Toggle").build(k).key("switch-box"))
+                        .child(
+                            Switch::new(true)
+                                .label("Toggle")
+                                .build(&k)
+                                .key("switch-box"),
+                        )
                         .child(
                             Checkbox::new(true)
                                 .label("Checked")
-                                .build(k)
+                                .build(&k)
                                 .key("check-box"),
                         )
                 })

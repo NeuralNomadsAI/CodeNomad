@@ -204,7 +204,7 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
             && owner(&mut rt.state).jump.is_browsing()
             && owner(&mut rt.state).scroll.get().rail_glide.is_none()
             && after_wheel_race >= 200.0
-            && after_wheel_race < 304.0,
+            && after_wheel_race < rail[3] * 2.0,
         "same-frame headless WheelOwner::Vertical race must interrupt the glide without snapping to 0.0 and enter browse mode: interrupted={wheel_glide_interrupted}, before={before_wheel_race}, after={after_wheel_race}"
     );
     // Mid-glide WheelOwner::Vertical burst: once a reveal glide is already in-flight, a continuing
@@ -248,9 +248,12 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
     // touch pan is never overwritten by a snapped glide.
     static TRACKED_POLL_CHANGED: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
+    static TRACKED_POLL_CALLS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
     fn tracked_poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
         let changed = crate::poll(s, now, tx);
-        TRACKED_POLL_CHANGED.store(changed, std::sync::atomic::Ordering::SeqCst);
+        TRACKED_POLL_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        TRACKED_POLL_CHANGED.fetch_or(changed, std::sync::atomic::Ordering::SeqCst);
         changed
     }
     rt.update(|s, tx| {
@@ -407,11 +410,13 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
     for _ in 0..45 {
         rt.frame(0.016);
     }
-    TRACKED_POLL_CHANGED.store(true, std::sync::atomic::Ordering::SeqCst);
+    TRACKED_POLL_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+    TRACKED_POLL_CHANGED.store(false, std::sync::atomic::Ordering::SeqCst);
     rt.poll = Some(tracked_poll);
     rt.frame(0.016);
     assert!(
-        !TRACKED_POLL_CHANGED.load(std::sync::atomic::Ordering::SeqCst),
+        TRACKED_POLL_CALLS.load(std::sync::atomic::Ordering::SeqCst) > 0
+            && !TRACKED_POLL_CHANGED.load(std::sync::atomic::Ordering::SeqCst),
         "precondition: settings::poll and all earlier subsystems must be quiet (changed=false) before emitting notification"
     );
     rt.poll = Some(crate::poll);

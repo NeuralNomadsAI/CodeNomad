@@ -219,6 +219,18 @@ impl Requests {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn deliver_read(&mut self, lane: Lane, outcome: Result<Value>) {
+        let (token, _rx) = bounded(1);
+        self.slots[lane as usize].token = Some(token.clone());
+        self.slots[lane as usize].dirty = false;
+        let _ = self.out.try_send(Event::Read {
+            lane,
+            token,
+            outcome,
+        });
+    }
+
     pub fn slot(&self, lane: Lane) -> &Slot {
         &self.slots[lane as usize]
     }

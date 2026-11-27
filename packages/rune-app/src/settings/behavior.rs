@@ -17,13 +17,13 @@ const BEFORE_PERMISSIONS: [GeneralToggle; 4] = [
 #[derive(Default)]
 pub(super) struct General {
     open: bool,
-    help_failed: bool,
+    help_open: super::ExternalLink,
 }
 
 impl General {
     pub fn close(&mut self) {
         self.open = false;
-        self.help_failed = false;
+        self.help_open.clear();
     }
 
     pub fn view<S: 'static>(
@@ -48,7 +48,9 @@ impl General {
                     locale()
                 );
                 chrome::info_link(t(info_key), move |s: &mut S, tx| {
-                    access(s).help_failed = tx.open_url(&url).is_err();
+                    access(s)
+                        .help_open
+                        .open(&url, tx, move |s| Some(&mut access(s).help_open));
                 })
                 .key(format!("behavior-help-{}", toggle.key()))
             });
@@ -90,7 +92,7 @@ impl General {
         let press = toggle.clone();
         let choose = shared.clone();
         let trigger = chrome::build_picker(
-            chrome::picker(KEY, title, &labels)
+            chrome::stepping_picker(KEY, title, &labels)
                 .current(current.map(|index| labels[index]))
                 .disabled(unavailable)
                 .open(self.open && !pending)
@@ -99,12 +101,14 @@ impl General {
                 })
                 .on_close(move |s| access(s).open = false)
                 .on_choose(move |s, label, _| {
-                    if std::mem::take(&mut access(s).open)
+                    access(s).open = false;
+                    let mut prefs = choose.borrow_mut();
+                    if prefs.can_retry()
+                        && prefs.locale_ready()
+                        && !prefs.new_conversation_permissions_pending()
                         && let Some(index) = labels.iter().position(|&candidate| candidate == label)
                     {
-                        choose
-                            .borrow_mut()
-                            .set_new_conversation_permissions(PERMISSION_MODES[index].0);
+                        prefs.set_new_conversation_permissions(PERMISSION_MODES[index].0);
                     }
                 }),
             layers,
@@ -119,7 +123,9 @@ impl General {
             locale()
         );
         let info = chrome::info_link(hint, move |s: &mut S, tx| {
-            access(s).help_failed = tx.open_url(&help).is_err();
+            access(s)
+                .help_open
+                .open(&help, tx, move |s| Some(&mut access(s).help_open));
         })
         .key("behavior-help-newConversationPermissions");
         chrome::card(
@@ -144,7 +150,8 @@ impl General {
                 .child(toggle_row(GeneralToggle::FollowUpBehavior))
                 .children(native.then(|| toggle_row(GeneralToggle::KeepComputerAwake)))
                 .children(
-                    self.help_failed
+                    self.help_open
+                        .failed()
                         .then(|| text(t("commands.openHelp.failed")).role("alert").wrap()),
                 ),
         )

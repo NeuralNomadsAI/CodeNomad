@@ -1,6 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs"
 import { mkdtemp, mkdir } from "node:fs/promises"
 import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
+import { redactSecrets } from "./native-fixture-http.mjs"
 import os from "node:os"
 import path from "node:path"
 import { channel } from "node:diagnostics_channel"
@@ -60,20 +61,21 @@ export function observeFixtureReload(url) {
   } }
 }
 
-export function createNativeFixtureReporter(root, output) {
+export function createNativeFixtureReporter(root, output, { secrets = [] } = {}) {
   const receipt = process.env.CODENOMAD_NATIVE_TEST_RECEIPT ?? path.join(root, "test-diagnostics.jsonl")
+  const sanitize = text => redactSecrets(text, secrets)
   let stage = "fixture-created"
   const record = (event, details = {}) => {
-    appendFileSync(receipt, JSON.stringify({ event, stage, root, pid: process.pid, ...details }) + "\n")
-    writeFileSync(path.join(root, "server.log"), output())
+    appendFileSync(receipt, sanitize(JSON.stringify({ event, stage, root, pid: process.pid, ...details })) + "\n")
+    writeFileSync(path.join(root, "server.log"), sanitize(output()))
   }
   const terminalRecord = (event, details) => {
     try { record(event, details) } catch (error) {
-      console.error("Native fixture diagnostic write failed:", error)
+      console.error("Native fixture diagnostic write failed:", sanitize(error?.message ?? error))
       process.exitCode ||= 1
     }
   }
-  const onError = error => terminalRecord("uncaught-error", { error: String(error?.stack ?? error) })
+  const onError = error => terminalRecord("uncaught-error", { error: sanitize(String(error?.stack ?? error)) })
   const onExit = code => terminalRecord("exit", { code })
   process.on("uncaughtExceptionMonitor", onError)
   process.on("exit", onExit)
@@ -87,23 +89,46 @@ export function createNativeFixtureReporter(root, output) {
 
 // A parent survives child process.exit/native crashes and retains the actual
 // status and pipe output. It never retries or converts an incomplete run to PASS.
-export async function runNativeFixture(script, args, { directory = path.join(os.tmpdir(), "opencode"), env = process.env } = {}) {
+export async function runNativeFixture(script, args, { directory = path.join(os.tmpdir(), "opencode"), env = process.env, secrets = [] } = {}) {
+  const allSecrets = [...secrets, env.OPENCODE_SERVER_PASSWORD, env.CNRS_FIXTURE_PASSWORD, env.CNRS_SERVER_PASSWORD, env.RUNE_PASSWORD].filter(Boolean)
+  const sanitize = text => redactSecrets(text, allSecrets)
   await mkdir(directory, { recursive: true })
   const root = await mkdtemp(path.join(directory, "native-fixture-run-"))
   const receipt = path.join(root, "child.jsonl")
   console.log(`Native fixture runner diagnostics at ${root}`)
   const child = spawn(process.execPath, [script, ...args], { env: { ...env, CODENOMAD_NATIVE_TEST_RECEIPT: receipt }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+  const maxSecretLen = allSecrets.reduce((max, s) => Math.max(
+    max,
+    s.length,
+    Buffer.from(`opencode:${s}`).toString("base64").length,
+    Buffer.from(`codenomad:${s}`).toString("base64").length,
+  ), 0)
+  const overlap = Math.max(0, maxSecretLen - 1)
+  const flushers = []
   for (const [stream, name, target] of [[child.stdout, "stdout.log", process.stdout], [child.stderr, "stderr.log", process.stderr]]) {
-    stream.on("data", chunk => { appendFileSync(path.join(root, name), chunk); target.write(chunk) })
+    let carry = ""
+    const emit = text => { if (!text) return; appendFileSync(path.join(root, name), text); target.write(text) }
+    stream.on("data", chunk => {
+      const combined = sanitize(carry + chunk.toString("utf8"))
+      if (overlap > 0 && combined.length > overlap) {
+        emit(combined.slice(0, combined.length - overlap))
+        carry = combined.slice(combined.length - overlap)
+      } else if (overlap === 0) {
+        emit(combined)
+      } else {
+        carry = combined
+      }
+    })
+    flushers.push(() => { if (carry) { emit(sanitize(carry)); carry = "" } })
   }
   let error
-  child.on("error", value => { error = String(value.stack ?? value) })
-  const status = await new Promise(resolve => child.on("close", (code, signal) => resolve({ code, signal, error })))
+  child.on("error", value => { error = sanitize(String(value.stack ?? value)) })
+  const status = await new Promise(resolve => child.on("close", (code, signal) => { for (const flush of flushers) flush(); resolve({ code, signal, error }) }))
   const { readFile } = await import("node:fs/promises")
   let completed = false
   try { completed = (await readFile(receipt, "utf8")).split("\n").filter(Boolean).some(line => JSON.parse(line).event === "completed") } catch { /* Missing/malformed receipt is incomplete, not success. */ }
   const result = { ...status, completed, root }
-  writeFileSync(path.join(root, "result.json"), JSON.stringify(result, null, 2) + "\n")
-  console.log(`Native fixture child result: ${JSON.stringify(result)}`)
+  writeFileSync(path.join(root, "result.json"), sanitize(JSON.stringify(result, null, 2)) + "\n")
+  console.log(`Native fixture child result: ${sanitize(JSON.stringify(result))}`)
   return { ...result, exitCode: status.code === 0 && completed ? 0 : status.code || 1 }
 }

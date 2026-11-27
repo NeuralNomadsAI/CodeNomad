@@ -1,4 +1,4 @@
-use super::{FILE_DRAFT_BYTES, Files, Store};
+use super::{FILE_DRAFT_BYTES, Files, Store, WriteGate};
 use crate::history::Result;
 use std::fs;
 
@@ -19,6 +19,7 @@ fn cancel_draft(state: &std::sync::atomic::AtomicU8) -> bool {
 
 struct PendingFileDraft {
     state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    generation: u64,
     deadline: std::time::Instant,
     bytes: Vec<u8>,
     reply: tokio::sync::oneshot::Sender<Result<bool>>,
@@ -33,10 +34,23 @@ pub(super) struct FileDraftQueue {
     writes: u64,
 }
 
+impl FileDraftQueue {
+    pub(super) fn cancel_all(&mut self) {
+        if let Some(active) = self.active.take() {
+            let _ = cancel_draft(&active);
+        }
+        if let Some(evicted) = self.pending.take() {
+            let _ = cancel_draft(&evicted.state);
+            let _ = evicted.reply.send(Ok(false));
+        }
+    }
+}
+
 fn spawn_file_draft_worker(
     files: std::sync::Arc<Files>,
     file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,
     queue: std::sync::Arc<std::sync::Mutex<FileDraftQueue>>,
+    gate: std::sync::Arc<std::sync::Mutex<WriteGate>>,
 ) {
     tokio::task::spawn_blocking(move || {
         loop {
@@ -55,6 +69,7 @@ fn spawn_file_draft_worker(
             let current = || {
                 task.state.load(std::sync::atomic::Ordering::Acquire) == DRAFT_ACTIVE
                     && std::time::Instant::now() < task.deadline
+                    && gate.lock().is_ok_and(|g| g.allows(task.generation))
             };
             let outcome = if !current() {
                 Ok(false)
@@ -69,11 +84,10 @@ fn spawn_file_draft_worker(
                             // Enforce the deadline and claim PUBLISHING atomically without
                             // holding a mutex across fs::rename so a stalled filesystem cannot
                             // block admission or timeout beyond the 5 s wait bound; re-check
-                            // the deadline after claiming PUBLISHING so a pause before the CAS
-                            // cannot publish after expiry, while the single sequential worker
-                            // prevents any older write from overwriting a newer confirmed
-                            // checkpoint.
+                            // the deadline and write gate after claiming PUBLISHING so a pause
+                            // before the CAS cannot publish after expiry or Clear/Disable.
                             if std::time::Instant::now() >= task.deadline
+                                || !gate.lock().is_ok_and(|g| g.allows(task.generation))
                                 || task
                                     .state
                                     .compare_exchange(
@@ -86,7 +100,9 @@ fn spawn_file_draft_worker(
                             {
                                 return Ok(false);
                             }
-                            if std::time::Instant::now() >= task.deadline {
+                            if std::time::Instant::now() >= task.deadline
+                                || !gate.lock().is_ok_and(|g| g.allows(task.generation))
+                            {
                                 task.state
                                     .store(DRAFT_CANCELLED, std::sync::atomic::Ordering::Release);
                                 return Ok(false);
@@ -168,15 +184,18 @@ impl Store {
         let files = self.files.clone();
         let file_drafts_lock = self.file_drafts_lock.clone();
         let queue = self.file_drafts_queue.clone();
+        let gate = self.gate.clone();
         let write_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(DRAFT_ACTIVE));
         let wait_deadline = std::time::Instant::now() + wait_timeout;
-        let admitted = match queue.lock() {
-            Ok(mut state) => {
+        let generation = gate.lock().ok().and_then(|g| g.admit());
+        let admitted = match (generation, queue.lock()) {
+            (Some(generation), Ok(mut state)) => {
                 if let Some(previous) = state.active.replace(write_state.clone()) {
                     let _ = cancel_draft(&previous);
                 }
                 if let Some(evicted) = state.pending.replace(PendingFileDraft {
                     state: write_state.clone(),
+                    generation,
                     deadline,
                     bytes,
                     reply: tx,
@@ -186,14 +205,21 @@ impl Store {
                 }
                 true
             }
-            Err(_) => {
+            (None, _) => {
+                let _ = tx.send(Ok(false));
+                false
+            }
+            (_, Err(_)) => {
                 let _ = tx.send(Err("state store unavailable".into()));
                 false
             }
         };
         async move {
             if !admitted {
-                return Err("state store unavailable".into());
+                return match rx.await {
+                    Ok(outcome) => outcome,
+                    Err(_) => Err("state store unavailable".into()),
+                };
             }
             let start_worker = queue
                 .lock()
@@ -207,7 +233,7 @@ impl Store {
                 })
                 .unwrap_or(false);
             if start_worker {
-                spawn_file_draft_worker(files, file_drafts_lock, queue.clone());
+                spawn_file_draft_worker(files, file_drafts_lock, queue.clone(), gate);
             }
             let remaining = wait_deadline
                 .checked_duration_since(std::time::Instant::now())

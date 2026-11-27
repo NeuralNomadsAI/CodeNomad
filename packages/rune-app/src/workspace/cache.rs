@@ -26,12 +26,19 @@ pub(super) struct Cache {
     paging: bool,
     error: bool,
     history_detached: bool,
+    stream_offline: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
     status_permissions: crate::shell::status_permissions::Permissions,
+    status_services: crate::shell::status_services::Services,
     status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
+    #[cfg(test)]
+    pub(super) fn git_mut(&mut self) -> &mut crate::git::Binding {
+        &mut self.git
+    }
+
     pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
         self.agent
             .as_ref()
@@ -44,12 +51,70 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn is_sending(&self) -> bool {
+        self.composer.pending()
+    }
+
+    pub(super) fn unconfirmed_id(&self) -> Option<&str> {
+        self.composer.unconfirmed_id()
+    }
+
+    pub(super) fn unconfirmed_state(&self) -> Option<&crate::composer::UnconfirmedPrompt> {
+        self.composer.unconfirmed_state()
+    }
+
+    pub(super) fn restore_unconfirmed(&mut self, pending: crate::composer::UnconfirmedPrompt) {
+        if self.composer.unconfirmed_state().is_none() {
+            self.composer.restore_unconfirmed(pending);
+        }
+    }
+
+    pub(super) fn has_confirmed_user_message(&self, id: &str) -> bool {
+        self.composer.has_confirmed_prompt(
+            &self.messages,
+            self.transcript_display.queue.items(),
+            id,
+        )
+    }
+
+    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) -> bool {
+        self.composer
+            .confirm_unconfirmed_matching(&mut self.draft, attempt_id)
+    }
+
+    pub(super) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.composer
+            .add_unique_inline_usage(seen, self.composer.recall.is_some())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn revoke_pairing(&mut self) {
+        self.composer.picker.set_attachments_supported(false);
+        if let Some(reader) = &self.reader {
+            reader.revoke();
+        }
+        if let Some(commands) = self.commands.take() {
+            commands.close();
+        }
+        if !matches!(self.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            self.phase = Phase::Failed;
+        }
+        self.stream_offline = true;
+    }
+
     pub(super) fn has_healthy_conversation_stream(&self) -> bool {
         self.has_conversation_stream() && self.conversation_stream_connected
     }
 
     pub(super) fn conversation_client_id(&self) -> Option<&str> {
         self.conversation_client_id.as_deref()
+    }
+
+    pub(super) fn is_launcher_visible(&self) -> bool {
+        self.launcher_visible
     }
 
     fn is_detached(&self) -> bool {
@@ -85,8 +150,24 @@ impl Cache {
         if let Some(git) = &mut self.git.owner
             && git.workspace_id() == target
         {
-            git.event(event);
-            delivered = true;
+            if let codenomad_client::transport::WorkspaceEvent::NativeStreamStatus {
+                workspace_id,
+                connected: true,
+            } = event
+            {
+                git.event(
+                    &codenomad_client::transport::WorkspaceEvent::WorktreesChanged {
+                        workspace_id: workspace_id.clone(),
+                    },
+                );
+                delivered = true;
+            } else if !matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::NativeStreamStatus { .. }
+            ) {
+                git.event(event);
+                delivered = true;
+            }
         }
         if let Some(files) = &mut self.files
             && files.workspace_id() == target
@@ -94,11 +175,25 @@ impl Cache {
             files.event(event.clone());
             delivered = true;
         }
+        if self.status_services.workspace_id() == Some(target) {
+            self.status_services.event(event);
+            delivered = true;
+        }
+        if matches!(
+            event,
+            codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+        ) && let Some(agent) = &mut self.agent
+        {
+            delivered |= agent.workspace_stopped(target);
+        }
         delivered
     }
 
     pub(super) fn has_detached_panels(&self) -> bool {
-        self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
+        self.is_detached()
+            && (self.git.owner.is_some()
+                || self.files.is_some()
+                || self.status_services.workspace_id().is_some())
     }
 
     pub(super) fn collect_detached_workspace_ids(
@@ -114,6 +209,9 @@ impl Cache {
         if let Some(files) = &self.files {
             out.insert(files.workspace_id().to_owned());
         }
+        if let Some(id) = self.status_services.workspace_id() {
+            out.insert(id.to_owned());
+        }
     }
 
     pub(super) fn stop_unlisted_detached(
@@ -128,7 +226,11 @@ impl Cache {
             let id = git.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -136,9 +238,24 @@ impl Cache {
             let id = files.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
+        }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned)
+            && !live.contains(id.as_str())
+        {
+            self.status_services
+                .event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id: id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
+            changed = true;
         }
         changed
     }
@@ -159,6 +276,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -180,6 +299,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -189,6 +310,31 @@ impl Cache {
                 }
                 None if opened_after.contains(id) => {
                     files.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        if let Some(id) = self.status_services.workspace_id().map(str::to_owned) {
+            match live {
+                Some(live)
+                    if !opened_after.contains(id.as_str()) && !live.contains(id.as_str()) =>
+                {
+                    self.status_services.event(
+                        &codenomad_client::transport::WorkspaceEvent::Stopped {
+                            workspace_id: id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
+                    changed = true;
+                }
+                Some(_) => {
+                    self.status_services.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id.as_str()) => {
+                    self.status_services.online(true);
                     changed = true;
                 }
                 None => {}
@@ -210,6 +356,10 @@ impl Cache {
             files.online(online);
             changed = true;
         }
+        if self.status_services.workspace_id().is_some() {
+            self.status_services.online(online);
+            changed = true;
+        }
         changed
     }
 
@@ -219,8 +369,79 @@ impl Cache {
             crate::history::retained_bytes(&self.messages),
         )
     }
+    pub(super) fn rendered_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.transcript_display.retained_bytes(seen_outlines)
+    }
+    pub(super) fn files_and_git_bytes(
+        &self,
+        seen_file_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.files
+            .as_ref()
+            .map_or(0, |files| files.retained_bytes(seen_file_drafts))
+            .saturating_add(self.git.retained_bytes())
+    }
+    pub(super) fn draft_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.draft
+            .text
+            .len()
+            .saturating_add(self.composer.draft.retained_bytes(seen))
+            .saturating_add(
+                self.composer
+                    .recall
+                    .as_ref()
+                    .map_or(0, |recall| recall.retained_bytes(seen)),
+            )
+            .saturating_add(self.git.draft_bytes())
+    }
+    pub(super) fn evictable_rendered_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        self.transcript_display
+            .evictable_rendered_bytes(active_outline_ptr)
+    }
+    pub(super) fn evictable_secondary_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        let files = self
+            .files
+            .as_ref()
+            .map_or(0, crate::files::Ui::evictable_inactive_bytes);
+        let display = if self.history_protected() {
+            self.transcript_display.saved_sessions_bytes()
+        } else {
+            self.transcript_display
+                .evictable_rendered_bytes(active_outline_ptr)
+        };
+        files
+            .saturating_add(self.git.retained_bytes())
+            .saturating_add(display)
+    }
+    pub(super) fn evict_secondary_caches(&mut self, active_outline_ptr: Option<usize>) -> usize {
+        let mut freed = self
+            .files
+            .as_mut()
+            .map_or(0, crate::files::Ui::evict_inactive_caches);
+        freed = freed.saturating_add(self.git.evict_inactive_caches());
+        if self.history_protected() {
+            freed.saturating_add(self.transcript_display.evict_inactive_sessions())
+        } else {
+            let evictable = self
+                .transcript_display
+                .evictable_rendered_bytes(active_outline_ptr);
+            self.transcript_display.evict_rendered();
+            freed.saturating_add(evictable)
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn files_mut(&mut self) -> &mut Option<crate::files::Ui> {
+        &mut self.files
+    }
+    #[cfg(test)]
+    pub(super) fn timeline_ref(&self) -> &crate::timeline::Timeline {
+        &self.transcript_display.timeline
+    }
     pub(super) fn history_protected(&self) -> bool {
-        self.phase == Phase::Streaming
+        self.phase.running()
             || self.agent.as_ref().is_some_and(|agent| agent.running)
             || self
                 .reader
@@ -236,11 +457,20 @@ impl Cache {
         self.transcript_display.evict_rendered();
     }
     pub fn navigation_blocked(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if self.phase == Phase::RestoreFailed {
+            return false;
+        }
         self.composer.blocks_navigation()
             || self
                 .agent
                 .as_ref()
                 .is_some_and(agent::Ui::navigation_blocked)
+    }
+    pub(super) fn has_unsaved_form_drafts(&self) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(agent::Ui::has_unsaved_form_drafts)
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
@@ -271,9 +501,11 @@ impl Cache {
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
             history_detached: std::mem::take(&mut s.history_detached),
+            stream_offline: std::mem::take(&mut s.stream_offline),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
             status_permissions: std::mem::take(&mut s.status_permissions),
+            status_services: std::mem::take(&mut s.status_services),
             status_usage: std::mem::take(&mut s.status_usage),
         }
     }
@@ -299,6 +531,7 @@ impl Cache {
         s.paging = self.paging;
         s.history_error = self.error;
         s.history_detached = self.history_detached;
+        s.stream_offline = self.stream_offline;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {
@@ -306,6 +539,7 @@ impl Cache {
         }
         s.input_scope = self.input_scope;
         s.status_permissions = self.status_permissions;
+        s.status_services = self.status_services;
         s.status_usage = self.status_usage;
     }
 }
@@ -318,7 +552,7 @@ pub(super) fn status(
         Some(Status::Permission)
     } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
-    } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
+    } else if *phase == Phase::Failed || phase.reconnecting() {
         Some(Status::Unavailable)
     } else {
         None

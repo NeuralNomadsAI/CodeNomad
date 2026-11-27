@@ -6,8 +6,9 @@ use crate::{
 };
 use codenomad_client::{Receiver, git::Repository};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 pub(super) async fn load(
@@ -16,7 +17,8 @@ pub(super) async fn load(
     selected: Option<&str>,
     reads: &Reads,
     cancelled: &Receiver<()>,
-) -> Result<Option<Sessions>> {
+    presence_epoch: &AtomicU64,
+) -> Result<Option<(Sessions, Vec<(String, u64)>)>> {
     let native = {
         let _permit = reads
             .background(cancelled)
@@ -51,6 +53,7 @@ pub(super) async fn load(
     let directory = root.service_directory.as_deref().unwrap_or(&project.path);
     let mut members = Vec::<Member>::new();
     let mut ids = HashSet::new();
+    let mut id_epochs = HashMap::<String, u64>::new();
     let mut bytes = 0;
     for scope in [
         InventoryScope::NativeProject(&native),
@@ -60,14 +63,21 @@ pub(super) async fn load(
         let mut consumed = HashSet::new();
         let mut cursor;
         loop {
-            let next = {
+            let (next, read_epoch) = {
                 let _permit = reads
                     .background(cancelled)
                     .await
                     .ok_or("catalogue closed")?;
-                backend.session_inventory(project, scope).await?
+                let epoch = presence_epoch
+                    .fetch_add(1, Ordering::SeqCst)
+                    .wrapping_add(1);
+                (backend.session_inventory(project, scope).await?, epoch)
             };
             for member in next.members {
+                id_epochs
+                    .entry(member.session.id.clone())
+                    .and_modify(|e| *e = (*e).max(read_epoch))
+                    .or_insert(read_epoch);
                 if ids.insert(member.session.id.clone()) {
                     bytes += member.session.id.len()
                         + member.session.title.len()
@@ -90,5 +100,9 @@ pub(super) async fn load(
         }
     }
     let rows = super::families::rows(members, &project.path, &trees.trees, selected);
-    Ok(Some(Sessions { rows, next: None }))
+    let proofs: Vec<(String, u64)> = rows
+        .iter()
+        .filter_map(|row| Some((row.id.clone(), *id_epochs.get(&row.id)?)))
+        .collect();
+    Ok(Some((Sessions { rows, next: None }, proofs)))
 }

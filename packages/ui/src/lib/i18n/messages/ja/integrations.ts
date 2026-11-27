@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "連携をインストール",
   "integrations.install.confirm": "{name}（{scope}）をインストールしますか？コードは OpenCode 内であなたの権限で実行されます。",
   "integrations.install.error": "確認できませんでした。更新して確認してください。",
+  "settings.nav.integrations": "連携",
 }

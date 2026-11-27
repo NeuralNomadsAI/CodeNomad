@@ -569,6 +569,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({"directory": root}),
+            temporary: None,
         });
 
         let expected: Vec<String> = (0..count).map(|i| format!("item-{i:04}.txt")).collect();
@@ -644,6 +645,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             location: json!({ "directory": ws_dir }),
+            temporary: None,
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

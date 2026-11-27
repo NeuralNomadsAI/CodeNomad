@@ -3,7 +3,7 @@
 //! hooks, and signing), matching `packages/server/src/workspaces/git-mutations.ts`.
 use std::{io, path::Path, process::Stdio};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::Command,
 };
 
@@ -65,6 +65,29 @@ pub(super) async fn execute(mut command: Command) -> Result<Output, Error> {
     // Drain output without letting verbosity kill Git or hold the pool used by reads.
     let (bytes, err, status) = tokio::try_join!(drain(out, 64 * 1024), drain(err, 32 * 1024), child.wait())
         .map_err(|_| conflict("Git outcome unavailable"))?;
+    Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
+}
+
+pub(super) async fn execute_with_stdin(mut command: Command, input: Vec<u8>) -> Result<Output, Error> {
+    command.stdin(Stdio::piped());
+    let mut child = command.spawn().map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound { missing_git() } else { conflict("Git could not start") }
+    })?;
+    let mut stdin = child.stdin.take().unwrap();
+    let (out, err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+    let write_stdin = async move {
+        let result = stdin.write_all(&input).await;
+        let _ = stdin.shutdown().await;
+        match result {
+            Ok(()) => Ok(()),
+            // Git may exit early with a non-zero status and close stdin before reading everything.
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            Err(e) => Err(e),
+        }
+    };
+    let ((), bytes, err, status) =
+        tokio::try_join!(write_stdin, drain(out, 64 * 1024), drain(err, 32 * 1024), child.wait())
+            .map_err(|_| conflict("Git outcome unavailable"))?;
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
 

@@ -89,6 +89,14 @@ impl Actions {
         self.boundary.is_some() && !self.refresh_boundary && self.read.is_none()
     }
 
+    pub(super) fn has_restore(&self) -> bool {
+        self.boundary.is_some()
+    }
+
+    pub(super) fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
     pub(super) fn visible<'a>(&self, rows: &'a [crate::history::Row]) -> &'a [crate::history::Row] {
         if let Some(boundary) = &self.boundary
             && let Some(first_hidden) = rows.iter().position(|row| row.id >= *boundary)

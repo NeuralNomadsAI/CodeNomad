@@ -1,7 +1,7 @@
 //! Workspace persistence, background tabs and active-panel updates.
 #[cfg(target_arch = "wasm32")]
 use super::platform;
-use super::{State, Tx, catalogue, history_budget, observation::poll_cached, panel_state, resume};
+use super::{State, Tx, catalogue, observation::poll_cached, panel_state, resume};
 
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
@@ -24,7 +24,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let became_ready = loading && !ui.persistence.loading;
-    if let Some(store) = &ui.persistence.store {
+    if ui.persistence.restore_enabled
+        && !ui.persistence.mutating
+        && let Some(store) = &ui.persistence.store
+    {
         s.saved_outlines.poll(store, s.wake.clone());
     }
     if became_ready {
@@ -35,24 +38,32 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
-    changed |= poll_cached(s, &mut ui, Some(now), tx);
+    #[cfg(target_arch = "wasm32")]
+    platform::pairing::set_defer_checks(s, true);
+    let (cached_changed, deleted_by_tab) = poll_cached(s, &mut ui, Some(now), tx);
+    changed |= cached_changed;
     changed |= crate::timeline::sync_outline_mutation(s);
     let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;
-    ui.stage();
+    let stashed = s.temporary.stashed_for_snapshot();
+    ui.stage_with_stashed(stashed);
     let previous_error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.partial,
     );
-    let snapshot = ui.snapshot();
-    ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
+    if ui.persistence.poll_save_ready(ui.revision, now, tx) {
+        let snapshot = ui.snapshot_with_stashed(stashed);
+        ui.persistence.start_save(&snapshot, s.wake.clone());
+    }
     let error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.partial,
     );
     s.workspace = Some(ui);
+    #[cfg(target_arch = "wasm32")]
+    platform::pairing::flush_deferred_checks(s);
     if !mission_auth_expired.is_empty() {
         #[cfg(not(target_arch = "wasm32"))]
         for expired in mission_auth_expired {
@@ -64,13 +75,16 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             crate::platform::pairing::observe(s);
         }
     }
+    changed |= catalogue::poll(s, now, tx);
+    for (index, id) in deleted_by_tab {
+        changed |= super::drafts::recover_missing_session_draft_in(s, Some(index), &id);
+    }
+    changed |= super::drafts::drain_window_deleted_sessions(s);
+    changed |= super::drafts::poll_restored_draft_checks(s);
+    changed |= super::drafts::poll_pending_deleted(s);
     if became_ready {
         resume(s, tx);
     }
-    if changed {
-        history_budget::enforce(s);
-    }
-    changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error
 }
 pub fn poll_file_drafts(s: &mut State, now: f64, tx: &mut Tx) -> bool {

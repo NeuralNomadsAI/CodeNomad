@@ -286,6 +286,8 @@ mod tests {
                     backend_id: None,
                     server_id: None,
                     folder: "D:/repo".into(),
+                    project_name: None,
+                    temporary: false,
                     occurrence: 1,
                     workspace_id: Some("ws-1".into()),
                     active_session_id: Some("ses-1".into()),

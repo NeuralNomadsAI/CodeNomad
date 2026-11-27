@@ -81,7 +81,7 @@ pub(in crate::settings) fn view<S: 'static>(
                     layout::hinted_field(filter, t("hotkeys.filter"))
                         .label(t("hotkeys.filter"))
                         .on_edit(filter_edit)
-                        .build(field_kit(layout::dark()))
+                        .build(&field_kit(layout::dark()))
                         .on_input_change(move |s: &mut S, _| {
                             if let Some((recording, capture)) = access(s) {
                                 *recording = false;
@@ -193,7 +193,7 @@ fn row_view<S: 'static>(
             *recording = false;
             capture.refused = false;
             return false;
-        } else if reserved::blocks_recording(event, row_composer_scope) {
+        } else if reserved::blocks_recording(event, tx.key_base(), row_composer_scope) {
             capture.refused = true;
             #[cfg(target_arch = "wasm32")]
             layout::announce_alert(tx, t("hotkeys.reserved"));

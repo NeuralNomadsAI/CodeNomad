@@ -2,6 +2,8 @@
 //! reference's `auth.json`, bootstrap token and named cookie, and the paired-device admission of
 //! the HTTPS listener (`devices`, `remote`, `tls`).
 pub mod devices;
+#[cfg(test)]
+mod logout_tests;
 pub mod managed;
 pub mod password;
 pub mod remote;
@@ -34,6 +36,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/login", post(login).layer(DefaultBodyLimit::max(24 * 1024)))
+        .route("/api/auth/logout", post(logout).fallback(|| async { error(Status::NOT_FOUND, "Not found") }))
         .route("/api/remote-control/status", get(devices::status))
 }
 /// Pairing, served on the HTTPS listener only.
@@ -53,7 +56,6 @@ pub fn local_routes() -> Router<Shared> {
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
         .route("/api/remote-control/previews", put(devices::set_previews).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
-        .route("/api/auth/logout", post(logout))
         .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
         .route("/login", get(login_page))
         .route("/auth/token", get(token_page))
@@ -83,6 +85,10 @@ impl Principal {
 }
 pub fn unauthorized() -> Error {
     error(Status::UNAUTHORIZED, "Unauthorized")
+}
+pub fn unauthorized_before_dispatch() -> Response {
+    (Status::UNAUTHORIZED, [("x-codenomad-before-dispatch", "1")], Json(json!({"error":"Unauthorized"})))
+        .into_response()
 }
 struct Session {
     born: Instant,
@@ -412,7 +418,26 @@ fn wants_html(headers: &HeaderMap) -> bool {
     })
 }
 
-pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Result<Response, Error> {
+pub async fn admit(State(app): State<Shared>, req: Request, next: Next) -> Result<Response, Error> {
+    let no_store_account = remote::is_no_store_account_path(req.uri().path());
+    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
+    match admit_inner(app, req, next).await {
+        Ok(mut response) => {
+            if no_store_integrations || (no_store_account && !response.status().is_success()) {
+                response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            }
+            Ok(response)
+        }
+        Err(err) if no_store_integrations || no_store_account => {
+            let mut response = err.into_response();
+            response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok(response)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn admit_inner(app: Shared, mut req: Request, next: Next) -> Result<Response, Error> {
     let (key, device) = cookies(req.headers(), app.auth.cookie_name())?;
     let host = req.headers().get(header::HOST).and_then(|x| x.to_str().ok()).unwrap_or("");
     let selected = [format!("127.0.0.1:{}", app.port), format!("localhost:{}", app.port)];
@@ -459,7 +484,12 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }
     let path = req.uri().path().to_owned();
     if device.is_some() || req.headers().contains_key("x-codenomad-server-request") {
-        return Err(error(Status::UNAUTHORIZED, "This device is not paired"));
+        return Ok((
+            Status::UNAUTHORIZED,
+            [("x-codenomad-before-dispatch", "1")],
+            Json(json!({"error":"This device is not paired"})),
+        )
+            .into_response());
     }
     if app.devices.is_some() && path == "/api/remote-control/server-pair" {
         return Ok((
@@ -517,7 +547,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         {
             found("/login")
         } else if api {
-            unauthorized().into_response()
+            unauthorized_before_dispatch()
         } else {
             req.extensions_mut().insert(None::<Principal>);
             next.run(req).await
@@ -613,8 +643,20 @@ pub async fn token(
     }
 }
 
-/// `POST /api/auth/logout`: revokes the session (including a managed local renewal right).
-pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Error> {
+/// `POST /api/auth/logout`: revokes the local session (including a managed local renewal right),
+/// or clears the paired browser's device cookie and revokes its preview capabilities on HTTPS.
+pub async fn logout(
+    State(app): State<Shared>,
+    channel: Option<Extension<tls::Channel>>,
+    browser: Option<Extension<remote::BrowserDevice>>,
+    headers: HeaderMap,
+) -> Result<Response, Error> {
+    if channel.is_some() {
+        if let Some(Extension(remote::BrowserDevice(id))) = browser {
+            app.previews.revoke_device(id);
+        }
+        return Ok(([(header::SET_COOKIE, devices::clear_cookie())], Json(json!({"ok":true}))).into_response());
+    }
     let (key, _) = cookies(&headers, app.auth.cookie_name())?;
     let _change = app.auth.password_change.lock().await;
     app.auth.revoke_session(key.as_deref());

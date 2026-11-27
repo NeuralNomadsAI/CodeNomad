@@ -369,10 +369,11 @@ fn launch(s: &mut State, directory: &str, path: &str, slug: &str, target: Target
         if let Err(error) =
             workspace_open::open(backend, slug, directory, path, target, owner).await
         {
+            let detail = error.localized(&language);
             let message = catalogue::format(
                 &language,
                 "instanceShell.filesShell.toast.openError",
-                &[("message", &error)],
+                &[("message", &detail)],
             );
             if out.try_send((Category::Files, false, message)).is_ok() {
                 wake();

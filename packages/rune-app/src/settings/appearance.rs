@@ -23,7 +23,11 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
         .is_some_and(web_contrast::Watch::more);
     #[cfg(not(target_arch = "wasm32"))]
     let more = cx.system_increased_contrast();
-    render_with(cx, &prefs, more, |cx| {
+    #[cfg(target_arch = "wasm32")]
+    let include_preview = s.settings.web.shown() && !crate::platform::pairing::required(s);
+    #[cfg(not(target_arch = "wasm32"))]
+    let include_preview = false;
+    render_with(cx, &prefs, more, include_preview, |cx| {
         let body = view(cx);
         #[cfg(target_arch = "wasm32")]
         {
@@ -56,18 +60,14 @@ pub(super) fn render_with<S>(
     cx: &mut Cx<S>,
     prefs: &Preferences,
     system_more: bool,
+    include_preview: bool,
     view: impl FnOnce(&mut Cx<S>) -> El,
 ) -> El {
     let dark = prefs.dark(cx.system_dark());
     let locale = prefs.locale().unwrap_or_else(strings::locale);
     use rune_theme_codenomad::layout::Layout;
     let more = effective_contrast(prefs.contrast(), system_more);
-    let palette = prefs.palette(dark);
-    let palette = if more {
-        rune_theme_codenomad::palettes::increased_contrast(palette, dark)
-    } else {
-        palette
-    };
+    let palette = prefs.resolved_palette(dark, more, include_preview);
     rune_theme_codenomad::settings::render(cx, dark, palette, |cx| {
         strings::with_locale(locale, || view(cx).locale_direction(locale))
     })

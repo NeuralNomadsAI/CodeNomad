@@ -1,9 +1,13 @@
 //! Geometry shared by the application bar and conversation panels.
+pub mod blank_cleanup;
+pub mod command_palette;
 pub mod icons;
 pub mod notices;
+pub mod tab_rename;
+pub mod temporary_close;
 use crate::{
     Length, Space, TextRole, kit,
-    layout::{self, enter_action},
+    layout::{self, Layout, enter_action},
     tokens,
 };
 use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
@@ -96,14 +100,19 @@ fn titlebar_height() -> f32 {
 
 /// A producer can update an owning window independently of its next paint.
 pub type WindowFeed<S> = rune::AppHandle<S>;
+pub use rune::CloseResponse;
 
 pub fn app<S: 'static>(
     spec: AppSpec<S>,
+    close_request: fn(&mut S, &mut Tx) -> CloseResponse,
     closing: fn(&mut S, &mut Tx),
     native_chrome: bool,
     locale: &'static str,
 ) -> App<S> {
-    let mut app = App::new(spec).on_close(closing).on_quit(closing);
+    let mut app = App::new(spec)
+        .on_close_request(close_request)
+        .on_close(closing)
+        .on_quit(closing);
     if native_chrome {
         native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));
@@ -177,7 +186,7 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
                 .truncate(),
         )
         .leading(menus)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
 }
 
 pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx) + 'static) -> El {
@@ -187,7 +196,7 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
         .variant(ButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(enter_action(activate))
 }
 
@@ -213,7 +222,7 @@ pub fn panel_tabs<S: 'static>(
                 })
                 .control_size(ControlSize::Small)
                 .on_press_tx(move |s, tx| press(s, tx))
-                .build(kit(dark))
+                .build(&kit(dark))
                 .h(height)
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
@@ -274,6 +283,22 @@ pub fn cover(element: El) -> El {
     element.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
 }
 
+pub fn viewport_probe<S: 'static>(
+    touch: bool,
+    on_layout: impl Fn(&mut S, [f32; 4], &mut Tx) + 'static,
+) -> El {
+    rune::el()
+        .key(if touch {
+            "shell-viewport-touch"
+        } else {
+            "shell-viewport-pointer"
+        })
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .inert()
+        .a11y_hidden()
+        .on_layout_tx(on_layout)
+}
+
 pub fn floating_notice(notice: El) -> El {
     let inset = tokens(layout::dark()).space(Space::Sm).px();
     row()
@@ -329,7 +354,7 @@ pub fn older_button<S: 'static>(
         .help(label)
         .disabled(busy)
         .on_press_tx(activate)
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .key("older")
 }
 
@@ -343,7 +368,7 @@ pub fn session_row<S: 'static>(
     if !disabled {
         row = row.on_select(select);
     }
-    row.build(kit(layout::dark())).disabled(disabled)
+    row.build(&kit(layout::dark())).disabled(disabled)
 }
 
 fn control_size(touch: bool) -> f32 {
@@ -413,6 +438,79 @@ pub fn spacer() -> El {
     el().grow(1.0).min_w(0.0)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceDot {
+    Ready,
+    Pending,
+    Error,
+    Stopped,
+}
+
+pub fn status_dot(state: ServiceDot) -> El {
+    let t = tokens(layout::dark());
+    let size = t.space(Space::Sm).px();
+    let color = match state {
+        ServiceDot::Ready => t.color("status-ready-fg"),
+        ServiceDot::Pending => t.color("status-starting-fg"),
+        ServiceDot::Error => t.color("status-error-fg"),
+        ServiceDot::Stopped => t.color("text-muted"),
+    };
+    el().size(size, size)
+        .radius(size * 0.5)
+        .fill(color)
+        .a11y_hidden()
+}
+
+pub fn compact_switch<S: 'static>(
+    label: &str,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Switch::new(checked)
+        .control_size(ControlSize::Small)
+        .label(label)
+        .hide_label()
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(&kit(layout::dark()))
+}
+
+pub fn service_row(leading: Option<El>, title: &str, trailing: impl IntoIterator<Item = El>) -> El {
+    let mut line = row().full_width().center_y().separate(Space::Xs);
+    if let Some(lead) = leading {
+        line = line.child(lead);
+    }
+    line.child(text(title).truncate().min_w(0.0).grow(1.0).shrink())
+        .children(trailing)
+}
+
+pub fn service_header(trailing: impl IntoIterator<Item = El>) -> El {
+    row()
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .child(spacer())
+        .children(trailing)
+}
+
+pub fn service_heading_row(title: &str, trailing: impl IntoIterator<Item = El>) -> El {
+    row()
+        .full_width()
+        .center_y()
+        .separate(Space::Xs)
+        .child(
+            text(title)
+                .text_role(TextRole::Button)
+                .role("heading")
+                .truncate()
+                .min_w(0.0)
+                .grow(1.0)
+                .shrink(),
+        )
+        .children(trailing)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +556,69 @@ mod tests {
         });
         rt.frame(0.01);
         assert_eq!(rt.state, 1);
+    }
+
+    #[test]
+    fn panel_tabs_web_mirror_groups_tabs_under_tablist() {
+        let mut rt = rune::Runtime::new(
+            0_usize,
+            |chosen, _| {
+                panel_tabs("Right panel", &["Status", "Files"], *chosen, |s, i, _| {
+                    *s = i;
+                })
+            },
+            (280.0, 60.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tablist_index = items
+            .iter()
+            .position(|e| e["o"] == "tablist" && e["t"] == "Right panel")
+            .unwrap_or_else(|| panic!("missing panel tablist in web mirror: {}", rt.a11y_json()));
+        let tabs: Vec<_> = items.iter().filter(|e| e["o"] == "tab").collect();
+        assert_eq!(tabs.len(), 2, "real web mirror: {}", rt.a11y_json());
+        assert!(
+            tabs.iter().all(|tab| {
+                let mut ancestor = tab["a"].as_u64().map(|index| index as usize);
+                while let Some(index) = ancestor {
+                    if index == tablist_index {
+                        return true;
+                    }
+                    ancestor = items[index]["a"].as_u64().map(|next| next as usize);
+                }
+                false
+            }),
+            "panel tabs must be grouped inside tablist: {}",
+            rt.a11y_json()
+        );
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["t"] == "Status" && tab["se"] == true)
+        );
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["t"] == "Files" && tab["se"] == false)
+        );
+    }
+
+    #[test]
+    fn older_button_web_mirror_exposes_disabled_state() {
+        for busy in [false, true] {
+            let mut rt = rune::Runtime::new(
+                busy,
+                |busy, _| older_button("Older messages", *busy, |_: &mut bool, _| {}),
+                (180.0, 60.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+            let button = items
+                .iter()
+                .find(|item| item["k"] == "button" && item["t"] == "Older messages")
+                .unwrap_or_else(|| panic!("missing older button: {}", rt.a11y_json()));
+            assert_eq!(button.get("dis") == Some(&serde_json::json!(true)), busy);
+        }
     }
 
     #[test]

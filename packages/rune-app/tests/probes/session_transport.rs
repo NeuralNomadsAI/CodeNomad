@@ -140,12 +140,15 @@ pub fn contract() {
             | Event::AnchorFailed(_)
             | Event::Reconnecting
             | Event::HistoryInvalidated
+            | Event::SessionDeleted
             | Event::RevertChanged
             | Event::ConnectionLost
             | Event::WorkspaceMissing
             | Event::Connected(_)
             | Event::ProviderUsageWatch(_)
             | Event::AgentHint(_)
+            | Event::UpstreamReady
+            | Event::AgentControl(_)
             | Event::ObservedRunning { .. }
             | Event::Workspace(_)
             | Event::Preferences(_)
@@ -155,6 +158,9 @@ pub fn contract() {
             | Event::FamilyUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
+            | Event::Inbox { .. }
+            | Event::InboxDelta(_)
+            | Event::InboxFailed
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

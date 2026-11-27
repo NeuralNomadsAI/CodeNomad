@@ -26,7 +26,8 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/workspaces/[^/]+/(?:git-init|worktrees/[^/]+/git-(?:stage|unstage|commit))$"),
     ("POST",r"^/api/workspaces/[^/]+/(?:worktrees|sessions/[^/]+/worktree)$"),
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
-    ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
+    // `instance/api` delegates route and ownership enforcement to `opencode::proxy::relay`.
+    ("GET POST PUT PATCH DELETE",r"^/workspaces/[^/]+/instance/api/.+$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
@@ -40,36 +41,62 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
-    ("GET",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
+    ("POST",r"^/api/opencode/(?:service|update)$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
-    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked)$"),
+    ("GET POST",r"^/api/workspaces/temporary$"),
+    ("POST",r"^/api/workspaces/temporary/abandon$"),
+    ("POST",r"^/api/workspaces/[^/]+/(?:keep|discard)$"),
+    ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked|prune)$"),
+    ("POST",r"^/api/workspaces/[^/]+/session-pruning/(?:preview|prune)$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),
     ("GET",r"^/api/workspaces/[^/]+/session-media/[^/]+/[^/]+/[^/]+/[^/]+/[^/]+$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
     ("GET",r"^/api/panel-extensions/[^/]+/panel$"),
-    ("GET",r"^/workspaces/[^/]+/instance/api/(?:agent(?:/[^/]+)?|command|location|mcp|model(?:/default)?|provider|project|session(?:/active|/[^/]+(?:/(?:inbox|permission|form|message(?:/[^/]+)?))?)?|experimental/session/[^/]+/log)$"),
-    ("POST",r"^/workspaces/[^/]+/instance/api/session(?:/[^/]+/(?:prompt|command|agent|model|interrupt|background))?$"),
-    ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
-    ("GET PUT",r"^/api/workspaces/[^/]+/subagent-depth$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/(?:websearch-settings|image-settings|subagent-depth)$"),
+    ("GET PATCH",r"^/api/workspaces/[^/]+/plugin-controls$"),
+    ("POST DELETE",r"^/api/workspaces/[^/]+/plugin-sources$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:hosts|binding)$"),
+    ("POST",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:install|attach|detach|install-host)$"),
     ("GET POST",r"^/api/sidecars$"),
+    ("GET",r"^/api/speech/capabilities$"),
+    ("POST",r"^/api/speech/(?:transcribe|synthesize/stream)$"),
     ("POST",r"^/api/previews$"),
     ("DELETE",r"^/api/previews/[^/]+$"),
     ("GET",r"^/api/usage/[^/]+$"),
     ("PUT DELETE",r"^/api/sidecars/[^/]+$"),
     ("GET",r"^/api/workspaces/[^/]+/service-usage(?:/(?:owner|cache))?$"),
-    // `isMemoryRelayRoute`: browser devices only (`memory::routes` refuses server devices).
-    ("POST",r"^/api/memory$"),
-    ("GET PUT",r"^/api/memory/settings$"),
 ].into_iter().map(|(method,path)|(method,Regex::new(path).unwrap())).collect()
 });
 
 #[derive(Clone)]
 pub(crate) struct BrowserDevice(pub uuid::Uuid);
 
+/// Per-device preview logout epoch captured at remote middleware admission time so a concurrent
+/// `POST /api/auth/logout` between admission and preview creation still fences publication.
+#[derive(Clone, Copy)]
+pub(crate) struct DeviceAdmission {
+    pub id: uuid::Uuid,
+    pub logout_epoch: u64,
+}
+
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
+}
+pub(crate) fn is_no_store_account_path(path: &str) -> bool {
+    let matches_raw = |p: &str| {
+        (p.starts_with("/api/workspaces/") && p.contains("/provider-accounts/"))
+            || (p.starts_with("/workspaces/")
+                && (p.contains("/instance/api/credential")
+                    || (p.contains("/instance/api/integration/") && p.contains("/connect/"))))
+    };
+    if matches_raw(path) {
+        return true;
+    }
+    percent_encoding::percent_decode_str(path).decode_utf8().ok().is_some_and(|decoded| matches_raw(&decoded))
 }
 fn status(paired: bool) -> Response {
     Json(if paired {
@@ -149,6 +176,20 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
 }
 
 pub async fn admit(
+    state: State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let no_store_account = is_no_store_account_path(req.uri().path());
+    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
+    let mut response = admit_inner(state, req, next).await;
+    if no_store_integrations || (no_store_account && !response.status().is_success()) {
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+async fn admit_inner(
     State((app, bundle)): State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
     mut req: Request,
     next: Next,
@@ -223,22 +264,20 @@ pub async fn admit(
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if server && (!direct || browser_metadata(h)) {
-        return cors(
-            reply(if channel.ingress { Status::FORBIDDEN } else { Status::UNAUTHORIZED }, "This device is not paired"),
-            None,
-        );
+    if !channel.ingress && server && (!direct || browser_metadata(h)) {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), None);
     }
     let method = req.method().clone();
     let ui = bundle
         .as_ref()
         .filter(|_| !server && direct)
         .and_then(|bundle| bundle.path(&method, &path).map(|asset| (bundle, asset)));
-    let form_reply = !server
-        && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
-            !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
-        });
-    let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
+    let has_server_header = h.contains_key("x-codenomad-server-request");
+    let memory_path = path == "/api/memory" || path.starts_with("/api/memory/");
+    let memory_route = memory_relay_route(&path, &method);
+    // Direct HTTPS server-device catalog retains authenticated memory relay; ingress stays closed.
+    let server_memory = server && !channel.ingress && memory_route;
+    let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
@@ -264,29 +303,6 @@ pub async fn admit(
         }
         return cors(next.run(req).await, supplied);
     }
-    if path.starts_with("/api/auth/") && path != "/api/auth/status"
-        || (path.starts_with("/api/backends/") && !backend_ui)
-        // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
-        || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
-        || path == "/api/remote-control"
-        || path.starts_with("/api/push/")
-    {
-        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
-    }
-    if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
-        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
-    }
-    if !entry
-        && !backend_ui
-        && !form_reply
-        && ui.is_none()
-        && !CATALOG.iter().any(|(methods, pat)| {
-            methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
-                && pat.is_match(&path)
-        })
-    {
-        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
-    }
     let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
@@ -298,6 +314,45 @@ pub async fn admit(
             tunnel_active,
         )
     });
+    let server_authenticated = server && !browser_metadata(h) && owner.is_some();
+    // Direct HTTPS server-device requests authenticate before origin/catalog checks
+    // (TS `gate.ts:133-138`); ingress unauthenticated mutations fail origin check with 403
+    // even when `x-codenomad-server-request: 1` is sent (`gate.ts:177-183`).
+    if !channel.ingress && server && owner.is_none() {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
+    if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok && !server_authenticated {
+        return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
+    }
+    if !channel.ingress && owner.is_none() && memory_path {
+        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+    }
+    let multi_backend = !has_server_header && owner.is_some() && crate::previews::backend::enabled(&app);
+    let preview_ui = multi_backend && preview_control(&path, &method);
+    let memory_ui = multi_backend && memory_route;
+    if path.starts_with("/api/auth/") && path != "/api/auth/status" && !remote_logout
+        || (path.starts_with("/api/backends/") && !preview_ui)
+        || (memory_path && !memory_ui && !server_memory)
+        // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
+        || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
+        || path == "/api/remote-control"
+        || path.starts_with("/api/push/")
+    {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
+    if !entry
+        && !preview_ui
+        && !memory_ui
+        && !server_memory
+        && !remote_logout
+        && ui.is_none()
+        && !CATALOG.iter().any(|(methods, pat)| {
+            methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
+                && pat.is_match(&path)
+        })
+    {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
     }
@@ -307,7 +362,9 @@ pub async fn admit(
     {
         let response = bundle.serve(req, asset).await;
         let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
-            reply(Status::UNAUTHORIZED, "This device is not paired")
+            let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+            r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+            r
         } else {
             response
         };
@@ -339,7 +396,9 @@ pub async fn admit(
         );
     }
     let Some((id, principal)) = owner else {
-        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+        let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+        r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+        return cors(r, supplied);
     };
     {
         let mut socket = channel.principal.lock().unwrap();
@@ -358,11 +417,13 @@ pub async fn admit(
         return cors(status(!principal.is_cancelled()), supplied);
     }
     for name in super::AUTHORITY_HEADERS {
-        if !backend_ui || name != crate::previews::backend::PROOF {
+        if !preview_ui || name != crate::previews::backend::PROOF {
             req.headers_mut().remove(name);
         }
     }
+    let logout_epoch = app.previews.logout_epoch(id);
     req.extensions_mut().insert(Principal(principal.clone()));
+    req.extensions_mut().insert(DeviceAdmission { id, logout_epoch });
     if !server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
@@ -382,6 +443,11 @@ pub async fn admit(
     cors(Response::from_parts(parts, body), supplied)
 }
 
+fn memory_relay_route(path: &str, method: &Method) -> bool {
+    (path == "/api/memory" && *method == Method::POST)
+        || (path == "/api/memory/settings" && matches!(*method, Method::GET | Method::HEAD | Method::PUT))
+}
+
 fn preview_control(path: &str, method: &Method) -> bool {
     let Some((id, route)) = path.strip_prefix("/api/backends/").and_then(|p| p.split_once('/')) else {
         return false;
@@ -398,6 +464,10 @@ fn preview_control(path: &str, method: &Method) -> bool {
 }
 
 #[cfg(test)]
+#[path = "remote_tests.rs"]
+mod remote_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{App, auth, files, opencode, settings};
@@ -408,6 +478,16 @@ mod tests {
     fn admitted(method: &str, path: &str) -> bool {
         let effective = if method == "HEAD" { "GET" } else { method };
         CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == effective) && pat.is_match(path))
+    }
+
+    #[test]
+    fn remote_catalog_admits_opencode_service_and_update_but_not_logs() {
+        assert!(admitted("GET", "/api/opencode/update"));
+        assert!(admitted("POST", "/api/opencode/update"));
+        assert!(admitted("POST", "/api/opencode/service"));
+        assert!(!admitted("GET", "/api/opencode/service"));
+        assert!(!admitted("GET", "/api/opencode/logs"));
+        assert!(!admitted("POST", "/api/opencode/logs"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use super::super::{Preferences, preferences::server::LEVELS};
 use crate::strings::t;
 use rune::{El, col, text};
 use rune_theme_codenomad::{
+    Space,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -19,6 +20,7 @@ impl Logging {
         &self,
         shared: &Rc<RefCell<Preferences>>,
         layers: &mut Vec<El>,
+        logs_action: El,
         access: fn(&mut S) -> &mut Self,
     ) -> El {
         const KEY: &str = "opencode-log-level";
@@ -42,7 +44,7 @@ impl Logging {
         let press = toggle.clone();
         let (choose, retry) = (shared.clone(), shared.clone());
         let trigger = chrome::build_picker(
-            chrome::picker(KEY, title, &labels)
+            chrome::stepping_picker(KEY, title, &labels)
                 .current(current)
                 .disabled(!prefs.log_level_available())
                 .open(self.0 && !pending)
@@ -51,10 +53,13 @@ impl Logging {
                 })
                 .on_close(move |s| access(s).close())
                 .on_choose(move |s, label, _| {
-                    if std::mem::take(&mut access(s).0)
+                    access(s).close();
+                    let mut prefs = choose.borrow_mut();
+                    if prefs.log_level_available()
+                        && !prefs.log_level_pending()
                         && let Some(index) = labels.iter().position(|&candidate| candidate == label)
                     {
-                        choose.borrow_mut().set_log_level(index);
+                        prefs.set_log_level(index);
                     }
                 }),
             layers,
@@ -65,6 +70,7 @@ impl Logging {
         chrome::card(
             col()
                 .full_width()
+                .separate(Space::Sm)
                 .on_key(move |s, event, tx| {
                     event.key == rune::Key::Enter
                         && event.mods == rune::Mods::default()
@@ -82,7 +88,8 @@ impl Logging {
                             !prefs.can_retry() || pending,
                             move |_: &mut S| retry.borrow_mut().retry_log_level(),
                         ))
-                })),
+                }))
+                .child(logs_action),
         )
     }
 }

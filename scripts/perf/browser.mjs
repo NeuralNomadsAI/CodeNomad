@@ -1,25 +1,33 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { chromium } from "playwright"
+import { launchOwnedChromium } from "../rune/web-chromium.mjs"
 import { privatePath } from "./isolation.mjs"
 import { now } from "./lib.mjs"
 import { withBackend } from "./stacks.mjs"
 
 export async function withBrowser(daemon, tree, root, followLongReplies, run) {
-  return withBackend(daemon, tree, root, followLongReplies, async (url, cookie) => {
-    const profile = privatePath(path.join(root, "chromium"))
+  return withBackend(daemon, tree, root, followLongReplies, async (url, cookie, { backendPid }) => {
+    const profile = privatePath(path.join(root, "browser-profile"))
+    await mkdir(profile, { recursive: true })
     // Chromium puts its Linux singleton socket under TMPDIR; keep it short.
     const socketDir = process.platform === "linux" ? await mkdtemp(path.join(os.tmpdir(), "cn-perf-")) : undefined
-    let context
+    const localOrigin = new URL(url).origin
+    let owned, context
     try {
-      context = await chromium.launchPersistentContext(profile, {
-        headless: true, channel: "chromium", env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
+      owned = await launchOwnedChromium({
+        profile,
+        env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
+        origin: localOrigin,
+        targetPid: backendPid,
+        injectCookie: `codenomad_session=${cookie}`,
+      })
+      context = await owned.browser.newContext({
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
-      await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
+      await context.addCookies([{ name: "codenomad_session", value: "fixture-relay-placeholder", url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)
       const failures = []
@@ -88,7 +96,9 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
       })
     } finally {
       try { await context?.close() } finally {
-        if (socketDir) await rm(socketDir, { recursive: true, force: true })
+        try { await owned?.close() } finally {
+          if (socketDir) await rm(socketDir, { recursive: true, force: true })
+        }
       }
     }
   })

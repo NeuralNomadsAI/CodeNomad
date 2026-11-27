@@ -245,3 +245,122 @@ fn a_gateway_timeout_cannot_settle_worktree_placement() {
         .placement_answered()
     );
 }
+
+#[test]
+fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let entries = [
+            (
+                200,
+                json!({"isGitRepo":true,"worktrees":[{"slug":"root","directory":"D:/repo"}]}),
+            ),
+            (200, json!({"ok":false})),
+            (
+                422,
+                json!({"error":"  pre-commit hook rejected  ","code":"hook_failed"}),
+            ),
+            (500, json!({"error":"   "})),
+        ];
+        for (status, response) in entries {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = BufReader::new(&mut socket);
+            let mut line = String::new();
+            let mut length = 0;
+            loop {
+                line.clear();
+                assert_ne!(request.read_line(&mut line).unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            if length > 0 {
+                let mut body = vec![0; length];
+                request.read_exact(&mut body).unwrap();
+            }
+            let body = response.to_string();
+            write!(
+                socket,
+                "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::connect(&base, "").await.unwrap();
+            backend.workspace = "w".into();
+
+            let checkout_err = backend
+                .workspace_checkout("missing-tree")
+                .await
+                .unwrap_err();
+            assert_eq!(
+                checkout_err.downcast_ref::<GitError>(),
+                Some(&GitError::CheckoutUnavailable)
+            );
+
+            let ack_err = backend.git_commit("root", "hello").await.unwrap_err();
+            assert_eq!(
+                ack_err.downcast_ref::<GitError>(),
+                Some(&GitError::UnconfirmedMutation)
+            );
+
+            let refusal_err = backend.git_commit("root", "hello").await.unwrap_err();
+            let refusal = refusal_err.downcast_ref::<Refusal>().unwrap();
+            assert_eq!(refusal.status, 422);
+            assert_eq!(refusal.code.as_deref(), Some("hook_failed"));
+            assert_eq!(refusal.message(), Some("pre-commit hook rejected"));
+
+            let blank_err = backend.git_commit("root", "hello").await.unwrap_err();
+            let blank = blank_err.downcast_ref::<Refusal>().unwrap();
+            assert_eq!(blank.status, 500);
+            assert_eq!(blank.message(), None);
+
+            let empty_msg = backend.git_commit("root", "   ").await.unwrap_err();
+            assert_eq!(
+                empty_msg.downcast_ref::<GitError>(),
+                Some(&GitError::InvalidRequest)
+            );
+
+            let bad_mime = diff(
+                json!({"path":"a.bin","image":{"mime":"application/octet-stream"}}),
+                "a.bin",
+            )
+            .unwrap_err();
+            assert_eq!(
+                bad_mime.downcast_ref::<GitError>(),
+                Some(&GitError::UnsupportedImageType)
+            );
+
+            let huge = "a".repeat(6 * 1024 * 1024 + 1);
+            let huge_err = diff(
+                json!({"path":"a.txt","isBinary":false,"before":huge,"after":""}),
+                "a.txt",
+            )
+            .unwrap_err();
+            assert_eq!(
+                huge_err.downcast_ref::<GitError>(),
+                Some(&GitError::OversizedContent)
+            );
+
+            let foreign = diff(json!({"path":"other.txt","isBinary":true}), "a.txt").unwrap_err();
+            assert_eq!(
+                foreign.downcast_ref::<GitError>(),
+                Some(&GitError::UnexpectedResponse)
+            );
+        });
+    server.join().unwrap();
+}

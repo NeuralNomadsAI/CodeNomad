@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {spawnFixtureChild as spawn,stopFixtureChild} from '../native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
+import {createAttestedRelay,createStreamRedactor,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
 
@@ -27,29 +29,39 @@ export function observation(value, clock) {
 }
 
 export async function withRune(binary, rustBinary, daemon, session, root, run) {
-  for (const executable of [binary, rustBinary]) assert(path.isAbsolute(executable), 'Rune and Rust server binaries must be absolute')
+  binary = resolveLocalExecutable(binary, 'Rune client binary')
+  rustBinary = resolveLocalExecutable(rustBinary, 'Rust server binary')
   assert.equal((await daemon.call('GET','/api/info')).pid,daemon.pid,'Rune workload must use the owned benchmark daemon')
   assert(daemon.pruning,'Rune benchmark requires explicitly provisioned pruning capability')
   await daemon.pruning.window(session)
-  return withBackend(daemon, undefined, root, false, async (origin, cookie, {password}) => {
-    const opened = await fetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
+  return withBackend(daemon, undefined, root, false, async (origin, cookie, {password, backendPid, fetch: backendFetch}) => {
+    const opened = await backendFetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
       body: JSON.stringify({path: daemon.project}), signal: AbortSignal.timeout(30_000)})
     assert(opened.ok, `Rune benchmark workspace failed (${opened.status})`)
     const workspace = await opened.json()
     assert(typeof workspace.id === 'string' && workspace.id.length > 0, 'Missing private workspace identity')
-    const history=await fetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
+    const history=await backendFetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
       headers:{'content-type':'application/json',cookie:`codenomad_session=${cookie}`},body:JSON.stringify({sessionID:session,target:{kind:'latest'}}),signal:AbortSignal.timeout(20_000)})
     const historyBody=await history.json()
     await writeFile(path.join(root,'history-capability.json'),JSON.stringify({nativeWindowProven:true,httpStatus:history.status,
       status:historyBody.status??'invalid',reason:historyBody.reason,messages:Array.isArray(historyBody.messages)?historyBody.messages.length:undefined},null,2))
     assert(history.ok&&historyBody.status==='window','Rust history capability unavailable; inspect history-capability.json and native pruning-proof.json')
-    const child = spawn(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: {...daemon.env, RUNE_BACKEND: `${origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'}})
+    const rustRelay = await createAttestedRelay(origin, backendPid, {requireClientAttestation: true})
+    try {
+    const group = process.platform !== 'win32'
+    const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, detached: group, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+      env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${rustRelay.origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
+    const startedBy = new Date()
     const pending = new Map()
+    const errRedactor = createStreamRedactor([password, daemon.password])
     let serial = 0, buffer = '', stderr = '', failure
+    const appendStderr = chunk => { if (chunk) stderr = (stderr + chunk).slice(-64 * 1024) }
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}
-    const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
-    child.stderr.on('data', chunk => {stderr = (stderr + chunk).slice(-64 * 1024)})
+    const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {appendStderr(errRedactor.flush()); rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
+    rustRelay.allowClientPid(fixtureChildPid(child), stopped)
+    const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy}))
+    void stopped.finally(untrack)
+    child.stderr.on('data', chunk => {appendStderr(errRedactor.push(chunk))})
     child.stdout.on('data', chunk => {
       buffer += chunk
       if (buffer.length > 256 * 1024) return rejectAll(Error('Rune latency response exceeds its bound'))
@@ -113,10 +125,13 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
       try {
         if(child.exitCode===null&&!failure){await call('stop');await Promise.race([stopped,sleep(2000,undefined,{ref:false})]);graceful=child.exitCode===0}
       } catch {}
-      try {await stopFixtureChild(child, stopped)} finally {
-        await writeFile(path.join(root, 'rune-probe.log'), stderr.replaceAll(password, '<fixture password>').replaceAll(daemon.password, '<fixture password>'))
+      try {await stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy})} finally {
+        await writeFile(path.join(root, 'rune-probe.log'), redactSecrets(stderr + errRedactor.peek(), [password, daemon.password]))
       }
       if(completed)assert(graceful,'Rune latency probe must acknowledge stop and exit 0')
+    }
+    } finally {
+      await rustRelay.close().catch(() => {})
     }
   }, {rustBinary})
 }

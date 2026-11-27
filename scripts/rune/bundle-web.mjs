@@ -60,6 +60,7 @@ async function files(directory, relative = '') {
   return result
 }
 async function compressedSize(file, transform) {let count = 0; await pipeline(createReadStream(file), transform, new Writable({write(chunk, _encoding, done) {count += chunk.length; done()}})); return count}
+async function compressBuffer(file, transform) {const chunks = []; await pipeline(createReadStream(file), transform, new Writable({write(chunk, _encoding, done) {chunks.push(chunk); done()}})); return Buffer.concat(chunks)}
 try {
   await run(bindgen, ['--target', 'web', '--out-dir', staging, '--out-name', 'app', '--remove-name-section', values.wasm])
   for (const font of ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf']) {
@@ -96,14 +97,30 @@ try {
   assert.equal(pair.split('__RUNE_WEB_PAIR_MESSAGES__').length, 2)
   await writeFile(path.join(staging, 'remote-pair.html'), pairShell(pairing.en, css + pageStyle,
     pair.replace('__RUNE_WEB_PAIR_MESSAGES__', JSON.stringify(pairing).replaceAll('<', '\\u003c'))))
-  const entries = []
+  const entries = [], compressed = []
   for (const relative of await files(staging)) {
     const file = path.join(staging, relative)
-    const [gzip, brotli] = await Promise.all([compressedSize(file, createGzip({level: 9})), compressedSize(file, createBrotliCompress({params: {[constants.BROTLI_PARAM_QUALITY]: 5}}))])
-    entries.push({file: relative.replaceAll(path.sep, '/'), sha256: await hash(file), raw: (await stat(file)).size, gzip, brotli})
+    const logical = relative.replaceAll(path.sep, '/')
+    const [raw, gzip, brotli] = await Promise.all([
+      stat(file).then(info => info.size),
+      compressedSize(file, createGzip({level: 9})),
+      compressBuffer(file, createBrotliCompress({params: {[constants.BROTLI_PARAM_QUALITY]: 5}})),
+    ])
+    if (brotli.length < raw) {
+      await writeFile(`${file}.br`, brotli)
+      compressed.push({
+        file: `${logical}.br`,
+        encoding: 'br',
+        for: logical,
+        sha256: createHash('sha256').update(brotli).digest('hex'),
+        bytes: brotli.length,
+      })
+    }
+    entries.push({file: logical, sha256: await hash(file), raw, gzip, brotli: brotli.length})
   }
-  const manifest = {generator: 'scripts/rune/bundle-web.mjs', testSupport:values['test-support'], wasmBindgen: version, tools: {node: process.versions.node, zlib: process.versions.zlib, brotli: process.versions.brotli}, inputWasm: {sha256: await hash(values.wasm), bytes: (await stat(values.wasm)).size}, cargoLockSha256: await hash(path.join(root, 'Cargo.lock')), themeSha256: await hash(themeFile), locales: index.locales, compression: {gzipLevel: 9, brotliQuality: 5}, files: entries,
-    totals: Object.fromEntries(['raw', 'gzip', 'brotli'].map(key => [key, entries.reduce((sum, entry) => sum + entry[key], 0)]))}
+  const manifest = {generator: 'scripts/rune/bundle-web.mjs', testSupport:values['test-support'], wasmBindgen: version, tools: {node: process.versions.node, zlib: process.versions.zlib, brotli: process.versions.brotli}, inputWasm: {sha256: await hash(values.wasm), bytes: (await stat(values.wasm)).size}, cargoLockSha256: await hash(path.join(root, 'Cargo.lock')), themeSha256: await hash(themeFile), locales: index.locales, compression: {gzipLevel: 9, brotliQuality: 5}, files: entries, compressed,
+    totals: Object.fromEntries(['raw', 'gzip', 'brotli'].map(key => [key, entries.reduce((sum, entry) => sum + entry[key], 0)])),
+    compressedTotals: {brotli: compressed.reduce((sum, entry) => sum + entry.bytes, 0)}}
   await writeFile(path.join(staging, 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
   let existing = false
   try {await access(out); existing = true} catch (error) {if (error.code !== 'ENOENT') throw error}

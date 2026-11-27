@@ -22,6 +22,24 @@ struct Snapshot {
     latest_version: u64,
 }
 impl Snapshot {
+    fn retained_bytes(&self) -> usize {
+        self.directories
+            .iter()
+            .fold(0usize, |total, (dir, entries)| {
+                let entries_bytes = entries.iter().fold(0usize, |acc, entry| {
+                    acc.saturating_add(entry.name.len())
+                        .saturating_add(entry.path.len())
+                        .saturating_add(entry.absolute_path.as_deref().map_or(0, str::len))
+                        .saturating_add(entry.directory_identity.as_deref().map_or(0, str::len))
+                        .saturating_add(entry.modified_at.as_deref().map_or(0, str::len))
+                        .saturating_add(size_of::<Entry>())
+                });
+                total
+                    .saturating_add(dir.len())
+                    .saturating_add(entries_bytes)
+            })
+    }
+
     fn empty() -> Self {
         Self {
             expanded: BTreeSet::from([".".into()]),
@@ -73,6 +91,35 @@ impl Tree {
     }
     pub fn directory(&self) -> &str {
         &self.directory
+    }
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let cached: usize = self
+            .cache
+            .iter()
+            .map(|(dir, snap)| dir.len().saturating_add(snap.retained_bytes()))
+            .sum();
+        self.state.retained_bytes().saturating_add(cached)
+    }
+    pub(crate) fn evict_cached_worktrees(&mut self) -> usize {
+        let freed: usize = self
+            .cache
+            .iter()
+            .map(|(dir, snap)| dir.len().saturating_add(snap.retained_bytes()))
+            .sum();
+        self.cache.clear();
+        freed
+    }
+    pub(crate) fn evict_listings(&mut self) -> usize {
+        let before = self.retained_bytes();
+        if before == 0 {
+            return 0;
+        }
+        self.cancel();
+        self.cache.clear();
+        self.state.directories.clear();
+        self.state.loaded.clear();
+        self.dirty = true;
+        before
     }
     pub fn selected(&self) -> Option<&str> {
         self.state.selected.as_deref()

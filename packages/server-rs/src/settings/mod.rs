@@ -35,6 +35,41 @@ const SERVER_PROFILES: &[&str] = &["remoteServers"];
 pub struct Settings {
     pub location: Location,
     write: Mutex<()>,
+    #[cfg(test)]
+    write_enter: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    #[cfg(test)]
+    write_exit: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    #[cfg(test)]
+    desktop_voice_env: Mutex<Option<(Option<String>, String)>>,
+    #[cfg(test)]
+    speech_env: Mutex<Option<(Option<String>, Option<String>)>>,
+}
+
+#[cfg(test)]
+impl Settings {
+    pub(crate) fn set_desktop_voice_env_for_test(&self, identity: Option<String>, channel: String) {
+        *self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()) = Some((identity, channel));
+    }
+    pub(crate) fn desktop_voice_env_for_test(&self) -> Option<(Option<String>, String)> {
+        self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub(crate) fn set_speech_env_for_test(&self, api_key: Option<&str>, base_url: Option<&str>) {
+        *self.speech_env.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((api_key.map(str::to_owned), base_url.map(str::to_owned)));
+    }
+    pub(crate) fn speech_env_for_test(&self) -> Option<(Option<String>, Option<String>)> {
+        self.speech_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.write.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub(crate) fn arm_write_hooks(&self) -> (tokio::sync::oneshot::Receiver<()>, tokio::sync::oneshot::Receiver<()>) {
+        let (enter_tx, enter_rx) = tokio::sync::oneshot::channel();
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        *self.write_enter.lock().unwrap_or_else(|e| e.into_inner()) = Some(enter_tx);
+        *self.write_exit.lock().unwrap_or_else(|e| e.into_inner()) = Some(exit_tx);
+        (enter_rx, exit_rx)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -77,7 +112,18 @@ impl From<Unreadable> for Failure {
 
 impl Settings {
     pub fn new(location: Location) -> Self {
-        Settings { location, write: Mutex::new(()) }
+        Settings {
+            location,
+            write: Mutex::new(()),
+            #[cfg(test)]
+            write_enter: Mutex::new(None),
+            #[cfg(test)]
+            write_exit: Mutex::new(None),
+            #[cfg(test)]
+            desktop_voice_env: Mutex::new(None),
+            #[cfg(test)]
+            speech_env: Mutex::new(None),
+        }
     }
     fn file(&self, kind: Kind) -> &std::path::Path {
         if kind == Kind::Config { &self.location.config } else { &self.location.state }
@@ -225,11 +271,27 @@ impl Settings {
         name: &str,
         patch: &Value,
         patch_history_order: &[String],
-        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+        mut check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
         on_committed: impl FnOnce(&Value, &[String]),
     ) -> Result<(Value, Vec<String>), Failure> {
         if !patch.is_object() {
             return Err(Failure::Invalid("Patch must be a JSON object".into()));
+        }
+        #[cfg(test)]
+        struct ExitSignal<'a>(&'a Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
+        #[cfg(test)]
+        impl Drop for ExitSignal<'_> {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+        #[cfg(test)]
+        let _exit_signal = ExitSignal(&self.write_exit);
+        #[cfg(test)]
+        if let Some(tx) = self.write_enter.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = tx.send(());
         }
         let _write = self.write.lock().unwrap();
         let file = self.file(kind);
@@ -270,8 +332,18 @@ impl Settings {
             None
         };
         check(&before, &doc)?;
-        document::write_with_history_order(file, &doc, history_order.as_deref())
-            .map_err(|e| Failure::Invalid(e.to_string()))?;
+        let mut rename_failure: Option<Failure> = None;
+        let write_result = document::write_with_history_order_checked(file, &doc, history_order.as_deref(), || {
+            if let Err(failure) = check(&before, &doc) {
+                rename_failure = Some(failure);
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "pre-rename check rejected"));
+            }
+            Ok(())
+        });
+        if let Some(failure) = rename_failure {
+            return Err(failure);
+        }
+        write_result.map_err(|e| Failure::Invalid(e.to_string()))?;
         let final_order = history_order.unwrap_or(combined_order);
         let saved = Value::Object(owner(doc.get(name)));
         on_committed(&saved, &final_order);
@@ -284,7 +356,7 @@ impl Settings {
         name: &str,
         patch: &Value,
         patch_history_order: &[String],
-        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+        check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
     ) -> Result<(Value, Vec<String>), Failure> {
         self.patch_checked_committed(kind, name, patch, patch_history_order, check, |_, _| {})
     }
@@ -348,14 +420,23 @@ fn sanitized(name: &str, value: Value) -> Value {
 
 /// `mergePatchOwner` for other domains (memory, SideCars, Stats), published like the reference's.
 pub fn patch_owner(app: &App, kind: Kind, name: &str, patch: Value) -> Result<Value, Failure> {
-    let (saved, _) = app.settings.patch_checked_committed(
-        kind,
-        name,
-        &patch,
-        &[],
-        |_, _| Ok(()),
-        |saved, order| publish_with_order(app, kind, name, saved.clone(), order),
-    )?;
+    patch_owner_checked(app, kind, name, patch, |_, _| Ok(()), || {})
+}
+
+/// `mergePatchOwner` with a pre-commit authorization check and post-commit hook executed under the
+/// settings write lock.
+pub fn patch_owner_checked(
+    app: &App,
+    kind: Kind,
+    name: &str,
+    patch: Value,
+    check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
+    on_committed: impl FnOnce(),
+) -> Result<Value, Failure> {
+    let (saved, _) = app.settings.patch_checked_committed(kind, name, &patch, &[], check, |saved, order| {
+        on_committed();
+        publish_with_order(app, kind, name, saved.clone(), order);
+    })?;
     Ok(saved)
 }
 
@@ -407,7 +488,7 @@ async fn patch_config(
         (Some(mode), None) => Some(mode),
         (Some(_), Some(_)) => return Err(Failure::Invalid("Unknown conditional patch mode".into()).response()),
     };
-    let mut refresh_login = false;
+    let mut binary_changed = false;
     let saved = match conditional.as_deref() {
         Some("missions-v1") => conditional::apply_committed(&app.settings, &name, &patch, |saved| {
             publish(&app, Kind::Config, &name, saved.clone());
@@ -435,8 +516,8 @@ async fn patch_config(
                         }
                         if name == "server" {
                             let before_bin = before.get("server").and_then(|s| s.get("opencodeBinary"));
-                            refresh_login =
-                                patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != before_bin);
+                            let after_bin = after.get("server").and_then(|s| s.get("opencodeBinary"));
+                            binary_changed = before_bin != after_bin;
                         }
                         Ok(())
                     },
@@ -446,8 +527,15 @@ async fn patch_config(
         }
     };
     let saved = saved.map_err(Failure::response)?;
-    if refresh_login {
-        crate::opencode::login_start::refresh(&app);
+    if binary_changed {
+        let app_adopt = app.clone();
+        // Detach so cancelling this HTTP request (e.g. remote device revocation) never leaves
+        // the active binary selection behind the already-committed profile change.
+        let _ = tokio::spawn(async move {
+            crate::opencode::adopt_configured_binary(&app_adopt).await;
+            crate::opencode::login_start::refresh(&app_adopt);
+        })
+        .await;
     }
     Ok(Json(sanitized(&name, saved)).into_response())
 }

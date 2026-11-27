@@ -6,7 +6,7 @@ pub(crate) mod document;
 pub(crate) mod jsonc;
 mod jsonc_edit;
 mod jsonc_value;
-mod rules;
+pub(crate) mod rules;
 
 use crate::files::node_path::Style;
 use crate::shared::fastify;
@@ -129,9 +129,8 @@ pub(crate) struct Target {
     pub(crate) project: bool,
     pub(crate) path: String,
     pub(crate) io: String,
-    // The reference publishes it with Plugin controls only; tests read it.
-    #[cfg_attr(not(test), allow(dead_code))]
-    exists: bool,
+    pub(crate) requested_io: String,
+    pub(crate) exists: bool,
 }
 struct Located {
     location: String,
@@ -208,17 +207,19 @@ pub(crate) fn resolve_targets(
     }
     let select = |project: bool, candidates: &[(String, String)], inspected: &[(String, bool)]| {
         let mut selected = candidates.last().cloned().unwrap_or_default();
+        let mut requested_io = selected.1.clone();
         let mut exists = false;
         for (c, r) in candidates.iter().zip(inspected) {
             if r.1 {
                 selected = (c.0.clone(), r.0.clone());
+                requested_io = c.1.clone();
                 exists = true;
             }
         }
         if !exists {
             selected.1 = inspected.last().map(|r| r.0.clone()).unwrap_or_default();
         }
-        Target { project, path: selected.0, io: selected.1, exists }
+        Target { project, path: selected.0, io: selected.1, requested_io, exists }
     };
     let global_target = select(false, &gc, &inspected[..2]);
     let inherited_layer = entries.iter().any(|e| {

@@ -15,6 +15,8 @@ pub(crate) mod notifications_web;
 pub(crate) use notifications_web as notifications;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod pairing;
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod pairing_state;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
@@ -52,6 +54,98 @@ impl LocalHost {
 }
 pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
+}
+pub(crate) fn resolve_reference_viewport_height(
+    visible_height: Option<f32>,
+    editing: bool,
+    coarse_pointer: bool,
+    inner_height: Option<f64>,
+    visual_height: Option<f64>,
+    scale: f64,
+) -> Option<f32> {
+    if !editing || !coarse_pointer {
+        return visible_height;
+    }
+    let (Some(inner_h), Some(visual_h)) = (
+        inner_height.filter(|value| value.is_finite() && *value > 0.0),
+        visual_height.filter(|value| value.is_finite() && *value > 0.0),
+    ) else {
+        return visible_height;
+    };
+    if scale == 1.0 && inner_h - visual_h >= 100.0 {
+        let delta = (inner_h - visual_h) as f32;
+        Some(visible_height.map_or(inner_h as f32, |visible| visible + delta))
+    } else {
+        visible_height
+    }
+}
+
+pub(crate) fn resolve_layout_viewport_height(
+    shell_height: Option<f32>,
+    inner_height: Option<f64>,
+) -> Option<f32> {
+    let shell = shell_height.filter(|value| value.is_finite() && *value > 0.0);
+    let inner = inner_height
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value as f32);
+    match (shell, inner) {
+        (Some(s), Some(i)) => Some(s.max(i)),
+        (None, Some(i)) => Some(i),
+        (Some(s), None) => Some(s),
+        (None, None) => None,
+    }
+}
+
+pub(crate) fn layout_viewport_height(shell_height: Option<f32>) -> Option<f32> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        resolve_layout_viewport_height(shell_height, None)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let inner_h = web_sys::window()
+            .and_then(|window| window.inner_height().ok())
+            .and_then(|value| value.as_f64());
+        resolve_layout_viewport_height(shell_height, inner_h)
+    }
+}
+
+pub(crate) fn reference_viewport_height(visible_height: Option<f32>, editing: bool) -> Option<f32> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = editing;
+        visible_height
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if !editing {
+            return visible_height;
+        }
+        let Some(window) = web_sys::window() else {
+            return visible_height;
+        };
+        let coarse = window
+            .match_media("(pointer: coarse)")
+            .ok()
+            .flatten()
+            .is_some_and(|list| list.matches());
+        let inner_h = window.inner_height().ok().and_then(|value| value.as_f64());
+        let vv = js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("visualViewport"))
+            .ok()
+            .filter(|value| !value.is_undefined() && !value.is_null());
+        let scale = vv
+            .as_ref()
+            .and_then(|vv| js_sys::Reflect::get(vv, &wasm_bindgen::JsValue::from_str("scale")).ok())
+            .and_then(|value| value.as_f64())
+            .unwrap_or(1.0);
+        let visual_h = vv
+            .as_ref()
+            .and_then(|vv| {
+                js_sys::Reflect::get(vv, &wasm_bindgen::JsValue::from_str("height")).ok()
+            })
+            .and_then(|value| value.as_f64());
+        resolve_reference_viewport_height(visible_height, editing, coarse, inner_h, visual_h, scale)
+    }
 }
 pub fn attachment_export_available() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
@@ -352,4 +446,127 @@ pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = s;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_layout_viewport_height, resolve_reference_viewport_height};
+
+    #[test]
+    fn layout_viewport_height_keeps_unshrunk_layout_height_for_dock_vh() {
+        assert_eq!(
+            resolve_layout_viewport_height(Some(514.0), Some(844.0)),
+            Some(844.0)
+        );
+        assert_eq!(
+            resolve_layout_viewport_height(Some(514.0), Some(514.0)),
+            Some(514.0)
+        );
+        assert_eq!(
+            resolve_layout_viewport_height(Some(514.0), Some(f64::NAN)),
+            Some(514.0)
+        );
+        assert_eq!(
+            resolve_layout_viewport_height(None, Some(844.0)),
+            Some(844.0)
+        );
+    }
+
+    #[test]
+    fn reference_viewport_height_recovers_unoccluded_height_only_for_coarse_editing() {
+        // Soft keyboard occludes 320 px on a coarse-pointer mobile viewport while editing.
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(480.0),
+                1.0
+            ),
+            Some(740.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(None, true, true, Some(800.0), Some(480.0), 1.0),
+            Some(800.0)
+        );
+        // Not editing, fine pointer, pinched zoom, small delta (< 100 px), or non-finite inputs keep visible height.
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                false,
+                true,
+                Some(800.0),
+                Some(480.0),
+                1.0
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                false,
+                Some(800.0),
+                Some(480.0),
+                1.0
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(480.0),
+                1.005
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(480.0),
+                1.25
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(720.0),
+                1.0
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(f64::NAN),
+                Some(480.0),
+                1.0
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(480.0),
+                f64::NAN
+            ),
+            Some(420.0)
+        );
+    }
 }

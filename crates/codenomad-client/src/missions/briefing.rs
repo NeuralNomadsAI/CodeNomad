@@ -208,16 +208,28 @@ impl Backend {
         };
         let mut prompt_backend = self.clone();
         prompt_backend.session.clone_from(&target.coordinator);
-        match timeout(SEND_TIMEOUT, prompt_backend.prompt_with_401(&prompt, true)).await {
+        prompt_backend.session_directory = None;
+        match timeout(SEND_TIMEOUT, prompt_backend.prompt(&prompt)).await {
             Some(Ok(ack)) => BriefingSendOutcome {
                 state: BriefingSendState::Admitted { message_id: ack.id },
                 auth_expired: false,
             },
             Some(Err(err)) => {
-                let auth_expired = matches!(
+                let auth_expired = if matches!(
                     err.downcast_ref::<PromptError>(),
-                    Some(PromptError::AuthenticationRequired)
-                );
+                    Some(PromptError::AuthenticationRequired { .. })
+                ) {
+                    !matches!(
+                        timeout(
+                            Duration::from_secs(5),
+                            prompt_backend.authentication_status(),
+                        )
+                        .await,
+                        Some(Ok(true))
+                    )
+                } else {
+                    false
+                };
                 BriefingSendOutcome::uncertain(auth_expired)
             }
             None => BriefingSendOutcome::uncertain(false),
@@ -246,7 +258,7 @@ mod tests {
     }
 
     async fn spawn_server(
-        handler: impl Fn(String, String) -> (u16, String) + Send + Sync + 'static,
+        handler: impl Fn(String, String, String) -> (u16, String) + Send + Sync + 'static,
     ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -284,7 +296,7 @@ mod tests {
                         }
                     }
                     let head_end = header_end.unwrap_or(buf.len());
-                    let head = String::from_utf8_lossy(&buf[..head_end]);
+                    let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
                     let first = head.lines().next().unwrap_or_default();
                     let target = first
                         .split_whitespace()
@@ -292,7 +304,7 @@ mod tests {
                         .unwrap_or_default()
                         .to_owned();
                     let body = String::from_utf8_lossy(&buf[head_end..]).into_owned();
-                    let (status, resp_body) = handler(target, body);
+                    let (status, resp_body) = handler(target, head, body);
                     let reason = match status {
                         200 => "OK",
                         401 => "Unauthorized",
@@ -341,14 +353,14 @@ mod tests {
     #[test]
     fn admission_then_steer_prompt_admits_once_with_exact_text() {
         run(async {
-            let posted = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+            let posted = Arc::new(Mutex::new(Vec::<(String, String, Value)>::new()));
             let seen = posted.clone();
-            let (base, server) = spawn_server(move |path, body| {
+            let (base, server) = spawn_server(move |path, head, body| {
                 if path == "/api/workspaces/ws-1/missions/msn-1/admission" {
                     return (200, admission_ok().to_string());
                 }
                 let parsed: Value = serde_json::from_str(&body).unwrap();
-                seen.lock().unwrap().push((path, parsed));
+                seen.lock().unwrap().push((path, head, parsed));
                 (
                     200,
                     json!({"data": {"id": "msg_ack_1", "sessionID": "ses_coord"}}).to_string(),
@@ -357,6 +369,8 @@ mod tests {
             .await;
             let mut backend = Backend::unauthenticated(&base).unwrap();
             backend.workspace = "ws-1".into();
+            backend.session = "ses_conversation".into();
+            backend.session_directory = Some("/other-worktree".into());
             let (_cancel, cancelled) = bounded(1);
 
             let adm = backend
@@ -384,13 +398,20 @@ mod tests {
                 requests[0].0,
                 "/workspaces/ws-1/instance/api/session/ses_coord/prompt"
             );
-            assert_eq!(requests[0].1["delivery"], "steer");
+            assert!(
+                !requests[0]
+                    .1
+                    .to_ascii_lowercase()
+                    .contains("x-codenomad-session-directory"),
+                "briefing prompt must not inherit another conversation's directory header"
+            );
+            assert_eq!(requests[0].2["delivery"], "steer");
             assert_eq!(
-                requests[0].1["text"],
+                requests[0].2["text"],
                 briefing_request_text("msn-1", "req-42", "fr")
             );
-            assert!(requests[0].1.get("agent").is_none());
-            assert!(requests[0].1.get("model").is_none());
+            assert!(requests[0].2.get("agent").is_none());
+            assert!(requests[0].2.get("model").is_none());
         });
     }
 
@@ -399,30 +420,31 @@ mod tests {
         run(async {
             let mode = Arc::new(AtomicUsize::new(0));
             let current = mode.clone();
-            let (base, server) = spawn_server(move |_, _| match current.load(Ordering::SeqCst) {
-                0 => (401, "{}".into()),
-                1 => {
-                    let mut v = admission_ok();
-                    v["controlUnavailable"] = json!(true);
-                    (200, v.to_string())
-                }
-                2 => {
-                    let mut v = admission_ok();
-                    v["mission"]["control"] = json!({"pending": ["ses_1"]});
-                    (200, v.to_string())
-                }
-                3 => {
-                    let mut v = admission_ok();
-                    v["mission"]["coordinatorSessionId"] = json!("ses_other");
-                    (200, v.to_string())
-                }
-                _ => {
-                    let mut v = admission_ok();
-                    v["mission"]["projectCanonical"] = json!("/other-repo");
-                    (200, v.to_string())
-                }
-            })
-            .await;
+            let (base, server) =
+                spawn_server(move |_, _, _| match current.load(Ordering::SeqCst) {
+                    0 => (401, "{}".into()),
+                    1 => {
+                        let mut v = admission_ok();
+                        v["controlUnavailable"] = json!(true);
+                        (200, v.to_string())
+                    }
+                    2 => {
+                        let mut v = admission_ok();
+                        v["mission"]["control"] = json!({"pending": ["ses_1"]});
+                        (200, v.to_string())
+                    }
+                    3 => {
+                        let mut v = admission_ok();
+                        v["mission"]["coordinatorSessionId"] = json!("ses_other");
+                        (200, v.to_string())
+                    }
+                    _ => {
+                        let mut v = admission_ok();
+                        v["mission"]["projectCanonical"] = json!("/other-repo");
+                        (200, v.to_string())
+                    }
+                })
+                .await;
             let mut backend = Backend::unauthenticated(&base).unwrap();
             backend.workspace = "ws-1".into();
             let (_cancel, cancelled) = bounded(1);
@@ -451,7 +473,15 @@ mod tests {
             let count = prompts.clone();
             let status_code = Arc::new(AtomicUsize::new(500));
             let code = status_code.clone();
-            let (base, server) = spawn_server(move |_, _| {
+            let auth_live = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let live = auth_live.clone();
+            let (base, server) = spawn_server(move |path, _, _| {
+                if path == "/api/auth/status" {
+                    return (
+                        200,
+                        json!({"authenticated": live.load(Ordering::SeqCst)}).to_string(),
+                    );
+                }
                 count.fetch_add(1, Ordering::SeqCst);
                 (code.load(Ordering::SeqCst) as u16, "{}".into())
             })
@@ -459,19 +489,25 @@ mod tests {
             let mut backend = Backend::unauthenticated(&base).unwrap();
             backend.workspace = "ws-1".into();
 
-            for (http, expect_auth) in [(500, false), (400, false), (401, true)] {
+            for (http, authenticated, expect_auth) in [
+                (500, true, false),
+                (400, true, false),
+                (401, true, false),
+                (401, false, true),
+            ] {
                 status_code.store(http, Ordering::SeqCst);
+                auth_live.store(authenticated, Ordering::SeqCst);
                 let outcome = backend
                     .send_mission_briefing_prompt(&target(), "req-uncertain", "en")
                     .await;
                 assert_eq!(
                     outcome,
                     BriefingSendOutcome::uncertain(expect_auth),
-                    "http {http}"
+                    "http {http} authenticated={authenticated}"
                 );
             }
             server.abort();
-            assert_eq!(prompts.load(Ordering::SeqCst), 3);
+            assert_eq!(prompts.load(Ordering::SeqCst), 4);
         });
     }
 
@@ -480,7 +516,7 @@ mod tests {
         run(async {
             let hits = Arc::new(AtomicUsize::new(0));
             let count = hits.clone();
-            let (base, server) = spawn_server(move |_, _| {
+            let (base, server) = spawn_server(move |_, _, _| {
                 count.fetch_add(1, Ordering::SeqCst);
                 (200, admission_ok().to_string())
             })

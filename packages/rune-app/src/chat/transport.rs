@@ -54,6 +54,10 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
         Startup::Bound(backend) => Some(backend),
         Startup::Configured { .. } => None,
     });
+    s.status_services.attach(match &startup {
+        Startup::Bound(backend) => Some(backend),
+        Startup::Configured { .. } => None,
+    });
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -63,13 +67,22 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     };
     s.conversation_stream_connected = false;
     s.commands = Some(commands);
+    s.stream_offline = false;
     let reading = match &startup {
-        Startup::Bound(_) => {
-            let (mut reader, lane) = super::reader::Reader::open();
+        Startup::Bound(backend) => {
+            let (mut reader, mut lane) = super::reader::Reader::open();
+            lane.on_session_deleted = crate::workspace::session_deleted_hook(s, &backend.session);
             if let Some(id) = anchor {
                 reader.resume(super::reading::Bookmark::Message { id, offset: 0.0 });
             } else if let Some(previous) = &s.reader {
-                reader.resume(previous.bookmark(s.transcript_display.reading_mut()));
+                let width = s.tool_diff_preferences.history_width();
+                let history_bounds = s.tool_diff_preferences.history_bounds.get();
+                reader.resume_from(
+                    previous,
+                    s.transcript_display.reading_mut(),
+                    width,
+                    history_bounds,
+                );
             }
             s.reader = Some(reader);
             Some(lane)
@@ -142,10 +155,18 @@ pub(crate) async fn authenticate_and_run(
         return;
     }
     match result {
-        Ok(()) => {
-            target.session_directory = target.prompt_directory().await.ok();
-            run_bound(Ok(target), out, input, wake, None).await;
-        }
+        Ok(()) => match target.prompt_directory().await {
+            Ok(directory) => {
+                target.session_directory = Some(directory);
+                run_bound(Ok(target), out, input, wake, None).await;
+            }
+            Err(error) if codenomad_client::http::authentication_expired(&error) => {
+                publish(&out, &wake, Event::authentication_required(target)).await;
+                drop(out);
+                wake();
+            }
+            Err(error) => run_bound(Err(error), out, input, wake, None).await,
+        },
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             publish(&out, &wake, Event::authentication_required(target)).await;
             drop(out);

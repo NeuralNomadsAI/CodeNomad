@@ -1,7 +1,10 @@
 //! The shared daemon's official lifecycle through its CLI (`opencode-cli-service.ts`,
 //! `native-service-registration.ts`, `native-service-start.ts`): `service status`, `start` and
 //! `get password`, the registration fallback and the authenticated health read.
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
@@ -22,9 +25,11 @@ pub struct Endpoint {
     pub pid: u64,
 }
 
+#[derive(Clone)]
 pub struct Lifecycle {
     pub binary: String,
     client: Client,
+    pub config_path: Option<PathBuf>,
 }
 
 enum Health {
@@ -205,27 +210,68 @@ fn refused(error: &reqwest::Error) -> bool {
 
 impl Lifecycle {
     pub fn new(binary: String, client: Client) -> Self {
-        Self { binary, client }
+        Self { binary, client, config_path: None }
+    }
+
+    pub fn with_config(binary: String, client: Client, config_path: Option<PathBuf>) -> Self {
+        Self { binary, client, config_path }
     }
 
     pub async fn discover(&self, deadline: Instant) -> Result<Option<Endpoint>, String> {
-        let status = single_line(&self.run(&["service", "status"], false, deadline).await?, "status")?;
+        let status = single_line(&self.run(&["service", "status"], None, deadline).await?, "status")?;
         if status == "stopped" {
             return self.discover_registration(deadline).await;
         }
         self.endpoint(&status, deadline).await.map(Some)
     }
 
-    pub async fn ensure(&self, deadline: Instant) -> Result<Endpoint, String> {
-        if let Some(existing) = self.discover(deadline).await? {
-            return Ok(existing);
-        }
-        let url = single_line(&self.run(&["service", "start"], true, deadline).await?, "start")?;
+    /// Starts the daemon directly without a redundant discovery pass, using `environment`.
+    pub async fn start_with_env(
+        &self,
+        environment: &[(String, String)],
+        deadline: Instant,
+    ) -> Result<Endpoint, String> {
+        let url = single_line(&self.run(&["service", "start"], Some(environment), deadline).await?, "start")?;
         self.endpoint(&url, deadline).await
     }
 
+    #[cfg(test)]
+    pub async fn ensure(&self, deadline: Instant) -> Result<Endpoint, String> {
+        let environment = launch::daemon_environment_from_config(self.config_path.as_deref())?;
+        self.ensure_with_env(&environment, deadline).await
+    }
+
+    pub async fn ensure_with_env(
+        &self,
+        environment: &[(String, String)],
+        deadline: Instant,
+    ) -> Result<Endpoint, String> {
+        if let Some(existing) = self.discover(deadline).await? {
+            return Ok(existing);
+        }
+        self.start_with_env(environment, deadline).await
+    }
+
+    /// Explicit user restart only (`opencode-cli-service.ts:74-79`): validate and freeze the
+    /// startup environment before any mutation, stop the shared service, then start it with that
+    /// exact environment snapshot.
+    #[cfg(test)]
+    pub async fn restart(&self, deadline: Instant) -> Result<Endpoint, String> {
+        let environment = launch::daemon_environment_from_config(self.config_path.as_deref())?;
+        self.restart_with_env(&environment, deadline).await
+    }
+
+    pub async fn restart_with_env(
+        &self,
+        environment: &[(String, String)],
+        deadline: Instant,
+    ) -> Result<Endpoint, String> {
+        let _ = self.run(&["service", "stop"], None, deadline).await?;
+        self.ensure_with_env(environment, deadline).await
+    }
+
     async fn password(&self, deadline: Instant) -> Result<String, String> {
-        let password = single_line(&self.run(&["service", "get", "password"], false, deadline).await?, "password")?;
+        let password = single_line(&self.run(&["service", "get", "password"], None, deadline).await?, "password")?;
         if password.is_empty() {
             return Err("Host OpenCode service returned an empty password".into());
         }
@@ -245,8 +291,8 @@ impl Lifecycle {
     /// The 2.0.11 recovery: a stopped status still lets the registration or the configured port prove a daemon.
     async fn discover_registration(&self, deadline: Instant) -> Result<Option<Endpoint>, String> {
         let password = self.password(deadline).await?;
-        let state = single_line(&self.run(&["debug", "paths", "state"], false, deadline).await?, "state directory")?;
-        let config = single_line(&self.run(&["debug", "paths", "config"], false, deadline).await?, "config directory")?;
+        let state = single_line(&self.run(&["debug", "paths", "state"], None, deadline).await?, "state directory")?;
+        let config = single_line(&self.run(&["debug", "paths", "config"], None, deadline).await?, "config directory")?;
         let left = remaining(deadline, "registration discovery")?;
         let read = tokio::task::spawn_blocking({
             let password = password.clone();
@@ -270,19 +316,26 @@ impl Lifecycle {
         Ok(Some(Endpoint { url, password, version, pid: reported }))
     }
 
-    async fn run(&self, args: &[&str], start: bool, deadline: Instant) -> Result<String, String> {
+    async fn run(
+        &self,
+        args: &[&str],
+        start_env: Option<&[(String, String)]>,
+        deadline: Instant,
+    ) -> Result<String, String> {
         // The host CLI only: a WSL executable is refused like an absent capability.
         if launch::wsl(&self.binary) {
             return Err("WSL OpenCode is not supported by this backend".into());
         }
+        let start = start_env.is_some();
         let label = args.join(" ");
         let timeout = remaining(deadline, &label)?;
         let spec = launch::spec(&self.binary, args)?;
-        let environment = start.then(launch::daemon_environment);
-        let result = if start && native_parent::available() {
-            self.delegate(&spec, environment.as_deref().unwrap_or_default(), timeout).await
+        let result = if let Some(environment) = start_env
+            && native_parent::available()
+        {
+            self.delegate(&spec, environment, timeout).await
         } else {
-            execute(&spec, environment.as_deref(), timeout).await
+            execute(&spec, start_env, timeout).await
         };
         let result = if remaining(deadline, &label).is_err() {
             Err(ExecError {
