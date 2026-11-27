@@ -454,7 +454,7 @@ const server = createServer(async (req,res) => {
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
     if (p === '/api/workspaces/catalogue/provider-accounts/example') {
       assert.equal(url.searchParams.get('directory'),directory)
-      return json({logins:{active:'account@example.test',secondary:'other@example.test'}})
+      return json({supported:false,enabled:false,logins:{active:'account@example.test',secondary:'other@example.test'}})
     }
     if (p === `${base}session` && req.method === 'POST') {
       let body = ''
