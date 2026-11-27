@@ -65,6 +65,19 @@ async function findCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?
 
 // Undefined means discovery verified the absence of a checkout. Errors retain
 // ambiguity (permissions, administrative markers, environment and depth bounds).
+export async function discoverCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
+  if (gitDiscoveryOverridden()) {
+    throw new Error("Git discovery is configured by the environment")
+  }
+  const root = await findCheckoutRoot(directory, signal, stopAt, maxDepth)
+  if (root === undefined) return undefined
+  const checkout = await readCheckoutIdentity(root)
+  await validateCheckoutLayout(checkout)
+  if (checkout.root && checkout.root !== root) throw new Error("Linked worktree root mismatch")
+  signal?.throwIfAborted()
+  return root
+}
+
 export async function discoverCheckoutCommonDirectory(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
   if (gitDiscoveryOverridden()) {
     throw new Error("Git discovery is configured by the environment")

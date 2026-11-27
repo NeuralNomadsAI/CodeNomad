@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises"
 import { runWorktreeGit } from "./git-process"
 import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
-export { readCheckoutIdentity, discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
+export { readCheckoutIdentity, discoverCheckoutCommonDirectory, discoverCheckoutRoot } from "../opencode/session-pruning/checkout-identity"
 
 const pending = new Map<string, Promise<string>>()
 

@@ -9,9 +9,13 @@ import type { Logger } from "../../logger"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
-import { deferPendingDiscovery, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
+import {
+  clearLoadedPendingWarm, deferPendingDiscovery, isLoadedPendingWarm, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED,
+} from "../../workspaces/pending-discovery"
 import { awaitNativePlugin } from "../../opencode/plugin-activation"
-import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
+
+// Cold Location boot + plugin loading regularly exceeds 5 s on Windows; keep it inside the 30 s route deadline.
+export const PENDING_PLUGIN_ACTIVATION_TIMEOUT_MS = 15_000
 
 const directorySchema = z.string().min(1).max(4096)
 const directoryListSchema = z.union([directorySchema, z.array(directorySchema).min(1).max(64)])
@@ -142,10 +146,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       const rejectedPlacement = new Map<string, "not-owned" | "unverified">()
       const style = manager.getServicePathStyle(id)
       const nativePath = style === "win32" ? path.win32 : style === "posix" ? path.posix : undefined
-      const root = await manager.getServiceDirectoryForPath(id, workspace.path)
-      const rootIdentity = bootstrap && await manager.getWorktreeIdentityForPath(id, bootstrap.directory)
+      const root = await manager.getServiceDirectoryForPath(id, workspace.path, { purpose: "event" })
+      const rootIdentity = bootstrap && await manager.getWorktreeIdentityForPath(id, bootstrap.directory, "event")
       if (!bootstrap || bootstrap.workspaceID !== undefined || !root || !rootIdentity || !nativePath?.isAbsolute(bootstrap.directory)
-        || await manager.getServiceDirectoryForPath(id, bootstrap.directory) !== root) throw new Error("Pending bootstrap unavailable")
+        || await manager.getServiceDirectoryForPath(id, bootstrap.directory, { purpose: "event" }) !== root) throw new Error("Pending bootstrap unavailable")
       const bootstrapDirectory = bootstrap.directory
       fences.push(deps.worktreeDeletionFence.captureDisplay([rootIdentity]))
       const assertCurrent = () => {
@@ -190,8 +194,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           const host = await manager.getHostPathForServicePath(id, ancestor)
           if (!host || !path.isAbsolute(host)) return undefined
           if (!await missingHost(host)) {
-            const directory = await manager.getServiceDirectoryForPath(id, ancestor)
-            const identity = directory && await manager.getWorktreeIdentityForPath(id, directory)
+            const directory = await manager.getServiceDirectoryForPath(id, ancestor, { purpose: "event" })
+            const identity = directory && await manager.getWorktreeIdentityForPath(id, directory, "event")
             const canonical = directory && await manager.getHostPathForServicePath(id, directory)
             if (!identity || !canonical || deps.worktreeDeletionFence.isBlocked(identity)) return undefined
             try {
@@ -211,7 +215,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         const candidates = await drainOwnershipReads(submitted.slice(offset, offset + 8).map(async (candidate) => {
           signal.throwIfAborted()
           try {
-            const directory = await manager.getServiceDirectoryForPath(id, candidate)
+            const directory = await manager.getServiceDirectoryForPath(id, candidate, { purpose: "event" })
             if (!directory && optional.has(candidate)) {
               const host = await manager.getHostPathForServicePath(id, candidate)
               const owned = host && path.isAbsolute(host) && await missingHost(host) ? await ownedMissingAncestor(candidate, workspaceCommon) : undefined
@@ -225,7 +229,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
               }
               return { candidate, status: "excluded" as const, missing: { submitted: candidate, host, ...owned } }
             }
-            const identity = directory === root ? rootIdentity : directory && await manager.getWorktreeIdentityForPath(id, directory)
+            const identity = directory === root ? rootIdentity : directory && await manager.getWorktreeIdentityForPath(id, directory, "event")
             const host = directory && await manager.getHostPathForServicePath(id, directory)
             if (!directory) {
               const translated = await manager.getHostPathForServicePath(id, candidate)
@@ -270,9 +274,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       }
       const assertOrigin = async (directory: string) => {
         // Resolve spelling/realpath aliases through existing ownership, but never accept a host alias as WSL-native provenance.
-        if (!nativePath.isAbsolute(directory) || await manager.getServiceDirectoryForPath(id, directory) !== root
-          || await manager.getServiceDirectoryForPath(id, workspace.path) !== root
-          || await manager.getWorktreeIdentityForPath(id, bootstrapDirectory) !== rootIdentity) throw new Error("Invalid pending origin")
+        if (!nativePath.isAbsolute(directory) || await manager.getServiceDirectoryForPath(id, directory, { purpose: "event" }) !== root
+          || await manager.getServiceDirectoryForPath(id, workspace.path, { purpose: "event" }) !== root
+          || await manager.getWorktreeIdentityForPath(id, bootstrapDirectory, "event") !== rootIdentity) throw new Error("Invalid pending origin")
         assertCurrent()
       }
       const revalidateCandidates = async () => {
@@ -284,8 +288,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             try {
               const host = candidate.directory === root ? undefined : await manager.getHostPathForServicePath(id, candidate.directory)
               const owned = !deps.worktreeDeletionFence.isBlocked(candidate.identity)
-                && await manager.getServiceDirectoryForPath(id, candidate.submitted) === candidate.directory
-                && (candidate.directory === root || (await manager.getWorktreeIdentityForPath(id, candidate.directory) === candidate.identity
+                && await manager.getServiceDirectoryForPath(id, candidate.submitted, { purpose: "event" }) === candidate.directory
+                && (candidate.directory === root || (await manager.getWorktreeIdentityForPath(id, candidate.directory, "event") === candidate.identity
                   && Boolean(host) && await readCommon(host!) === candidate.common))
               if (!owned) failed.add(candidate.submitted)
             } catch (error) {
@@ -300,8 +304,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           await drainOwnershipReads(missing.slice(offset, offset + 8).map(async ({ submitted, directory, identity, host, ancestor }) => {
             try {
               const owned = !deps.worktreeDeletionFence.isBlocked(identity)
-                && await manager.getServiceDirectoryForPath(id, submitted) === directory
-                && (!directory || await manager.getWorktreeIdentityForPath(id, directory) === identity)
+                && await manager.getServiceDirectoryForPath(id, submitted, { purpose: "event" }) === directory
+                && (!directory || await manager.getWorktreeIdentityForPath(id, directory, "event") === identity)
                 && await manager.getHostPathForServicePath(id, directory ?? submitted) === host
                 && await missingHost(host)
                 && (!ancestor || (await ownedMissingAncestor(submitted, async () => currentCommon!))?.identity === identity)
@@ -315,7 +319,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         for (const entry of outside) {
           try {
             // Still unowned: a path the workspace manager now owns can no longer be excluded.
-            if (await manager.getServiceDirectoryForPath(id, entry.submitted) !== undefined
+            if (await manager.getServiceDirectoryForPath(id, entry.submitted, { purpose: "event" }) !== undefined
               || await outsideHistory(entry.submitted, async () => currentCommon!) !== entry.proof) failed.add(entry.submitted)
           } catch (error) { isolate(error); failed.add(entry.submitted) }
         }
@@ -329,35 +333,73 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       assertCurrent()
       record("ownership")
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
-      // Warm only the authorized bootstrap. The validated read itself proves
-      // registration; the separate presence challenge can expire on a working RPC.
-      phase = "plugin-activation"
-      phaseSignal = AbortSignal.any([signal, AbortSignal.timeout(READINESS_WAIT_MS)])
-      await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory }, phaseSignal, assertCurrent)
-      phaseSignal = signal
-      record("plugin-activation")
-      phase = "ownership-revalidation"
-      await assertOrigin(bootstrapDirectory)
-      await revalidateCandidates()
-      assertCurrent()
-      record("ownership-revalidation")
-      const admitted = resolved.filter(entry => !failed.has(entry.submitted))
-      if (!admitted.length && failed.size) return reply.code(403).send({ error: "Directory does not belong to workspace", directories: [
-        ...result.directories.filter(entry => !failed.has(entry.directory)),
-        ...[...failed].map(directory => ({ directory, status: "error", reason: deleting.has(directory) ? "deleting" : "changed" })),
-      ] })
-      const expected = new Set(admitted.length ? admitted.map(entry => entry.directory) : [root])
-      if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
+      const selectExpected = () => {
+        const admitted = resolved.filter(entry => !failed.has(entry.submitted))
+        if (!admitted.length && failed.size) {
+          return reply.code(403).send({ error: "Directory does not belong to workspace", directories: [
+            ...result.directories.filter(entry => !failed.has(entry.directory)),
+            ...[...failed].map(directory => ({ directory, status: "error", reason: deleting.has(directory) ? "deleting" : "changed" })),
+          ] })
+        }
+        return new Set(admitted.length ? admitted.map(entry => entry.directory) : [root])
+      }
+      const activateBootstrap = async () => {
+        // Warm only the authorized bootstrap. The validated read itself proves
+        // registration; the separate presence challenge can expire on a working RPC.
+        phase = "plugin-activation"
+        phaseSignal = AbortSignal.any([signal, AbortSignal.timeout(PENDING_PLUGIN_ACTIVATION_TIMEOUT_MS)])
+        await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory }, phaseSignal, assertCurrent)
+        phaseSignal = signal
+        record("plugin-activation")
+        phase = "ownership-revalidation"
+        await assertOrigin(bootstrapDirectory)
+        await revalidateCandidates()
+        assertCurrent()
+        record("ownership-revalidation")
+        if (deferPendingDiscovery(connection, { loadedOnly: true })) {
+          return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
+        }
+        return selectExpected()
+      }
+      let activated = false
+      let expected: Set<string>
+      if (isLoadedPendingWarm(connection, bootstrapDirectory)) {
+        const selected = selectExpected()
+        if (!(selected instanceof Set)) return selected
+        expected = selected
+      } else {
+        activated = true
+        const selected = await activateBootstrap()
+        if (!(selected instanceof Set)) return selected
+        expected = selected
+      }
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
       url.searchParams.set("location[directory]", bootstrapDirectory)
-      phase = "native-read"
-      assertCurrent()
-      const response = await connection.fetch(url, { method: "POST", signal, redirect: "error",
-        headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { directories: [...expected] } }) })
-      nativeStatus = response.status
-      phase = "response-validation"
-      assertCurrent()
-      if (response.status === 400 && unavailableSchema.safeParse(await readBoundedJson(response)).success) {
+      const fetchSnapshot = async () => {
+        phase = "native-read"
+        assertCurrent()
+        const response = await connection.fetch(url, { method: "POST", signal, redirect: "error",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { directories: [...expected] } }) })
+        nativeStatus = response.status
+        phase = "response-validation"
+        assertCurrent()
+        return response
+      }
+      const isUnavailable = async (res: Response) =>
+        res.status === 400 && unavailableSchema.safeParse(await readBoundedJson(res)).success
+      let response = await fetchSnapshot()
+      let unavailable = await isUnavailable(response)
+      if (unavailable && !activated) {
+        // A previously warm bootstrap may have been evicted while idle; activate once and retry.
+        clearLoadedPendingWarm(connection, bootstrapDirectory)
+        activated = true
+        const selected = await activateBootstrap()
+        if (!(selected instanceof Set)) return selected
+        expected = selected
+        response = await fetchSnapshot()
+        unavailable = await isUnavailable(response)
+      }
+      if (unavailable) {
         record("native")
         phase = "ownership-revalidation"
         await assertOrigin(bootstrapDirectory)
@@ -384,8 +426,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           // A rejected placement withholds only its own directory's coverage and
           // capability verification; malformed native data above fails the batch.
           const owned = await (async () => snapshot.location.workspaceID === undefined && nativePath.isAbsolute(snapshot.location.directory)
-            && await manager.getServiceDirectoryForPath(id, snapshot.location.directory) === entry.directory
-            && await manager.ownsLocation(id, snapshot.location, connection.client, { signal }))().catch((error) => {
+            && await manager.getServiceDirectoryForPath(id, snapshot.location.directory, { purpose: "event" }) === entry.directory
+            && await manager.ownsLocation(id, snapshot.location, connection.client, { signal, purpose: "event" }))().catch((error) => {
             isolate(error)
             return undefined
           })
@@ -420,7 +462,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       record("revalidation")
       // Any admitted candidate (resolved or excluded) that failed revalidation also
       // withholds capability: a changed or fenced directory cannot verify the RPC.
-      if (!placementRejected && !failed.size) markLoadedPendingSupported(connection, true)
+      if (!placementRejected && !failed.size) markLoadedPendingSupported(connection, true, bootstrapDirectory)
       result.directories = [
         ...result.directories.filter((entry) => !failed.has(entry.directory)),
         ...[...failed].map((directory) => ({ directory, status: "error" as const,

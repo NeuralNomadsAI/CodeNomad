@@ -12,8 +12,8 @@ import { getSessionListIds, sessions } from "./session-state"
 import { refreshSessionCatalog } from "./session-api"
 import { reloadWorktrees } from "./worktrees"
 
-// Fixture workspaces live in /repo; newest warning first, like the notification history.
-const recoveryWarnings = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace: "repo" }))
+// Fixture workspaces live in /repo; newest notice first, like the notification history.
+const unsupportedNotices = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryUnsupported.title"))
 
 it("publishes root sessions before project metadata and checkout discovery, then reconciles verified families", async () => {
   const id = "startup-slow-checkouts"
@@ -124,7 +124,7 @@ it("runs pending recovery without waiting for the session catalog or instance co
   }
 })
 
-it("warns when initial hydration fails before pending recovery can start", async () => {
+it("marks incomplete recovery without warning when initial hydration fails before pending recovery can start", async () => {
   const id = "startup-pending-unavailable"
   const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees
   const oldToast = toast.custom
@@ -132,14 +132,15 @@ it("warns when initial hydration fails before pending recovery can start", async
   const client: any = { session: { list: async () => ({ data: [], cursor: {} }) }, location: { get: async () => ({ directory: "/repo" }) } }
   sdkManager.createClient = () => client
   serverApi.fetchWorktrees = async () => { throw new Error("Worktree metadata unavailable") }
-  const warnings = () => recoveryWarnings().length
-  const before = warnings()
+  const before = getToastHistory().length
   try {
     ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
       id, path: "/repo", status: "ready", proxyPath: `/workspaces/${id}/instance`,
     } })
     await assert.rejects(waitForInstanceInitialHydration(id))
-    assert.equal(warnings(), before + 1)
+    assert.equal(incompletePendingRecovery().has(id), true)
+    assert.equal(getToastHistory().length, before)
+    assert.equal(unsupportedNotices().length, 0)
   } finally {
     sdkManager.createClient = oldCreate
     serverApi.fetchWorktrees = oldWorktrees
@@ -149,11 +150,11 @@ it("warns when initial hydration fails before pending recovery can start", async
   }
 })
 
-for (const scenario of ["success", "reuse", "invalidation", "unrelated compaction"] as const) it(`startup metadata failure after ${scenario} stays incomplete only when unrecovered and warns on a consecutive failure`, async () => {
+for (const scenario of ["success", "reuse", "invalidation", "unrelated compaction"] as const) it(`startup metadata failure after ${scenario} stays incomplete only when unrecovered and stays silent on transient retries`, async () => {
   const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees, oldPending = serverApi.getPendingRequests
   const oldToast = toast.custom
   toast.custom = () => "fixture-toast"
-  const warnings = () => recoveryWarnings().length
+  const notices = () => getToastHistory().length
   serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
     directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }],
   })) })
@@ -170,7 +171,7 @@ for (const scenario of ["success", "reuse", "invalidation", "unrelated compactio
   try {
     for (let attempt = 0; attempt < 100 && !reads; attempt++) await new Promise<void>(resolve => setImmediate(resolve))
     assert.equal(reads, 1)
-    const before = warnings()
+    const before = notices()
     ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
       id, path: "/repo", status: "ready", proxyPath: `/workspaces/${id}/instance`,
     } })
@@ -193,15 +194,18 @@ for (const scenario of ["success", "reuse", "invalidation", "unrelated compactio
     await new Promise<void>(resolve => setImmediate(resolve))
     const unrecovered = scenario === "invalidation" || scenario === "unrelated compaction"
     assert.equal(incompletePendingRecovery().has(id), unrecovered)
-    // A single incomplete recovery is retained silently; only a consecutive one warns.
-    assert.equal(warnings(), before)
+    assert.equal(notices(), before)
     // The unrelated compaction is still active, so its next attempt is deferred rather than counted.
     if (scenario === "invalidation") {
       serverApi.getPendingRequests = async () => { throw new Error("Recovery still unavailable") }
       await syncPendingRequests(id).catch(() => {})
-      assert.equal(warnings(), before + 1)
-      // The warning describes the attempt that crossed the threshold.
-      assert.equal(recoveryWarnings()[0]?.message, tGlobal("interruption.recoveryIssue.unavailableDetail", { directories: "repo", detail: "Recovery still unavailable" }))
+      assert.equal(incompletePendingRecovery().has(id), true)
+      assert.equal(notices(), before, "transient follow-up failures do not create notifications")
+      // An unsupported plugin crossing the consecutive-failure threshold still notifies once.
+      const beforeUnsupported = unsupportedNotices().length
+      serverApi.getPendingRequests = async () => ({ supported: false })
+      await syncPendingRequests(id).catch(() => {})
+      assert.equal(unsupportedNotices().length, beforeUnsupported + 1)
     }
   } finally {
     failWorktrees(new Error("Fixture disposed"))

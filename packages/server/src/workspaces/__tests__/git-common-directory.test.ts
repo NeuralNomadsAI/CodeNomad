@@ -6,7 +6,7 @@ import fs from "node:fs/promises"
 import { syncBuiltinESMExports } from "node:module"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it, test } from "node:test"
-import { readGitCommonDirectory } from "../git-common-directory"
+import { discoverCheckoutRoot, readGitCommonDirectory } from "../git-common-directory"
 import { sharesGitCommonDirectory } from "../git-worktrees"
 import { runGitProcess } from "../git-process"
 
@@ -59,6 +59,12 @@ describe("Git ownership preflight admission", () => {
     const reads = Array.from({ length: 48 }, () => sharesGitCommonDirectory(repo, nested))
     assert.deepEqual(await Promise.all(reads), Array(48).fill(true))
     assert.deepEqual(await Promise.all(directories.map(readGitCommonDirectory)), expected)
+    assert.equal(await discoverCheckoutRoot(repo), realpathSync(repo))
+    assert.equal(await discoverCheckoutRoot(linked), realpathSync(linked))
+    assert.equal(await discoverCheckoutRoot(nested), realpathSync(linked))
+    const plain = path.join(temp, "plain-folder")
+    mkdirSync(plain)
+    assert.equal(await discoverCheckoutRoot(plain), undefined)
     assert.equal(events(trace).filter(event => event.event === "start").length, 0)
   })
 

@@ -77,6 +77,6 @@ If the mode is unconfirmed, choose **Reload permissions**. To set the starting m
 1. Check the connection indicator and reconnect to the same backend/project.
 2. Let recovery reconcile pending native requests; known requests and drafts are retained if coverage is incomplete.
 
-After two consecutive incomplete attempts, each project shows one recovery warning per browser tab until a full recovery succeeds.
+Transient recovery failures retry in the background without creating notifications. If the bundled OpenCode plugin cannot list waiting requests, one notice per backend appears in the browser tab until recovery succeeds.
 
-An incomplete response is not an authoritative empty queue, and the warning is not permission to repeat a prompt, answer or approval. Configuration reload can cancel native Forms/permissions; do not use it as a routine request-refresh button. See [Troubleshooting](troubleshooting.md) and [OpenCode setup](opencode.md).
+An incomplete response is not an authoritative empty queue, and a missing-plugin notice is not permission to repeat a prompt, answer or approval. Configuration reload can cancel native Forms/permissions; do not use it as a routine request-refresh button. See [Troubleshooting](troubleshooting.md) and [OpenCode setup](opencode.md).
