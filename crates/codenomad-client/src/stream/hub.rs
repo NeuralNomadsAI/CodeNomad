@@ -461,15 +461,24 @@ impl SharedStream {
                 return;
             }
             match &class {
-                FrameClass::ReplayStatus(id) => {
+                FrameClass::ReplayStatus {
+                    id,
+                    location_changed,
+                } => {
                     if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(id) {
                         inner.replays.insert(id.clone(), frame.clone());
                     } else {
                         inner.replays_overflowed = true;
                     }
+                    if *location_changed {
+                        hub.note_workspace_location_change(id);
+                    }
                 }
                 FrameClass::ReplayStopped(id) => {
                     inner.replays.remove(id);
+                    hub.note_workspace_location_change(id);
+                }
+                FrameClass::WorkspaceLocationChanged(id) => {
                     hub.note_workspace_location_change(id);
                 }
                 FrameClass::SessionMoved { workspace, session } => {
@@ -632,8 +641,9 @@ impl SharedStream {
 
 enum FrameClass {
     None,
-    ReplayStatus(String),
+    ReplayStatus { id: String, location_changed: bool },
     ReplayStopped(String),
+    WorkspaceLocationChanged(String),
     SessionMoved { workspace: String, session: String },
 }
 
@@ -643,8 +653,9 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
     }
     let is_status = data.contains("\"instance.eventStatus\"");
     let is_stopped = !is_status && data.contains("\"workspace.stopped\"");
-    let is_moved = !is_status && !is_stopped && data.contains("\"session.moved\"");
-    if !is_status && !is_stopped && !is_moved {
+    let is_worktrees = !is_status && !is_stopped && data.contains("\"workspace.worktreesChanged\"");
+    let is_moved = !is_status && !is_stopped && !is_worktrees && data.contains("\"session.moved\"");
+    if !is_status && !is_stopped && !is_worktrees && !is_moved {
         return FrameClass::None;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
@@ -662,13 +673,25 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
         {
             return FrameClass::ReplayStopped(id.to_owned());
         }
-        return FrameClass::ReplayStatus(id.to_owned());
+        return FrameClass::ReplayStatus {
+            id: id.to_owned(),
+            location_changed: matches!(
+                value["status"].as_str(),
+                Some("connected" | "disconnected")
+            ),
+        };
     }
     if value["type"] == "workspace.stopped"
         && let Some(id) = value["workspaceId"].as_str()
         && crate::history::valid_id(id)
     {
         return FrameClass::ReplayStopped(id.to_owned());
+    }
+    if value["type"] == "workspace.worktreesChanged"
+        && let Some(id) = value["workspaceId"].as_str()
+        && crate::history::valid_id(id)
+    {
+        return FrameClass::WorkspaceLocationChanged(id.to_owned());
     }
     if value["type"] == "instance.event"
         && value["event"]["type"] == "session.moved"

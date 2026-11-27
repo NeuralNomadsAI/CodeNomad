@@ -12,7 +12,7 @@ use crate::{
     strings::{locale, t},
 };
 use codenomad_client::{
-    Receiver, Sender, bounded,
+    Receiver, Sender, bounded, same_server_path,
     settings::missions::{
         MissionCatalog, MissionDefaultScope, MissionExecution, MissionModelRef, MissionProfiles,
         MissionTaskMode, MissionTemplate, ProfileModel, execution_label, legal_profile_agents,
@@ -33,6 +33,7 @@ type Flight = (Sender<()>, Receiver<Option<MissionCatalog>>);
 #[derive(Default)]
 pub(super) struct State {
     scope: Option<(String, String, u64)>,
+    directory: Option<String>,
     authority: u64,
     seen: Option<u64>,
     manual_epoch: u64,
@@ -90,6 +91,7 @@ impl State {
         let mut changed = false;
         if self.scope.as_ref() != Some(&scope) || self.authority != authority {
             self.scope = Some(scope);
+            self.directory = None;
             self.authority = authority;
             self.seen = None;
             self.flight = None;
@@ -99,12 +101,34 @@ impl State {
             changed = true;
         }
         let Some(directory) = pinned_directory else {
+            if self.directory.take().is_some()
+                | self.flight.take().is_some()
+                | self.seen.take().is_some()
+                | self.catalog.take().is_some()
+            {
+                self.known_names.clear();
+                self.failed = false;
+                changed = true;
+            }
             if location_failed && !self.failed {
                 self.failed = true;
                 changed = true;
             }
             return changed;
         };
+        if self
+            .directory
+            .as_deref()
+            .is_none_or(|prev| !same_server_path(prev, directory))
+        {
+            self.directory = Some(directory.to_owned());
+            self.seen = None;
+            self.flight = None;
+            self.catalog = None;
+            self.known_names.clear();
+            self.failed = false;
+            changed = true;
+        }
         let revision = target.revision().wrapping_add(self.manual_epoch);
         if let Some(result) = self
             .flight

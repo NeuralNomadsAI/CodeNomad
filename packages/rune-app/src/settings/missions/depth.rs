@@ -32,6 +32,7 @@ struct QueuedTarget {
     session: Option<String>,
     directory: String,
     authority: u64,
+    revision: u64,
     location_revision: Option<u64>,
     expected_location_token: u64,
     expected_prefs_authority: u64,
@@ -64,6 +65,19 @@ fn confirmed_depth_value(snapshot: Option<&SubagentDepthSnapshot>) -> String {
         .and_then(|s| s.project.as_ref())
         .and_then(|p| p.depth)
         .map_or_else(String::new, |d| d.to_string())
+}
+
+fn snapshot_display_value(snapshot: Option<&SubagentDepthSnapshot>) -> String {
+    let fresh = confirmed_depth_value(snapshot);
+    if fresh.is_empty()
+        && snapshot
+            .and_then(|s| s.project.as_ref())
+            .is_some_and(|p| p.empty_experimental)
+    {
+        "masked".to_owned()
+    } else {
+        fresh
+    }
 }
 
 fn valid_depth_choice(snapshot: &SubagentDepthSnapshot, value: &str) -> bool {
@@ -99,6 +113,7 @@ pub(super) struct State {
     queued: Option<QueuedChoice>,
     save_target: Option<QueuedTarget>,
     read_target: Option<QueuedTarget>,
+    ready_target: Option<QueuedTarget>,
     background_read: bool,
     read_flight: Option<ReadFlight>,
     save_flight: Option<SaveFlight>,
@@ -121,6 +136,7 @@ impl State {
             | self.queued.take().is_some()
             | self.save_target.take().is_some()
             | self.read_target.take().is_some()
+            | self.ready_target.take().is_some()
             | std::mem::take(&mut self.background_read)
             | std::mem::take(&mut self.pending_save)
             | std::mem::take(&mut self.dirty)
@@ -171,9 +187,40 @@ impl State {
         matches!(self.phase, Phase::Reading | Phase::Saving)
     }
 
+    pub(super) fn has_live_work(&self) -> bool {
+        self.save_flight.is_some()
+            || self.pending_save
+            || self.queued.is_some()
+            || self.background_read
+    }
+
+    pub(super) fn adopt_reopened_authority(&mut self, authority: u64, target_revision: u64) {
+        let revision = target_revision.wrapping_add(self.manual_epoch);
+        self.authority = authority;
+        if self.resolved_authority.is_some() {
+            self.resolved_authority = Some(authority);
+        }
+        if let Some(queued) = &mut self.queued {
+            queued.authority = authority;
+        }
+        if let Some(target) = &mut self.save_target {
+            target.authority = authority;
+            target.revision = revision;
+        }
+        if let Some(target) = &mut self.read_target {
+            target.authority = authority;
+            target.revision = revision;
+        }
+        if let Some(target) = &mut self.ready_target {
+            target.authority = authority;
+            target.revision = revision;
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn saving(&self) -> bool {
         self.save_flight.is_some()
+            || (self.pending_save && self.save_target.is_some())
             || (self.background_read && self.read_flight.is_some())
             || (self.queued.is_some() && self.save_target.is_some())
     }
@@ -193,6 +240,7 @@ impl State {
         self.queued = None;
         self.save_target = None;
         self.read_target = None;
+        self.ready_target = None;
         self.background_read = false;
         self.pending_save = false;
         if self.phase == Phase::Uncertain || self.phase == Phase::Unsupported {
@@ -274,7 +322,7 @@ impl State {
                 .filter(|q| {
                     q.authority == self.authority && same_server_path(&q.directory, &directory)
                 })
-                .map_or_else(|| self.draft.clone(), |q| q.base.clone());
+                .map_or_else(|| self.saved_value().to_owned(), |q| q.base.clone());
             self.queued = Some(QueuedChoice {
                 value,
                 base,
@@ -294,6 +342,7 @@ impl State {
         self.queued = None;
         self.dirty = true;
         self.saved = false;
+        self.save_target = self.ready_target.clone();
         self.pending_save = true;
     }
 
@@ -307,6 +356,7 @@ impl State {
         depth: Option<u64>,
         expectation: &str,
         authority: u64,
+        revision: u64,
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
@@ -333,6 +383,7 @@ impl State {
             session: session.map(str::to_owned),
             directory: directory.to_owned(),
             authority,
+            revision,
             location_revision: self.read_location_revision,
             expected_location_token: location_token.load(Ordering::SeqCst),
             expected_prefs_authority: prefs_authority.load(Ordering::SeqCst),
@@ -422,6 +473,7 @@ impl State {
     pub(super) fn poll_background_writes(
         &mut self,
         transport_lost: bool,
+        launch_pending: bool,
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
@@ -430,9 +482,12 @@ impl State {
     ) -> (bool, bool) {
         let (mut changed, mut settled) = self.poll_save_only(transport_lost);
         if transport_lost {
-            if self.background_read {
+            if self.background_read || (launch_pending && self.pending_save) {
                 self.background_read = false;
+                self.pending_save = false;
+                self.dirty = false;
                 self.read_flight = None;
+                self.read_started_revision = None;
                 self.read_started_location_revision = None;
                 self.queued = None;
                 self.save_target = None;
@@ -451,6 +506,7 @@ impl State {
             self.read_flight = None;
             self.read_target = None;
             self.background_read = false;
+            let started_rev = self.read_started_revision.take();
             let started_loc_rev = self.read_started_location_revision.take();
             let Some(target) = self.save_target.clone() else {
                 self.queued = None;
@@ -472,17 +528,19 @@ impl State {
                         && ServerOwner::backend_verified(&target.backend) =>
                 {
                     let fresh = confirmed_depth_value(Some(&snapshot));
+                    let display = snapshot_display_value(Some(&snapshot));
                     let queued = self.queued.take().filter(|queued| {
                         queued.authority == target.authority
                             && same_server_path(&queued.directory, &snapshot.directory)
-                            && queued.base == fresh
+                            && queued.base == display
                             && valid_depth_choice(&snapshot, &queued.value)
                     });
                     self.opener_directory = Some(target.directory.clone());
                     self.resolved_authority = Some(target.authority);
                     self.read_location_revision = Some(current_loc_rev);
+                    self.ready_target = Some(target.clone());
                     let next_save = queued.and_then(|q| {
-                        if q.value == fresh {
+                        if q.value == display {
                             return None;
                         }
                         let (Some(capability), Some(project)) =
@@ -516,6 +574,7 @@ impl State {
                     if let Some((draft, parsed, directory, expectation)) = next_save {
                         self.draft = draft;
                         self.dirty = true;
+                        self.saved = false;
                         self.spawn_save(
                             &target.backend,
                             &target.workspace,
@@ -524,6 +583,7 @@ impl State {
                             parsed,
                             &expectation,
                             target.authority,
+                            target.revision,
                             prefs_authority,
                             location_token,
                             #[cfg(test)]
@@ -535,7 +595,9 @@ impl State {
                     } else {
                         self.save_target = None;
                         self.phase = Phase::Ready;
-                        self.saved = true;
+                        if let Some(rev) = started_rev {
+                            self.seen_revision = Some(rev);
+                        }
                     }
                 }
                 _ => {
@@ -546,6 +608,86 @@ impl State {
             }
             changed = true;
             settled = true;
+        }
+        if launch_pending
+            && self.pending_save
+            && self.save_flight.is_none()
+            && self.read_flight.is_none()
+            && let Some(target) = self.save_target.clone()
+        {
+            self.pending_save = false;
+            let current_loc_rev = target
+                .backend
+                .client
+                .location_revision(&target.workspace, target.session.as_deref());
+            if self.resolved_authority != Some(target.authority)
+                || self.read_location_revision != Some(current_loc_rev)
+                || target.location_revision != Some(current_loc_rev)
+                || location_token.load(Ordering::SeqCst) != target.expected_location_token
+                || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
+                || self
+                    .opener_directory
+                    .as_deref()
+                    .is_none_or(|od| !same_server_path(od, &target.directory))
+                || !ServerOwner::backend_verified(&target.backend)
+            {
+                self.dirty = false;
+                self.queued = None;
+                self.save_target = None;
+                self.phase = Phase::Uncertain;
+                changed = true;
+                settled = true;
+            } else if let Some(snapshot) = &self.snapshot
+                && let (Some(capability), Some(project)) = (&snapshot.capability, &snapshot.project)
+            {
+                let parsed = if self.draft.is_empty() {
+                    Some(None)
+                } else {
+                    self.draft
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|&d| {
+                            d >= capability.minimum && capability.maximum.is_none_or(|max| d <= max)
+                        })
+                        .map(Some)
+                };
+                if let Some(depth) = parsed {
+                    let snap_dir = snapshot.directory.clone();
+                    let expectation = project.expectation.clone();
+                    self.spawn_save(
+                        &target.backend,
+                        &target.workspace,
+                        target.session.as_deref(),
+                        &snap_dir,
+                        depth,
+                        &expectation,
+                        target.authority,
+                        target.revision,
+                        prefs_authority,
+                        location_token,
+                        #[cfg(test)]
+                        pre_put_gate,
+                        #[cfg(test)]
+                        post_attest_gate,
+                        wake,
+                    );
+                    changed = true;
+                } else {
+                    self.dirty = false;
+                    self.queued = None;
+                    self.save_target = None;
+                    self.phase = Phase::Uncertain;
+                    changed = true;
+                    settled = true;
+                }
+            } else {
+                self.dirty = false;
+                self.queued = None;
+                self.save_target = None;
+                self.phase = Phase::Uncertain;
+                changed = true;
+                settled = true;
+            }
         }
         if self.save_flight.is_none()
             && self.read_flight.is_none()
@@ -575,6 +717,7 @@ impl State {
                 let pinned = target.directory.clone();
                 let wake = wake.clone();
                 self.background_read = true;
+                self.read_started_revision = Some(target.revision);
                 self.read_started_location_revision = Some(loc_rev);
                 self.phase = Phase::Reading;
                 self.error = false;
@@ -590,7 +733,11 @@ impl State {
                 changed = true;
             }
         }
-        if self.save_flight.is_none() && !self.background_read && self.queued.is_none() {
+        if self.save_flight.is_none()
+            && !self.background_read
+            && self.queued.is_none()
+            && !self.pending_save
+        {
             self.save_target = None;
         }
         (changed, settled)
@@ -669,6 +816,7 @@ impl State {
                 self.authority = authority;
                 self.resolved_authority = None;
                 self.read_location_revision = None;
+                self.ready_target = None;
                 self.suspend();
             } else {
                 *self = Self {
@@ -695,6 +843,7 @@ impl State {
             self.error = false;
             self.resolved_authority = None;
             self.read_location_revision = None;
+            self.ready_target = None;
             self.opener_directory = None;
             if self.phase != Phase::Uncertain {
                 self.snapshot = None;
@@ -731,7 +880,7 @@ impl State {
                 .and_then(|(_, inbox)| inbox.try_recv().ok())
         {
             self.read_flight = None;
-            self.read_target = None;
+            let finished_target = self.read_target.take();
             let started = self.read_started_revision.take();
             let started_loc_rev = self.read_started_location_revision.take();
             if started != Some(revision) || started_loc_rev != Some(current_location_revision) {
@@ -745,15 +894,17 @@ impl State {
                 match result {
                     Ok(snapshot) => {
                         let fresh = confirmed_depth_value(Some(&snapshot));
+                        let display = snapshot_display_value(Some(&snapshot));
                         let queued = self.queued.take().filter(|queued| {
                             queued.authority == self.authority
                                 && same_server_path(&queued.directory, &snapshot.directory)
-                                && queued.base == fresh
+                                && queued.base == display
                                 && valid_depth_choice(&snapshot, &queued.value)
                         });
                         self.opener_directory = Some(directory.to_owned());
                         self.resolved_authority = Some(authority);
                         self.read_location_revision = Some(current_location_revision);
+                        self.ready_target = finished_target;
                         self.snapshot = Some(snapshot);
                         self.draft = fresh;
                         self.dirty = false;
@@ -765,6 +916,7 @@ impl State {
                             self.draft = queued.value;
                             self.dirty = true;
                             self.saved = false;
+                            self.save_target = self.ready_target.clone();
                             self.pending_save = true;
                         }
                     }
@@ -826,6 +978,7 @@ impl State {
                         depth,
                         &expectation,
                         authority,
+                        revision,
                         prefs_authority,
                         location_token,
                         #[cfg(test)]
@@ -868,6 +1021,7 @@ impl State {
                 session: session.map(str::to_owned),
                 directory: pinned.clone(),
                 authority,
+                revision,
                 location_revision: Some(current_location_revision),
                 expected_location_token: location_token.load(Ordering::SeqCst),
                 expected_prefs_authority: prefs_authority.load(Ordering::SeqCst),

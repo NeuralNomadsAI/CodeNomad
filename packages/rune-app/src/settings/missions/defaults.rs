@@ -59,6 +59,7 @@ pub(super) struct State {
     pending_delete: Option<bool>,
     delete_flight: Option<(bool, Receiver<Reply>)>,
     delete_confirming: Option<bool>,
+    delete_reconciling: Option<bool>,
     reattach_pending: bool,
     pub(super) failed: bool,
     pub(super) needs_reload: bool,
@@ -189,6 +190,7 @@ impl State {
             || (config_refreshing
                 && (self.defaults_confirming
                     || self.delete_confirming.is_some()
+                    || self.delete_reconciling.is_some()
                     || self.reconciling.is_some()))
             || (can_start_write
                 && (self.pending_delete.is_some()
@@ -201,6 +203,7 @@ impl State {
             || self.delete_flight.is_some()
             || self.defaults_confirming
             || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
             || self.reconciling.is_some()
             || self.pending_delete.is_some()
             || (!self.needs_reload && !self.queued.is_empty())
@@ -212,6 +215,7 @@ impl State {
             || self.delete_flight.is_some()
             || self.pending_delete.is_some()
             || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
             || self.failed
             || self.delete_failed
             || self.needs_reload
@@ -221,6 +225,7 @@ impl State {
         self.delete_flight.is_some()
             || self.pending_delete.is_some()
             || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
     }
 
     pub(super) fn shown(&self, snapshot: Option<&Value>) -> Vec<MissionProfileDefault> {
@@ -237,7 +242,11 @@ impl State {
         if let Some((pending, _)) = &self.delete_flight {
             return *pending;
         }
-        if let Some(pending) = self.pending_delete.or(self.delete_confirming) {
+        if let Some(pending) = self
+            .pending_delete
+            .or(self.delete_confirming)
+            .or(self.delete_reconciling)
+        {
             return pending;
         }
         snapshot.is_some_and(|doc| doc["settings"]["missionDeleteSessions"] == true)
@@ -306,7 +315,8 @@ impl State {
                     | MissionPatchOutcome::Unsupported
                     | MissionPatchOutcome::Failed => {
                         self.delete_failed = true;
-                        if !pre_send_aborted {
+                        if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                            self.delete_reconciling = pending_value;
                             effects.invalidate = true;
                         }
                     }
@@ -380,6 +390,18 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
+        if let Some(expected) = self.delete_reconciling.take() {
+            if ctx.config_loaded {
+                let actual = ctx
+                    .config_snapshot
+                    .is_some_and(|doc| doc["settings"]["missionDeleteSessions"] == true);
+                self.delete_failed = actual != expected;
+            } else {
+                self.delete_failed = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
         if self.defaults_confirming {
             self.defaults_confirming = false;
             self.in_flight_edit = None;
@@ -437,6 +459,7 @@ impl State {
             || self.reloading
             || self.defaults_confirming
             || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
             || self.reconciling.is_some()
             || self.reattach_pending
         {

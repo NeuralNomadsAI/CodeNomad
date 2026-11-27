@@ -1030,7 +1030,7 @@ impl Preferences {
     }
 
     pub(super) fn poll_missions_writes(&mut self, wake: &rune::Waker) -> bool {
-        let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
+        let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, false, wake));
         self.apply_mission_effects(effects).0
     }
 
@@ -1242,7 +1242,10 @@ impl Preferences {
                     &fallback_wake
                 }
             };
-            let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
+            let launch_pending_depth = !revalidate_idle || self.provider_target.is_none();
+            let effects = self.run_mission_op(|missions, ctx| {
+                missions.poll_writes(ctx, launch_pending_depth, wake)
+            });
             self.apply_mission_effects(effects)
         };
         if missions_invalidated && poll_config && !self.missions.config_write_in_flight() {

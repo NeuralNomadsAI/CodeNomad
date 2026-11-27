@@ -16,6 +16,7 @@ pub(crate) fn provider_change(frame: &Value) -> Option<&str> {
                     | "credential.switched"
                     | "model.updated"
                     | "provider.updated"
+                    | "agent.updated"
                     | "config.updated"
                     | "server.connected"
             ) =>

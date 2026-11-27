@@ -6,7 +6,7 @@ use crate::{
     settings::{ServerOwner, providers::Target},
 };
 use codenomad_client::{
-    Receiver, Sender, absolute_server_path, bounded,
+    Receiver, Sender, absolute_server_path, bounded, same_server_path,
     settings::missions::{MissionPreferenceExpectation, resolve_workspace_directory},
 };
 use rune::Waker;
@@ -186,6 +186,7 @@ pub(in crate::settings) struct Shared {
     open_epoch: u64,
     pinned_directory: Option<String>,
     pinned_location_revision: Option<u64>,
+    pinned_target: Option<(Backend, String, Option<String>)>,
     location_authority: Option<(String, u64)>,
     location_token: Arc<AtomicU64>,
     location_flight: Option<LocationFlight>,
@@ -255,17 +256,42 @@ impl Shared {
         directory: Option<String>,
         target: Option<&Target>,
     ) {
+        let next_dir = directory.filter(|path| absolute_server_path(path));
+        let next_target = target.map(|t| {
+            let (ws, ses) = t.location();
+            (t.backend().clone(), ws.to_owned(), ses.map(str::to_owned))
+        });
+        let next_loc_rev = target.map(|t| {
+            let (ws, ses) = t.location();
+            t.backend().client.location_revision(ws, ses)
+        });
+        let same_pinned = matches!(
+            (&self.pinned_target, &next_target, &self.pinned_directory),
+            (
+                Some((prev_b, prev_ws, prev_ses)),
+                Some((next_b, next_ws, next_ses)),
+                Some(cur_dir),
+            ) if prev_b.client.same_connection(&next_b.client)
+                && prev_ws == next_ws
+                && prev_ses == next_ses
+                && self.pinned_location_revision == next_loc_rev
+                && next_dir
+                    .as_deref()
+                    .is_none_or(|dir| same_server_path(cur_dir, dir))
+        );
+        if same_pinned && self.depth.has_live_work() {
+            if let Some(t) = target {
+                let auth = t.authority();
+                self.location_authority = Some((t.location().0.to_owned(), auth));
+                self.depth.adopt_reopened_authority(auth, t.revision());
+            }
+            return;
+        }
         self.open_epoch = self.open_epoch.wrapping_add(1);
         self.revoke_location();
-        self.pinned_directory = directory.filter(|path| absolute_server_path(path));
-        self.pinned_location_revision =
-            self.pinned_directory
-                .as_ref()
-                .and_then(|_| target)
-                .map(|t| {
-                    let (ws, ses) = t.location();
-                    t.backend().client.location_revision(ws, ses)
-                });
+        self.pinned_directory = next_dir;
+        self.pinned_location_revision = self.pinned_directory.as_ref().and(next_loc_rev);
+        self.pinned_target = self.pinned_directory.as_ref().and(next_target);
         self.location_authority = target.map(|t| (t.location().0.to_owned(), t.authority()));
         self.location_flight = None;
         self.location_failed = None;
@@ -288,6 +314,7 @@ impl Shared {
         self.revoke_location();
         self.pinned_directory = None;
         self.pinned_location_revision = None;
+        self.pinned_target = None;
         self.location_authority = None;
         self.location_flight = None;
         self.location_failed = None;
@@ -317,6 +344,7 @@ impl Shared {
                 self.revoke_location();
                 let invalidated = self.pinned_directory.take().is_some()
                     | self.pinned_location_revision.take().is_some()
+                    | self.pinned_target.take().is_some()
                     | self.location_flight.take().is_some()
                     | self.location_failed.take().is_some();
                 self.location_authority = Some((workspace.to_owned(), authority));
@@ -326,6 +354,7 @@ impl Shared {
             && (self.location_authority.take().is_some()
                 | self.pinned_directory.take().is_some()
                 | self.pinned_location_revision.take().is_some()
+                | self.pinned_target.take().is_some()
                 | self.location_flight.take().is_some()
                 | self.location_failed.take().is_some())
         {
@@ -374,6 +403,11 @@ impl Shared {
                     Some(dir) => {
                         self.pinned_directory = Some(dir);
                         self.pinned_location_revision = Some(current_loc_rev);
+                        self.pinned_target = Some((
+                            backend.clone(),
+                            workspace.to_owned(),
+                            session.map(str::to_owned),
+                        ));
                         self.location_failed = None;
                     }
                     None => {
@@ -423,6 +457,7 @@ impl Shared {
         self.depth.rebind(same_address);
         self.pinned_directory = None;
         self.pinned_location_revision = None;
+        self.pinned_target = None;
         self.location_authority = None;
         self.location_flight = None;
         self.location_failed = None;
@@ -463,12 +498,14 @@ impl Shared {
     pub(in crate::settings) fn poll_writes(
         &mut self,
         ctx: &ConfigContext<'_>,
+        launch_pending_depth: bool,
         wake: &Waker,
     ) -> ConfigEffects {
         let mut effects = self.defaults.poll_replies(ctx);
         effects.merge(self.library.poll_replies(ctx));
         let (depth_changed, depth_settled) = self.depth.poll_background_writes(
             ctx.transport_lost,
+            launch_pending_depth,
             &ctx.prefs_authority,
             &self.location_token,
             #[cfg(test)]
