@@ -31,13 +31,18 @@ async function runIsolatedPairFixture({root,options,state,isInterrupted}){
     stdio:['pipe','pipe','pipe'],
   })
   const startedBy=new Date()
-  let helperErr=''
+  let helperErr='',helperError=null
+  let helperSpawned=Boolean(helper.pid)
+  helper.once('spawn',()=>{helperSpawned=true})
   for(const stream of [helper.stdout,helper.stderr]){
     stream?.on('data',chunk=>{helperErr=(helperErr+chunk).slice(-16384)})
   }
   const closed=new Promise(resolve=>{
     helper.once('close',(code,signal)=>resolve({code,signal}))
-    helper.once('error',error=>resolve({code:1,signal:null,error}))
+    helper.on('error',error=>{
+      helperError??=error
+      if(!helperSpawned&&!helper.pid)resolve({code:1,signal:null,error})
+    })
   })
   let pairingStopSettled
   const pairingStopDone=new Promise(resolve=>{pairingStopSettled=resolve})
@@ -61,6 +66,7 @@ async function runIsolatedPairFixture({root,options,state,isInterrupted}){
     if(isInterrupted?.())throw Error('Launcher interrupted during pairing')
     if(!exit)throw Error('Isolated pairing helper exit was not confirmed after stop')
     if(exit.error)throw exit.error
+    if(helperError)throw helperError
     assert.equal(exit.code,0,`Isolated pairing helper failed (code=${exit.code}, signal=${exit.signal}): ${helperErr.trim()}`)
     return JSON.parse(await readFile(pairProofFile,'utf8'))
   }finally{

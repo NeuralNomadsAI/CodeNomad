@@ -95,7 +95,16 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
         const graceMs=Number(process.env.CODENOMAD_POSIX_WORKER_GRACE_MS)
         delete process.env.CODENOMAD_POSIX_WORKER_ARGS
         delete process.env.CODENOMAD_POSIX_WORKER_GRACE_MS
-        const child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
+        let child
+        try{
+          child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
+        }catch(error){
+          const msg=String(error?.message??error)
+          console.error(msg)
+          try{writeSync(3,JSON.stringify({escalated:false,exitCode:null,exitSignal:null,error:msg,stopError:null})+'\\n')}catch{}
+          try{closeSync(3)}catch{}
+          process.exit(1)
+        }
         child.stdin?.on('error',()=>{})
         let childError=null
         let childSpawned=Boolean(child.pid)
@@ -728,6 +737,8 @@ function launchOwnedServer(binary,args,{cwd,env:childEnv,shutdown,graceMs=3000,r
   const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(childEnv),detached:group,graceMs,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
   let output='',stdout='',spawnError,stopping
+  let childSpawned=Boolean(child.pid)
+  child.once('spawn',()=>{childSpawned=true})
   const outRedactor=createStreamRedactor(redact)
   const errRedactor=createStreamRedactor(redact)
   const appendOut=chunk=>{if(chunk){stdout=(stdout+chunk).slice(-1048576);output=(output+chunk).slice(-1048576)}}
@@ -738,7 +749,10 @@ function launchOwnedServer(binary,args,{cwd,env:childEnv,shutdown,graceMs=3000,r
       appendErr(errRedactor.flush())
       resolve(code)
     })
-    child.once('error',cause=>{spawnError=cause;resolve(1)})
+    child.on('error',cause=>{
+      spawnError??=cause
+      if(!childSpawned&&!child.pid)resolve(1)
+    })
   })
   child.stdout.on('data',data=>{appendOut(outRedactor.push(data))})
   child.stderr.on('data',data=>{appendErr(errRedactor.push(data))})
@@ -762,6 +776,7 @@ function launchOwnedServer(binary,args,{cwd,env:childEnv,shutdown,graceMs=3000,r
         if(child.pid)await stopFixtureChild(child,closed,graceMs,2000,{
           group,startedBy,close:close??(shutdown?()=>child.stdin.end(shutdown):undefined),
         })
+        if(spawnError)throw spawnError
       })()
       return stopping
     },

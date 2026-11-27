@@ -252,6 +252,40 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
     missingEventDataWithRootFields,
     exactFrames[1],
   ], 'sse-1', expected), /Injected SSE frame assistantMessageID must be a string/)
+  const rawUntypedDuplicate = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      assistantMessageID: 'sse-live-1',
+      sessionID: 'ses_tab_1',
+      delta: 'Tab 1',
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    rawUntypedDuplicate,
+  ], 'sse-1', expected), /expected instance\.event/)
+  const rawUntypedDataDuplicate = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      data: {assistantMessageID: 'sse-live-1', sessionID: 'ses_tab_1', delta: 'Tab 1'},
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    rawUntypedDataDuplicate,
+  ], 'sse-1', expected), /expected instance\.event/)
+  const legitimateStepStarted = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      type: 'instance.event',
+      instanceId: 'ws-1',
+      event: {type: 'session.step.started', data: {sessionID: 'ses_tab_1', assistantMessageID: 'sse-live-1'}},
+    }),
+  })
+  assert.equal(assertExactInjectedMultiset([...exactFrames, legitimateStepStarted], 'sse-1', expected), 2)
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
     {...exactFrames[0], assistantMessageID: ['sse-live-1']},

@@ -110,7 +110,7 @@ export function parseCdpSseFrame(event) {
   const isNamedDelta = eventName === 'session.text.delta'
   const hasEnvelopeEvent = parsed?.event != null && typeof parsed.event === 'object'
   const nativeEvent = hasEnvelopeEvent ? parsed.event : (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
-  const payload = hasEnvelopeEvent ? nativeEvent?.data : (nativeEvent?.data ?? parsed)
+  const payload = hasEnvelopeEvent ? nativeEvent?.data : (nativeEvent?.data ?? parsed?.data ?? parsed)
   return {
     requestId: event.requestId,
     eventName,
@@ -130,7 +130,9 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
   const actualFrames = frames.filter(f =>
     f.nativeType === 'session.text.delta'
     || f.type === 'session.text.delta'
-    || f.eventName === 'session.text.delta',
+    || f.eventName === 'session.text.delta'
+    || f.delta != null
+    || (f.type !== 'instance.event' && typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID)),
   )
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)

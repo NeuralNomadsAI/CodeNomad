@@ -127,7 +127,11 @@ export function evaluateWorkerExit({
     && Boolean(outerSignal) && !stopError && !unconfirmedStop && !escalatedStop
   const spawnError = bridgeExit?.error ?? supervisorExit?.error ?? (
     !workerStarted && (supervisorExit || bridgeExit) && supervisorExit?.code !== 86 && bridgeExit?.code !== 86
-      ? new Error(`Owned worker did not start (supervisor exit code=${supervisorExit?.code ?? bridgeExit?.code ?? null}, signal=${supervisorExit?.signal ?? bridgeExit?.signal ?? null})`)
+      ? new Error(
+        supervisorExit
+          ? `Owned worker did not start (supervisor exit code=${supervisorExit.code ?? null}, signal=${supervisorExit.signal ?? null})`
+          : `Owned worker did not start (bridge exit code=${bridgeExit.code ?? null}, signal=${bridgeExit.signal ?? null})`,
+      )
       : null
   )
   const supervisorIncompleteTree = supervisorExit?.code === 86

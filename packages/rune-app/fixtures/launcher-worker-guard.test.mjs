@@ -181,6 +181,31 @@ test('evaluateWorkerExit separates bridge, supervisor, and worker statuses and l
   assert.equal(supervisorOnlyExit.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
   assert.equal(supervisorOnlyExit.finalResult, 1)
 
+  const bridgeReportedSpawnFailure = evaluateWorkerExit({
+    supervisorExit: { code: null, signal: null, error: new Error('Build codenomad-fixture-job') },
+    bridgeExit: { code: 1, signal: null },
+    workerStarted: false,
+  })
+  assert.equal(bridgeReportedSpawnFailure.workerExited, false)
+  assert.equal(bridgeReportedSpawnFailure.workerExitCode, null)
+  assert.equal(bridgeReportedSpawnFailure.supervisorExitCode, undefined)
+  assert.equal(bridgeReportedSpawnFailure.supervisorExitSignal, undefined)
+  assert.equal(bridgeReportedSpawnFailure.bridgeExitCode, 1)
+  assert.equal(bridgeReportedSpawnFailure.workerSpawnError, 'Build codenomad-fixture-job')
+  assert.equal(bridgeReportedSpawnFailure.finalResult, 1)
+
+  const bridgeOnlyExit = evaluateWorkerExit({
+    supervisorExit: null,
+    bridgeExit: { code: 1, signal: null },
+    workerStarted: false,
+  })
+  assert.equal(bridgeOnlyExit.workerExited, false)
+  assert.equal(bridgeOnlyExit.workerExitCode, null)
+  assert.equal(bridgeOnlyExit.supervisorExitCode, undefined)
+  assert.equal(bridgeOnlyExit.bridgeExitCode, 1)
+  assert.equal(bridgeOnlyExit.workerSpawnError, 'Owned worker did not start (bridge exit code=1, signal=null)')
+  assert.equal(bridgeOnlyExit.finalResult, 1)
+
   const unconfirmedOnly = evaluateWorkerExit({
     supervisorExit: { code: 0, signal: null },
     unconfirmedStop: true,
