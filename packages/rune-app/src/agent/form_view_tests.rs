@@ -5437,9 +5437,9 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
 fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional_bad_pattern_and_bounded_option_descriptions()
  {
     crate::strings::with_locale("en", || {
-        // 1. Checking Production (`prod`) and pasting `prod, canary` into custom input deduplicates
-        // across checkbox + custom sources to `["prod", "canary"]` (satisfying `maxItems: 2`).
-        let dedup_form = Form {
+        // 1. Checking Production (`prod`) and entering `prod` in Other values preserves
+        // Solid/OpenCode multiplicity (`["prod", "prod"]`), satisfying `minItems: 2`.
+        let multi_form = Form {
             tool: None,
             infer_websearch: false,
             id: "form-r22-dedup".into(),
@@ -5449,20 +5449,20 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
                 "title": "Targets",
                 "type": "multiselect",
                 "custom": true,
-                "maxItems": 2,
+                "minItems": 2,
                 "options": [{"value": "prod", "label": "Production"}]
             })],
         };
         let mut drafts = agent_forms::Drafts::new();
-        agent_forms::seed(std::slice::from_ref(&dedup_form), &mut drafts);
+        agent_forms::seed(std::slice::from_ref(&multi_form), &mut drafts);
         let td = drafts
             .get_mut(&("form-r22-dedup".into(), "targets".into()))
             .unwrap();
         td.toggle("prod");
-        td.custom_editor().text = "prod, canary".into();
-        let ans = agent_forms::answer(&dedup_form, &drafts)
-            .expect("checked prod + custom 'prod, canary' must deduplicate under maxItems=2");
-        assert_eq!(ans["targets"], json!(["prod", "canary"]));
+        td.custom_editor().text = "prod".into();
+        let ans = agent_forms::answer(&multi_form, &drafts)
+            .expect("checked prod + custom 'prod' must preserve Solid/OpenCode multiplicity");
+        assert_eq!(ans["targets"], json!(["prod", "prod"]));
 
         // 2. Unpadded local date-time `2026-11-26 4:30` normalizes to UTC `2026-11-26T09:30:00.000Z`
         // under US Eastern time (-05:00) instead of falling back to the raw timezone-less string.
@@ -5631,8 +5631,503 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
         assert!(
             opt0_after["description"]
                 .as_str()
-                .is_some_and(|d| d.len() < 400),
-            "option accessibility description must stay bounded even after revealing more visual text"
+                .is_some_and(|d| d.len() > 2_000 && d.len() < 3_000),
+            "option accessibility description must expose the newly revealed 2,000-char chunk while staying bounded (never 100 KiB)"
+        );
+    });
+}
+
+#[test]
+fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clear_failed_reply_focus_and_backref_deferred_rejection()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. A 300-character option description keeps its collapsed 240-char accessibility budget
+        // initially, and exposes the full revealed text (including tail after char 240) to both
+        // native AccessKit and web mirror after activating Show all.
+        let tail_instruction = "CRITICAL_TAIL_AFTER_240";
+        let long_300 = format!("{} {tail_instruction}", "A".repeat(250));
+        let reveal_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r23-reveal".into(),
+            title: "Instructions".into(),
+            fields: vec![json!({
+                "key": "opt",
+                "title": "Option",
+                "type": "string",
+                "options": [
+                    {"value": "a", "label": "Alpha", "description": long_300}
+                ]
+            })],
+        };
+        let (state, _rx) = state_with_form(reveal_form);
+        let mut rrt = Runtime::new(state, render_form, (420.0, 900.0), Env::new(false, 1.0));
+        rrt.frame(0.0);
+        let opt_a_key = agent_forms::string_option_key("opt", "a");
+        let before_tree = rrt.accessibility_json();
+        let before_desc = find_node(&before_tree, &opt_a_key).unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            !before_desc.contains(tail_instruction),
+            "collapsed option preview must stay within the 240-char initial budget"
+        );
+        let reveal_key = agent_forms::option_desc_reveal_key("opt", "a");
+        tap(&mut rrt, &reveal_key);
+        let after_tree = rrt.accessibility_json();
+        let after_desc = find_node(&after_tree, &opt_a_key).unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            after_desc.contains(tail_instruction),
+            "activating Show all must expose revealed text after char 240 in AccessKit: {after_desc}"
+        );
+        let web_items: Vec<serde_json::Value> = serde_json::from_str(&rrt.a11y_json()).unwrap();
+        assert!(
+            web_items.iter().any(|item| {
+                item["p"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(&format!("/{opt_a_key}")))
+                    && item["d"]
+                        .as_str()
+                        .is_some_and(|d| d.contains(tail_instruction))
+            }),
+            "activating Show all must expose revealed text in the web mirror too: {web_items:?}"
+        );
+
+        // 2. Strict cross-target date-time validation rejects invalid numeric/named dates like
+        // `99/99/2026`, `2/30/2026`, `Jan 99, 2026`, while accepting valid formats.
+        let dt_field = json!({
+            "key": "when",
+            "title": "When",
+            "type": "string",
+            "format": "date-time",
+            "required": true
+        });
+        let mut budget = crate::agent::string_constraints::MatchBudget::new();
+        for bad in [
+            "99/99/2026",
+            "2/30/2026",
+            "13-01-2026 12:00",
+            "Jan 99, 2026",
+            "Feb 30, 2026",
+            "2026/13/01",
+        ] {
+            assert_eq!(
+                crate::agent::string_constraints::matches_string_constraints_budgeted(
+                    &dt_field,
+                    bad,
+                    &mut budget
+                ),
+                Ok(crate::agent::string_constraints::MatchOutcome::NoMatch),
+                "invalid date-time {bad:?} must be rejected identically across targets"
+            );
+        }
+        for good in [
+            "2026-11-26T14:30:00Z",
+            "2026-11-26 4:30",
+            "2026/11/26",
+            "11/26/2026",
+            "11-26-2026 14:30:00",
+            "Thu, 26 Nov 2026 14:30:00 GMT",
+            "Nov 26, 2026",
+            "November 26, 2026 2:30 PM",
+        ] {
+            assert_eq!(
+                crate::agent::string_constraints::matches_string_constraints_budgeted(
+                    &dt_field,
+                    good,
+                    &mut budget
+                ),
+                Ok(crate::agent::string_constraints::MatchOutcome::Matched),
+                "valid date-time {good:?} must be accepted"
+            );
+        }
+
+        // 3. Optional string with `custom: true`, declared `prod`, and `default: ""`: Clear is
+        // enabled initially because Rune would submit `""`, and clicking Clear omits the field.
+        let empty_default_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r23-empty-clear".into(),
+            title: "Target".into(),
+            fields: vec![json!({
+                "key": "env",
+                "title": "Environment",
+                "type": "string",
+                "custom": true,
+                "default": "",
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(empty_default_form);
+        let mut ert = Runtime::new(state, render_form, (420.0, 720.0), Env::new(false, 1.0));
+        ert.frame(0.0);
+        let clear_key = agent_forms::clear_option_key("env");
+        let before_clear_tree = ert.accessibility_json();
+        assert!(
+            !has_state(
+                find_node(&before_clear_tree, &clear_key).unwrap(),
+                "disabled"
+            ),
+            "Clear must be enabled when an explicit empty default would be submitted"
+        );
+        let before_ans = agent_forms::answer(
+            &ert.state.agent.as_ref().unwrap().forms[0],
+            &ert.state.agent.as_ref().unwrap().drafts,
+        )
+        .unwrap();
+        assert_eq!(before_ans["env"], json!(""));
+        tap(&mut ert, &clear_key);
+        let after_clear_tree = ert.accessibility_json();
+        assert!(
+            has_state(
+                find_node(&after_clear_tree, &clear_key).unwrap(),
+                "disabled"
+            ),
+            "Clear must become disabled once the explicit empty default is cleared"
+        );
+        let after_ans = agent_forms::answer(
+            &ert.state.agent.as_ref().unwrap().forms[0],
+            &ert.state.agent.as_ref().unwrap().drafts,
+        )
+        .unwrap();
+        assert!(after_ans.get("env").is_none());
+
+        // 4. Stale editor focus after a failed reply must never steal focus from another enabled
+        // control focused while the reply was pending, and must preserve editor text/selection.
+        let focus_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r23-focus".into(),
+            title: "Reply focus".into(),
+            fields: vec![json!({
+                "key": "msg",
+                "title": "Message",
+                "type": "string",
+                "required": true,
+                "default": "hello world"
+            })],
+        };
+        let (jobs, _) = codenomad_client::bounded(1);
+        let (stop, _) = codenomad_client::bounded(1);
+        let (results_tx, results) = codenomad_client::bounded(4);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(4);
+        let mut handle = crate::agent::Handle::test(jobs, stop, results);
+        handle.forms = forms_tx;
+        let mut ui = crate::agent::Ui::new(handle);
+        ui.reading = false;
+        ui.known = true;
+        ui.mark_pending_known();
+        ui.forms_lane.reading = false;
+        ui.online = true;
+        while forms_rx.try_recv().is_ok() {}
+        ui.selected = focus_form.id.clone();
+        ui.forms.push(focus_form.clone());
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        let mut state = crate::init();
+        state.phase = crate::Phase::Ready;
+        state.agent = Some(ui);
+        let render_with_sibling = |s: &State, cx: &mut Cx<State>| {
+            layout::render(cx, |_| {
+                let Some(form) = s.agent.as_ref().and_then(|a| a.forms.first()) else {
+                    return col();
+                };
+                col()
+                    .full_width()
+                    .full_height()
+                    .child(fields(s, form))
+                    .child(actions(s, form))
+                    .child(crate::components::button(
+                        "sibling-enabled",
+                        "Other",
+                        false,
+                        |_: &mut State| {},
+                    ))
+            })
+        };
+        let mut frt = Runtime::new(
+            state,
+            render_with_sibling,
+            (420.0, 620.0),
+            Env::new(false, 1.0),
+        );
+        frt.frame(0.0);
+        // Focus textbox and set a non-empty selection.
+        frt.update(|s, _| {
+            let d = s
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r23-focus".into(), "msg".into()))
+                .unwrap();
+            d.edit.focused = true;
+            d.edit.anchor = 0;
+            d.edit.focus = 5;
+        });
+        frt.frame(1.0 / 60.0);
+        // Invoke Answer without blurring the textbox (simulating AccessKit Click action).
+        frt.update(|s, _| {
+            s.agent.as_mut().unwrap().answer_form("form-r23-focus");
+        });
+        frt.frame(1.0 / 60.0);
+        let pending_gen = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, generation)) => generation,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        // Focus another enabled control while locked.
+        frt.update(|_, tx| tx.focus("sibling-enabled", true));
+        frt.frame(1.0 / 60.0);
+        assert_eq!(focused_key(&mut frt).as_deref(), Some("sibling-enabled"));
+        // Deliver a failed reply that leaves the same form pending.
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                false,
+                Some(vec![focus_form.clone()]),
+                pending_gen,
+            ))
+            .unwrap();
+        frt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        frt.frame(1.0 / 60.0);
+        assert_eq!(
+            focused_key(&mut frt).as_deref(),
+            Some("sibling-enabled"),
+            "unlocking after a failed reply must not steal focus back to the stale textbox"
+        );
+        let msg_draft = frt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r23-focus".into(), "msg".into()))
+            .unwrap();
+        assert_eq!(msg_draft.edit.text, "hello world");
+        assert_eq!((msg_draft.edit.anchor, msg_draft.edit.focus), (0, 5));
+
+        // 5. Backreferences, lookarounds, and inline modifiers evaluate within budget, and
+        // genuinely deferred patterns distinguish Deferred from Matched and surface field-level
+        // errors when rejected by the server.
+        let backref_field = json!({
+            "key": "code",
+            "title": "Code",
+            "type": "string",
+            "required": true,
+            "pattern": "^([A-Z]{2})-\\1$"
+        });
+        let mut budget = crate::agent::string_constraints::MatchBudget::new();
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &backref_field,
+                "AB-CD",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch),
+            "^([A-Z]{{2}})-\\1$ must reject AB-CD locally"
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &backref_field,
+                "AB-AB",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched),
+            "^([A-Z]{{2}})-\\1$ must accept AB-AB locally"
+        );
+        let lookahead_field = json!({
+            "key": "pw",
+            "type": "string",
+            "pattern": "^(?=.*[0-9])(?=.*[A-Z]).{8,}$"
+        });
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &lookahead_field,
+                "abcdef12",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &lookahead_field,
+                "Abcdef12",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        let named_ref_field = json!({
+            "key": "pair",
+            "type": "string",
+            "pattern": "^(?<t>[a-z]+)=\\k<t>$"
+        });
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &named_ref_field,
+                "foo=bar",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &named_ref_field,
+                "foo=foo",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        let lookbehind_field = json!({
+            "key": "lb",
+            "type": "string",
+            "pattern": "(?<=foo)bar"
+        });
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &lookbehind_field,
+                "bazbar",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &lookbehind_field,
+                "foobar",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        let mod_field = json!({
+            "key": "mod",
+            "type": "string",
+            "pattern": "(?i:^ok$)"
+        });
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &mod_field,
+                "OK",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &mod_field,
+                "NO",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+
+        // Genuinely deferred pattern (`\p{Lu}`): returns Deferred, enables initial submit, and
+        // surfaces a field-level error on server rejection until the user changes the value.
+        let deferred_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r23-deferred".into(),
+            title: "Deferred".into(),
+            fields: vec![json!({
+                "key": "token",
+                "title": "Token",
+                "type": "string",
+                "required": true,
+                "pattern": "^\\p{Lu}+$"
+            })],
+        };
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &deferred_form.fields[0],
+                "abc",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Deferred)
+        );
+        let (jobs2, _) = codenomad_client::bounded(1);
+        let (stop2, _) = codenomad_client::bounded(1);
+        let (results2_tx, results2) = codenomad_client::bounded(4);
+        let (forms2_tx, forms2_rx) = codenomad_client::bounded(4);
+        let mut handle2 = crate::agent::Handle::test(jobs2, stop2, results2);
+        handle2.forms = forms2_tx;
+        let mut ui2 = crate::agent::Ui::new(handle2);
+        ui2.reading = false;
+        ui2.known = true;
+        ui2.mark_pending_known();
+        ui2.forms_lane.reading = false;
+        ui2.online = true;
+        while forms2_rx.try_recv().is_ok() {}
+        ui2.selected = deferred_form.id.clone();
+        ui2.forms.push(deferred_form.clone());
+        agent_forms::seed(&ui2.forms, &mut ui2.drafts);
+        ui2.drafts
+            .get_mut(&("form-r23-deferred".into(), "token".into()))
+            .unwrap()
+            .editor()
+            .text = "abc".into();
+        let mut state2 = crate::init();
+        state2.phase = crate::Phase::Ready;
+        state2.agent = Some(ui2);
+        let mut drt = Runtime::new(state2, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        drt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&drt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "deferred pattern must allow initial submission to authoritative server"
+        );
+        drt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r23-deferred"));
+        let def_gen = match forms2_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, generation)) => generation,
+            _ => panic!("expected deferred PendingJob::Act"),
+        };
+        results2_tx
+            .try_send(crate::agent::Result::ActForm(
+                false,
+                Some(vec![deferred_form.clone()]),
+                def_gen,
+            ))
+            .unwrap();
+        drt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        drt.frame(1.0 / 60.0);
+        let rejected_tree = drt.accessibility_json();
+        assert!(
+            find_node(&rejected_tree, &agent_forms::field_error_key("token")).is_some(),
+            "server rejection of a deferred field must surface a field-level error"
+        );
+        assert!(
+            has_state(
+                find_node(&rejected_tree, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "server-rejected deferred value must disable Answer until edited"
+        );
+        drt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r23-deferred".into(), "token".into()))
+                .unwrap()
+                .editor()
+                .text = "ABC".into();
+        });
+        drt.frame(1.0 / 60.0);
+        let edited_tree = drt.accessibility_json();
+        assert!(
+            find_node(&edited_tree, &agent_forms::field_error_key("token")).is_none(),
+            "editing the deferred field must clear the previous rejection error"
+        );
+        assert!(
+            !has_state(
+                find_node(&edited_tree, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "editing the deferred field must re-enable Answer"
         );
     });
 }

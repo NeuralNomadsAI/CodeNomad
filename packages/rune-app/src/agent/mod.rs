@@ -296,6 +296,11 @@ pub struct Ui {
     models_directory: Option<String>,
     permissions_lane: RequestLane,
     forms_lane: RequestLane,
+    pending_deferred_submission: Option<(
+        String,
+        Vec<serde_json::Value>,
+        Vec<(String, serde_json::Value)>,
+    )>,
     activity_during_job: bool,
     usage_during_job: bool,
     trailing: Option<bool>,
@@ -473,6 +478,7 @@ impl Ui {
         self.forms_lane.reconciling = false;
         self.forms_lane.trailing = false;
         self.forms_lane.error = false;
+        self.pending_deferred_submission = None;
         self.attention.disconnected();
         self.sync_error();
         self.sync_pending_known();
@@ -506,6 +512,7 @@ impl Ui {
         self.catalog_directory = None;
         self.permissions_lane.reset();
         self.forms_lane.reset();
+        self.pending_deferred_submission = None;
         self.activity_during_job = false;
         self.usage_during_job = false;
         self.trailing = None;
@@ -589,14 +596,26 @@ impl Ui {
     }
     pub fn answer_form(&mut self, id: &str) {
         if let Some(form) = self.forms.iter().find(|f| f.id == id) {
-            if let Ok(answer) = agent_forms::answer(form, &self.drafts) {
-                self.act(Action::Answer(id.into(), answer, form.fields.clone()))
+            if let Ok((answer, deferred)) = agent_forms::answer_with_deferred(form, &self.drafts) {
+                let fields = form.fields.clone();
+                if !self.forms_locked() {
+                    self.pending_deferred_submission =
+                        (!deferred.is_empty()).then(|| (id.to_string(), fields.clone(), deferred));
+                }
+                self.act(Action::Answer(id.into(), answer, fields))
             }
         }
     }
     pub fn cancel_form(&mut self, id: String) {
         if self.forms.iter().any(|f| f.id == id) {
+            self.pending_deferred_submission = None;
             self.act(Action::Cancel(id));
+        }
+    }
+    fn clear_form_editor_focus(&mut self) {
+        for draft in self.drafts.values_mut() {
+            draft.edit.focused = false;
+            draft.custom.focused = false;
         }
     }
     pub fn idle(&self) -> bool {
@@ -651,6 +670,7 @@ impl Ui {
             models_directory: None,
             permissions_lane: RequestLane::default(),
             forms_lane: RequestLane::default(),
+            pending_deferred_submission: None,
             activity_during_job: false,
             usage_during_job: false,
             trailing: None,
@@ -849,10 +869,13 @@ impl Ui {
                     .is_ok()
                 {
                     self.attention.invalidate_kind(1);
+                    self.clear_form_editor_focus();
                     self.forms_lane.busy = true;
                     self.forms_lane.hint_during_job = false;
                     self.forms_lane.error = false;
                     self.sync_error();
+                } else {
+                    self.pending_deferred_submission = None;
                 }
             }
         }
@@ -1099,6 +1122,8 @@ impl Ui {
                 }
                 Result::ActForm(ok, forms, generation) => {
                     self.forms_lane.busy = false;
+                    self.clear_form_editor_focus();
+                    let submitted_deferred = self.pending_deferred_submission.take();
                     if self.scope_missing {
                         self.forms_lane.reconciling = false;
                     } else {
@@ -1106,6 +1131,22 @@ impl Ui {
                         self.forms_lane.error = !ok || (fresh && forms.is_none());
                         self.sync_error();
                         if fresh {
+                            if !ok
+                                && let Some(ref pending_forms) = forms
+                                && let Some((form_id, submitted_fields, deferred_fields)) =
+                                    submitted_deferred
+                                && pending_forms
+                                    .iter()
+                                    .any(|f| f.id == form_id && f.fields == submitted_fields)
+                            {
+                                for (field_key, submitted_value) in deferred_fields {
+                                    if let Some(draft) =
+                                        self.drafts.get_mut(&(form_id.clone(), field_key))
+                                    {
+                                        draft.server_rejected_value = Some(submitted_value);
+                                    }
+                                }
+                            }
                             self.forms_lane.reconciling = forms.is_none();
                             self.apply_forms(forms);
                         } else {

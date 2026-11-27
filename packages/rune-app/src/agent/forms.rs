@@ -218,7 +218,7 @@ fn string_value_satisfies_bounds(
         && min_len.is_none_or(|m| n >= m)
         && max_len.is_none_or(|m| n <= m)
         && string_constraints::matches_string_constraints_budgeted(field, raw, budget)
-            .unwrap_or(false)
+            .is_ok_and(|outcome| outcome != string_constraints::MatchOutcome::NoMatch)
 }
 
 /// Whether an active field requires a non-empty answer before submission.
@@ -576,6 +576,7 @@ pub struct Draft {
     pub text_dirty: Cell<bool>,
     pub custom_dirty: Cell<bool>,
     pub option_desc_reveals: HashMap<String, usize>,
+    pub server_rejected_value: Option<Value>,
 }
 impl Draft {
     pub fn choose(&mut self, value: &str) {
@@ -735,6 +736,7 @@ impl Default for Draft {
             text_dirty: Cell::new(false),
             custom_dirty: Cell::new(false),
             option_desc_reveals: HashMap::new(),
+            server_rejected_value: None,
         }
     }
 }
@@ -1242,6 +1244,14 @@ pub fn validate_budgeted(
     d: &Draft,
     budget: &mut string_constraints::MatchBudget,
 ) -> Result<Option<Value>, ValidationError> {
+    validate_budgeted_with_deferred(field, d, budget).map(|(value, _)| value)
+}
+
+fn validate_budgeted_with_deferred(
+    field: &Value,
+    d: &Draft,
+    budget: &mut string_constraints::MatchBudget,
+) -> Result<(Option<Value>, bool), ValidationError> {
     if !valid_options_shape(field)
         || !valid_bounds(field)
         || !string_constraints::valid_string_schema(field)
@@ -1298,7 +1308,7 @@ pub fn validate_budgeted(
                     return if field["required"] == true {
                         Err(ValidationError::Required)
                     } else {
-                        Ok(None)
+                        Ok((None, false))
                     };
                 };
                 if field["required"] == true && selected_text.is_empty() {
@@ -1320,16 +1330,28 @@ pub fn validate_budgeted(
                 {
                     return Err(ValidationError::TooLong { max: m });
                 }
-                if !string_constraints::matches_string_constraints_budgeted(
+                match string_constraints::matches_string_constraints_budgeted(
                     field,
                     selected_text,
                     budget,
                 )
                 .map_err(|()| ValidationError::Unsupported)?
                 {
-                    return Err(ValidationError::InvalidFormat);
+                    string_constraints::MatchOutcome::Matched => {
+                        return Ok((Some(json!(selected_text)), false));
+                    }
+                    string_constraints::MatchOutcome::NoMatch => {
+                        return Err(ValidationError::InvalidFormat);
+                    }
+                    string_constraints::MatchOutcome::Deferred => {
+                        if d.server_rejected_value.as_ref().and_then(Value::as_str)
+                            == Some(selected_text)
+                        {
+                            return Err(ValidationError::InvalidFormat);
+                        }
+                        return Ok((Some(json!(selected_text)), true));
+                    }
                 }
-                return Ok(Some(json!(selected_text)));
             }
             let hidden_present =
                 field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
@@ -1341,6 +1363,7 @@ pub fn validate_budgeted(
                             field, "", budget,
                         )
                         .map_err(|()| ValidationError::Unsupported)?
+                            != string_constraints::MatchOutcome::NoMatch
                 } else {
                     d.has_string_value
                 }
@@ -1356,7 +1379,7 @@ pub fn validate_budgeted(
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
-                    Ok(None)
+                    Ok((None, false))
                 };
             }
             if field["required"] == true && effective_raw.is_empty() {
@@ -1380,12 +1403,18 @@ pub fn validate_budgeted(
             {
                 return Err(ValidationError::TooLong { max: m });
             }
-            if !string_constraints::matches_string_constraints_budgeted(field, effective, budget)
+            match string_constraints::matches_string_constraints_budgeted(field, effective, budget)
                 .map_err(|()| ValidationError::Unsupported)?
             {
-                return Err(ValidationError::InvalidFormat);
+                string_constraints::MatchOutcome::Matched => Ok((Some(json!(effective)), false)),
+                string_constraints::MatchOutcome::NoMatch => Err(ValidationError::InvalidFormat),
+                string_constraints::MatchOutcome::Deferred => {
+                    if d.server_rejected_value.as_ref().and_then(Value::as_str) == Some(effective) {
+                        return Err(ValidationError::InvalidFormat);
+                    }
+                    Ok((Some(json!(effective)), true))
+                }
             }
-            Ok(Some(json!(effective)))
         }
         Some("number" | "integer") => {
             let minimum =
@@ -1401,7 +1430,7 @@ pub fn validate_budgeted(
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
-                    Ok(None)
+                    Ok((None, false))
                 };
             }
             let n = effective
@@ -1426,10 +1455,10 @@ pub fn validate_budgeted(
             if field["type"] == "integer" && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
                 let i = n as i64;
                 if (i as f64) == n {
-                    return Ok(Some(json!(i)));
+                    return Ok((Some(json!(i)), false));
                 }
             }
-            Ok(Some(json!(n)))
+            Ok((Some(json!(n)), false))
         }
         Some("boolean") => {
             let effective = if field["hidden"] == true && text.is_empty() {
@@ -1438,13 +1467,13 @@ pub fn validate_budgeted(
                 text
             };
             match effective {
-                "true" => Ok(Some(json!(true))),
-                "false" => Ok(Some(json!(false))),
+                "true" => Ok((Some(json!(true)), false)),
+                "false" => Ok((Some(json!(false)), false)),
                 _ => {
                     if field["required"] == true {
                         Err(ValidationError::Required)
                     } else {
-                        Ok(None)
+                        Ok((None, false))
                     }
                 }
             }
@@ -1473,7 +1502,7 @@ pub fn validate_budgeted(
                     return if field["required"] == true {
                         Err(ValidationError::Required)
                     } else {
-                        Ok(None)
+                        Ok((None, false))
                     };
                 };
                 let mut hidden_items = Vec::new();
@@ -1504,7 +1533,7 @@ pub fn validate_budgeted(
                 if field["required"] == true && count == 0 {
                     return Err(ValidationError::Required);
                 }
-                return Ok(Some(json!(hidden_items)));
+                return Ok((Some(json!(hidden_items)), false));
             }
             let mut parsed_custom = Vec::new();
             if allow_custom {
@@ -1568,21 +1597,9 @@ pub fn validate_budgeted(
                     }
                 }
                 if custom_edited {
-                    // Deduplicate entries already covered by checked checkboxes while preserving
-                    // multiplicity typed explicitly inside custom input (e.g. `prod, prod` when
-                    // `prod` is unchecked).
-                    let mut checkbox_dedup: HashSet<&str> = d
-                        .selected
-                        .iter()
-                        .chain(d.preserved_custom_selected.iter())
-                        .map(String::as_str)
-                        .collect();
-                    for item in &parsed_custom {
-                        if checkbox_dedup.remove(item.as_str()) {
-                            continue;
-                        }
-                        values.push(item.clone());
-                    }
+                    // Match Solid (`[...selectedOptions, ...custom]`) and OpenCode by preserving
+                    // multiplicity across checked checkboxes and custom input entries.
+                    values.extend(parsed_custom.iter().cloned());
                 } else {
                     let mut emitted_new_custom: HashSet<&str> = HashSet::new();
                     for item in &parsed_custom {
@@ -1606,7 +1623,7 @@ pub fn validate_budgeted(
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
-                    Ok(None)
+                    Ok((None, false))
                 };
             }
             if values
@@ -1632,7 +1649,7 @@ pub fn validate_budgeted(
             if field["required"] == true && count == 0 {
                 return Err(ValidationError::Required);
             }
-            Ok(Some(json!(values)))
+            Ok((Some(json!(values)), false))
         }
         _ => Err(ValidationError::Unsupported),
     }
@@ -1739,20 +1756,33 @@ pub fn active_fields<'a>(
     (active_list, out)
 }
 pub fn answer(form: &Form, drafts: &Drafts) -> Result<Value, ()> {
+    answer_with_deferred(form, drafts).map(|(value, _)| value)
+}
+
+pub fn answer_with_deferred(
+    form: &Form,
+    drafts: &Drafts,
+) -> Result<(Value, Vec<(String, Value)>), ()> {
     let mut budget = string_constraints::MatchBudget::new();
     if !supported_budgeted(form, &mut budget) {
         return Err(());
     }
     let mut out = serde_json::Map::new();
+    let mut deferred = Vec::new();
     for field in &form.fields {
         if !active(field, &out) {
             continue;
         }
         let key = field["key"].as_str().ok_or(())?;
         let d = drafts.get(&(form.id.clone(), key.into())).ok_or(())?;
-        if let Some(value) = validate_budgeted(field, d, &mut budget).map_err(|_| ())? {
+        let (value, is_deferred) =
+            validate_budgeted_with_deferred(field, d, &mut budget).map_err(|_| ())?;
+        if let Some(value) = value {
+            if is_deferred {
+                deferred.push((key.to_string(), value.clone()));
+            }
             out.insert(key.into(), value);
         }
     }
-    Ok(Value::Object(out))
+    Ok((Value::Object(out), deferred))
 }

@@ -52,6 +52,13 @@ impl MatchBudget {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchOutcome {
+    Matched,
+    NoMatch,
+    Deferred,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompileError {
     InvalidSyntax,
     DeferToServer,
@@ -64,7 +71,7 @@ struct PatternCacheState {
 
 static PATTERN_CACHE: OnceLock<Mutex<PatternCacheState>> = OnceLock::new();
 static MATCH_CACHE_SEEDS: OnceLock<(RandomState, RandomState)> = OnceLock::new();
-static MATCH_CACHE: OnceLock<Mutex<HashMap<(u64, u64), bool>>> = OnceLock::new();
+static MATCH_CACHE: OnceLock<Mutex<HashMap<(u64, u64), MatchOutcome>>> = OnceLock::new();
 
 fn match_cache_digest(src: &str, value: &str) -> (u64, u64) {
     let (s1, s2) = MATCH_CACHE_SEEDS.get_or_init(|| (RandomState::new(), RandomState::new()));
@@ -118,7 +125,7 @@ pub(crate) fn pattern_cache_bytes() -> usize {
         .map_or(0, |s| s.bytes)
 }
 
-fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget) -> bool {
+fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget) -> MatchOutcome {
     let cache = MATCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     // Store only a non-reversible per-process keyed 128-bit digest, never plaintext draft text.
     let key = match_cache_digest(src, value);
@@ -128,7 +135,7 @@ fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget)
         return hit;
     }
     if budget.remaining == 0 {
-        return true;
+        return MatchOutcome::Deferred;
     }
     // Cap each individual match so one pathological pattern cannot starve the rest of the form,
     // and cache pairs that exhaust the per-match cap on their own so repeated renders do zero work.
@@ -140,8 +147,9 @@ fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget)
     let outcome = pat.is_match_budgeted(value, &mut call_budget);
     let spent = single_cap - call_budget.remaining;
     budget.remaining = before.saturating_sub(spent);
-    let matched = match outcome {
-        Some(matched) => matched,
+    let result = match outcome {
+        Some(true) => MatchOutcome::Matched,
+        Some(false) => MatchOutcome::NoMatch,
         None => {
             if spent >= MAX_SINGLE_MATCH_STEPS
                 && let Ok(mut map) = cache.lock()
@@ -149,18 +157,18 @@ fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget)
                 if map.len() >= MAX_MATCH_CACHE_ENTRIES {
                     map.clear();
                 }
-                map.insert(key, true);
+                map.insert(key, MatchOutcome::Deferred);
             }
-            return true;
+            return MatchOutcome::Deferred;
         }
     };
     if let Ok(mut map) = cache.lock() {
         if map.len() >= MAX_MATCH_CACHE_ENTRIES {
             map.clear();
         }
-        map.insert(key, matched);
+        map.insert(key, result);
     }
-    matched
+    result
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,28 +236,24 @@ pub fn matches_string_constraints_budgeted(
     field: &Value,
     value: &str,
     budget: &mut MatchBudget,
-) -> Result<bool, ()> {
+) -> Result<MatchOutcome, ()> {
     if let Some(raw) = field.get("format").filter(|v| !v.is_null()) {
         let fmt = raw.as_str().and_then(StringFormat::parse).ok_or(())?;
         if !fmt.matches(value) {
-            return Ok(false);
+            return Ok(MatchOutcome::NoMatch);
         }
     }
     if let Some(raw) = field.get("pattern").filter(|v| !v.is_null()) {
         let src = raw.as_str().ok_or(())?;
         if !src.is_empty() {
             match compile_cached(src) {
-                Ok(pat) => {
-                    if !match_cached(src, &pat, value, budget) {
-                        return Ok(false);
-                    }
-                }
-                Err(CompileError::DeferToServer) => {}
+                Ok(pat) => return Ok(match_cached(src, &pat, value, budget)),
+                Err(CompileError::DeferToServer) => return Ok(MatchOutcome::Deferred),
                 Err(CompileError::InvalidSyntax) => return Err(()),
             }
         }
     }
-    Ok(true)
+    Ok(MatchOutcome::Matched)
 }
 
 pub fn is_es_whitespace(c: char) -> bool {
@@ -348,69 +352,49 @@ fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime
     if !value.is_ascii() {
         return None;
     }
-    let (year, ylen) = parse_iso_year_prefix(value)?;
-    let rest_after_year = value[ylen..].strip_prefix('-')?;
-    let (month, after_month) = take_1_or_2_digits(rest_after_year)?;
-    if !(1..=12).contains(&month) {
-        return None;
-    }
-    let after_m_dash = after_month.strip_prefix('-')?;
-    let (day, after_date) = take_1_or_2_digits(after_m_dash)?;
-    if !(1..=days_in_month_i64(year, month)).contains(&day) {
-        return None;
-    }
-    let b = after_date.as_bytes();
-    if b.is_empty() || !matches!(b[0], b'T' | b't' | b' ') {
-        return None;
-    }
-    let (hour, after_hour) = take_1_or_2_digits(&after_date[1..])?;
-    let after_h_colon = after_hour.strip_prefix(':')?;
-    let (minute, mut rest) = take_1_or_2_digits(after_h_colon)?;
-    if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
-        return None;
-    }
-    let mut second = 0i64;
-    let mut millis = 0u32;
-    if let Some(after_colon) = rest.strip_prefix(':') {
-        let (sec, after_sec) = take_1_or_2_digits(after_colon)?;
-        if sec > 59 || (hour == 24 && sec != 0) {
-            return None;
+    if let Some((year, ylen)) = parse_iso_year_prefix(value)
+        && let Some(rest_after_year) = value[ylen..].strip_prefix('-')
+        && let Some((month, after_month)) = take_1_or_2_digits(rest_after_year)
+        && (1..=12).contains(&month)
+        && let Some(after_m_dash) = after_month.strip_prefix('-')
+        && let Some((day, after_date)) = take_1_or_2_digits(after_m_dash)
+        && (1..=days_in_month_i64(year, month)).contains(&day)
+    {
+        let b = after_date.as_bytes();
+        if !b.is_empty() && matches!(b[0], b'T' | b't' | b' ') {
+            if let Some((hour, minute, second, millis, None)) =
+                parse_time_and_tz(&after_date[1..], false)
+            {
+                return Some(ParsedLocalDateTime {
+                    year,
+                    month: i64::from(month),
+                    day: i64::from(day),
+                    hour: i64::from(hour),
+                    minute: i64::from(minute),
+                    second: i64::from(second),
+                    millis,
+                });
+            }
         }
-        second = i64::from(sec);
-        rest = after_sec;
-        if let Some(after_dot) = rest.strip_prefix('.') {
-            let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
-            if frac_len == 0 {
-                return None;
-            }
-            let frac = &after_dot[..frac_len];
-            if hour == 24 && !frac.bytes().all(|d| d == b'0') {
-                return None;
-            }
-            let mut m = 0u32;
-            for i in 0..3 {
-                let d = frac.as_bytes().get(i).copied().unwrap_or(b'0') - b'0';
-                m = m * 10 + u32::from(d);
-            }
-            millis = m;
-            rest = &after_dot[frac_len..];
-        }
-    }
-    if !rest.is_empty() {
         return None;
     }
-    Some(ParsedLocalDateTime {
-        year,
-        month: i64::from(month),
-        day: i64::from(day),
-        hour: i64::from(hour),
-        minute: i64::from(minute),
-        second,
-        millis,
-    })
+    if let Some(parsed) = parse_numeric_date_time(value)
+        && parsed.has_time
+        && parsed.tz_offset_ms.is_none()
+    {
+        return Some(ParsedLocalDateTime {
+            year: parsed.year,
+            month: i64::from(parsed.month),
+            day: i64::from(parsed.day),
+            hour: i64::from(parsed.hour),
+            minute: i64::from(parsed.minute),
+            second: i64::from(parsed.second),
+            millis: parsed.millis,
+        });
+    }
+    None
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let y = year - i64::from(month <= 2);
     let era = y.div_euclid(400);
@@ -559,48 +543,382 @@ pub fn normalize_edited_local_date_time(value: &str) -> Option<String> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn contains_js_month_name(s: &str) -> bool {
-    const MONTHS: [&str; 12] = [
-        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-    ];
-    s.split(|c: char| !c.is_ascii_alphabetic()).any(|tok| {
-        tok.len() >= 3 && {
-            let prefix = tok[..3].to_ascii_lowercase();
-            MONTHS.contains(&prefix.as_str())
+struct ParsedDateTime {
+    year: i64,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+    millis: u32,
+    tz_offset_ms: Option<i64>,
+    has_time: bool,
+}
+
+fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
+    let tz_raw = raw.trim();
+    if tz_raw.is_empty() {
+        return Some(None);
+    }
+    let tz = if let Some(paren_idx) = tz_raw.find('(') {
+        if !tz_raw.ends_with(')') {
+            return None;
         }
+        let inner = &tz_raw[paren_idx + 1..tz_raw.len() - 1];
+        if inner.is_empty()
+            || !inner.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b' ' | b'+' | b'-' | b'/' | b'_' | b'.')
+            })
+        {
+            return None;
+        }
+        tz_raw[..paren_idx].trim_end()
+    } else {
+        tz_raw
+    };
+    if tz.is_empty() {
+        return None;
+    }
+    if tz.eq_ignore_ascii_case("Z")
+        || tz.eq_ignore_ascii_case("GMT")
+        || tz.eq_ignore_ascii_case("UTC")
+        || tz.eq_ignore_ascii_case("UT")
+    {
+        return Some(Some(0));
+    }
+    match tz.to_ascii_uppercase().as_str() {
+        "EDT" => return Some(Some(-4 * 3_600_000)),
+        "EST" | "CDT" => return Some(Some(-5 * 3_600_000)),
+        "CST" | "MDT" => return Some(Some(-6 * 3_600_000)),
+        "MST" | "PDT" => return Some(Some(-7 * 3_600_000)),
+        "PST" => return Some(Some(-8 * 3_600_000)),
+        _ => {}
+    }
+    let tz_offset_part = if tz.len() > 3
+        && (tz[..3].eq_ignore_ascii_case("GMT") || tz[..3].eq_ignore_ascii_case("UTC"))
+    {
+        &tz[3..]
+    } else {
+        tz
+    };
+    let rb = tz_offset_part.as_bytes();
+    let (sign, tz_h_str, tz_m_str) =
+        if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
+            (
+                if rb[0] == b'-' { -1i64 } else { 1i64 },
+                &tz_offset_part[1..3],
+                &tz_offset_part[4..6],
+            )
+        } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
+            (
+                if rb[0] == b'-' { -1i64 } else { 1i64 },
+                &tz_offset_part[1..3],
+                &tz_offset_part[3..5],
+            )
+        } else if (rb.len() == 2 || rb.len() == 3)
+            && matches!(rb[0], b'+' | b'-')
+            && tz_offset_part.len() < tz.len()
+        {
+            (
+                if rb[0] == b'-' { -1i64 } else { 1i64 },
+                &tz_offset_part[1..],
+                "00",
+            )
+        } else {
+            return None;
+        };
+    let tz_h = parse_ascii_digits(tz_h_str)?;
+    let tz_m = parse_ascii_digits(tz_m_str)?;
+    if tz_h > 23 || tz_m > 59 {
+        return None;
+    }
+    Some(Some(
+        sign * (i64::from(tz_h) * 3600 + i64::from(tz_m) * 60) * 1000,
+    ))
+}
+
+fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32, Option<i64>)> {
+    let (mut hour, after_hour) = take_1_or_2_digits(rest)?;
+    let after_h_colon = after_hour.strip_prefix(':')?;
+    let (minute, mut tail) = take_1_or_2_digits(after_h_colon)?;
+    let mut second = 0u32;
+    let mut millis = 0u32;
+    if let Some(after_colon) = tail.strip_prefix(':') {
+        let (sec, after_sec) = take_1_or_2_digits(after_colon)?;
+        if sec > 59 {
+            return None;
+        }
+        second = sec;
+        tail = after_sec;
+        if let Some(after_dot) = tail.strip_prefix('.') {
+            let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
+            if frac_len == 0 {
+                return None;
+            }
+            let frac = &after_dot[..frac_len];
+            let mut m = 0u32;
+            for i in 0..3 {
+                let d = frac.as_bytes().get(i).copied().unwrap_or(b'0') - b'0';
+                m = m * 10 + u32::from(d);
+            }
+            millis = m;
+            tail = &after_dot[frac_len..];
+        }
+    }
+    let mut has_ampm = false;
+    if allow_ampm {
+        let trimmed = tail.trim_start();
+        let after_meridiem = if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("AM") {
+            let rem = &trimmed[2..];
+            if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
+                has_ampm = true;
+                if !(1..=12).contains(&hour) {
+                    return None;
+                }
+                if hour == 12 {
+                    hour = 0;
+                }
+                Some(rem)
+            } else {
+                None
+            }
+        } else if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("PM") {
+            let rem = &trimmed[2..];
+            if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
+                has_ampm = true;
+                if !(1..=12).contains(&hour) {
+                    return None;
+                }
+                if hour != 12 {
+                    hour += 12;
+                }
+                Some(rem)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(rem) = after_meridiem {
+            tail = rem;
+        }
+    }
+    if minute > 59 {
+        return None;
+    }
+    if !has_ampm && (hour > 24 || (hour == 24 && (minute != 0 || second != 0 || millis != 0))) {
+        return None;
+    }
+    let tz_offset_ms = parse_tz_offset_ms(tail)?;
+    Some((hour, minute, second, millis, tz_offset_ms))
+}
+
+fn parse_month_name(tok: &str) -> Option<u32> {
+    match tok.to_ascii_lowercase().as_str() {
+        "jan" | "january" => Some(1),
+        "feb" | "february" => Some(2),
+        "mar" | "march" => Some(3),
+        "apr" | "april" => Some(4),
+        "may" => Some(5),
+        "jun" | "june" => Some(6),
+        "jul" | "july" => Some(7),
+        "aug" | "august" => Some(8),
+        "sep" | "sept" | "september" => Some(9),
+        "oct" | "october" => Some(10),
+        "nov" | "november" => Some(11),
+        "dec" | "december" => Some(12),
+        _ => None,
+    }
+}
+
+fn is_weekday_name(tok: &str) -> bool {
+    matches!(
+        tok.to_ascii_lowercase().as_str(),
+        "mon"
+            | "monday"
+            | "tue"
+            | "tues"
+            | "tuesday"
+            | "wed"
+            | "wednesday"
+            | "thu"
+            | "thur"
+            | "thurs"
+            | "thursday"
+            | "fri"
+            | "friday"
+            | "sat"
+            | "saturday"
+            | "sun"
+            | "sunday"
+    )
+}
+
+fn parse_year_2_or_4(tok: &str) -> Option<i64> {
+    let v = parse_ascii_digits(tok)?;
+    match tok.len() {
+        4 => Some(i64::from(v)),
+        2 => Some(if v < 50 {
+            2000 + i64::from(v)
+        } else {
+            1900 + i64::from(v)
+        }),
+        _ => None,
+    }
+}
+
+fn split_first_date_token(s: &str) -> (&str, &str) {
+    let idx = s
+        .bytes()
+        .position(|b| matches!(b, b' ' | b'\t' | b'T' | b't' | b','))
+        .unwrap_or(s.len());
+    (&s[..idx], &s[idx..])
+}
+
+fn parse_numeric_date_time(s: &str) -> Option<ParsedDateTime> {
+    let (date_part, after_date) = split_first_date_token(s);
+    let sep = if date_part.contains('/') {
+        '/'
+    } else if date_part.contains('-') {
+        '-'
+    } else if date_part.contains('.') {
+        '.'
+    } else {
+        return None;
+    };
+    let mut parts = date_part.split(sep);
+    let (Some(p1), Some(p2), Some(p3), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    let (year, month, day) = if p1.len() == 4 && sep != '-' {
+        let year = i64::from(parse_ascii_digits(p1)?);
+        if p2.len() > 2 || p3.len() > 2 {
+            return None;
+        }
+        (year, parse_ascii_digits(p2)?, parse_ascii_digits(p3)?)
+    } else if p1.len() <= 2 && p2.len() <= 2 {
+        let year = parse_year_2_or_4(p3)?;
+        (year, parse_ascii_digits(p1)?, parse_ascii_digits(p2)?)
+    } else {
+        return None;
+    };
+    if !(1..=12).contains(&month) || !(1..=days_in_month_i64(year, month)).contains(&day) {
+        return None;
+    }
+    let tail = after_date
+        .strip_prefix(',')
+        .unwrap_or(after_date)
+        .trim_start();
+    let tail = tail
+        .strip_prefix('T')
+        .or_else(|| tail.strip_prefix('t'))
+        .unwrap_or(tail);
+    let (hour, minute, second, millis, tz_offset_ms, has_time) = if tail.is_empty() {
+        (0, 0, 0, 0, None, false)
+    } else {
+        let (h, m, sec, ms, tz) = parse_time_and_tz(tail, true)?;
+        (h, m, sec, ms, tz, true)
+    };
+    let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
+        + i64::from(millis);
+    if !within_js_date_range(year, month, day, sod_ms, tz_offset_ms.unwrap_or(0)) {
+        return None;
+    }
+    Some(ParsedDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+        tz_offset_ms,
+        has_time,
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn looks_like_legacy_numeric_date(s: &str) -> bool {
-    let b = s.as_bytes();
-    if b.is_empty() || !b[0].is_ascii_digit() {
-        return false;
+fn next_date_piece(s: &str) -> Option<(&str, &str)> {
+    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    if trimmed.is_empty() {
+        return None;
     }
-    if !b.iter().all(|&c| {
-        c.is_ascii_alphanumeric()
-            || matches!(
-                c,
-                b' ' | b'\t' | b'/' | b'-' | b'.' | b',' | b':' | b'+' | b'(' | b')'
-            )
-    }) {
-        return false;
+    let end = trimmed
+        .bytes()
+        .position(|b| b.is_ascii_whitespace() || b == b',' || b == b'-')
+        .unwrap_or(trimmed.len());
+    if end == 0 {
+        return None;
     }
-    for sep in [b'/', b'-', b'.'] {
-        let mut parts = s.split(sep as char);
-        let (Some(a), Some(c)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        if !a.is_empty()
-            && !c.is_empty()
-            && a.bytes().all(|x| x.is_ascii_digit())
-            && c.bytes().next().is_some_and(|x| x.is_ascii_digit())
-        {
-            return true;
+    let tok = &trimmed[..end];
+    let rest = &trimmed[end..];
+    let rest = rest.strip_prefix('-').unwrap_or(rest);
+    Some((tok, rest))
+}
+
+fn parse_named_month_date_time(s: &str) -> Option<ParsedDateTime> {
+    let mut rest = s;
+    let (mut t1, r1) = next_date_piece(rest)?;
+    if is_weekday_name(t1) {
+        rest = r1;
+        let (nt, nr) = next_date_piece(rest)?;
+        t1 = nt;
+        rest = nr;
+    } else {
+        rest = r1;
+    }
+    let (t2, r2) = next_date_piece(rest)?;
+    let (t3, r3) = next_date_piece(r2)?;
+    let (year, month, day) = if let Some(m) = parse_month_name(t1) {
+        // `Nov 26, 2026` or `Thu Nov 26 2026 ...`
+        if t2.len() > 2 {
+            return None;
         }
+        (parse_year_2_or_4(t3)?, m, parse_ascii_digits(t2)?)
+    } else if let Some(m) = parse_month_name(t2) {
+        if t1.len() == 4 && t3.len() <= 2 {
+            // `2026 Nov 26`
+            (
+                i64::from(parse_ascii_digits(t1)?),
+                m,
+                parse_ascii_digits(t3)?,
+            )
+        } else if t1.len() <= 2 {
+            // `26 Nov 2026` / `Thu, 26 Nov 2026 14:30:00 GMT`
+            (parse_year_2_or_4(t3)?, m, parse_ascii_digits(t1)?)
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    if !(1..=days_in_month_i64(year, month)).contains(&day) {
+        return None;
     }
-    false
+    let tail = r3.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    let (hour, minute, second, millis, tz_offset_ms, has_time) = if tail.is_empty() {
+        (0, 0, 0, 0, None, false)
+    } else {
+        let (h, m, sec, ms, tz) = parse_time_and_tz(tail, true)?;
+        (h, m, sec, ms, tz, true)
+    };
+    let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
+        + i64::from(millis);
+    if !within_js_date_range(year, month, day, sod_ms, tz_offset_ms.unwrap_or(0)) {
+        return None;
+    }
+    Some(ParsedDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+        tz_offset_ms,
+        has_time,
+    })
 }
 
 fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
@@ -648,7 +966,6 @@ fn take_1_or_2_digits(s: &str) -> Option<(u32, &str)> {
     Some((parse_ascii_digits(&s[..len])?, &s[len..]))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn within_js_date_range(year: i64, month: u32, day: u32, sod_ms: i64, tz_offset_ms: i64) -> bool {
     const MAX_JS_DATE_MS: i128 = 8_640_000_000_000_000;
     let days = days_from_civil(year, i64::from(month), i64::from(day));
@@ -658,177 +975,58 @@ fn within_js_date_range(year: i64, month: u32, day: u32, sod_ms: i64, tz_offset_
 
 fn is_valid_date_time(value: &str) -> bool {
     let s = trim_es(value);
-    if s.is_empty() {
+    if s.is_empty() || !s.is_ascii() {
         return false;
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_sys::Date::new(&wasm_bindgen::JsValue::from_str(s))
-            .get_time()
-            .is_finite()
+    // Use one deterministic parser across desktop and wasm32 so both targets agree on every
+    // ISO-8601, numeric slash/hyphen, and RFC 2822 / month-name date-time string.
+    let iso_candidate = parse_iso_year_prefix(s).filter(|&(_, ylen)| {
+        let tail = &s.as_bytes()[ylen..];
+        tail.is_empty() || tail[0] == b'-'
+    });
+    let Some((year, ylen)) = iso_candidate else {
+        return parse_numeric_date_time(s).is_some() || parse_named_month_date_time(s).is_some();
+    };
+    let rest_after_year = &s[ylen..];
+    if rest_after_year.is_empty() {
+        return within_js_date_range(year, 1, 1, 0, 0);
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if !s.is_ascii() {
-            return false;
-        }
-        // OpenCode validates `date-time` via `new Date(value)`: standard 4-digit and ECMAScript
-        // 6-digit extended ISO years (`±YYYYYY`), including unpadded `YYYY-M-D` forms accepted
-        // by JavaScript `Date.parse`, are valid.
-        let iso_candidate = parse_iso_year_prefix(s).filter(|&(_, ylen)| {
-            let tail = &s.as_bytes()[ylen..];
-            tail.is_empty() || tail[0] == b'-'
-        });
-        let Some((year, ylen)) = iso_candidate else {
-            // Defer non-ISO JavaScript `Date.parse` formats (e.g. RFC 2822
-            // `"Thu, 26 Nov 2026 14:30:00 GMT"`, `"Nov 26, 2026"`, `"2026/11/26"`,
-            // `"11-26-2026 14:30:00"`) to OpenCode instead of falsely blocking valid protocol
-            // defaults on desktop.
-            let has_digit = s.bytes().any(|b| b.is_ascii_digit());
-            return has_digit && (contains_js_month_name(s) || looks_like_legacy_numeric_date(s));
-        };
-        let rest_after_year = &s[ylen..];
-        if rest_after_year.is_empty() {
-            return within_js_date_range(year, 1, 1, 0, 0);
-        }
-        let Some(after_y_dash) = rest_after_year.strip_prefix('-') else {
-            return false;
-        };
-        let Some((month, after_month)) = take_1_or_2_digits(after_y_dash) else {
-            return false;
-        };
-        if !(1..=12).contains(&month) {
-            return false;
-        }
-        if after_month.is_empty() {
-            return within_js_date_range(year, month, 1, 0, 0);
-        }
-        let Some(after_m_dash) = after_month.strip_prefix('-') else {
-            return false;
-        };
-        let Some((day, after_date)) = take_1_or_2_digits(after_m_dash) else {
-            return false;
-        };
-        if !(1..=days_in_month_i64(year, month)).contains(&day) {
-            return false;
-        }
-        if after_date.is_empty() {
-            return within_js_date_range(year, month, day, 0, 0);
-        }
-        let b = after_date.as_bytes();
-        if !matches!(b[0], b'T' | b't' | b' ') {
-            return false;
-        }
-        let Some((hour, after_hour)) = take_1_or_2_digits(&after_date[1..]) else {
-            return false;
-        };
-        let Some(after_h_colon) = after_hour.strip_prefix(':') else {
-            return false;
-        };
-        let Some((minute, mut rest)) = take_1_or_2_digits(after_h_colon) else {
-            return false;
-        };
-        if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
-            return false;
-        }
-        let mut second = 0u32;
-        let mut millis = 0u32;
-        if let Some(after_colon) = rest.strip_prefix(':') {
-            let Some((sec, after_sec)) = take_1_or_2_digits(after_colon) else {
-                return false;
-            };
-            if sec > 59 || (hour == 24 && sec != 0) {
-                return false;
-            }
-            second = sec;
-            rest = after_sec;
-            if let Some(after_dot) = rest.strip_prefix('.') {
-                let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
-                if frac_len == 0 {
-                    return false;
-                }
-                let frac = &after_dot[..frac_len];
-                if hour == 24 && !frac.bytes().all(|d| d == b'0') {
-                    return false;
-                }
-                let mut m = 0u32;
-                for i in 0..3 {
-                    let d = frac.as_bytes().get(i).copied().unwrap_or(b'0') - b'0';
-                    m = m * 10 + u32::from(d);
-                }
-                millis = m;
-                rest = &after_dot[frac_len..];
-            }
-        }
-        let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
-            + i64::from(millis);
-        // Strip optional trailing parenthesized zone name (e.g. `GMT+0000 (Coordinated Universal Time)`).
-        let tz_raw = rest.trim_start();
-        let tz = if let Some(paren_idx) = tz_raw.find('(')
-            && tz_raw.ends_with(')')
-        {
-            tz_raw[..paren_idx].trim_end()
-        } else {
-            tz_raw
-        };
-        if tz.is_empty()
-            || tz.eq_ignore_ascii_case("Z")
-            || tz.eq_ignore_ascii_case("GMT")
-            || tz.eq_ignore_ascii_case("UTC")
-            || tz.eq_ignore_ascii_case("UT")
-            || matches!(
-                tz.to_ascii_uppercase().as_str(),
-                "EST" | "EDT" | "CST" | "CDT" | "MST" | "MDT" | "PST" | "PDT"
-            )
-        {
-            return within_js_date_range(year, month, day, sod_ms, 0);
-        }
-        let tz_offset_part = if tz.len() > 3
-            && (tz[..3].eq_ignore_ascii_case("GMT") || tz[..3].eq_ignore_ascii_case("UTC"))
-        {
-            &tz[3..]
-        } else {
-            tz
-        };
-        let rb = tz_offset_part.as_bytes();
-        let (sign, tz_h_str, tz_m_str) =
-            if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
-                (
-                    if rb[0] == b'-' { -1i64 } else { 1i64 },
-                    &tz_offset_part[1..3],
-                    &tz_offset_part[4..6],
-                )
-            } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
-                (
-                    if rb[0] == b'-' { -1i64 } else { 1i64 },
-                    &tz_offset_part[1..3],
-                    &tz_offset_part[3..5],
-                )
-            } else if (rb.len() == 2 || rb.len() == 3)
-                && matches!(rb[0], b'+' | b'-')
-                && tz_offset_part.len() < tz.len()
-            {
-                // `GMT+0`, `GMT-5`, `UTC+02`
-                (
-                    if rb[0] == b'-' { -1i64 } else { 1i64 },
-                    &tz_offset_part[1..],
-                    "00",
-                )
-            } else {
-                return false;
-            };
-        let Some(tz_h) = parse_ascii_digits(tz_h_str) else {
-            return false;
-        };
-        let Some(tz_m) = parse_ascii_digits(tz_m_str) else {
-            return false;
-        };
-        if tz_h > 23 || tz_m > 59 {
-            return false;
-        }
-        let tz_offset_ms = sign * (i64::from(tz_h) * 3600 + i64::from(tz_m) * 60) * 1000;
-        within_js_date_range(year, month, day, sod_ms, tz_offset_ms)
+    let Some(after_y_dash) = rest_after_year.strip_prefix('-') else {
+        return false;
+    };
+    let Some((month, after_month)) = take_1_or_2_digits(after_y_dash) else {
+        return false;
+    };
+    if !(1..=12).contains(&month) {
+        return false;
     }
+    if after_month.is_empty() {
+        return within_js_date_range(year, month, 1, 0, 0);
+    }
+    let Some(after_m_dash) = after_month.strip_prefix('-') else {
+        return false;
+    };
+    let Some((day, after_date)) = take_1_or_2_digits(after_m_dash) else {
+        return false;
+    };
+    if !(1..=days_in_month_i64(year, month)).contains(&day) {
+        return false;
+    }
+    if after_date.is_empty() {
+        return within_js_date_range(year, month, day, 0, 0);
+    }
+    let b = after_date.as_bytes();
+    if !matches!(b[0], b'T' | b't' | b' ') {
+        return false;
+    }
+    let Some((hour, minute, second, millis, tz_offset_ms)) =
+        parse_time_and_tz(&after_date[1..], false)
+    else {
+        return false;
+    };
+    let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
+        + i64::from(millis);
+    within_js_date_range(year, month, day, sod_ms, tz_offset_ms.unwrap_or(0))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -858,6 +1056,64 @@ impl ClassItem {
             Self::Deferred => false,
         }
     }
+
+    fn matches_icase(&self, u: u16) -> bool {
+        match *self {
+            Self::Single(x) => eq_u16_icase(u, x),
+            Self::Range(lo, hi) => {
+                if u >= lo && u <= hi {
+                    return true;
+                }
+                let alt = fold_u16_alt_case(u);
+                alt.is_some_and(|a| a >= lo && a <= hi)
+            }
+            other => other.matches(u),
+        }
+    }
+}
+
+fn eq_u16_icase(a: u16, b: u16) -> bool {
+    if a == b {
+        return true;
+    }
+    if a < 128 && b < 128 {
+        return (a as u8).eq_ignore_ascii_case(&(b as u8));
+    }
+    match (char::from_u32(u32::from(a)), char::from_u32(u32::from(b))) {
+        (Some(ca), Some(cb)) => ca.to_lowercase().eq(cb.to_lowercase()),
+        _ => false,
+    }
+}
+
+fn fold_u16_alt_case(u: u16) -> Option<u16> {
+    if u < 128 {
+        let b = u as u8;
+        if b.is_ascii_lowercase() {
+            return Some(u16::from(b.to_ascii_uppercase()));
+        }
+        if b.is_ascii_uppercase() {
+            return Some(u16::from(b.to_ascii_lowercase()));
+        }
+        return None;
+    }
+    let ch = char::from_u32(u32::from(u))?;
+    let mut lower = ch.to_lowercase();
+    if let (Some(l), None) = (lower.next(), lower.next())
+        && l != ch
+    {
+        return u16::try_from(u32::from(l)).ok();
+    }
+    let mut upper = ch.to_uppercase();
+    if let (Some(up), None) = (upper.next(), upper.next())
+        && up != ch
+    {
+        return u16::try_from(u32::from(up)).ok();
+    }
+    None
+}
+
+fn is_line_terminator_u16(u: u16) -> bool {
+    matches!(u, 0x000A | 0x000D | 0x2028 | 0x2029)
 }
 
 fn is_digit_u16(u: u16) -> bool {
@@ -907,12 +1163,30 @@ enum Expr {
     AssertEnd,
     AssertWord(bool),
     Group(Box<Expr>),
+    Capture {
+        index: usize,
+        inner: Box<Expr>,
+    },
+    Backref(usize),
+    NamedBackref(String),
+    Lookaround {
+        positive: bool,
+        behind: bool,
+        inner: Box<Expr>,
+    },
+    Flags {
+        ignore_case: Option<bool>,
+        multiline: Option<bool>,
+        dot_all: Option<bool>,
+        inner: Box<Expr>,
+    },
     Concat(Vec<Expr>),
     Alt(Vec<Expr>),
     Repeat {
         inner: Box<Expr>,
         min: usize,
         max: Option<usize>,
+        lazy: bool,
     },
 }
 
@@ -921,6 +1195,9 @@ struct Parser {
     pos: usize,
     depth: usize,
     nodes: usize,
+    captures: usize,
+    named_captures: HashMap<String, usize>,
+    needs_backtrack: bool,
     deferred: bool,
 }
 
@@ -931,6 +1208,9 @@ impl Parser {
             pos: 0,
             depth: 0,
             nodes: 0,
+            captures: 0,
+            named_captures: HashMap::new(),
+            needs_backtrack: false,
             deferred: false,
         }
     }
@@ -954,15 +1234,21 @@ impl Parser {
         Some(u)
     }
 
-    fn parse(mut self) -> Result<Expr, CompileError> {
-        let expr = self.parse_alt()?;
+    fn parse(mut self) -> Result<(Expr, usize, bool), CompileError> {
+        let mut expr = self.parse_alt()?;
         if self.pos != self.units.len() {
             return Err(CompileError::InvalidSyntax);
         }
+        resolve_backrefs(
+            &mut expr,
+            self.captures,
+            &self.named_captures,
+            &mut self.deferred,
+        )?;
         if self.deferred {
             return Err(CompileError::DeferToServer);
         }
-        Ok(expr)
+        Ok((expr, self.captures, self.needs_backtrack))
     }
 
     fn parse_alt(&mut self) -> Result<Expr, CompileError> {
@@ -1024,10 +1310,12 @@ impl Parser {
         ) {
             return Err(CompileError::InvalidSyntax);
         }
-        // Optional lazy `?` suffix does not change boolean match acceptance.
-        if self.peek() == Some(b'?' as u16) {
+        let lazy = if self.peek() == Some(b'?' as u16) {
             self.pos += 1;
-        }
+            true
+        } else {
+            false
+        };
         if self
             .peek()
             .is_some_and(|u| u == b'*' as u16 || u == b'+' as u16 || u == b'?' as u16)
@@ -1043,6 +1331,7 @@ impl Parser {
                 inner: Box::new(expr),
                 min,
                 max,
+                lazy,
             })
         }
     }
@@ -1122,23 +1411,46 @@ impl Parser {
                 if self.depth > MAX_NESTING {
                     return Err(CompileError::DeferToServer);
                 }
-                let mut deferred_group = false;
-                if self.peek() == Some(b'?' as u16) {
+                enum GroupKind {
+                    NonCapturing,
+                    Capture(usize),
+                    Lookaround {
+                        positive: bool,
+                        behind: bool,
+                    },
+                    Flags {
+                        ignore_case: Option<bool>,
+                        multiline: Option<bool>,
+                        dot_all: Option<bool>,
+                    },
+                }
+                let kind = if self.peek() == Some(b'?' as u16) {
                     self.pos += 1;
                     match self.peek() {
                         Some(ch) if ch == b':' as u16 => {
                             self.pos += 1;
+                            GroupKind::NonCapturing
                         }
                         Some(ch) if ch == b'=' as u16 || ch == b'!' as u16 => {
+                            let positive = ch == b'=' as u16;
                             self.pos += 1;
-                            self.deferred = true;
-                            deferred_group = true;
+                            self.needs_backtrack = true;
+                            GroupKind::Lookaround {
+                                positive,
+                                behind: false,
+                            }
                         }
                         Some(ch) if ch == b'<' as u16 => {
                             self.pos += 1;
                             if matches!(self.peek(), Some(c) if c == b'=' as u16 || c == b'!' as u16)
                             {
+                                let positive = self.peek() == Some(b'=' as u16);
                                 self.pos += 1;
+                                self.needs_backtrack = true;
+                                GroupKind::Lookaround {
+                                    positive,
+                                    behind: true,
+                                }
                             } else {
                                 let name_start = self.pos;
                                 while let Some(c) = self.peek() {
@@ -1147,49 +1459,107 @@ impl Parser {
                                     }
                                     self.pos += 1;
                                 }
-                                if self.pos == name_start || self.next() != Some(b'>' as u16) {
+                                let name_end = self.pos;
+                                if name_end == name_start || self.next() != Some(b'>' as u16) {
                                     return Err(CompileError::InvalidSyntax);
                                 }
+                                let name_slice = &self.units[name_start..name_end];
+                                if is_digit_u16(name_slice[0])
+                                    || !name_slice
+                                        .iter()
+                                        .all(|&c| is_word_u16(c) || c == b'$' as u16)
+                                {
+                                    return Err(CompileError::InvalidSyntax);
+                                }
+                                let name = String::from_utf16_lossy(name_slice);
+                                self.captures += 1;
+                                let idx = self.captures;
+                                self.named_captures.entry(name).or_insert(idx);
+                                GroupKind::Capture(idx)
                             }
-                            self.deferred = true;
-                            deferred_group = true;
                         }
                         _ => {
-                            let saved = self.pos;
                             let mut seen_dash = false;
-                            let mut valid_mods = false;
+                            let mut ignore_case: Option<bool> = None;
+                            let mut multiline: Option<bool> = None;
+                            let mut dot_all: Option<bool> = None;
+                            let mut any_flag = false;
+                            let mut closed = false;
                             while let Some(c) = self.peek() {
                                 if c == b':' as u16 {
                                     self.pos += 1;
-                                    valid_mods = self.pos > saved + 1;
+                                    closed = any_flag;
                                     break;
                                 }
                                 if c == b'-' as u16 && !seen_dash {
                                     seen_dash = true;
                                     self.pos += 1;
-                                } else if matches!(c, 0x0069 | 0x006D | 0x0073) {
+                                } else if c == b'i' as u16 {
+                                    if ignore_case.is_some() {
+                                        return Err(CompileError::InvalidSyntax);
+                                    }
+                                    ignore_case = Some(!seen_dash);
+                                    any_flag = true;
+                                    self.pos += 1;
+                                } else if c == b'm' as u16 {
+                                    if multiline.is_some() {
+                                        return Err(CompileError::InvalidSyntax);
+                                    }
+                                    multiline = Some(!seen_dash);
+                                    any_flag = true;
+                                    self.pos += 1;
+                                } else if c == b's' as u16 {
+                                    if dot_all.is_some() {
+                                        return Err(CompileError::InvalidSyntax);
+                                    }
+                                    dot_all = Some(!seen_dash);
+                                    any_flag = true;
                                     self.pos += 1;
                                 } else {
                                     break;
                                 }
                             }
-                            if !valid_mods {
+                            if !closed {
                                 return Err(CompileError::InvalidSyntax);
                             }
-                            self.deferred = true;
-                            deferred_group = true;
+                            self.needs_backtrack = true;
+                            GroupKind::Flags {
+                                ignore_case,
+                                multiline,
+                                dot_all,
+                            }
                         }
                     }
-                }
+                } else {
+                    self.captures += 1;
+                    GroupKind::Capture(self.captures)
+                };
                 let inner = self.parse_alt()?;
                 self.depth -= 1;
                 if self.next() != Some(b')' as u16) {
                     return Err(CompileError::InvalidSyntax);
                 }
-                Ok(if deferred_group {
-                    Expr::Empty
-                } else {
-                    Expr::Group(Box::new(inner))
+                Ok(match kind {
+                    GroupKind::NonCapturing => Expr::Group(Box::new(inner)),
+                    GroupKind::Capture(index) => Expr::Capture {
+                        index,
+                        inner: Box::new(inner),
+                    },
+                    GroupKind::Lookaround { positive, behind } => Expr::Lookaround {
+                        positive,
+                        behind,
+                        inner: Box::new(inner),
+                    },
+                    GroupKind::Flags {
+                        ignore_case,
+                        multiline,
+                        dot_all,
+                    } => Expr::Flags {
+                        ignore_case,
+                        multiline,
+                        dot_all,
+                        inner: Box::new(inner),
+                    },
                 })
             }
             x if x == b'[' as u16 => self.parse_class(),
@@ -1228,8 +1598,35 @@ impl Parser {
             x if x == b'b' as u16 => Ok(Expr::AssertWord(true)),
             x if x == b'B' as u16 => Ok(Expr::AssertWord(false)),
             0x0031..=0x0039 => {
-                self.deferred = true;
-                Ok(Expr::Empty)
+                let mut val = (u - 0x0030) as usize;
+                while let Some(d) = self.peek().filter(|&d| is_digit_u16(d)) {
+                    self.pos += 1;
+                    val = val.saturating_mul(10).saturating_add((d - 0x0030) as usize);
+                }
+                self.needs_backtrack = true;
+                Ok(Expr::Backref(val))
+            }
+            x if x == b'k' as u16 => {
+                if self.peek() == Some(b'<' as u16) {
+                    self.pos += 1;
+                    let start = self.pos;
+                    while let Some(c) = self.peek() {
+                        if c == b'>' as u16 {
+                            break;
+                        }
+                        self.pos += 1;
+                    }
+                    let end = self.pos;
+                    if end == start || self.next() != Some(b'>' as u16) {
+                        return Err(CompileError::InvalidSyntax);
+                    }
+                    let name = String::from_utf16_lossy(&self.units[start..end]);
+                    self.needs_backtrack = true;
+                    Ok(Expr::NamedBackref(name))
+                } else {
+                    self.deferred = true;
+                    Ok(Expr::Empty)
+                }
             }
             other => Ok(match self.decode_u16_escape(other)? {
                 Some(ch) => Expr::Literal(ch),
@@ -1377,8 +1774,612 @@ enum Inst {
     Match,
 }
 
-pub struct Pattern {
-    insts: Vec<Inst>,
+const MAX_BT_CAPTURES: usize = 64;
+const MAX_BT_STACK: usize = 4_096;
+const MAX_LOOKAROUND_DEPTH: usize = 16;
+
+#[derive(Clone, Copy, Default)]
+struct VmFlags {
+    ignore_case: bool,
+    multiline: bool,
+    dot_all: bool,
+}
+
+#[derive(Clone, Debug)]
+enum VmInst {
+    Literal {
+        unit: u16,
+        ignore_case: bool,
+    },
+    Any {
+        dot_all: bool,
+    },
+    Class {
+        negated: bool,
+        items: Arc<[ClassItem]>,
+        ignore_case: bool,
+    },
+    AssertStart {
+        multiline: bool,
+    },
+    AssertEnd {
+        multiline: bool,
+    },
+    AssertWord(bool),
+    SaveStart(usize),
+    SaveEnd(usize),
+    ClearCaps(usize, usize),
+    ZeroGuardStart(usize),
+    ZeroGuardEnd(usize),
+    Backref {
+        index: usize,
+        ignore_case: bool,
+    },
+    Lookaround {
+        positive: bool,
+        behind: bool,
+        sub: Arc<[VmInst]>,
+        zero_slots: usize,
+    },
+    Split(usize, usize),
+    Jmp(usize),
+    Match,
+}
+
+enum Pattern {
+    Nfa(Vec<Inst>),
+    Backtrack {
+        insts: Arc<[VmInst]>,
+        captures: usize,
+        zero_slots: usize,
+    },
+}
+
+fn resolve_backrefs(
+    expr: &mut Expr,
+    captures: usize,
+    named: &HashMap<String, usize>,
+    deferred: &mut bool,
+) -> Result<(), CompileError> {
+    match expr {
+        Expr::Backref(n) => {
+            if *n == 0 || *n > captures {
+                *deferred = true;
+            }
+            Ok(())
+        }
+        Expr::NamedBackref(name) => {
+            if let Some(&idx) = named.get(name) {
+                *expr = Expr::Backref(idx);
+                Ok(())
+            } else {
+                Err(CompileError::InvalidSyntax)
+            }
+        }
+        Expr::Group(inner)
+        | Expr::Capture { inner, .. }
+        | Expr::Lookaround { inner, .. }
+        | Expr::Flags { inner, .. }
+        | Expr::Repeat { inner, .. } => resolve_backrefs(inner, captures, named, deferred),
+        Expr::Concat(items) | Expr::Alt(items) => {
+            for item in items {
+                resolve_backrefs(item, captures, named, deferred)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn capture_range(expr: &Expr) -> Option<(usize, usize)> {
+    match expr {
+        Expr::Capture { index, inner } => {
+            let mut lo = *index;
+            let mut hi = *index;
+            if let Some((ilo, ihi)) = capture_range(inner) {
+                lo = lo.min(ilo);
+                hi = hi.max(ihi);
+            }
+            Some((lo, hi))
+        }
+        Expr::Group(inner)
+        | Expr::Lookaround { inner, .. }
+        | Expr::Flags { inner, .. }
+        | Expr::Repeat { inner, .. } => capture_range(inner),
+        Expr::Concat(items) | Expr::Alt(items) => {
+            let mut bounds: Option<(usize, usize)> = None;
+            for item in items {
+                if let Some((ilo, ihi)) = capture_range(item) {
+                    bounds = Some(match bounds {
+                        Some((lo, hi)) => (lo.min(ilo), hi.max(ihi)),
+                        None => (ilo, ihi),
+                    });
+                }
+            }
+            bounds
+        }
+        _ => None,
+    }
+}
+
+fn push_vm_inst(insts: &mut Vec<VmInst>, inst: VmInst) -> Result<usize, CompileError> {
+    if insts.len() >= MAX_STATES {
+        return Err(CompileError::DeferToServer);
+    }
+    let idx = insts.len();
+    insts.push(inst);
+    Ok(idx)
+}
+
+fn compile_vm_expr(
+    expr: &Expr,
+    flags: VmFlags,
+    insts: &mut Vec<VmInst>,
+    zero_slots: &mut usize,
+    work: &mut usize,
+) -> Result<(), CompileError> {
+    charge_work(work)?;
+    match expr {
+        Expr::Empty => Ok(()),
+        Expr::Literal(unit) => {
+            push_vm_inst(
+                insts,
+                VmInst::Literal {
+                    unit: *unit,
+                    ignore_case: flags.ignore_case,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::Any => {
+            push_vm_inst(
+                insts,
+                VmInst::Any {
+                    dot_all: flags.dot_all,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::Class { negated, items } => {
+            charge_work_n(work, items.len())?;
+            push_vm_inst(
+                insts,
+                VmInst::Class {
+                    negated: *negated,
+                    items: Arc::clone(items),
+                    ignore_case: flags.ignore_case,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::AssertStart => {
+            push_vm_inst(
+                insts,
+                VmInst::AssertStart {
+                    multiline: flags.multiline,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::AssertEnd => {
+            push_vm_inst(
+                insts,
+                VmInst::AssertEnd {
+                    multiline: flags.multiline,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::AssertWord(b) => {
+            push_vm_inst(insts, VmInst::AssertWord(*b))?;
+            Ok(())
+        }
+        Expr::Group(inner) => compile_vm_expr(inner, flags, insts, zero_slots, work),
+        Expr::Capture { index, inner } => {
+            push_vm_inst(insts, VmInst::SaveStart(*index))?;
+            compile_vm_expr(inner, flags, insts, zero_slots, work)?;
+            push_vm_inst(insts, VmInst::SaveEnd(*index))?;
+            Ok(())
+        }
+        Expr::Backref(index) => {
+            push_vm_inst(
+                insts,
+                VmInst::Backref {
+                    index: *index,
+                    ignore_case: flags.ignore_case,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::NamedBackref(_) => Err(CompileError::InvalidSyntax),
+        Expr::Lookaround {
+            positive,
+            behind,
+            inner,
+        } => {
+            let mut sub = Vec::new();
+            let mut sub_zeros = 0usize;
+            compile_vm_expr(inner, flags, &mut sub, &mut sub_zeros, work)?;
+            push_vm_inst(&mut sub, VmInst::Match)?;
+            push_vm_inst(
+                insts,
+                VmInst::Lookaround {
+                    positive: *positive,
+                    behind: *behind,
+                    sub: Arc::from(sub),
+                    zero_slots: sub_zeros,
+                },
+            )?;
+            Ok(())
+        }
+        Expr::Flags {
+            ignore_case,
+            multiline,
+            dot_all,
+            inner,
+        } => {
+            let child_flags = VmFlags {
+                ignore_case: ignore_case.unwrap_or(flags.ignore_case),
+                multiline: multiline.unwrap_or(flags.multiline),
+                dot_all: dot_all.unwrap_or(flags.dot_all),
+            };
+            compile_vm_expr(inner, child_flags, insts, zero_slots, work)
+        }
+        Expr::Concat(items) => {
+            for item in items {
+                compile_vm_expr(item, flags, insts, zero_slots, work)?;
+            }
+            Ok(())
+        }
+        Expr::Alt(branches) => {
+            let mut jmp_ends = Vec::with_capacity(branches.len());
+            for (i, branch) in branches.iter().enumerate() {
+                if i + 1 < branches.len() {
+                    let split = push_vm_inst(insts, VmInst::Split(0, 0))?;
+                    let left = insts.len();
+                    compile_vm_expr(branch, flags, insts, zero_slots, work)?;
+                    let jmp = push_vm_inst(insts, VmInst::Jmp(0))?;
+                    let right = insts.len();
+                    insts[split] = VmInst::Split(left, right);
+                    jmp_ends.push(jmp);
+                } else {
+                    compile_vm_expr(branch, flags, insts, zero_slots, work)?;
+                }
+            }
+            let end = insts.len();
+            for jmp in jmp_ends {
+                insts[jmp] = VmInst::Jmp(end);
+            }
+            Ok(())
+        }
+        Expr::Repeat {
+            inner,
+            min,
+            max,
+            lazy,
+        } => {
+            let cap_bounds = capture_range(inner);
+            for _ in 0..*min {
+                charge_work(work)?;
+                if let Some((lo, hi)) = cap_bounds {
+                    push_vm_inst(insts, VmInst::ClearCaps(lo, hi))?;
+                }
+                compile_vm_expr(inner, flags, insts, zero_slots, work)?;
+            }
+            match max {
+                None => {
+                    if *zero_slots >= MAX_BT_CAPTURES {
+                        return Err(CompileError::DeferToServer);
+                    }
+                    let slot = *zero_slots;
+                    *zero_slots += 1;
+                    let split = push_vm_inst(insts, VmInst::Split(0, 0))?;
+                    let body = insts.len();
+                    push_vm_inst(insts, VmInst::ZeroGuardStart(slot))?;
+                    if let Some((lo, hi)) = cap_bounds {
+                        push_vm_inst(insts, VmInst::ClearCaps(lo, hi))?;
+                    }
+                    compile_vm_expr(inner, flags, insts, zero_slots, work)?;
+                    push_vm_inst(insts, VmInst::ZeroGuardEnd(slot))?;
+                    push_vm_inst(insts, VmInst::Jmp(split))?;
+                    let end = insts.len();
+                    insts[split] = if *lazy {
+                        VmInst::Split(end, body)
+                    } else {
+                        VmInst::Split(body, end)
+                    };
+                }
+                Some(hi) => {
+                    for _ in *min..*hi {
+                        charge_work(work)?;
+                        let split = push_vm_inst(insts, VmInst::Split(0, 0))?;
+                        let body = insts.len();
+                        if let Some((lo, hi_cap)) = cap_bounds {
+                            push_vm_inst(insts, VmInst::ClearCaps(lo, hi_cap))?;
+                        }
+                        compile_vm_expr(inner, flags, insts, zero_slots, work)?;
+                        let end = insts.len();
+                        insts[split] = if *lazy {
+                            VmInst::Split(end, body)
+                        } else {
+                            VmInst::Split(body, end)
+                        };
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone)]
+struct BtFrame {
+    pc: usize,
+    pos: usize,
+    caps: Vec<Option<(usize, usize)>>,
+    open: Vec<Option<usize>>,
+    zeros: Vec<Option<usize>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_vm(
+    insts: &[VmInst],
+    captures: usize,
+    zero_slots: usize,
+    units: &[u16],
+    start_pos: usize,
+    required_end: Option<usize>,
+    init_caps: Option<&[Option<(usize, usize)>]>,
+    budget: &mut MatchBudget,
+    depth: usize,
+) -> Option<Option<Vec<Option<(usize, usize)>>>> {
+    if depth > MAX_LOOKAROUND_DEPTH {
+        return None;
+    }
+    let mut stack = Vec::with_capacity(32);
+    let mut caps = vec![None; captures];
+    if let Some(seed) = init_caps {
+        let len = seed.len().min(captures);
+        caps[..len].copy_from_slice(&seed[..len]);
+    }
+    stack.push(BtFrame {
+        pc: 0,
+        pos: start_pos,
+        caps,
+        open: vec![None; captures],
+        zeros: vec![None; zero_slots],
+    });
+    while let Some(mut frame) = stack.pop() {
+        loop {
+            if !budget.consume(1) {
+                return None;
+            }
+            let Some(inst) = insts.get(frame.pc) else {
+                break;
+            };
+            match inst {
+                VmInst::Match => {
+                    if required_end.is_none_or(|end| frame.pos == end) {
+                        return Some(Some(frame.caps));
+                    }
+                    break;
+                }
+                VmInst::Jmp(target) => {
+                    frame.pc = *target;
+                }
+                VmInst::Split(first, second) => {
+                    if stack.len() >= MAX_BT_STACK {
+                        return None;
+                    }
+                    let mut alt = frame.clone();
+                    alt.pc = *second;
+                    stack.push(alt);
+                    frame.pc = *first;
+                }
+                VmInst::Literal { unit, ignore_case } => {
+                    let Some(&u) = units.get(frame.pos) else {
+                        break;
+                    };
+                    let ok = if *ignore_case {
+                        eq_u16_icase(u, *unit)
+                    } else {
+                        u == *unit
+                    };
+                    if !ok {
+                        break;
+                    }
+                    frame.pos += 1;
+                    frame.pc += 1;
+                }
+                VmInst::Any { dot_all } => {
+                    let Some(&u) = units.get(frame.pos) else {
+                        break;
+                    };
+                    if !*dot_all && is_line_terminator_u16(u) {
+                        break;
+                    }
+                    frame.pos += 1;
+                    frame.pc += 1;
+                }
+                VmInst::Class {
+                    negated,
+                    items,
+                    ignore_case,
+                } => {
+                    let Some(&u) = units.get(frame.pos) else {
+                        break;
+                    };
+                    if !budget.consume(items.len()) {
+                        return None;
+                    }
+                    let hit = items.iter().any(|item| {
+                        if *ignore_case {
+                            item.matches_icase(u)
+                        } else {
+                            item.matches(u)
+                        }
+                    });
+                    if (*negated && hit) || (!*negated && !hit) {
+                        break;
+                    }
+                    frame.pos += 1;
+                    frame.pc += 1;
+                }
+                VmInst::AssertStart { multiline } => {
+                    let ok = frame.pos == 0
+                        || (*multiline
+                            && frame
+                                .pos
+                                .checked_sub(1)
+                                .and_then(|i| units.get(i))
+                                .is_some_and(|&u| is_line_terminator_u16(u)));
+                    if !ok {
+                        break;
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::AssertEnd { multiline } => {
+                    let ok = frame.pos == units.len()
+                        || (*multiline
+                            && units
+                                .get(frame.pos)
+                                .is_some_and(|&u| is_line_terminator_u16(u)));
+                    if !ok {
+                        break;
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::AssertWord(want_boundary) => {
+                    let prev = frame.pos.checked_sub(1).and_then(|i| units.get(i).copied());
+                    let curr = units.get(frame.pos).copied();
+                    let is_boundary =
+                        prev.is_some_and(is_word_u16) != curr.is_some_and(is_word_u16);
+                    if is_boundary != *want_boundary {
+                        break;
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::SaveStart(index) => {
+                    if let Some(slot) = frame.open.get_mut(index.saturating_sub(1)) {
+                        *slot = Some(frame.pos);
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::SaveEnd(index) => {
+                    let i = index.saturating_sub(1);
+                    if let Some(start) = frame.open.get(i).copied().flatten()
+                        && let Some(slot) = frame.caps.get_mut(i)
+                    {
+                        *slot = Some((start, frame.pos));
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::ClearCaps(lo, hi) => {
+                    for idx in *lo..=*hi {
+                        let i = idx.saturating_sub(1);
+                        if let Some(slot) = frame.caps.get_mut(i) {
+                            *slot = None;
+                        }
+                        if let Some(slot) = frame.open.get_mut(i) {
+                            *slot = None;
+                        }
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::ZeroGuardStart(slot) => {
+                    if let Some(cell) = frame.zeros.get_mut(*slot) {
+                        *cell = Some(frame.pos);
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::ZeroGuardEnd(slot) => {
+                    if frame.zeros.get(*slot).copied().flatten() == Some(frame.pos) {
+                        break;
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::Backref { index, ignore_case } => {
+                    let captured = frame.caps.get(index.saturating_sub(1)).copied().flatten();
+                    if let Some((start, end)) = captured {
+                        let len = end.saturating_sub(start);
+                        if !budget.consume(len.max(1)) {
+                            return None;
+                        }
+                        let Some(target) = units.get(frame.pos..frame.pos + len) else {
+                            break;
+                        };
+                        let source = &units[start..end];
+                        let matched = if *ignore_case {
+                            source
+                                .iter()
+                                .zip(target.iter())
+                                .all(|(&a, &b)| eq_u16_icase(a, b))
+                        } else {
+                            source == target
+                        };
+                        if !matched {
+                            break;
+                        }
+                        frame.pos += len;
+                    }
+                    frame.pc += 1;
+                }
+                VmInst::Lookaround {
+                    positive,
+                    behind,
+                    sub,
+                    zero_slots: sub_zeros,
+                } => {
+                    let sub_match = if *behind {
+                        let mut found = None;
+                        for s in (0..=frame.pos).rev() {
+                            if !budget.consume(1) {
+                                return None;
+                            }
+                            let res = run_vm(
+                                sub,
+                                captures,
+                                *sub_zeros,
+                                units,
+                                s,
+                                Some(frame.pos),
+                                Some(&frame.caps),
+                                budget,
+                                depth + 1,
+                            )?;
+                            if let Some(new_caps) = res {
+                                found = Some(new_caps);
+                                break;
+                            }
+                        }
+                        found
+                    } else {
+                        run_vm(
+                            sub,
+                            captures,
+                            *sub_zeros,
+                            units,
+                            frame.pos,
+                            None,
+                            Some(&frame.caps),
+                            budget,
+                            depth + 1,
+                        )?
+                    };
+                    if *positive {
+                        let Some(new_caps) = sub_match else {
+                            break;
+                        };
+                        frame.caps = new_caps;
+                    } else if sub_match.is_some() {
+                        break;
+                    }
+                    frame.pc += 1;
+                }
+            }
+        }
+    }
+    Some(None)
 }
 
 impl Pattern {
@@ -1386,23 +2387,75 @@ impl Pattern {
         if src.len() > MAX_PATTERN_BYTES {
             return Err(CompileError::DeferToServer);
         }
-        let expr = Parser::new(src).parse()?;
+        let (expr, captures, needs_backtrack) = Parser::new(src).parse()?;
+        if !needs_backtrack {
+            let mut insts = Vec::new();
+            let mut work = 0usize;
+            compile_expr(&expr, &mut insts, &mut work)?;
+            push_inst(&mut insts, Inst::Match)?;
+            return Ok(Self::Nfa(insts));
+        }
+        if captures > MAX_BT_CAPTURES {
+            return Err(CompileError::DeferToServer);
+        }
         let mut insts = Vec::new();
+        let mut zero_slots = 0usize;
         let mut work = 0usize;
-        compile_expr(&expr, &mut insts, &mut work)?;
-        push_inst(&mut insts, Inst::Match)?;
-        Ok(Self { insts })
+        compile_vm_expr(
+            &expr,
+            VmFlags::default(),
+            &mut insts,
+            &mut zero_slots,
+            &mut work,
+        )?;
+        push_vm_inst(&mut insts, VmInst::Match)?;
+        Ok(Self::Backtrack {
+            insts: Arc::from(insts),
+            captures,
+            zero_slots,
+        })
     }
 
     fn is_match_budgeted(&self, text: &str, budget: &mut MatchBudget) -> Option<bool> {
+        match self {
+            Self::Nfa(insts) => Self::is_match_nfa(insts, text, budget),
+            Self::Backtrack {
+                insts,
+                captures,
+                zero_slots,
+            } => {
+                let units: Vec<u16> = text.encode_utf16().collect();
+                for start in 0..=units.len() {
+                    let res = run_vm(
+                        insts,
+                        *captures,
+                        *zero_slots,
+                        &units,
+                        start,
+                        None,
+                        None,
+                        budget,
+                        0,
+                    )?;
+                    if res.is_some() {
+                        return Some(true);
+                    }
+                }
+                Some(false)
+            }
+        }
+    }
+
+    fn is_match_nfa(insts: &[Inst], text: &str, budget: &mut MatchBudget) -> Option<bool> {
         let units: Vec<u16> = text.encode_utf16().collect();
-        let n = self.insts.len();
+        let n = insts.len();
         let mut visited = vec![0u32; n];
         let mut stamp = 1u32;
         let mut current = Vec::with_capacity(n.min(64));
         let mut next = Vec::with_capacity(n.min(64));
         let mut stack = Vec::with_capacity(n.min(64));
-        if !self.add_state(
+        if !Self::add_state(
+            insts,
             0,
             0,
             &units,
@@ -1414,10 +2467,7 @@ impl Pattern {
         ) {
             return None;
         }
-        if current
-            .iter()
-            .any(|&pc| matches!(self.insts[pc], Inst::Match))
-        {
+        if current.iter().any(|&pc| matches!(insts[pc], Inst::Match)) {
             return Some(true);
         }
         for (pos, &unit) in units.iter().enumerate() {
@@ -1433,9 +2483,9 @@ impl Pattern {
                 if !budget.consume(1) {
                     return None;
                 }
-                let matched = match &self.insts[pc] {
+                let matched = match &insts[pc] {
                     Inst::Literal(u) => unit == *u,
-                    Inst::Any => !matches!(unit, 0x000A | 0x000D | 0x2028 | 0x2029),
+                    Inst::Any => !is_line_terminator_u16(unit),
                     Inst::Class { negated, items } => {
                         if !budget.consume(items.len()) {
                             return None;
@@ -1446,7 +2496,8 @@ impl Pattern {
                     _ => false,
                 };
                 if matched
-                    && !self.add_state(
+                    && !Self::add_state(
+                        insts,
                         pc + 1,
                         pos + 1,
                         &units,
@@ -1461,7 +2512,8 @@ impl Pattern {
                 }
             }
             // Unanchored ECMAScript RegExp.test semantics: a match may start at any UTF-16 offset.
-            if !self.add_state(
+            if !Self::add_state(
+                insts,
                 0,
                 pos + 1,
                 &units,
@@ -1474,10 +2526,7 @@ impl Pattern {
                 return None;
             }
             std::mem::swap(&mut current, &mut next);
-            if current
-                .iter()
-                .any(|&pc| matches!(self.insts[pc], Inst::Match))
-            {
+            if current.iter().any(|&pc| matches!(insts[pc], Inst::Match)) {
                 return Some(true);
             }
         }
@@ -1486,7 +2535,7 @@ impl Pattern {
 
     #[allow(clippy::too_many_arguments)]
     fn add_state(
-        &self,
+        insts: &[Inst],
         start: usize,
         pos: usize,
         units: &[u16],
@@ -1502,11 +2551,11 @@ impl Pattern {
             if !budget.consume(1) {
                 return false;
             }
-            if pc >= self.insts.len() || visited[pc] == stamp {
+            if pc >= insts.len() || visited[pc] == stamp {
                 continue;
             }
             visited[pc] = stamp;
-            match self.insts[pc] {
+            match insts[pc] {
                 Inst::Jmp(target) => stack.push(target),
                 Inst::Split(a, b) => {
                     stack.push(b);
@@ -1595,7 +2644,10 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<
             push_inst(insts, Inst::AssertWord(*b))?;
             Ok(())
         }
-        Expr::Group(inner) => compile_expr(inner, insts, work),
+        Expr::Group(inner) | Expr::Capture { inner, .. } => compile_expr(inner, insts, work),
+        Expr::Backref(_) | Expr::NamedBackref(_) | Expr::Lookaround { .. } | Expr::Flags { .. } => {
+            Err(CompileError::DeferToServer)
+        }
         Expr::Concat(items) => {
             for item in items {
                 compile_expr(item, insts, work)?;
@@ -1623,7 +2675,12 @@ fn compile_expr(expr: &Expr, insts: &mut Vec<Inst>, work: &mut usize) -> Result<
             }
             Ok(())
         }
-        Expr::Repeat { inner, min, max } => {
+        Expr::Repeat {
+            inner,
+            min,
+            max,
+            lazy: _,
+        } => {
             for _ in 0..*min {
                 charge_work(work)?;
                 compile_expr(inner, insts, work)?;

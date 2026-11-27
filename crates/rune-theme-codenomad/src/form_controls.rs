@@ -618,7 +618,15 @@ pub fn form_textarea<S: 'static>(
         .metrics
         .text_area
         .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(&k));
-    let mut input = rune::text_input(edit, metrics.style)
+    let mut unfocused_edit;
+    let shown_edit = if disabled && edit.focused {
+        unfocused_edit = edit.clone();
+        unfocused_edit.focused = false;
+        &unfocused_edit
+    } else {
+        edit
+    };
+    let mut input = rune::text_input(shown_edit, metrics.style)
         .key("input")
         .w_full()
         .color(ink)
@@ -868,20 +876,8 @@ pub fn option_description_window(desc: &str, reveal_steps: usize) -> (String, us
     }
 }
 
-fn bounded_a11y_snippet(raw: &str, max_chars: usize) -> String {
-    let mut chars = raw.chars();
-    let prefix: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else {
-        prefix
-    }
-}
-
 fn join_a11y_description(visible: Option<&str>, note: Option<&str>) -> Option<String> {
-    let bounded_visible =
-        non_empty(visible).map(|v| bounded_a11y_snippet(v, OPTION_DESCRIPTION_INITIAL_CHARS));
-    match (bounded_visible.as_deref(), non_empty(note)) {
+    match (non_empty(visible), non_empty(note)) {
         (Some(a), Some(b)) => Some(format!("{a} · {b}")),
         (Some(a), None) => Some(a.to_string()),
         (None, Some(b)) => Some(b.to_string()),

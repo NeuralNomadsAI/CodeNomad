@@ -354,8 +354,9 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let valid = agent_forms::normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let custom_active = allow_custom && !d.custom.text.is_empty();
-                let has_choice = (!custom_active && d.choice.is_some())
-                    || (custom_active && valid.iter().any(|o| o.value == d.custom.text));
+                let has_answer = d.choice.is_some()
+                    || (allow_custom
+                        && (!d.custom.text.is_empty() || (!d.is_dirty() && d.has_string_value)));
                 let shared_required = required && !valid.is_empty() && allow_custom;
                 let req_note = required.then(|| t("toolCall.question.status.required"));
                 let shared_req_note =
@@ -443,7 +444,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                             &agent_forms::clear_option_key(key),
                             clear_label,
                             &clear_accessible,
-                            locked || !has_choice,
+                            locked || !has_answer,
                             crate::screen::action_tx(&scope, move |s: &mut State, tx| {
                                 if let Some(d) = s
                                     .agent
