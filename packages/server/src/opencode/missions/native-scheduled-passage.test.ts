@@ -140,6 +140,10 @@ async function fixture(existing = false, author?: string) {
       const original = snapshot()
       const checks: (() => void)[] = []
       return { family: () => [...states.keys()].map(id => [id, -1, null, null, 0] as [string, number, null, null, number]),
+        absentSession: (id: string) => {
+          checks.push(() => assert.equal(sessions.has(id), false, "Selected native session exists"))
+          assert.equal(sessions.has(id), false, "Selected native session exists")
+        },
         coordinator() {},
         journal(prefix: string, except?: string) {
           const rows = () => JSON.stringify([...values].filter(([key]) => key.startsWith(prefix) && key !== except))
@@ -306,9 +310,28 @@ test("a quiet inherited descendant in another worktree does not block settlement
 
 test("a missing selected coordinator is never recreated and original proof still prevents replay", async () => {
   const f = await fixture(true)
+  const original = (await f.read()).pending!
   f.sessions.delete("ses_existing")
-  await assert.rejects(f.admit(), /missing/)
-  assert.equal(f.counts().creates, 0)
+  await f.use(async input => {
+    const admission = await admitNativeScheduledPassage(input)
+    assert.equal(admission.kind, "not-started")
+    assert.equal(admission.current(), true)
+    // If the deleted session reappears before publication, the absence fence aborts the CAS.
+    f.sessions.set(original.coordinatorSessionID, { id: original.coordinatorSessionID, projectID: "project", location: { directory: "/project" } })
+    assert.throws(() => admission.current(), /Native state changed|Selected native session exists/)
+  })
+  assert.deepEqual(f.counts(), { creates: 0, sends: 0, environments: 0 })
+  // Once admission has been attempted or recorded, absence must preserve uncertainty.
+  f.sessions.delete("ses_existing")
+  let doc = await f.read()
+  await f.store.change(doc.id, doc.revision, current, next => {
+    next.pending!.coordinatorBaseline = [[original.coordinatorSessionID, -1, null, null, 0]]
+    next.pending!.admissionAttempted = true
+  })
+  assert.equal((await f.admit()).kind, "unknown")
+  doc = await f.read()
+  await f.store.change(doc.id, doc.revision, current, next => { changes.admitted(next, original.id, at + 1500) })
+  assert.equal((await f.admit()).kind, "unknown")
   const g = await fixture(true); g.crash = true
   await assert.rejects(g.admit(), /lost native ACK/)
   const pending = (await g.read()).pending!
