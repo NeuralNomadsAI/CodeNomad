@@ -478,11 +478,79 @@ fn remove_promoted_lines(edit: &mut TextEdit, mut should_remove: impl FnMut(&str
     true
 }
 
+const MAX_PROVENANCE_ENTRIES: usize = 256;
+const MAX_PROVENANCE_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BoundedProvenance {
+    values: BTreeSet<String>,
+    bytes: usize,
+    exhausted: bool,
+}
+
+impl BoundedProvenance {
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty() && !self.exhausted
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.exhausted
+    }
+
+    pub fn contains(&self, value: &str) -> bool {
+        self.exhausted || self.values.contains(value)
+    }
+
+    pub fn insert(&mut self, value: String) {
+        if self.exhausted || self.values.contains(&value) {
+            return;
+        }
+        let next_bytes = self.bytes.saturating_add(value.len());
+        if self.values.len() >= MAX_PROVENANCE_ENTRIES || next_bytes > MAX_PROVENANCE_BYTES {
+            self.exhausted = true;
+            self.values.clear();
+            self.bytes = 0;
+            return;
+        }
+        self.bytes = next_bytes;
+        self.values.insert(value);
+    }
+
+    pub fn extend_from_iter<I: IntoIterator<Item = String>>(&mut self, iter: I) {
+        for value in iter {
+            if self.exhausted {
+                break;
+            }
+            self.insert(value);
+        }
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        if other.exhausted {
+            self.exhausted = true;
+            self.values.clear();
+            self.bytes = 0;
+            return;
+        }
+        self.extend_from_iter(other.values);
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[cfg(test)]
+    pub fn total_bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
 fn strip_leaked_defaults(
     field: &Value,
     next: &mut Draft,
-    choice_provenance: &BTreeSet<String>,
-    hidden_provenance: &BTreeSet<String>,
+    choice_provenance: &BoundedProvenance,
+    hidden_provenance: &BoundedProvenance,
 ) {
     if field["hidden"] == true || (choice_provenance.is_empty() && hidden_provenance.is_empty()) {
         return;
@@ -526,28 +594,28 @@ fn strip_leaked_defaults(
     }
 }
 
-fn collect_choice_provenance(draft: &mut Draft) -> BTreeSet<String> {
+fn collect_choice_provenance(draft: &mut Draft) -> BoundedProvenance {
     let mut provenance = std::mem::take(&mut draft.prior_choice_values);
     if matches!(
         draft.kind,
         Some(FieldKind::StringOptions | FieldKind::Multiselect)
     ) {
         if let Some(prev_opts) = draft.declared_options.take() {
-            provenance.extend(prev_opts);
+            provenance.extend_from_iter(prev_opts);
         }
         if let Some(prev_choice) = draft.choice.take() {
             provenance.insert(prev_choice);
         }
-        provenance.extend(draft.selected.iter().cloned());
+        provenance.extend_from_iter(draft.selected.iter().cloned());
     }
     provenance
 }
 
-fn collect_hidden_provenance(draft: &mut Draft) -> BTreeSet<String> {
+fn collect_hidden_provenance(draft: &mut Draft) -> BoundedProvenance {
     let mut provenance = std::mem::take(&mut draft.prior_hidden_values);
     if draft.hidden_only {
         if let Some(items) = &draft.hidden_multiselect {
-            provenance.extend(items.iter().cloned());
+            provenance.extend_from_iter(items.iter().cloned());
         }
         if let Some(val) = draft.hidden_value.as_ref() {
             provenance.insert(val.clone());
@@ -588,8 +656,8 @@ pub struct Draft {
     pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
-    pub prior_choice_values: BTreeSet<String>,
-    pub prior_hidden_values: BTreeSet<String>,
+    pub prior_choice_values: BoundedProvenance,
+    pub prior_hidden_values: BoundedProvenance,
     pub hidden_value: Option<String>,
     pub hidden_only: bool,
     pub kind: Option<FieldKind>,
@@ -886,8 +954,8 @@ impl Default for Draft {
             hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
-            prior_choice_values: BTreeSet::new(),
-            prior_hidden_values: BTreeSet::new(),
+            prior_choice_values: BoundedProvenance::default(),
+            prior_hidden_values: BoundedProvenance::default(),
             hidden_value: None,
             hidden_only: false,
             kind: None,
@@ -929,7 +997,7 @@ fn fresh_draft(field: &Value) -> Draft {
     let value = &field["default"];
     if field["type"] == "multiselect" {
         if let Some(opts) = &declared {
-            d.prior_choice_values.extend(opts.iter().cloned());
+            d.prior_choice_values.extend_from_iter(opts.iter().cloned());
         }
         if hidden {
             if let Some(values) = value.as_array() {
@@ -1044,7 +1112,7 @@ fn fresh_draft(field: &Value) -> Draft {
         }
     } else if field["type"] == "string" && has_declared_options(field) {
         if let Some(opts) = &declared {
-            d.prior_choice_values.extend(opts.iter().cloned());
+            d.prior_choice_values.extend_from_iter(opts.iter().cloned());
         }
         if let Some(raw) = value.as_str() {
             if hidden {
@@ -1141,8 +1209,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 let choice_provenance = collect_choice_provenance(draft);
                 let mut next = fresh_draft(field);
                 strip_leaked_defaults(field, &mut next, &choice_provenance, &hidden_provenance);
-                next.prior_choice_values.extend(choice_provenance);
-                next.prior_hidden_values.extend(hidden_provenance);
+                next.prior_choice_values.merge(choice_provenance);
+                next.prior_hidden_values.merge(hidden_provenance);
                 *draft = next;
                 continue;
             }
@@ -1171,6 +1239,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.hidden_value = None;
                             draft.prior_choice_values = choice_provenance;
                             draft.prior_hidden_values = hidden_provenance;
+                            draft.option_desc_reveals.clear();
                             draft.kind = Some(kind);
                             continue;
                         }
@@ -1181,8 +1250,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             &choice_provenance,
                             &hidden_provenance,
                         );
-                        next.prior_choice_values.extend(choice_provenance);
-                        next.prior_hidden_values.extend(hidden_provenance);
+                        next.prior_choice_values.merge(choice_provenance);
+                        next.prior_hidden_values.merge(hidden_provenance);
                         *draft = next;
                         continue;
                     }
@@ -1195,8 +1264,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                                 &choice_provenance,
                                 &hidden_provenance,
                             );
-                            next.prior_choice_values.extend(choice_provenance);
-                            next.prior_hidden_values.extend(hidden_provenance);
+                            next.prior_choice_values.merge(choice_provenance);
+                            next.prior_hidden_values.merge(hidden_provenance);
                             *draft = next;
                             continue;
                         }
@@ -1213,8 +1282,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             &choice_provenance,
                             &hidden_provenance,
                         );
-                        next.prior_choice_values.extend(choice_provenance);
-                        next.prior_hidden_values.extend(hidden_provenance);
+                        next.prior_choice_values.merge(choice_provenance);
+                        next.prior_hidden_values.merge(hidden_provenance);
                         *draft = next;
                         continue;
                     }
@@ -1228,7 +1297,9 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
             let current_options = declared_option_set(field);
             if kind == FieldKind::Multiselect {
                 if let Some(opts) = &current_options {
-                    draft.prior_choice_values.extend(opts.iter().cloned());
+                    draft
+                        .prior_choice_values
+                        .extend_from_iter(opts.iter().cloned());
                 }
                 if !draft.edit.text.is_empty() {
                     draft.edit = TextEdit::new("");
@@ -1359,7 +1430,9 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                         && prev_options.is_none_or(|prev| !prev.contains(val))
                 };
                 if let Some(opts) = &current_options {
-                    draft.prior_choice_values.extend(opts.iter().cloned());
+                    draft
+                        .prior_choice_values
+                        .extend_from_iter(opts.iter().cloned());
                 }
                 if draft
                     .choice
@@ -1422,6 +1495,11 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     draft.custom = TextEdit::new("");
                     draft.custom_baseline.clear();
                 }
+            }
+            if let Some(opts) = &current_options {
+                draft.option_desc_reveals.retain(|k, _| opts.contains(k));
+            } else {
+                draft.option_desc_reveals.clear();
             }
             draft.declared_options = current_options;
         }
@@ -1565,7 +1643,28 @@ fn validate_budgeted_with_deferred(
                 if !from_custom && !is_declared {
                     return Err(ValidationError::SelectDeclaredOption);
                 }
-                let n = selected_text.encode_utf16().count() as u64;
+                let raw_options_empty = field["options"].as_array().is_some_and(Vec::is_empty);
+                let normalized_dt = if from_custom
+                    && raw_options_empty
+                    && field["format"] == "date-time"
+                    && !hidden_explicit
+                    && d.is_dirty()
+                {
+                    if string_constraints::is_local_date_time_without_zone(selected_text) {
+                        let Some(norm) =
+                            string_constraints::normalize_edited_local_date_time(selected_text)
+                        else {
+                            return Err(ValidationError::InvalidFormat);
+                        };
+                        Some(norm)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let effective = normalized_dt.as_deref().unwrap_or(selected_text);
+                let n = effective.encode_utf16().count() as u64;
                 if let Some(m) = min_len
                     && n < m
                 {
@@ -1577,25 +1676,23 @@ fn validate_budgeted_with_deferred(
                     return Err(ValidationError::TooLong { max: m });
                 }
                 match string_constraints::matches_string_constraints_budgeted(
-                    field,
-                    selected_text,
-                    budget,
+                    field, effective, budget,
                 )
                 .map_err(|()| ValidationError::Unsupported)?
                 {
                     string_constraints::MatchOutcome::Matched => {
-                        return Ok((Some(json!(selected_text)), false));
+                        return Ok((Some(json!(effective)), false));
                     }
                     string_constraints::MatchOutcome::NoMatch => {
                         return Err(ValidationError::InvalidFormat);
                     }
                     string_constraints::MatchOutcome::Deferred => {
                         if d.server_rejected_value.as_ref().and_then(Value::as_str)
-                            == Some(selected_text)
+                            == Some(effective)
                         {
                             return Err(ValidationError::InvalidFormat);
                         }
-                        return Ok((Some(json!(selected_text)), true));
+                        return Ok((Some(json!(effective)), true));
                     }
                 }
             }
@@ -1609,7 +1706,7 @@ fn validate_budgeted_with_deferred(
                             field, "", budget,
                         )
                         .map_err(|()| ValidationError::Unsupported)?
-                            != string_constraints::MatchOutcome::NoMatch
+                            == string_constraints::MatchOutcome::Matched
                 } else {
                     d.has_string_value
                 }

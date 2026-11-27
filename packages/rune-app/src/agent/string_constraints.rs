@@ -351,6 +351,9 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 }
 
 fn is_valid_date(value: &str) -> bool {
+    if !value.is_ascii() {
+        return false;
+    }
     let b = value.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
         return false;
@@ -690,7 +693,7 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
     } else {
         tz_raw
     };
-    if tz.is_empty() {
+    if tz.is_empty() || !tz.is_ascii() {
         return None;
     }
     if tz.eq_ignore_ascii_case("Z")
@@ -782,7 +785,11 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
     let mut has_ampm = false;
     if allow_ampm {
         let trimmed = tail.trim_start();
-        let after_meridiem = if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("AM") {
+        let after_meridiem = if trimmed
+            .as_bytes()
+            .get(..2)
+            .is_some_and(|p| p.eq_ignore_ascii_case(b"AM"))
+        {
             let rem = &trimmed[2..];
             if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
                 has_ampm = true;
@@ -796,7 +803,11 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
             } else {
                 None
             }
-        } else if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("PM") {
+        } else if trimmed
+            .as_bytes()
+            .get(..2)
+            .is_some_and(|p| p.eq_ignore_ascii_case(b"PM"))
+        {
             let rem = &trimmed[2..];
             if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
                 has_ampm = true;
@@ -1037,19 +1048,18 @@ fn parse_named_month_date_time(s: &str) -> Option<ParsedDateTime> {
 
 fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
     let b = s.as_bytes();
-    if b.len() >= 7 && matches!(b[0], b'+' | b'-') {
+    if b.len() >= 7 && matches!(b[0], b'+' | b'-') && b[1..7].iter().all(u8::is_ascii_digit) {
         let digits = &s[1..7];
-        if digits.bytes().all(|x| x.is_ascii_digit()) {
-            let mag = digits.parse::<i64>().ok()?;
-            if b[0] == b'-' && mag == 0 {
-                // ECMAScript Date treats `-000000` as invalid (`NaN`).
-                return None;
-            }
-            let year = if b[0] == b'-' { -mag } else { mag };
-            return Some((year, 7));
+        let mag = digits.parse::<i64>().ok()?;
+        if b[0] == b'-' && mag == 0 {
+            // ECMAScript Date treats `-000000` as invalid (`NaN`).
+            return None;
         }
+        let year = if b[0] == b'-' { -mag } else { mag };
+        return Some((year, 7));
     }
     if b.len() >= 4
+        && b[0..4].iter().all(u8::is_ascii_digit)
         && let Some(year) = parse_ascii_digits(&s[0..4])
     {
         return Some((i64::from(year), 4));
@@ -1291,52 +1301,45 @@ impl ClassItem {
                 if u >= lo && u <= hi {
                     return true;
                 }
-                let alt = fold_u16_alt_case(u);
-                alt.is_some_and(|a| a >= lo && a <= hi)
+                if hi < 128 {
+                    if u >= 128 {
+                        return false;
+                    }
+                    let b = u as u8;
+                    let cu = u16::from(b.to_ascii_uppercase());
+                    let cl = u16::from(b.to_ascii_lowercase());
+                    return (cu >= lo && cu <= hi) || (cl >= lo && cl <= hi);
+                }
+                let cu = es_canonicalize_u16(u);
+                (lo..=hi).any(|c| es_canonicalize_u16(c) == cu)
             }
             other => other.matches(u),
         }
     }
 }
 
-fn eq_u16_icase(a: u16, b: u16) -> bool {
-    if a == b {
-        return true;
+/// ECMAScript flagless `Canonicalize(ch)` (ECMA-262 22.2.2.8.2): uppercase to a single BMP code
+/// unit unless a non-ASCII character would fold into ASCII (e.g. U+017F `ſ` or U+212A `K`).
+fn es_canonicalize_u16(u: u16) -> u16 {
+    if u < 128 {
+        return u16::from((u as u8).to_ascii_uppercase());
     }
-    if a < 128 && b < 128 {
-        return (a as u8).eq_ignore_ascii_case(&(b as u8));
+    let Some(ch) = char::from_u32(u32::from(u)) else {
+        return u;
+    };
+    let mut upper = ch.to_uppercase();
+    let (Some(up), None) = (upper.next(), upper.next()) else {
+        return u;
+    };
+    let up_u32 = u32::from(up);
+    if up_u32 < 128 || up_u32 > 0xFFFF {
+        return u;
     }
-    match (char::from_u32(u32::from(a)), char::from_u32(u32::from(b))) {
-        (Some(ca), Some(cb)) => ca.to_lowercase().eq(cb.to_lowercase()),
-        _ => false,
-    }
+    up_u32 as u16
 }
 
-fn fold_u16_alt_case(u: u16) -> Option<u16> {
-    if u < 128 {
-        let b = u as u8;
-        if b.is_ascii_lowercase() {
-            return Some(u16::from(b.to_ascii_uppercase()));
-        }
-        if b.is_ascii_uppercase() {
-            return Some(u16::from(b.to_ascii_lowercase()));
-        }
-        return None;
-    }
-    let ch = char::from_u32(u32::from(u))?;
-    let mut lower = ch.to_lowercase();
-    if let (Some(l), None) = (lower.next(), lower.next())
-        && l != ch
-    {
-        return u16::try_from(u32::from(l)).ok();
-    }
-    let mut upper = ch.to_uppercase();
-    if let (Some(up), None) = (upper.next(), upper.next())
-        && up != ch
-    {
-        return u16::try_from(u32::from(up)).ok();
-    }
-    None
+fn eq_u16_icase(a: u16, b: u16) -> bool {
+    a == b || es_canonicalize_u16(a) == es_canonicalize_u16(b)
 }
 
 fn is_line_terminator_u16(u: u16) -> bool {
@@ -2359,6 +2362,16 @@ fn compile_vm_expr(
             Ok(())
         }
         Expr::Class { negated, items } => {
+            if flags.ignore_case
+                && items.iter().any(|item| {
+                    matches!(
+                        *item,
+                        ClassItem::Range(lo, hi) if hi >= 128 && hi.saturating_sub(lo) > 64
+                    )
+                })
+            {
+                return Err(CompileError::DeferToServer);
+            }
             charge_work_n(work, items.len())?;
             push_vm_inst(
                 insts,

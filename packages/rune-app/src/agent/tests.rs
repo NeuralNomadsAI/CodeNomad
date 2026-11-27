@@ -987,6 +987,156 @@ fn permission_and_form_reply_bypass_blocked_catalogue_read() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn rejected_form_reply_unlocks_draft_editing_before_followup_snapshot_finishes() {
+    use crate::files::test_http::{Http, wait};
+    use std::sync::Arc;
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake_tx, wake_rx) = super::bounded::<()>(16);
+        let wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let mut ui = super::Ui::new(super::start(http.backend.clone(), wake));
+        ui.online = true;
+
+        let form_body = json!({
+            "data": [{
+                "id": "form_1",
+                "sessionID": "session",
+                "title": "Code",
+                "fields": [{
+                    "type": "string",
+                    "key": "code",
+                    "required": true,
+                    "pattern": "^[a-z]{257}$"
+                }]
+            }]
+        });
+
+        let (mut got_session, mut got_perm, mut got_form) = (false, false, false);
+        while !got_session || !got_perm || !got_form {
+            let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session ")
+            {
+                got_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/private"},"time":{"busy":2,"idle":1}}}),
+                )
+                .await;
+            } else if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/permission ")
+            {
+                got_perm = true;
+                req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
+            {
+                got_form = true;
+                req.reply(200, form_body.clone()).await;
+            } else {
+                panic!("unexpected initial request: {}", req.header);
+            }
+        }
+        while !ui.known || !ui.pending_known {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        let model_req = http.accept().await;
+        model_req.reply(200, json!({"data":[]})).await;
+        while !ui.idle() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+
+        ui.drafts
+            .get_mut(&("form_1".into(), "code".into()))
+            .unwrap()
+            .edit
+            .text = "bad".into();
+        ui.answer_form("form_1");
+        assert!(ui.forms_mutating());
+        assert!(ui.forms_locked());
+
+        let pre_check = http.accept().await;
+        assert!(
+            pre_check
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
+        );
+        pre_check.reply(200, form_body.clone()).await;
+
+        let post_reply = http.accept().await;
+        assert!(
+            post_reply.header.starts_with(
+                "POST /workspaces/owned/instance/api/session/session/form/form_1/reply "
+            )
+        );
+        post_reply
+            .reply(
+                400,
+                json!({"error":"Form field does not match pattern: code"}),
+            )
+            .await;
+
+        // Hold the follow-up GET /form open while verifying the UI already unlocked draft editing.
+        let held_refresh = http.accept().await;
+        assert!(
+            held_refresh
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
+        );
+        while ui.forms_mutating() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert!(
+            !ui.forms_mutating(),
+            "rejected POST must immediately unlock draft editing before follow-up GET finishes"
+        );
+        assert!(
+            ui.forms_locked(),
+            "Answer/Cancel must remain locked until follow-up GET finishes"
+        );
+        assert!(ui.error);
+        assert_eq!(
+            ui.drafts
+                .get(&("form_1".into(), "code".into()))
+                .unwrap()
+                .server_rejected_value,
+            Some(json!("bad"))
+        );
+
+        let fixed = "a".repeat(257);
+        ui.drafts
+            .get_mut(&("form_1".into(), "code".into()))
+            .unwrap()
+            .edit
+            .text = fixed.clone();
+
+        held_refresh.reply(200, form_body).await;
+        while ui.forms_locked() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert!(!ui.forms_mutating());
+        assert_eq!(
+            ui.drafts
+                .get(&("form_1".into(), "code".into()))
+                .unwrap()
+                .edit
+                .text,
+            fixed
+        );
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn pending_requests_publish_and_accept_replies_while_session_read_stalls() {
     use crate::files::test_http::{Http, wait};
     use std::sync::Arc;

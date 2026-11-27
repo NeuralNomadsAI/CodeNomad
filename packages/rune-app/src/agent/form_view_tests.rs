@@ -7460,3 +7460,417 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         assert_eq!(gmt_ans["exotic"], json!("Jan 1970"));
     });
 }
+
+#[test]
+fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_provenance() {
+    crate::strings::with_locale("en", || {
+        // 1. Arbitrary UTF-8 / emoji strings in `date-time` and `date` fields must never panic.
+        let dt_field = json!({
+            "key": "when",
+            "title": "When",
+            "type": "string",
+            "format": "date-time",
+            "required": true
+        });
+        let date_field = json!({
+            "key": "day",
+            "title": "Day",
+            "type": "string",
+            "format": "date",
+            "required": true
+        });
+        for bad in [
+            "a🦀1",
+            "+🦀123456",
+            "-🦀123456",
+            "2026-01-01 🦀x",
+            "2026-01-01 +🦀",
+            "2026-01-01 12:00 🦀",
+            "🦀-12-34",
+            "éé-12-34",
+        ] {
+            let mut d = agent_forms::Draft::default();
+            d.edit = rune::edit::TextEdit::new(bad);
+            assert_eq!(
+                agent_forms::validate(&dt_field, &d),
+                Err(agent_forms::ValidationError::InvalidFormat),
+                "UTF-8 input `{bad}` must cleanly fail date-time validation without panicking"
+            );
+            assert_eq!(
+                agent_forms::validate(&date_field, &d),
+                Err(agent_forms::ValidationError::InvalidFormat),
+                "UTF-8 input `{bad}` must cleanly fail date validation without panicking"
+            );
+        }
+
+        // 2. Empty `options: []` with `format: "date-time"` and `custom: true` normalizes edited
+        // local date-times to UTC like Solid's datetime-local fallback, while declared choices stay verbatim.
+        let empty_opts_dt = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r28-empty-opts-dt".into(),
+            title: "Empty opts date-time".into(),
+            fields: vec![
+                json!({
+                    "key": "when_empty_opts",
+                    "title": "When",
+                    "type": "string",
+                    "format": "date-time",
+                    "options": [],
+                    "custom": true,
+                    "required": true
+                }),
+                json!({
+                    "key": "when_free",
+                    "title": "When Free",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true
+                }),
+                json!({
+                    "key": "when_declared",
+                    "title": "When Declared",
+                    "type": "string",
+                    "format": "date-time",
+                    "options": [{ "value": "2026-11-26T14:30", "label": "Afternoon" }],
+                    "custom": true,
+                    "required": true
+                }),
+            ],
+        };
+        let (mut dt_state, _dtrx) = state_with_form(empty_opts_dt.clone());
+        {
+            let drafts = &mut dt_state.agent.as_mut().unwrap().drafts;
+            drafts
+                .get_mut(&("form-r28-empty-opts-dt".into(), "when_empty_opts".into()))
+                .unwrap()
+                .custom
+                .text = "2026-11-26T14:30".into();
+            drafts
+                .get_mut(&("form-r28-empty-opts-dt".into(), "when_free".into()))
+                .unwrap()
+                .edit
+                .text = "2026-11-26T14:30".into();
+            drafts
+                .get_mut(&("form-r28-empty-opts-dt".into(), "when_declared".into()))
+                .unwrap()
+                .choose_option("2026-11-26T14:30");
+        }
+        let dt_ans = agent_forms::answer(&empty_opts_dt, &dt_state.agent.as_ref().unwrap().drafts)
+            .expect("empty-options custom date-time must normalize cleanly");
+        let expected_utc = dt_ans["when_free"].as_str().unwrap();
+        assert!(
+            expected_utc.ends_with('Z'),
+            "edited local date-time must normalize to UTC: {expected_utc}"
+        );
+        assert_eq!(
+            dt_ans["when_empty_opts"],
+            json!(expected_utc),
+            "empty `options: []` + `custom: true` must normalize edited local date-time identically to free-text"
+        );
+        assert_eq!(
+            dt_ans["when_declared"],
+            json!("2026-11-26T14:30"),
+            "declared choice values must remain verbatim"
+        );
+
+        // 3. Clearing an optional field with a deferred regex (`^[a-z]{257}$`) omits the field
+        // instead of submitting `""` and locking the form.
+        let deferred_opt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r28-deferred-opt".into(),
+            title: "Deferred optional".into(),
+            fields: vec![
+                json!({
+                    "key": "name",
+                    "title": "Name",
+                    "type": "string",
+                    "required": true
+                }),
+                json!({
+                    "key": "long_code",
+                    "title": "Long code",
+                    "type": "string",
+                    "required": false,
+                    "pattern": "^[a-z]{257}$"
+                }),
+            ],
+        };
+        let (mut opt_state, _optrx) = state_with_form(deferred_opt_form.clone());
+        {
+            let drafts = &mut opt_state.agent.as_mut().unwrap().drafts;
+            drafts
+                .get_mut(&("form-r28-deferred-opt".into(), "name".into()))
+                .unwrap()
+                .edit
+                .text = "Alice".into();
+            let opt_draft = drafts
+                .get_mut(&("form-r28-deferred-opt".into(), "long_code".into()))
+                .unwrap();
+            opt_draft.edit.text = "x".into();
+            assert!(opt_draft.is_dirty());
+            opt_draft.edit.text.clear();
+            assert!(opt_draft.is_dirty());
+        }
+        let mut opt_rt = Runtime::new(opt_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        opt_rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&opt_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "clearing a dirty optional field with a deferred regex must keep Answer enabled"
+        );
+        let opt_ans = agent_forms::answer(
+            &deferred_opt_form,
+            &opt_rt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("cleared optional deferred-regex field must omit cleanly");
+        assert_eq!(opt_ans, json!({ "name": "Alice" }));
+
+        // 4. ECMAScript flagless case-insensitive regex matching (`Σ`/`σ`/`ς`, `ſ` isolation, ranges).
+        let sigma_field = json!({
+            "key": "greek",
+            "title": "Greek",
+            "type": "string",
+            "required": true,
+            "pattern": "(?i:^Σ$)"
+        });
+        for valid in ["Σ", "σ", "ς"] {
+            let mut d = agent_forms::Draft::default();
+            d.edit = rune::edit::TextEdit::new(valid);
+            assert_eq!(
+                agent_forms::validate(&sigma_field, &d),
+                Ok(Some(json!(valid))),
+                "`(?i:^Σ$)` must match `{valid}`"
+            );
+        }
+        let mut bad_greek = agent_forms::Draft::default();
+        bad_greek.edit = rune::edit::TextEdit::new("α");
+        assert_eq!(
+            agent_forms::validate(&sigma_field, &bad_greek),
+            Err(agent_forms::ValidationError::InvalidFormat)
+        );
+        let ascii_s_field = json!({
+            "key": "letter",
+            "title": "Letter",
+            "type": "string",
+            "required": true,
+            "pattern": "(?i:^s$)"
+        });
+        let mut long_s = agent_forms::Draft::default();
+        long_s.edit = rune::edit::TextEdit::new("\u{017F}");
+        assert_eq!(
+            agent_forms::validate(&ascii_s_field, &long_s),
+            Err(agent_forms::ValidationError::InvalidFormat),
+            "flagless ECMAScript `(?i:^s$)` must not fold non-ASCII U+017F into ASCII `s`"
+        );
+        let greek_range_field = json!({
+            "key": "range",
+            "title": "Range",
+            "type": "string",
+            "required": true,
+            "pattern": "(?i:^[Α-Ω]$)"
+        });
+        let mut final_sigma = agent_forms::Draft::default();
+        final_sigma.edit = rune::edit::TextEdit::new("ς");
+        assert_eq!(
+            agent_forms::validate(&greek_range_field, &final_sigma),
+            Ok(Some(json!("ς"))),
+            "`(?i:^[Α-Ω]$)` must match final sigma `ς`"
+        );
+        let large_non_ascii_range = json!({
+            "key": "wide",
+            "title": "Wide",
+            "type": "string",
+            "required": true,
+            "pattern": "(?i:^[\\u0100-\\u03FF]$)"
+        });
+        let mut wide_d = agent_forms::Draft::default();
+        wide_d.edit = rune::edit::TextEdit::new("ς");
+        assert_eq!(
+            agent_forms::validate(&large_non_ascii_range, &wide_d),
+            Ok(Some(json!("ς"))),
+            "large non-ASCII case-insensitive range must defer rather than reject"
+        );
+
+        // 5. Rejected form POST unlocks draft editing immediately on `ActFormOutcome` before a slow
+        // follow-up `GET` finishes (`ActFormSnapshot`), while Answer/Cancel stay disabled until snapshot.
+        let reject_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r28-async-reject".into(),
+            title: "Async reject".into(),
+            fields: vec![json!({
+                "key": "code",
+                "title": "Code",
+                "type": "string",
+                "required": true,
+                "pattern": "^[a-z]{257}$"
+            })],
+        };
+        let (jobs_tx, _jobs_rx) = codenomad_client::bounded(1);
+        let (perms_tx, _perms_rx) = codenomad_client::bounded(1);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(1);
+        let (catalog_tx, _catalog_rx) = codenomad_client::bounded(1);
+        let (stop_tx, _stop_rx) = codenomad_client::bounded(1);
+        let (out_tx, res_rx) = codenomad_client::bounded(16);
+        let mut agent = crate::agent::Ui::new(crate::agent::Handle {
+            connection: None,
+            workspace_id: None,
+            jobs: jobs_tx,
+            permissions: perms_tx,
+            forms: forms_tx,
+            catalog: catalog_tx,
+            stop: stop_tx,
+            results: res_rx,
+        });
+        let _ = forms_rx.try_recv();
+        agent.fixture_ready();
+        agent.forms_lane.reading = false;
+        agent.forms = vec![reject_form.clone()];
+        agent.selected = reject_form.id.clone();
+        agent_forms::seed(&agent.forms, &mut agent.drafts);
+        agent.mark_pending_known();
+        agent
+            .drafts
+            .get_mut(&("form-r28-async-reject".into(), "code".into()))
+            .unwrap()
+            .edit
+            .text = "bad".into();
+        agent.answer_form("form-r28-async-reject");
+        let sent_gen = match forms_rx.try_recv().expect("act job queued") {
+            crate::agent::PendingJob::Act(_, g) => g,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        assert!(agent.forms_mutating());
+        assert!(agent.forms_locked());
+        // POST fails immediately with 400; follow-up GET is still in flight.
+        out_tx
+            .try_send(crate::agent::Result::ActFormOutcome(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "Form field does not match pattern: code".into(),
+                )),
+                sent_gen,
+            ))
+            .unwrap();
+        assert!(agent.poll());
+        assert!(
+            !agent.forms_mutating(),
+            "draft editing must unlock immediately when the rejected POST returns"
+        );
+        assert!(
+            agent.forms_locked(),
+            "Answer/Cancel must stay locked until the follow-up forms snapshot arrives"
+        );
+        assert!(agent.error);
+        let rejected_draft = agent
+            .drafts
+            .get(&("form-r28-async-reject".into(), "code".into()))
+            .unwrap();
+        assert_eq!(
+            rejected_draft.server_rejected_value,
+            Some(json!("bad")),
+            "field rejection must appear immediately before the follow-up GET finishes"
+        );
+        // User edits the field while the slow follow-up GET is still pending.
+        let fixed_value = "b".repeat(257);
+        agent
+            .drafts
+            .get_mut(&("form-r28-async-reject".into(), "code".into()))
+            .unwrap()
+            .edit
+            .text = fixed_value.clone();
+        // Follow-up GET finally arrives.
+        out_tx
+            .try_send(crate::agent::Result::ActFormSnapshot(
+                Some(vec![reject_form.clone()]),
+                sent_gen,
+            ))
+            .unwrap();
+        assert!(agent.poll());
+        assert!(!agent.forms_mutating());
+        assert!(!agent.forms_locked());
+        assert_eq!(
+            agent
+                .drafts
+                .get(&("form-r28-async-reject".into(), "code".into()))
+                .unwrap()
+                .edit
+                .text,
+            fixed_value,
+            "user edits made while waiting for follow-up GET must be preserved"
+        );
+        assert_eq!(
+            agent_forms::answer(&reject_form, &agent.drafts).unwrap()["code"],
+            json!(fixed_value)
+        );
+
+        // 6. Provenance sets and option description reveals stay strictly bounded across 1,000
+        // refreshes of 64 x 4 KiB distinct options and fail closed on kind change once exhausted.
+        let mut drafts = agent_forms::Drafts::new();
+        let pad = "x".repeat(4080);
+        for round in 0..1_000usize {
+            let options: Vec<serde_json::Value> = (0..64usize)
+                .map(|idx| {
+                    let v = format!("r{round:04}-o{idx:02}-{pad}");
+                    json!({ "value": v, "label": format!("Option {idx}"), "description": "desc" })
+                })
+                .collect();
+            let form = Form {
+                tool: None,
+                infer_websearch: false,
+                id: "form-r28-bounded".into(),
+                title: "Bounded".into(),
+                fields: vec![json!({
+                    "key": "choice",
+                    "title": "Choice",
+                    "type": "string",
+                    "options": options
+                })],
+            };
+            agent_forms::seed(&[form], &mut drafts);
+            let d = drafts
+                .get_mut(&("form-r28-bounded".into(), "choice".into()))
+                .unwrap();
+            let reveal_key = format!("r{round:04}-o00-{pad}");
+            d.reveal_option_description(&reveal_key);
+            assert!(
+                d.prior_choice_values.total_bytes() <= 64 * 1024,
+                "prior_choice_values bytes must never exceed 64 KiB"
+            );
+            assert!(
+                d.option_desc_reveals.len() <= 64,
+                "option_desc_reveals must stay bounded to current options"
+            );
+        }
+        let d_after = drafts
+            .get(&("form-r28-bounded".into(), "choice".into()))
+            .unwrap();
+        assert!(d_after.prior_choice_values.is_exhausted());
+        assert_eq!(d_after.prior_choice_values.len(), 0);
+        assert_eq!(d_after.prior_choice_values.total_bytes(), 0);
+        // Transition to StringFree: exhausted provenance fails closed and strips leaked default.
+        let transitioned = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r28-bounded".into(),
+            title: "Bounded".into(),
+            fields: vec![json!({
+                "key": "choice",
+                "title": "Choice",
+                "type": "string",
+                "default": format!("r0000-o00-{pad}")
+            })],
+        };
+        agent_forms::seed(&[transitioned], &mut drafts);
+        let d_free = drafts
+            .get(&("form-r28-bounded".into(), "choice".into()))
+            .unwrap();
+        assert!(
+            d_free.edit.text.is_empty(),
+            "exhausted provenance must fail closed and strip defaults across kind transition"
+        );
+    });
+}

@@ -35,6 +35,8 @@ enum Result {
     Act(bool, Snapshot, Option<String>, u64),
     ActPermission(bool, Option<Vec<Permission>>, u64),
     ActForm(crate::agent_api::FormReplyOutcome, Option<Vec<Form>>, u64),
+    ActFormOutcome(crate::agent_api::FormReplyOutcome, u64),
+    ActFormSnapshot(Option<Vec<Form>>, u64),
     Stop(bool),
     VerifiedIdle(String, bool),
 }
@@ -460,17 +462,46 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let o = out.clone();
     crate::platform::spawn(async move {
         while let Ok(job) = frx.recv().await {
-            let result = match job {
-                PendingJob::Read(generation) => Result::Forms(b.forms_snapshot().await, generation),
+            match job {
+                PendingJob::Read(generation) => {
+                    if o.send(Result::Forms(b.forms_snapshot().await, generation))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    w();
+                }
                 PendingJob::Act(action, generation) => {
                     let outcome = b.agent_form_action(&action).await;
-                    Result::ActForm(outcome, b.forms_snapshot().await, generation)
+                    if matches!(outcome, crate::agent_api::FormReplyOutcome::Ok) {
+                        let snapshot = b.forms_snapshot().await;
+                        if o.send(Result::ActForm(outcome, snapshot, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                    } else {
+                        if o.send(Result::ActFormOutcome(outcome, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                        let snapshot = b.forms_snapshot().await;
+                        if o.send(Result::ActFormSnapshot(snapshot, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                    }
                 }
-            };
-            if o.send(result).await.is_err() {
-                break;
             }
-            w();
         }
     });
     let b = backend.clone();
@@ -1170,22 +1201,111 @@ impl Ui {
             }
             self.forms = forms;
             agent_forms::seed(&self.forms, &mut self.drafts);
-            if let Some(rejection) = self.pending_field_rejection.take()
-                && self
+            if let Some(rejection) = self.pending_field_rejection.take() {
+                if self
                     .forms
                     .iter()
                     .any(|f| f.id == rejection.form_id && f.fields == rejection.submitted_fields)
-            {
-                for (field_key, submitted_value) in rejection.to_mark {
-                    if let Some(draft) =
-                        self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
-                    {
-                        draft.server_rejected_value = Some(submitted_value);
+                {
+                    for (field_key, submitted_value) in rejection.to_mark {
+                        if let Some(draft) =
+                            self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                        {
+                            draft.server_rejected_value = Some(submitted_value);
+                        }
+                    }
+                } else {
+                    for (field_key, submitted_value) in rejection.to_mark {
+                        if let Some(draft) =
+                            self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                            && draft.server_rejected_value.as_ref() == Some(&submitted_value)
+                        {
+                            draft.server_rejected_value = None;
+                        }
                     }
                 }
             }
         }
         self.reconcile_selected();
+    }
+
+    fn handle_act_form_outcome(&mut self, outcome: crate::agent_api::FormReplyOutcome) {
+        self.forms_lane.busy = false;
+        self.forms_lane.reading = true;
+        self.clear_form_editor_focus();
+        let submitted_deferred = self.pending_deferred_submission.take();
+        let ok = matches!(outcome, crate::agent_api::FormReplyOutcome::Ok);
+        if self.scope_missing {
+            self.forms_lane.reconciling = false;
+            self.pending_field_rejection = None;
+            return;
+        }
+        if let crate::agent_api::FormReplyOutcome::ValidationRejected(ref detail) = outcome
+            && let Some(submitted) = submitted_deferred
+        {
+            let PendingDeferredSubmission {
+                form_id,
+                submitted_fields,
+                deferred_fields,
+            } = *submitted;
+            let all_keys: Vec<&str> = submitted_fields
+                .iter()
+                .filter_map(|f| f["key"].as_str())
+                .collect();
+            let rejected_keys = detail
+                .as_deref()
+                .map(|body| extract_rejected_field_keys(body, &all_keys))
+                .unwrap_or_default();
+            let to_mark: Vec<(String, serde_json::Value)> = if !rejected_keys.is_empty() {
+                deferred_fields
+                    .into_iter()
+                    .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !to_mark.is_empty() {
+                if self
+                    .forms
+                    .iter()
+                    .any(|f| f.id == form_id && f.fields == submitted_fields)
+                {
+                    for (field_key, submitted_value) in &to_mark {
+                        if let Some(draft) =
+                            self.drafts.get_mut(&(form_id.clone(), field_key.clone()))
+                        {
+                            draft.server_rejected_value = Some(submitted_value.clone());
+                        }
+                    }
+                }
+                self.pending_field_rejection = Some(Box::new(PendingFieldRejection {
+                    form_id,
+                    submitted_fields,
+                    to_mark,
+                }));
+            }
+        }
+        self.forms_lane.error = !ok;
+        self.forms_lane.reconciling = true;
+        self.sync_error();
+    }
+
+    fn handle_act_form_snapshot(&mut self, forms: Option<Vec<Form>>, generation: u64) {
+        self.forms_lane.reading = false;
+        if self.scope_missing {
+            self.forms_lane.reconciling = false;
+            return;
+        }
+        let fresh = generation == self.forms_lane.generation;
+        self.forms_lane.error |= fresh && forms.is_none();
+        self.sync_error();
+        if fresh {
+            self.forms_lane.reconciling = forms.is_none();
+            self.apply_forms(forms);
+        } else {
+            self.forms_lane.reconciling = true;
+            self.forms_lane.trailing = true;
+        }
     }
 
     #[cfg(test)]
@@ -1287,60 +1407,14 @@ impl Ui {
                     }
                 }
                 Result::ActForm(outcome, forms, generation) => {
-                    self.forms_lane.busy = false;
-                    self.clear_form_editor_focus();
-                    let submitted_deferred = self.pending_deferred_submission.take();
-                    let ok = matches!(outcome, crate::agent_api::FormReplyOutcome::Ok);
-                    if self.scope_missing {
-                        self.forms_lane.reconciling = false;
-                        self.pending_field_rejection = None;
-                    } else {
-                        if let crate::agent_api::FormReplyOutcome::ValidationRejected(ref detail) =
-                            outcome
-                            && let Some(submitted) = submitted_deferred
-                        {
-                            let PendingDeferredSubmission {
-                                form_id,
-                                submitted_fields,
-                                deferred_fields,
-                            } = *submitted;
-                            let all_keys: Vec<&str> = submitted_fields
-                                .iter()
-                                .filter_map(|f| f["key"].as_str())
-                                .collect();
-                            let rejected_keys = detail
-                                .as_deref()
-                                .map(|body| extract_rejected_field_keys(body, &all_keys))
-                                .unwrap_or_default();
-                            let to_mark: Vec<(String, serde_json::Value)> =
-                                if !rejected_keys.is_empty() {
-                                    deferred_fields
-                                        .into_iter()
-                                        .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
-                                        .collect()
-                                } else {
-                                    Vec::new()
-                                };
-                            if !to_mark.is_empty() {
-                                self.pending_field_rejection =
-                                    Some(Box::new(PendingFieldRejection {
-                                        form_id,
-                                        submitted_fields,
-                                        to_mark,
-                                    }));
-                            }
-                        }
-                        let fresh = generation == self.forms_lane.generation;
-                        self.forms_lane.error = !ok || (fresh && forms.is_none());
-                        self.sync_error();
-                        if fresh {
-                            self.forms_lane.reconciling = forms.is_none();
-                            self.apply_forms(forms);
-                        } else {
-                            self.forms_lane.reconciling = true;
-                            self.forms_lane.trailing = true;
-                        }
-                    }
+                    self.handle_act_form_outcome(outcome);
+                    self.handle_act_form_snapshot(forms, generation);
+                }
+                Result::ActFormOutcome(outcome, _generation) => {
+                    self.handle_act_form_outcome(outcome);
+                }
+                Result::ActFormSnapshot(forms, generation) => {
+                    self.handle_act_form_snapshot(forms, generation);
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;
