@@ -7,6 +7,43 @@ pub enum Target {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Editor {
+    VsCode,
+    Cursor,
+    Zed,
+    VsCodium,
+}
+
+impl Editor {
+    pub const ALL: [Self; 4] = [Self::VsCode, Self::Cursor, Self::Zed, Self::VsCodium];
+
+    pub const fn command_id(self) -> &'static str {
+        match self {
+            Self::VsCode => "open-workspace-editor-vscode",
+            Self::Cursor => "open-workspace-editor-cursor",
+            Self::Zed => "open-workspace-editor-zed",
+            Self::VsCodium => "open-workspace-editor-vscodium",
+        }
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::VsCode => "VS Code",
+            Self::Cursor => "Cursor",
+            Self::Zed => "Zed",
+            Self::VsCodium => "VSCodium",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceTarget {
+    Folder,
+    Terminal,
+    Editor(Editor),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DefaultMode {
     Open,
     Edit,
@@ -125,7 +162,7 @@ impl OpenError {
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::open;
+pub use windows::{open, open_workspace};
 
 #[cfg(not(windows))]
 pub async fn open(
@@ -137,4 +174,15 @@ pub async fn open(
     _: std::sync::Weak<()>,
 ) -> Result<(), OpenError> {
     Err(OpenError::Unavailable)
+}
+
+#[cfg(not(windows))]
+pub async fn open_workspace(
+    _: crate::backend::Backend,
+    _: String,
+    _: Option<String>,
+    _: WorkspaceTarget,
+    _: std::sync::Weak<()>,
+) -> Result<(), String> {
+    Err("Native workspace actions are unavailable".into())
 }

@@ -26,6 +26,7 @@ pub(super) struct Cache {
     paging: bool,
     error: bool,
     history_detached: bool,
+    stream_offline: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
     status_permissions: crate::shell::status_permissions::Permissions,
@@ -48,6 +49,60 @@ impl Cache {
         self.incoming
             .as_ref()
             .is_some_and(|incoming| !incoming.is_closed())
+    }
+
+    pub(super) fn is_sending(&self) -> bool {
+        self.composer.pending()
+    }
+
+    pub(super) fn unconfirmed_id(&self) -> Option<&str> {
+        self.composer.unconfirmed_id()
+    }
+
+    pub(super) fn unconfirmed_state(&self) -> Option<&crate::composer::UnconfirmedPrompt> {
+        self.composer.unconfirmed_state()
+    }
+
+    pub(super) fn restore_unconfirmed(&mut self, pending: crate::composer::UnconfirmedPrompt) {
+        if self.composer.unconfirmed_state().is_none() {
+            self.composer.restore_unconfirmed(pending);
+        }
+    }
+
+    pub(super) fn has_confirmed_user_message(&self, id: &str) -> bool {
+        self.composer.has_confirmed_prompt(
+            &self.messages,
+            self.transcript_display.queue.items(),
+            id,
+        )
+    }
+
+    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) -> bool {
+        self.composer
+            .confirm_unconfirmed_matching(&mut self.draft, attempt_id)
+    }
+
+    pub(super) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.composer
+            .add_unique_inline_usage(seen, self.composer.recall.is_some())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn revoke_pairing(&mut self) {
+        self.composer.picker.set_attachments_supported(false);
+        if let Some(reader) = &self.reader {
+            reader.revoke();
+        }
+        if let Some(commands) = self.commands.take() {
+            commands.close();
+        }
+        if !matches!(self.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            self.phase = Phase::Failed;
+        }
+        self.stream_offline = true;
     }
 
     pub(super) fn has_healthy_conversation_stream(&self) -> bool {
@@ -167,7 +222,11 @@ impl Cache {
             let id = git.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -175,7 +234,11 @@ impl Cache {
             let id = files.workspace_id();
             if !live.contains(id) {
                 let workspace_id = id.to_owned();
-                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
@@ -183,7 +246,11 @@ impl Cache {
             && !live.contains(id.as_str())
         {
             self.status_services
-                .event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id });
+                .event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id: id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
             changed = true;
         }
         changed
@@ -205,6 +272,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -226,6 +295,8 @@ impl Cache {
                     let workspace_id = id.to_owned();
                     files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
                     });
                     changed = true;
                 }
@@ -246,7 +317,11 @@ impl Cache {
                     if !opened_after.contains(id.as_str()) && !live.contains(id.as_str()) =>
                 {
                     self.status_services.event(
-                        &codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id: id },
+                        &codenomad_client::transport::WorkspaceEvent::Stopped {
+                            workspace_id: id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
                     );
                     changed = true;
                 }
@@ -362,7 +437,7 @@ impl Cache {
         &self.transcript_display.timeline
     }
     pub(super) fn history_protected(&self) -> bool {
-        self.phase == Phase::Streaming
+        self.phase.running()
             || self.agent.as_ref().is_some_and(|agent| agent.running)
             || self
                 .reader
@@ -387,6 +462,11 @@ impl Cache {
                 .agent
                 .as_ref()
                 .is_some_and(agent::Ui::navigation_blocked)
+    }
+    pub(super) fn has_unsaved_form_drafts(&self) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(agent::Ui::has_unsaved_form_drafts)
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
@@ -417,6 +497,7 @@ impl Cache {
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
             history_detached: std::mem::take(&mut s.history_detached),
+            stream_offline: std::mem::take(&mut s.stream_offline),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
             status_permissions: std::mem::take(&mut s.status_permissions),
@@ -446,6 +527,7 @@ impl Cache {
         s.paging = self.paging;
         s.history_error = self.error;
         s.history_detached = self.history_detached;
+        s.stream_offline = self.stream_offline;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {
@@ -466,7 +548,7 @@ pub(super) fn status(
         Some(Status::Permission)
     } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
-    } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
+    } else if *phase == Phase::Failed || phase.reconnecting() {
         Some(Status::Unavailable)
     } else {
         None

@@ -3,7 +3,7 @@
 //! for `global-only` and cross-spec/runtime `duplicate` enforcement.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -27,9 +27,32 @@ const INTEGRATION_CATALOG_MAX_PAGES: usize = 5;
 const RELEASE_LIST_MAX_BYTES: usize = 1024 * 1024;
 const RATE_LIMIT_MAX_WAIT_MS: u64 = 60 * 60 * 1000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CatalogAvailability {
+    Fresh,
+    Stale,
+    Unavailable,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct IntegrationCatalogView {
+    pub(crate) state: CatalogAvailability,
+    pub(crate) fetched_at: Option<String>,
+    pub(crate) catalog: IntegrationCatalog,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct IntegrationCatalog {
     pub(crate) integrations: Vec<IntegrationCatalogEntry>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct IntegrationCatalogApp {
+    pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) versions: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,8 +61,20 @@ pub(crate) struct IntegrationCatalogEntry {
     pub(crate) id: String,
     pub(crate) family: String,
     pub(crate) package: String,
+    #[serde(default)]
+    pub(crate) range: String,
+    #[serde(default)]
+    pub(crate) display_name: String,
     pub(crate) plugin: String,
     pub(crate) rpc: String,
+    #[serde(default)]
+    pub(crate) summary: BTreeMap<String, String>,
+    #[serde(default)]
+    pub(crate) app: IntegrationCatalogApp,
+    #[serde(default)]
+    pub(crate) docs: String,
+    #[serde(default)]
+    pub(crate) status: String,
     #[serde(default)]
     pub(crate) sources: Option<IntegrationCatalogSources>,
 }
@@ -68,6 +103,7 @@ struct Release {
 #[derive(Clone)]
 struct Attempt {
     at_ms: u64,
+    ok: bool,
     until_ms: Option<u64>,
 }
 
@@ -86,6 +122,24 @@ struct CatalogState {
     /// Detached in-flight refresh task; held until download + persistence finish so dropping a caller
     /// never lets a second refresh race an older disk write.
     refreshing: Option<Arc<Notify>>,
+}
+
+impl CatalogState {
+    fn view(&self) -> IntegrationCatalogView {
+        let Some(ref known) = self.known else {
+            return IntegrationCatalogView {
+                state: CatalogAvailability::Unavailable,
+                fetched_at: None,
+                catalog: IntegrationCatalog::default(),
+            };
+        };
+        let state = if self.attempt.as_ref().is_some_and(|a| a.ok) {
+            CatalogAvailability::Fresh
+        } else {
+            CatalogAvailability::Stale
+        };
+        IntegrationCatalogView { state, fetched_at: Some(known.fetched_at.clone()), catalog: known.catalog.clone() }
+    }
 }
 
 pub(crate) struct CatalogSource {
@@ -109,19 +163,51 @@ impl CatalogSource {
 
     #[cfg(test)]
     pub(crate) async fn seed_for_test(&self, catalog: IntegrationCatalog) {
+        self.seed_view_for_test(
+            CatalogAvailability::Fresh,
+            Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            catalog,
+        )
+        .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn seed_view_for_test(
+        &self,
+        state: CatalogAvailability,
+        fetched_at: Option<String>,
+        catalog: IntegrationCatalog,
+    ) {
         let mut st = self.state.lock().await;
         st.loaded = true;
-        st.known = Some(KnownCatalog {
-            catalog,
-            raw_document: json!({ "schemaVersion": 1, "integrations": [] }),
-            fetched_at: chrono::Utc::now().to_rfc3339(),
-            revision: "catalog-v1#1@2026-01-01T00:00:00Z".to_owned(),
-        });
-        st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+        st.releases_url = None;
+        match state {
+            CatalogAvailability::Unavailable => {
+                st.known = None;
+                st.attempt = Some(Attempt { at_ms: now_ms(), ok: false, until_ms: None });
+            }
+            CatalogAvailability::Fresh | CatalogAvailability::Stale => {
+                st.known = Some(KnownCatalog {
+                    catalog,
+                    raw_document: json!({ "schemaVersion": 1, "integrations": [] }),
+                    fetched_at: fetched_at
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+                    revision: "catalog-v1#1@2026-01-01T00:00:00Z".to_owned(),
+                });
+                st.attempt = Some(Attempt { at_ms: now_ms(), ok: state == CatalogAvailability::Fresh, until_ms: None });
+            }
+        }
     }
 
     pub(crate) async fn read(&self) -> IntegrationCatalog {
+        self.read_view(true).await.catalog
+    }
+
+    pub(crate) async fn read_view(&self, refresh: bool) -> IntegrationCatalogView {
         self.ensure_loaded().await;
+        if !refresh {
+            return self.state.lock().await.view();
+        }
         let now = now_ms();
         let waiter = {
             let mut st = self.state.lock().await;
@@ -129,10 +215,10 @@ impl CatalogSource {
                 now < a.at_ms.saturating_add(INTEGRATION_CATALOG_CACHE_MS).max(a.until_ms.unwrap_or(0))
             });
             let Some(url) = st.releases_url.clone() else {
-                return st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default();
+                return st.view();
             };
             if fresh {
-                return st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default();
+                return st.view();
             }
             if let Some(notify) = st.refreshing.clone() {
                 notify
@@ -161,8 +247,7 @@ impl CatalogSource {
         if still_running {
             notified.await;
         }
-        let st = self.state.lock().await;
-        st.known.as_ref().map(|k| k.catalog.clone()).unwrap_or_default()
+        self.state.lock().await.view()
     }
 
     async fn ensure_loaded(&self) {
@@ -217,7 +302,7 @@ async fn run_refresh(
                     Some(RefreshMatch::Updated(KnownCatalog {
                         catalog,
                         raw_document,
-                        fetched_at: chrono::Utc::now().to_rfc3339(),
+                        fetched_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
                         revision: release.revision,
                     })),
                     new_tag,
@@ -237,13 +322,19 @@ async fn run_refresh(
             let mut st = state.lock().await;
             st.list_tag = new_tag;
             st.known = Some(known);
-            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.attempt = Some(Attempt { at_ms: now_ms(), ok: true, until_ms: None });
             st.refreshing = None;
         }
-        Ok(Ok((Some(RefreshMatch::Unchanged), new_tag))) | Ok(Ok((None, new_tag))) => {
+        Ok(Ok((Some(RefreshMatch::Unchanged), new_tag))) => {
             let mut st = state.lock().await;
             st.list_tag = new_tag;
-            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.attempt = Some(Attempt { at_ms: now_ms(), ok: true, until_ms: None });
+            st.refreshing = None;
+        }
+        Ok(Ok((None, new_tag))) => {
+            let mut st = state.lock().await;
+            st.list_tag = new_tag;
+            st.attempt = Some(Attempt { at_ms: now_ms(), ok: false, until_ms: None });
             st.refreshing = None;
         }
         Ok(Err(retry_at)) => {
@@ -251,13 +342,14 @@ async fn run_refresh(
             let mut st = state.lock().await;
             st.attempt = Some(Attempt {
                 at_ms: now,
+                ok: false,
                 until_ms: retry_at.map(|r| r.min(now.saturating_add(RATE_LIMIT_MAX_WAIT_MS))),
             });
             st.refreshing = None;
         }
         Err(_) => {
             let mut st = state.lock().await;
-            st.attempt = Some(Attempt { at_ms: now_ms(), until_ms: None });
+            st.attempt = Some(Attempt { at_ms: now_ms(), ok: false, until_ms: None });
             st.refreshing = None;
         }
     }
@@ -313,7 +405,7 @@ fn valid_catalog_tag(tag: &str) -> Option<u64> {
     num.parse::<u64>().ok()
 }
 
-fn valid_integration_id(s: &str) -> bool {
+pub(crate) fn valid_integration_id(s: &str) -> bool {
     let bytes = s.as_bytes();
     (1..=32).contains(&bytes.len())
         && bytes[0].is_ascii_lowercase()
@@ -328,7 +420,7 @@ fn valid_package_name(s: &str) -> bool {
     s.strip_prefix("@neuralnomads/opencode-").is_some_and(valid_integration_id)
 }
 
-fn valid_range(s: &str) -> bool {
+pub(crate) fn valid_range(s: &str) -> bool {
     let len = s.chars().count();
     (1..=64).contains(&len)
         && s.bytes().all(|b| {
@@ -444,12 +536,14 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
         if summary.is_empty() || summary.len() > 16 || !summary.contains_key("en") {
             return None;
         }
+        let mut parsed_summary = BTreeMap::new();
         for (locale, text) in summary {
             let text_str = text.as_str()?;
             let cp = text_str.chars().count();
             if !valid_locale_key(locale) || !(1..=300).contains(&cp) {
                 return None;
             }
+            parsed_summary.insert(locale.clone(), text_str.to_owned());
         }
 
         // `app`: strict `{ name: 1..=60, versions?: range }`.
@@ -461,11 +555,13 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
         if !(1..=60).contains(&app_name.chars().count()) {
             return None;
         }
-        if let Some(versions) = app.get("versions")
-            && !versions.as_str().is_some_and(valid_range)
-        {
-            return None;
-        }
+        let app_versions = match app.get("versions") {
+            None => None,
+            Some(versions) => {
+                let s = versions.as_str().filter(|v| valid_range(v))?;
+                Some(s.to_owned())
+            }
+        };
 
         // `host`: required iff `family == "native"`; strict `{ protocol: int >= 1, range: range }`.
         let host = entry.get("host");
@@ -546,8 +642,14 @@ pub(crate) fn parse_catalog_value(value: &Value) -> Option<IntegrationCatalog> {
             id: id.to_owned(),
             family: family.to_owned(),
             package: package.to_owned(),
+            range: range.to_owned(),
+            display_name: display_name.to_owned(),
             plugin: plugin.to_owned(),
             rpc: rpc.to_owned(),
+            summary: parsed_summary,
+            app: IntegrationCatalogApp { name: app_name.to_owned(), versions: app_versions },
+            docs: docs.to_owned(),
+            status: status.to_owned(),
             sources,
         });
     }

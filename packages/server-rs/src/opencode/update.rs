@@ -1,6 +1,6 @@
 //! The selected OpenCode executable (`settings/binaries.ts`), its `--version` and `service --help` probes
 //! (`spawn.ts`) and the update status (`opencode-update/service.ts` `getStatus`) with the npm release and
-//! the running daemon's admission. The installer owns upgrade; restart and reload stay unavailable.
+//! the running daemon's admission and capabilities.
 use std::{cmp::Ordering, time::Duration};
 
 use axum::{
@@ -186,12 +186,26 @@ fn compare(left: &str, right: &str) -> Ordering {
     l.cmp(&r).then(r_pre.cmp(&l_pre))
 }
 
-/// `GET /api/opencode/update`: an explicit recheck refreshes the installation plan's cached probes.
-pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, String)>>) -> Json<Value> {
-    let force = query.iter().filter(|(key, _)| key == "recheck").map(|(_, value)| value.as_str()).eq(["1"]);
-    let plan = install::plan::plan(force).await;
+/// `canReplaceDaemon`: explicit troubleshooting can replace the same release, while keeping
+/// the update path's authenticated-version fence against downgrades and unknown builds.
+pub(crate) fn can_replace_daemon(installed: Option<&str>, running: Option<&str>) -> bool {
+    match (installed, running) {
+        (Some(installed), Some(running)) => {
+            comparable(installed) && comparable(running) && compare(installed, running) != Ordering::Less
+        }
+        _ => false,
+    }
+}
+
+/// Resolves the currently selected OpenCode executable `(resolved_path, source, is_default_selection)`.
+pub(crate) async fn selected_binary(app: &crate::App) -> (String, Option<&'static str>, bool) {
+    if app.native.is_pinned()
+        && let Some(pinned) = app.native.binary()
+    {
+        return (pinned, None, false);
+    }
     let user = install::plan::user_prefix();
-    let (binary, source, default_selection) = match launch::custom_binary(&app.settings) {
+    match launch::custom_binary(&app.settings) {
         Some(path) => (path, None, false),
         None => {
             let (path, source) = install::plan::resolve_default().await;
@@ -201,7 +215,26 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
             };
             (launch::resolve(&path), source, true)
         }
-    };
+    }
+}
+
+/// `readCurrentVersion`: probes `--version`, refusing quoted Windows paths and failed probes.
+pub(crate) async fn read_current_version(binary: &str) -> Result<String, String> {
+    if cfg!(windows) && binary.contains(['"', '\r', '\n']) {
+        return Err("The configured OpenCode binary path is invalid".into());
+    }
+    let probe = parse_version(&run(binary, &["--version"]).await);
+    if !probe.valid {
+        return Err(probe.error.unwrap_or_else(|| "Unable to read OpenCode version".into()));
+    }
+    Ok(probe.version.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()).unwrap_or_else(|| "unknown".into()))
+}
+
+/// `OpenCodeUpdateService.getStatus` as JSON.
+pub(crate) async fn status_value(app: &Shared, force: bool) -> Value {
+    let plan = install::plan::plan(force).await;
+    let user = install::plan::user_prefix();
+    let (binary, source, default_selection) = selected_binary(app).await;
     let probe = parse_version(&run(&binary, &["--version"]).await);
     let quoted = cfg!(windows) && binary.contains(['"', '\r', '\n']);
     let current = (probe.valid && !quoted).then(|| {
@@ -228,10 +261,12 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
         _ => None,
     };
     let needs_shared = source == Some("user");
-    let foreign = plan.foreign.as_ref().is_some_and(|f| f.command == binary);
+    let notice = if default_selection { install::plan::notice(&plan) } else { json!({}) };
+    let replaceable_or_foreign = notice.get("foreignInstallation").and_then(|v| v["path"].as_str()) == Some(&binary)
+        || notice.get("legacyReplacement").and_then(|v| v["path"].as_str()) == Some(&binary);
     let can_upgrade = default_selection
         && !launch::wsl(&binary)
-        && (!invalid || foreign)
+        && (!invalid || replaceable_or_foreign)
         && plan.prefix.is_some()
         && (update == Some(true) || needs_shared)
         && latest.as_deref().is_some_and(|version| !admission::below_minimum(version));
@@ -239,8 +274,11 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
         "canUpgrade": can_upgrade, "minimumVersion": MINIMUM_VERSION, "recommendedVersion": RECOMMENDED_VERSION,
         "state": state, "binaryPath": binary, "needsSharedInstallation": needs_shared,
         "target": if launch::wsl(&binary) { "wsl" } else { "host" }, "canRestart": false});
-    if default_selection && let Some(notice) = install::plan::notice(&plan).get("foreignInstallation") {
-        status["foreignInstallation"] = notice.clone();
+    if let Some(legacy) = notice.get("legacyReplacement") {
+        status["legacyReplacement"] = legacy.clone();
+    }
+    if let Some(foreign) = notice.get("foreignInstallation") {
+        status["foreignInstallation"] = foreign.clone();
     }
     if let Some(source) = source {
         status["installationSource"] = json!(source);
@@ -255,6 +293,7 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
                 (status["serviceState"], status["serviceError"]) = (json!("error"), json!("service_check_failed"))
             }
             Ok(endpoint) => {
+                let daemon_version = endpoint.as_ref().map(|e| e.version.clone());
                 let older = endpoint.as_ref().is_some_and(|e| {
                     current.as_deref().is_some_and(|c| {
                         comparable(c) && comparable(&e.version) && compare(c, &e.version) == Ordering::Greater
@@ -265,11 +304,11 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
                 }
                 status["serviceState"] = json!("stopped");
                 if let Some(endpoint) = endpoint {
-                    match admission::admit(&app.native.client, &endpoint).await {
-                        Ok(()) => {
+                    match admission::inspect(&app.native.client, &endpoint).await {
+                        Ok(capabilities) => {
                             status["serviceState"] = json!(if older { "restart_available" } else { "ready" });
                             status["state"] = json!("ready");
-                            status["canReload"] = json!(false);
+                            status["canReload"] = json!(app.native.can_reload() && capabilities.reload);
                         }
                         Err(Refusal::Unsupported { reason, .. }) => {
                             status["incompatibilityReason"] = json!(reason);
@@ -281,6 +320,13 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
                         }
                     }
                 }
+                let service_state = status["serviceState"].as_str().unwrap_or("");
+                status["canRestart"] = json!(
+                    app.native.can_restart()
+                        && state == "ready"
+                        && matches!(service_state, "ready" | "restart_required" | "restart_available")
+                        && can_replace_daemon(current.as_deref(), daemon_version.as_deref())
+                );
             }
         }
     }
@@ -295,7 +341,13 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
     } else {
         "untested"
     });
-    Json(status)
+    status
+}
+
+/// `GET /api/opencode/update`: an explicit recheck refreshes the installation plan's cached probes.
+pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, String)>>) -> Json<Value> {
+    let force = query.iter().filter(|(key, _)| key == "recheck").map(|(_, value)| value.as_str()).eq(["1"]);
+    Json(status_value(&app, force).await)
 }
 
 #[cfg(test)]

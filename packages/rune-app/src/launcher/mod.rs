@@ -23,7 +23,7 @@ use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::{connect, refresh_projects};
 pub(crate) use placement::place;
 pub(crate) use projects::set_project;
-pub use projects::{choose_project, open, restore};
+pub use projects::{choose_project, open, open_temporary_folder, restore};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use reopen::reopen;
 use rune::{Tx, edit::TextEdit};
@@ -74,8 +74,10 @@ pub struct Launcher {
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
     pending_stream_generation: u64,
-    stopped_during_pending: HashSet<String>,
+    stopped_during_pending: std::collections::HashMap<String, (bool, bool)>,
     stopped_during_pending_overflow: bool,
+    pub(super) pending_temporary_cleanup: Option<(Backend, String, Option<String>)>,
+    pub(crate) pending_restore_intent: Option<String>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
@@ -85,6 +87,7 @@ pub struct Launcher {
     pending_connection_generation: u64,
     selection_ticket: Option<u64>,
     close_mission_reader_on_bind: bool,
+    rebinding_failed: bool,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
@@ -125,6 +128,39 @@ impl Launcher {
     pub fn blocks_prompt(&self) -> bool {
         self.pending && !self.listing
     }
+    pub(crate) fn is_listing(&self) -> bool {
+        self.listing
+    }
+    pub(crate) fn connection_generation(&self) -> u64 {
+        self.connection_generation
+    }
+}
+
+pub(crate) fn cancel_pending_restore(s: &mut State) -> bool {
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_owned())
+        .unwrap_or_else(|| "launcher".into());
+    let Some(l) = s.screen.launcher_mut() else {
+        return false;
+    };
+    if !l.pending || l.pending_restore_intent.as_deref() != Some(intent.as_str()) {
+        return false;
+    }
+    l.openings.revoke_intent(&intent);
+    l.result = None;
+    l.pending = false;
+    l.listing = false;
+    l.pending_restore_intent = None;
+    l.selection_ticket = None;
+    l.resume_after_job = false;
+    l.stopped_during_pending.clear();
+    l.stopped_during_pending_overflow = false;
+    true
+}
+
+impl Launcher {
     #[cfg(test)]
     pub(crate) fn workspace_stream_online(&self) -> bool {
         self.detached_reconcile.is_none()
@@ -163,6 +199,10 @@ impl Launcher {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn has_owned_server(&self) -> bool {
         self.host.is_some()
+    }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn set_fixture_host(&mut self, host: crate::platform::LocalHost) {
+        self.host = Some(host);
     }
     pub fn new(wake: rune::Waker) -> Self {
         let boot = if crate::platform::setting("RUNE_BACKEND").is_none() {
@@ -208,8 +248,10 @@ impl Launcher {
             openings: Default::default(),
             result: None,
             pending_stream_generation: 0,
-            stopped_during_pending: HashSet::new(),
+            stopped_during_pending: std::collections::HashMap::new(),
             stopped_during_pending_overflow: false,
+            pending_temporary_cleanup: None,
+            pending_restore_intent: None,
             detached_reconcile: None,
             detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
@@ -219,6 +261,7 @@ impl Launcher {
             pending_connection_generation: 0,
             selection_ticket: None,
             close_mission_reader_on_bind: false,
+            rebinding_failed: false,
             boot,
             host: None,
             managed_renewal: None,
@@ -244,6 +287,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.pending_restore_intent = None;
         self.pending_connection_generation = self.connection_generation;
         self.pending_stream_generation = self.workspace_stream_generation;
         self.stopped_during_pending.clear();
@@ -367,6 +411,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let unauthorized = watch.take_authentication_required();
         let disconnected = watch.take_disconnect();
         let (generation, overflow, events) = watch.take_workspace_events();
+        let temporary_folders = watch.take_temporary_folders();
         let previous = l.workspace_stream_generation;
         l.workspace_stream_generation = generation;
         let expired = unauthorized.then(|| l.connection.clone()).flatten();
@@ -376,16 +421,28 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             overflow,
             disconnected,
             events,
+            temporary_folders,
             expired,
         ))
     });
     let mut relayed = false;
-    if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
+    if let Some((
+        previous,
+        generation,
+        overflow,
+        disconnected,
+        events,
+        temporary_folders,
+        expired,
+    )) = stream_update
+    {
         let mut stopped = Vec::new();
         let mut stopped_ids = HashSet::new();
         let mut other = Vec::new();
         for event in events {
-            if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = &event {
+            if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id, .. } =
+                &event
+            {
                 stopped_ids.insert(workspace_id.clone());
                 stopped.push(event);
             } else {
@@ -407,13 +464,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if !stopped.is_empty() {
             if let Some(l) = s.screen.launcher_mut() {
                 for event in &stopped {
-                    if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
-                        event
+                    if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted,
+                        temporary_retained,
+                    } = event
                     {
                         if l.pending {
-                            if l.stopped_during_pending.len() < 128 {
-                                l.stopped_during_pending.insert(workspace_id.clone());
-                            } else if !l.stopped_during_pending.contains(workspace_id) {
+                            if l.stopped_during_pending.len() < 128
+                                || l.stopped_during_pending.contains_key(workspace_id)
+                            {
+                                l.stopped_during_pending
+                                    .insert(workspace_id.clone(), (*deleted, *temporary_retained));
+                            } else {
                                 l.stopped_during_pending_overflow = true;
                             }
                         }
@@ -423,7 +486,27 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     }
                 }
             }
+            for event in &stopped {
+                if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted,
+                    temporary_retained,
+                } = event
+                {
+                    relayed |= crate::workspace::detach_stopped_temporary(
+                        s,
+                        workspace_id,
+                        *deleted,
+                        *temporary_retained,
+                        tx,
+                    );
+                }
+            }
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
+        }
+        if let Some(folders) = temporary_folders {
+            crate::shell::temporary::bump_reconcile_epoch(s);
+            relayed |= crate::workspace::reconcile_temporary_folders(s, &folders);
         }
         #[cfg(target_arch = "wasm32")]
         if disconnected && !crate::platform::pairing::required(s) {
@@ -433,6 +516,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let _ = disconnected;
         let mut start_reconcile = None;
         let mut overflow_reconcile = false;
+        let mut reconcile_temporary = false;
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
                 if let Some(l) = s.screen.launcher_mut() {
@@ -442,6 +526,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
+                reconcile_temporary = true;
                 #[cfg(target_arch = "wasm32")]
                 crate::platform::pairing::observe_launcher_authenticated(s, generation);
                 relayed |= crate::workspace::set_detached_online(s, false);
@@ -450,11 +535,15 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
             }
         } else if overflow && generation % 2 == 1 {
+            reconcile_temporary = true;
             relayed |= crate::workspace::set_detached_online(s, false);
             if crate::workspace::has_detached_panels(s) {
                 start_reconcile = Some(generation);
                 overflow_reconcile = true;
             }
+        }
+        if reconcile_temporary {
+            crate::shell::temporary::trigger_reconnect_reconcile(s);
         }
         if let Some(reconcile_generation) = start_reconcile
             && crate::workspace::has_detached_panels(s)
@@ -601,6 +690,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
+    #[cfg(target_arch = "wasm32")]
+    let pairing_required = crate::platform::pairing::required(s);
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -615,20 +706,29 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    l.pending_restore_intent = None;
+    let temporary_cleanup = l.pending_temporary_cleanup.take();
     let stale_connection = l.pending_connection_generation != l.connection_generation;
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
     let close_mission_reader = std::mem::take(&mut l.close_mission_reader_on_bind);
+    let rebinding_failed = std::mem::take(&mut l.rebinding_failed);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
+        if rebinding_failed && s.phase == Phase::Reconnecting {
+            s.phase = Phase::Failed;
+        }
         if std::mem::take(&mut l.resume_after_job)
             && !l.authentication_required
             && l.project.is_none()
         {
             crate::workspace::resume(s, tx);
+        }
+        if let Some((backend, path, req_id)) = temporary_cleanup {
+            crate::shell::temporary::queue_abandon(s, backend, path, req_id);
         }
         tx.instant();
         return true;
@@ -640,12 +740,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::AuthenticationExpired(expired)) => {
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             crate::settings::authentication_required(s, &expired);
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
+            if stale_connection && temporary_cleanup.is_some() {
+                drop(opening);
+                if let Some((backend, path, req_id)) = temporary_cleanup {
+                    crate::shell::temporary::queue_abandon(s, backend, path, req_id);
+                }
+                tx.instant();
+                return true;
+            }
             if opening.adopt().is_err() {
                 l.error = Some("rune.open_error");
+                if let Some((backend, path, req_id)) = temporary_cleanup {
+                    crate::shell::temporary::queue_abandon(s, backend, path, req_id);
+                }
                 tx.instant();
                 return true;
             }
@@ -656,7 +770,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.creation_uncertain_linked = None;
             l.rebind_after_send = None;
             l.failed_detached_workspaces.remove(&project.id);
-            let stopped_in_flight = stopped_during_pending.contains(&project.id);
+            let stopped_meta = stopped_during_pending.get(&project.id).copied();
+            let stopped_in_flight = stopped_meta.is_some();
             let current_stream_generation = l.workspace_stream_generation;
             let needs_reconcile = !stopped_in_flight
                 && (stopped_during_pending_overflow
@@ -704,11 +819,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
-            if stopped_in_flight {
+            if let Some((deleted, temporary_retained)) = stopped_meta {
+                let _ = crate::workspace::detach_stopped_temporary(
+                    s,
+                    &project.id,
+                    deleted,
+                    temporary_retained,
+                    tx,
+                );
                 crate::workspace::deliver_detached_events(
                     s,
                     &[codenomad_client::transport::WorkspaceEvent::Stopped {
                         workspace_id: project.id,
+                        deleted,
+                        temporary_retained,
                     }],
                 );
             } else if needs_reconcile
@@ -754,8 +878,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
             }
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
-            let stopped_in_flight =
-                stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
+            let stopped_in_flight = stopped_during_pending_overflow
+                || stopped_during_pending.contains_key(&b.workspace);
             if blocked || superseded || l.authentication_required || stopped_in_flight {
                 if !stopped_in_flight {
                     l.sessions.insert(
@@ -793,7 +917,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let stopped_in_flight = stopped_during_pending_overflow
                 || l.project
                     .as_ref()
-                    .is_some_and(|p| stopped_during_pending.contains(&p.id));
+                    .is_some_and(|p| stopped_during_pending.contains_key(&p.id));
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -858,25 +982,29 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
             }
-            if let Some(id) = selected
-                .as_deref()
-                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
-            {
+            if let Some(id) = selected.as_deref().filter(|id| {
+                (s.phase == Phase::Failed || rebinding_failed) && missing.iter().any(|m| m == id)
+            }) {
                 retire_session(s, id);
                 tx.instant();
                 return true;
             }
             let auth_required = l.authentication_required;
+            #[cfg(target_arch = "wasm32")]
+            let auth_required = auth_required || pairing_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
                     && !stopped_during_pending_overflow
-                    && !stopped_during_pending.contains(&b.workspace)
+                    && !stopped_during_pending.contains_key(&b.workspace)
                     && (!selection_blocked
-                        || s.phase == Phase::Failed
+                        || (s.phase == Phase::Failed || rebinding_failed)
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 l.show_title = false;
                 if stale_connection {
+                    if rebinding_failed && s.phase == Phase::Reconnecting {
+                        s.phase = Phase::Failed;
+                    }
                     dismiss_origin_panel(s, dismiss, tx);
                     if close_mission_reader {
                         retry_mission_conversation(s, b.session);
@@ -890,23 +1018,28 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     }
                     bind(s, b, title, visit, &slug, tx);
                 }
-            } else if !selection_blocked {
-                l.error = Some("sessionList.reload.error");
-                crate::shell::notifications::emit_outcome(
-                    s,
-                    crate::shell::notifications::Category::Sessions,
-                    None,
-                    crate::strings::t("sessionList.reload.error"),
-                    true,
-                );
+            } else {
+                if rebinding_failed && s.phase == Phase::Reconnecting {
+                    s.phase = Phase::Failed;
+                }
+                if !selection_blocked {
+                    l.error = Some("sessionList.reload.error");
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t("sessionList.reload.error"),
+                        true,
+                    );
+                }
             }
         }
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
-            if !l.authentication_required && !stale_connection {
+            if !l.authentication_required && !pairing_required && !stale_connection {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
-                let stopped_in_flight = stopped_during_pending.contains(&id);
+                let stopped_in_flight = stopped_during_pending.contains_key(&id);
                 let current_stream_generation = l.workspace_stream_generation;
                 let needs_reconcile = !stopped_in_flight
                     && (stopped_during_pending_overflow
@@ -939,6 +1072,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s,
                         &[codenomad_client::transport::WorkspaceEvent::Stopped {
                             workspace_id: id,
+                            deleted: false,
+                            temporary_retained: false,
                         }],
                     );
                 } else if needs_reconcile
@@ -953,6 +1088,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         spawn_detached_reconcile(l, current_stream_generation);
                     }
                 }
+            } else if pairing_required && !stale_connection {
+                s.phase = Phase::WorkspaceMissing;
             }
         }
         Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
@@ -962,7 +1099,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::workspace::schedule_catalogue(s);
                 if !auth_required
                     && !stopped_during_pending_overflow
-                    && !stopped_during_pending.contains(&backend.workspace)
+                    && !stopped_during_pending.contains_key(&backend.workspace)
                     && (attempted
                         || crate::git::placement(s) != Some(slug.as_str())
                         || s.phase == Phase::Failed)
@@ -986,7 +1123,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::schedule_catalogue(s);
             if !auth_required
                 && !stopped_during_pending_overflow
-                && !stopped_during_pending.contains(&backend.workspace)
+                && !stopped_during_pending.contains_key(&backend.workspace)
                 && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
             {
                 if stale_connection {
@@ -997,6 +1134,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Err(error) => {
+            if rebinding_failed && s.phase == Phase::Reconnecting {
+                s.phase = Phase::Failed;
+            }
             if stale_connection && l.resume_after_job {
                 l.error = None;
             } else {

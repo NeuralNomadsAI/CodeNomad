@@ -87,11 +87,21 @@ impl Images {
         }
     }
 
-    pub fn suspend(&mut self) {
+    pub fn suspend(&mut self) -> bool {
+        let changed = self.live.is_some()
+            || self.write_active
+            || self.seen_settled_id.is_some()
+            || self.scope_id.is_some()
+            || self.read_flight.is_some()
+            || self.snapshot.is_some()
+            || self.unsupported
+            || self.error
+            || self.generation_picker_open;
         self.live = None;
         self.write_active = false;
         self.seen_settled_id = None;
         self.reset_read_state();
+        changed
     }
 
     fn reset_read_state(&mut self) {
@@ -185,6 +195,7 @@ impl Images {
             }
             self.read_flight = None;
             self.trailing = true;
+            self.generation_picker_open = false;
             changed = true;
         }
 

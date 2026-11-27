@@ -302,7 +302,9 @@ impl Ui {
                     }
                 }
             }
-            WorkspaceEvent::Stopped { workspace_id } if workspace_id == self.backend.workspace => {
+            WorkspaceEvent::Stopped { workspace_id, .. }
+                if workspace_id == self.backend.workspace =>
+            {
                 self.pictures.suspend();
                 self.tree.close();
                 self.document.close();

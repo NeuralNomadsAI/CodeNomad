@@ -56,7 +56,15 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
         drop(prefs);
         if renewing {
             s.phase = crate::Phase::Reconnecting;
+            s.command_palette.dismiss();
+            s.tab_rename.dismiss();
+            s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
+            s.workspace_open.cancel();
         } else {
+            s.temporary.cancel_for_auth();
+            s.blank_cleanup.cancel();
+            s.workspace_open.cancel();
             s.show_launcher();
         }
         crate::workspace::suspend_missions(s);
@@ -105,6 +113,23 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
+fn provider_session_moved(s: &State, workspace: &str, session: &str) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.catalogue_watch.is_some())
+    {
+        return;
+    }
+    let mut prefs = s.settings.shared.borrow_mut();
+    if prefs.provider_target.as_mut().is_some_and(|target| {
+        target.session_moved(workspace, session)
+            | target.integrations_hint(workspace, Some(session))
+    }) && let Some(wake) = &prefs.window_wake
+    {
+        wake();
+    }
+}
+
 pub(crate) fn connection_event(
     s: &State,
     event: &crate::transport::Event,
@@ -148,11 +173,26 @@ pub(crate) fn connection_event(
             }
             let mut prefs = s.settings.shared.borrow_mut();
             prefs.set_native_stream_online(workspace_id, *connected);
+            if *connected {
+                prefs.set_pending_native_outage(false);
+                if affects_preferences {
+                    prefs.revalidate_transport();
+                    prefs.memory.transport(true);
+                }
+            } else if prefs
+                .backend
+                .as_ref()
+                .is_some_and(|b| b.workspace == *workspace_id)
+            {
+                prefs.set_pending_native_outage(true);
+            }
             if prefs.provider_target.as_mut().is_some_and(|target| {
                 if !target.is_workspace(workspace_id) {
                     return false;
                 }
-                if !target.native_transport(*connected) {
+                if *connected && !target.host_online() {
+                    target.transport(true);
+                } else if !target.native_transport(*connected) {
                     target.invalidate_location();
                 }
                 true
@@ -184,34 +224,31 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::SessionMoved {
             workspace_id,
             session_id,
-        }) => {
-            if s.screen
-                .launcher()
-                .is_some_and(|l| l.catalogue_watch.is_some())
-            {
-                return;
-            }
-            let mut prefs = s.settings.shared.borrow_mut();
-            if prefs.provider_target.as_mut().is_some_and(|target| {
-                target.hint_location(workspace_id)
-                    | target.integrations_hint(workspace_id, Some(session_id))
-            }) && let Some(wake) = &prefs.window_wake
-            {
-                wake();
-            }
-        }
-        Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
+        }) => provider_session_moved(s, workspace_id, session_id),
+        Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. }) => {
             provider_stopped(s, workspace_id)
+        }
+        Event::Reconnecting => {
+            s.settings
+                .shared
+                .borrow_mut()
+                .set_pending_native_outage(false);
         }
         Event::AgentHint(true) => {
             if affects_preferences {
-                s.settings.shared.borrow_mut().memory.transport(true);
+                let mut prefs = s.settings.shared.borrow_mut();
+                prefs.clear_native_stream_state();
+                prefs.memory.transport(true);
+                drop(prefs);
                 provider_transport(s, true);
             }
         }
         Event::ConnectionLost => {
             if affects_preferences {
                 s.settings.transcript_filters.close_preset_menu();
+                if s.settings.shared.borrow_mut().take_pending_native_outage() {
+                    return;
+                }
                 let other_healthy =
                     crate::workspace::conversation_stream_clients(s)
                         .iter()
@@ -234,7 +271,6 @@ pub(crate) fn connection_event(
                     prefs.revalidate_transport();
                 }
                 prefs.memory.transport(false);
-                prefs.clear_native_stream_state();
                 drop(prefs);
                 provider_transport(s, false);
             }
@@ -250,6 +286,9 @@ fn provider_transport(s: &State, online: bool) {
     let mut prefs = s.settings.shared.borrow_mut();
     if let Some(target) = &mut prefs.provider_target {
         target.transport(online);
+        if online {
+            target.native_transport(true);
+        }
         if let Some(wake) = &prefs.window_wake {
             wake();
         }

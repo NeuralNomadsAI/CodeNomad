@@ -62,6 +62,9 @@ const writes = []
 const memoryRequests = []
 const opencodeRequests = []
 const logLevelWrites = []
+const loginStartWrites = []
+let loginStartState = 'off'
+let opencodeLogsReads = 0
 const remoteRequests = []
 const directOrigin = 'https://fixture.example:444'
 const deviceId = '004633fb-53c4-477c-8b01-4cc5c177724b'
@@ -133,7 +136,27 @@ const server = createServer(async (req,res) => {
       }
       assert.equal(req.method,'GET')
       return json({state:'ready',serviceState:'ready',currentVersion:installed?'2.3.2':'2.3.0',
-        latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,binaryPath:'/fixture/opencode'})
+        latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,installationSource:'managed',binaryPath:'/fixture/opencode'})
+    }
+    if (p === '/api/opencode/login-start') {
+      assert(local,'The remote pane must not read or mutate login-start')
+      if (req.method === 'POST') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const change = JSON.parse(body)
+        loginStartWrites.push(change)
+        loginStartState = change.enabled ? 'on' : 'off'
+      }
+      return json({state:loginStartState})
+    }
+    if (p === '/api/opencode/logs') {
+      assert(local,'The remote pane must not read OpenCode logs')
+      opencodeLogsReads++
+      return json({path:'/fixture/opencode.log',text:'fixture opencode log line\n',truncated:false})
+    }
+    if (p === '/api/storage/binaries/validate') {
+      assert(local,'The remote pane must not validate OpenCode binaries')
+      return json({valid:true,version:'2.3.2'})
     }
     if (p === '/api/auth/status') return json({authenticated:true})
     if (stats && p.startsWith(usageRoute)) {
@@ -992,8 +1015,11 @@ try {
     await openCode.waitFor({state:local?'attached':'detached'})
     assert.deepEqual(opencodeRequests,[],'No diagnostic until OpenCode is opened')
     if (local) {
+      const loginLoaded = page.waitForResponse(
+        response=>new URL(response.url()).pathname==='/api/opencode/login-start' && response.request().method()==='GET'
+      )
       await openCode.click({force:true})
-      await update.waitFor({state:'attached'})
+      await Promise.all([update.waitFor({state:'attached'}), loginLoaded])
       assert.deepEqual(opencodeRequests,['GET'])
       const logging = page.getByRole('combobox',{name:'OpenCode Log Level',exact:true})
       await logging.and(page.locator('[aria-description="Debug"]')).waitFor({state:'attached'})
@@ -1001,6 +1027,16 @@ try {
       await page.getByRole('option',{name:'Warn',exact:true}).click({force:true})
       await logging.and(page.locator('[aria-description="Warn"]')).waitFor({state:'attached'})
       assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
+      const loginSwitch = page.getByRole('switch',{name:'Launch at startup',exact:true})
+      await loginSwitch.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
+      await loginSwitch.click({force:true})
+      await loginSwitch.and(page.locator('[aria-checked="true"]')).waitFor({state:'attached'})
+      assert.deepEqual(loginStartWrites,[{enabled:true}])
+      const openLogs = page.getByRole('button',{name:'View OpenCode logs',exact:true})
+      await openLogs.click({force:true})
+      await visible('fixture opencode log line')
+      assert.equal(opencodeLogsReads,1)
+      await page.getByRole('button',{name:'Close',exact:true}).last().click({force:true})
       await Promise.all([
         page.waitForRequest(request=>new URL(request.url()).pathname==='/api/opencode/update' && request.method()==='POST'),
         update.click({force:true}),
@@ -1023,8 +1059,10 @@ try {
       assert.deepEqual(remoteRequests,[])
       assert.deepEqual(opencodeRequests,[])
       assert.deepEqual(logLevelWrites,[])
+      assert.deepEqual(loginStartWrites,[])
+      assert.equal(opencodeLogsReads,0)
     }
-    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests,logLevelWrites}))
+    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests,logLevelWrites,loginStartWrites,opencodeLogsReads}))
   }
 
   async function checkProviders() {
@@ -1299,11 +1337,8 @@ try {
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
-  const nonConversation = () => {
-    assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
-    return Array.from(streams.values())[0]
-  }
-  nonConversation()
+  assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
+  const nonConversation = () => Array.from(streams.values())[0]
   account = 'default'
   nonConversation().write(`data: ${JSON.stringify({type:'instance.event',instanceId:'catalogue',event:{type:'credential.switched'}})}\n\n`)
   await visible('account@example.test')

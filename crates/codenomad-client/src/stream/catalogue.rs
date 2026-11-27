@@ -21,6 +21,14 @@ pub enum CatalogueChanges {
 }
 
 #[derive(Default)]
+pub enum ProviderMoves {
+    #[default]
+    None,
+    Sessions(Vec<(String, String)>),
+    All,
+}
+
+#[derive(Default)]
 pub enum SessionCatalogueChanges {
     #[default]
     None,
@@ -81,7 +89,10 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
         }),
         WorkspaceEvent::NativeFilesystemChanged { workspace_id }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
-        | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        | WorkspaceEvent::Stopped { workspace_id, .. } => workspace_id.len() + 64,
+        WorkspaceEvent::TemporaryChanged { folders } => folders
+            .iter()
+            .fold(64usize, |acc, folder| acc.saturating_add(folder.len() + 32)),
         _ => 64,
     }
 }
@@ -90,13 +101,15 @@ pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     provider_locations: Mutex<CatalogueChanges>,
+    provider_moves: Mutex<ProviderMoves>,
     integrations: Mutex<CatalogueChanges>,
     integration_sessions: Mutex<SessionCatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
-    workspace_stopped: Mutex<HashSet<String>>,
+    workspace_stopped: Mutex<std::collections::HashMap<String, (bool, bool)>>,
+    temporary_folders: Mutex<Option<Vec<String>>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
     disconnect_notice: std::sync::atomic::AtomicBool,
     authentication_required: std::sync::atomic::AtomicBool,
@@ -147,6 +160,7 @@ impl Signals {
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
+        *self.temporary_folders.lock().unwrap() = None;
         *self.stats.lock().unwrap() = StatsChanges::default();
         let gen_changed = self
             .generation
@@ -174,6 +188,31 @@ impl Signals {
 
     fn mark(&self, lane: &Mutex<CatalogueChanges>, workspace: Option<&str>) -> bool {
         mark_changes(&mut lane.lock().unwrap(), workspace)
+    }
+
+    fn mark_provider_move(&self, workspace: &str, session: &str) -> bool {
+        let mut moves = self.provider_moves.lock().unwrap();
+        match &mut *moves {
+            ProviderMoves::All => false,
+            ProviderMoves::None => {
+                *moves = ProviderMoves::Sessions(vec![(workspace.to_owned(), session.to_owned())]);
+                true
+            }
+            ProviderMoves::Sessions(entries) => {
+                if entries
+                    .iter()
+                    .any(|(ws, ses)| ws == workspace && (ses.is_empty() || ses == session))
+                {
+                    return false;
+                }
+                if entries.len() >= 128 {
+                    *moves = ProviderMoves::All;
+                    return true;
+                }
+                entries.push((workspace.to_owned(), session.to_owned()));
+                true
+            }
+        }
     }
 }
 
@@ -228,13 +267,20 @@ impl Signals {
         let workspace_event =
             super::routing::parse_detached_workspace_event(frame).is_some_and(|event| {
                 match event {
-                    WorkspaceEvent::Stopped { workspace_id } => {
+                    WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted,
+                        temporary_retained,
+                    } => {
                         let mut stopped = self.workspace_stopped.lock().unwrap();
-                        if stopped.len() < 128 {
-                            stopped.insert(workspace_id);
-                        } else if !stopped.contains(&workspace_id) {
+                        if stopped.len() < 128 || stopped.contains_key(&workspace_id) {
+                            stopped.insert(workspace_id, (deleted, temporary_retained));
+                        } else {
                             self.workspace_overflow.store(true, SeqCst);
                         }
+                    }
+                    WorkspaceEvent::TemporaryChanged { folders } => {
+                        *self.temporary_folders.lock().unwrap() = Some(folders);
                     }
                     other => {
                         if self.workspace_events.lock().unwrap().push(other) {
@@ -244,23 +290,42 @@ impl Signals {
                 }
                 true
             });
+        let session_moved = frame["type"] == "instance.event"
+            && frame["event"]["type"] == "session.moved"
+            && frame["instanceId"]
+                .as_str()
+                .filter(|id| valid_id(id))
+                .is_some_and(|id| {
+                    let ses = frame["event"]["data"]["sessionID"]
+                        .as_str()
+                        .filter(|s| valid_id(s))
+                        .or_else(|| {
+                            frame["event"]["data"]["id"]
+                                .as_str()
+                                .filter(|s| valid_id(s))
+                        })
+                        .unwrap_or("");
+                    self.mark_provider_move(id, ses) | self.mark(&self.providers, Some(id))
+                });
+        let account_config_changed = frame["type"] == "storage.configChanged"
+            && matches!(frame["owner"].as_str(), Some("providerAccounts" | "*"))
+            && self.mark(&self.providers, None);
         let provider_changed = crate::settings::provider_change(frame).is_some_and(|id| {
             let mut marked = self.mark(&self.providers, Some(id));
             if frame["type"] == "instance.eventStatus"
                 || (frame["type"] == "instance.event"
-                    && matches!(
-                        frame["event"]["type"].as_str(),
-                        Some("session.moved" | "server.connected")
-                    ))
+                    && frame["event"]["type"] == "server.connected")
             {
                 marked |= self.mark(&self.provider_locations, Some(id));
             }
             marked
-        }) || (frame["type"] == "instance.eventStatus"
+        }) | (frame["type"] == "instance.eventStatus"
             && frame["instanceId"]
                 .as_str()
                 .filter(|id| valid_id(id))
-                .is_some_and(|id| self.mark(&self.provider_locations, Some(id))));
+                .is_some_and(|id| self.mark(&self.provider_locations, Some(id))))
+            | session_moved
+            | account_config_changed;
         let integration_changed = match crate::settings::integrations::change_event(frame) {
             Some((ws, None)) => self.mark(&self.integrations, Some(ws)),
             Some((ws, Some(ses))) => mark_session_changes(
@@ -383,6 +448,7 @@ impl CatalogueWatch {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -390,6 +456,7 @@ impl CatalogueWatch {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -463,20 +530,23 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
+    pub fn take_temporary_folders(&self) -> Option<Vec<String>> {
+        self.signals.temporary_folders.lock().unwrap().take()
+    }
+
     pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
         let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
-        let stopped_ids: HashSet<String> = self
-            .signals
-            .workspace_stopped
-            .lock()
-            .unwrap()
-            .drain()
-            .collect();
-        for workspace_id in &stopped_ids {
+        let mut stopped_ids = HashSet::new();
+        for (workspace_id, (deleted, temporary_retained)) in
+            self.signals.workspace_stopped.lock().unwrap().drain()
+        {
+            stopped_ids.insert(workspace_id.clone());
             events.push_back(WorkspaceEvent::Stopped {
-                workspace_id: workspace_id.clone(),
+                workspace_id,
+                deleted,
+                temporary_retained,
             });
         }
         for event in self.signals.workspace_events.lock().unwrap().drain() {
@@ -487,7 +557,9 @@ impl CatalogueWatch {
                 | WorkspaceEvent::SessionMoved { workspace_id, .. }
                 | WorkspaceEvent::ServicesConfigChanged { workspace_id }
                 | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
-                | WorkspaceEvent::Stopped { workspace_id } => stopped_ids.contains(workspace_id),
+                | WorkspaceEvent::Stopped { workspace_id, .. } => {
+                    stopped_ids.contains(workspace_id)
+                }
                 WorkspaceEvent::PluginsChanged { workspace_id, .. }
                 | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id
                     .as_ref()
@@ -518,6 +590,10 @@ impl CatalogueWatch {
 
     pub fn take_provider_location_changes(&self) -> CatalogueChanges {
         std::mem::take(&mut *self.signals.provider_locations.lock().unwrap())
+    }
+
+    pub fn take_provider_moves(&self) -> ProviderMoves {
+        std::mem::take(&mut *self.signals.provider_moves.lock().unwrap())
     }
 
     pub fn native_connected(&self, workspace: &str) -> Option<bool> {
@@ -641,7 +717,7 @@ mod tests {
         assert_eq!(generation, 2);
         assert!(matches!(
             events.front(),
-            Some(WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "proj-1"
+            Some(WorkspaceEvent::Stopped { workspace_id, .. }) if workspace_id == "proj-1"
         ));
         for _ in 0..260 {
             watch.signals.observe(&json!({
@@ -720,6 +796,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -727,6 +804,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -798,6 +876,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -805,6 +884,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -829,10 +909,15 @@ mod tests {
         signals.observe(
             &json!({"type":"instance.event","instanceId":"first","event":{"type":"session.moved"}}),
         );
-        assert!(
-            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
-        );
-        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        assert!(matches!(
+            &*signals.provider_moves.lock().unwrap(),
+            ProviderMoves::Sessions(entries) if entries.contains(&("first".into(), String::new()))
+        ));
+        *signals.provider_moves.lock().unwrap() = ProviderMoves::None;
         signals.observe(
             &json!({"type":"instance.eventStatus","instanceId":"first","status":"disconnected"}),
         );
@@ -864,6 +949,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -871,6 +957,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -906,6 +993,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -913,6 +1001,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -928,6 +1017,88 @@ mod tests {
         assert!(!signals.workspace_overflow.load(SeqCst));
         signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
         assert!(signals.workspace_overflow.load(SeqCst));
+    }
+
+    #[test]
+    fn temporary_changed_coalesces_latest_folders_and_clears_on_disconnect() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            provider_locations: Mutex::default(),
+            provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
+            stopped: Mutex::default(),
+            stats: Mutex::default(),
+            attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
+            generation: Default::default(),
+            workspace_generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-a", "/tmp/cn-b"]
+        }));
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-b"]
+        }));
+        assert_eq!(
+            signals.temporary_folders.lock().unwrap().take(),
+            Some(vec!["/tmp/cn-b".to_owned()])
+        );
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["relative/invalid"]
+        }));
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-c"]
+        }));
+        signals.disconnected();
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn session_moved_records_provider_move_and_provider_accounts_config_invalidates_all() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.moved", "data": { "sessionID": "ses1" } }
+        }));
+        assert!(matches!(
+            watch.take_provider_moves(),
+            ProviderMoves::Sessions(entries) if entries == vec![("ws1".to_owned(), "ses1".to_owned())]
+        ));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(
+            matches!(changes, CatalogueChanges::Workspaces(ids) if ids == HashSet::from(["ws1".into()]))
+        );
+
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "providerAccounts"
+        }));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(matches!(changes, CatalogueChanges::All));
+
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "*"
+        }));
+        let (changes, _, _) = watch.take_provider_changes();
+        assert!(matches!(changes, CatalogueChanges::All));
     }
 
     #[test]
@@ -954,7 +1125,7 @@ mod tests {
         assert!(!overflow);
         assert!(events.iter().any(|ev| matches!(
             ev,
-            WorkspaceEvent::Stopped { workspace_id } if workspace_id == "proj-1"
+            WorkspaceEvent::Stopped { workspace_id, .. } if workspace_id == "proj-1"
         )));
         assert!(!events.iter().any(|ev| matches!(
             ev,

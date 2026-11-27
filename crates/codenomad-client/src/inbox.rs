@@ -84,6 +84,10 @@ impl InboxWire {
         self.inner.lock().unwrap().ingress
     }
 
+    pub(crate) fn current_ingress(&self) -> u64 {
+        self.inner.lock().unwrap().ingress
+    }
+
     pub(crate) fn capture(&self) -> InboxStamp {
         let inner = self.inner.lock().unwrap();
         InboxStamp {

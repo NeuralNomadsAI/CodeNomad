@@ -1,19 +1,19 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::view::Window;
-use crate::{State, backend::Backend, platform, strings::t};
-use codenomad_client::{
-    Receiver, Sender, bounded,
-    settings::{Provider, providers},
-    stream::{CatalogueChanges, SessionCatalogueChanges},
-};
-use rune::{El, TextEdit, col, text};
-use rune_theme_codenomad::{Space, TextRole, layout::Layout, settings as chrome};
-use std::{cell::RefCell, rc::Rc};
-
+mod accounts;
+mod form;
 mod images;
+mod manager;
+mod modal;
 #[cfg(test)]
 mod tests;
 mod websearch;
+
+#[cfg(not(target_arch = "wasm32"))]
+use super::view::Window;
+use crate::{State, backend::Backend};
+use codenomad_client::stream::{CatalogueChanges, ProviderMoves, SessionCatalogueChanges};
+use rune::{El, TextEdit, col};
+use rune_theme_codenomad::{Space, layout::Layout};
+use std::{cell::RefCell, rc::Rc};
 
 pub(super) struct Target {
     backend: Backend,
@@ -35,7 +35,7 @@ pub(super) struct Target {
 
 impl Target {
     pub fn capture(s: &State) -> Option<Self> {
-        let (backend, workspace, session, owned_tab, native_online) =
+        let (backend, workspace, session, owned_tab, host_online, native_online) =
             if let Some(l) = s.screen.launcher() {
                 let backend = l.connection.clone()?;
                 let workspace = l.project.as_ref()?.id.clone();
@@ -45,20 +45,19 @@ impl Target {
                     .as_ref()
                     .and_then(|watch| watch.native_connected(&workspace))
                     .unwrap_or(true);
-                (backend, workspace, session, true, native_online)
+                (backend, workspace, session, true, true, native_online)
             } else {
                 let backend = super::bound_backend(s)?;
                 let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
-                let native_online = s
-                    .settings
-                    .shared
-                    .borrow()
-                    .is_native_stream_online(&workspace);
+                let prefs = s.settings.shared.borrow();
+                let host_online = !prefs.is_transport_lost();
+                let native_online = prefs.is_native_stream_online(&workspace);
                 (
                     backend,
                     workspace,
                     (!session.is_empty()).then_some(session),
                     false,
+                    host_online,
                     native_online,
                 )
             };
@@ -72,7 +71,7 @@ impl Target {
             observed: None,
             authority: 0,
             native_authority: 0,
-            online: true,
+            online: host_online,
             native_online,
             stats: [0; 2],
             stats_status: None,
@@ -86,6 +85,7 @@ impl Target {
         s: &State,
         current: Option<&Backend>,
         changes: &CatalogueChanges,
+        moves: &ProviderMoves,
         stopped: &CatalogueChanges,
         generation: Option<u64>,
     ) -> bool {
@@ -108,6 +108,20 @@ impl Target {
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
+        }
+        match moves {
+            ProviderMoves::None => {}
+            ProviderMoves::All => {
+                self.authority = self.authority.wrapping_add(1);
+                self.invalidate_location();
+            }
+            ProviderMoves::Sessions(entries) => {
+                for (workspace, session) in entries {
+                    if self.session_moved(workspace, session) {
+                        break;
+                    }
+                }
+            }
         }
         if let Some(generation) = generation
             && self.observed != Some(generation)
@@ -153,6 +167,10 @@ impl Target {
         self.online && self.native_online
     }
 
+    pub(super) fn host_online(&self) -> bool {
+        self.online
+    }
+
     pub(super) fn stats_source(&self) -> (&Backend, &str, u64, [u64; 2]) {
         (&self.backend, &self.workspace, self.authority, self.stats)
     }
@@ -181,6 +199,10 @@ impl Target {
             let counter = &mut self.stats[usize::from(!urgent)];
             *counter = counter.wrapping_add(1);
         }
+    }
+
+    pub(super) fn backend(&self) -> &Backend {
+        &self.backend
     }
 
     pub(super) fn integrations_source(
@@ -271,19 +293,22 @@ impl Target {
         true
     }
 
-    pub fn hint_location(&mut self, workspace: &str) -> bool {
-        if !self.is_workspace(workspace) {
-            return false;
-        }
-        self.invalidate_location();
-        true
-    }
-
     pub(super) fn invalidate_location(&mut self) {
         self.location_epoch = self.location_epoch.wrapping_add(1);
         self.invalidate();
     }
 
+    pub fn session_moved(&mut self, workspace: &str, session: &str) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        if !session.is_empty() && self.session.as_deref() != Some(session) {
+            return false;
+        }
+        self.authority = self.authority.wrapping_add(1);
+        self.invalidate_location();
+        true
+    }
     fn invalidate(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }
@@ -310,16 +335,8 @@ impl Target {
     }
 }
 
-type Flight = (Sender<()>, Receiver<Option<Vec<Provider>>>);
-
 pub(super) struct Catalog {
-    pub expanded: bool,
-    scope: Option<(String, String, Option<String>)>,
-    authority: u64,
-    seen: Option<u64>,
-    flight: Option<Flight>,
-    rows: Option<Vec<Provider>>,
-    failed: bool,
+    manager: manager::Manager,
     websearch: Rc<RefCell<websearch::WebSearch>>,
     images: Rc<RefCell<images::Images>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -329,13 +346,7 @@ pub(super) struct Catalog {
 impl Default for Catalog {
     fn default() -> Self {
         Self {
-            expanded: true,
-            scope: None,
-            authority: 0,
-            seen: None,
-            flight: None,
-            rows: None,
-            failed: false,
+            manager: manager::Manager::default(),
             websearch: Rc::new(RefCell::new(websearch::WebSearch::default())),
             images: Rc::new(RefCell::new(images::Images::default())),
             #[cfg(not(target_arch = "wasm32"))]
@@ -345,190 +356,104 @@ impl Default for Catalog {
 }
 
 impl Catalog {
-    fn clear_models(&mut self) -> bool {
-        let changed =
-            self.seen.is_some() || self.flight.is_some() || self.rows.is_some() || self.failed;
-        self.scope = None;
-        self.authority = 0;
-        self.seen = None;
-        self.flight = None;
-        self.rows = None;
-        self.failed = false;
-        changed
-    }
-
-    pub fn poll(&mut self, target: Option<&Target>, wake: Option<&rune::Waker>) -> bool {
-        let mut changed = self.websearch.borrow_mut().poll(target, wake);
+    pub fn poll<S: 'static>(
+        &mut self,
+        target: Option<&Target>,
+        now: f64,
+        wake: Option<&rune::Waker>,
+        tx: &mut rune::Tx,
+        visible: bool,
+        access: fn(&mut S) -> &mut Catalog,
+    ) -> bool {
+        let mut changed = self.manager.poll(target, now, wake, tx, visible, access);
+        changed |= self.websearch.borrow_mut().poll(target, wake);
         #[cfg(not(target_arch = "wasm32"))]
         if self.websearch.borrow_mut().take_wipe_key() {
             self.websearch_key = TextEdit::new("");
         }
         changed |= self.images.borrow_mut().poll(target, wake);
+        changed
+    }
 
-        let Some((target, wake)) = target
-            .zip(wake)
-            .filter(|(target, _)| self.expanded && target.online())
-        else {
-            return self.clear_models() | changed;
-        };
-        if self
-            .scope
-            .as_ref()
-            .is_none_or(|(client, workspace, session)| {
-                client != &target.backend.client_id
-                    || workspace != &target.workspace
-                    || session != &target.session
-            })
-            || self.authority != target.provider_authority()
+    pub fn toggle(&mut self) {
+        self.manager.toggle();
+    }
+
+    pub fn suspend(&mut self) {
+        self.manager.suspend();
+        let _ = self.websearch.borrow_mut().suspend();
+        let _ = self.images.borrow_mut().suspend();
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            self.clear_models();
-            self.scope = Some((
-                target.backend.client_id.clone(),
-                target.workspace.clone(),
-                target.session.clone(),
-            ));
-            self.authority = target.provider_authority();
-            changed = true;
+            let _ = self.websearch.borrow_mut().take_wipe_key();
+            self.websearch_key = TextEdit::new("");
         }
-        if let Some(result) = self
-            .flight
-            .as_ref()
-            .and_then(|(_, reply)| reply.try_recv().ok())
+    }
+
+    pub fn cancel_on_hide(&mut self) -> bool {
+        let mut changed = self.manager.cancel_on_hide();
+        changed |= self.websearch.borrow_mut().suspend();
+        changed |= self.images.borrow_mut().suspend();
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            self.flight = None;
-            if self.seen == Some(target.revision) {
-                self.failed = result.is_none();
-                if let Some(rows) = result {
-                    self.rows = Some(rows);
-                }
+            let _ = self.websearch.borrow_mut().take_wipe_key();
+            if !self.websearch_key.text.is_empty() {
+                self.websearch_key = TextEdit::new("");
+                changed = true;
             }
-            changed = true;
-        }
-        if self.flight.is_none() && self.seen != Some(target.revision) {
-            let (cancel, cancelled) = bounded(1);
-            let (out, reply) = bounded(1);
-            let (backend, workspace, session, wake) = (
-                target.backend.clone(),
-                target.workspace.clone(),
-                target.session.clone(),
-                wake.clone(),
-            );
-            self.seen = Some(target.revision);
-            self.flight = Some((cancel, reply));
-            self.failed = false;
-            platform::spawn(async move {
-                if let Some(result) = platform::reads::cancellable(
-                    &cancelled,
-                    providers(&backend, &workspace, session.as_deref()),
-                )
-                .await
-                    && out.send(result.ok()).await.is_ok()
-                {
-                    wake();
-                }
-            });
-            changed = true;
         }
         changed
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn dismiss_modal(&mut self, tx: &mut rune::Tx) -> bool {
+        self.manager.dismiss_modal(tx)
+    }
+
+    #[cfg(test)]
+    pub(super) fn models_expanded(&self) -> bool {
+        self.manager.expanded
+    }
+
+    #[cfg(test)]
+    pub(super) fn models_settled(&self) -> bool {
+        self.manager.settled()
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn view(s: &Window, available: bool) -> El {
+pub(super) fn view(s: &Window, available: bool, layers: &mut Vec<El>) -> El {
     render_groups(
         &s.providers,
         available,
-        |s: &mut Window| s.providers.toggle(),
+        layers,
+        |s: &mut Window| &mut s.providers,
         Some(&s.providers.websearch_key),
         Some(|s: &mut Window| &mut s.providers.websearch_key),
     )
 }
 
-impl Catalog {
-    pub fn toggle(&mut self) {
-        self.expanded = !self.expanded;
-        self.clear_models();
-    }
-
-    pub fn suspend(&mut self) {
-        self.clear_models();
-        self.websearch.borrow_mut().suspend();
-        self.images.borrow_mut().suspend();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.websearch_key = TextEdit::new("");
-        }
-    }
-}
-
 pub(super) fn content<S: 'static>(
     catalog: &Catalog,
     available: bool,
-    toggle: impl Fn(&mut S) + Clone + 'static,
+    layers: &mut Vec<El>,
+    access: fn(&mut S) -> &mut Catalog,
 ) -> El {
-    render_groups(catalog, available, toggle, None, None)
+    render_groups(catalog, available, layers, access, None, None)
 }
 
 fn render_groups<S: 'static>(
     catalog: &Catalog,
     available: bool,
-    toggle: impl Fn(&mut S) + Clone + 'static,
+    layers: &mut Vec<El>,
+    access: fn(&mut S) -> &mut Catalog,
     external_key: Option<&TextEdit>,
     edit_key: Option<fn(&mut S) -> &mut TextEdit>,
 ) -> El {
-    let mut body = col().full_width().separate(Space::Sm);
-    if catalog.expanded {
-        if !available {
-            body = body.child(text(t("settings.providers.empty.noInstance")).role("status"));
-        } else {
-            if catalog.flight.is_some() {
-                body = body.child(text(t("settings.providers.loading")).role("status"));
-            } else if catalog.failed {
-                body = body.child(
-                    text(t("settings.providers.errors.loadFailed"))
-                        .wrap()
-                        .role("alert"),
-                );
-            }
-            if let Some(rows) = &catalog.rows {
-                if rows.is_empty() {
-                    body = body.child(
-                        text(t("settings.providers.empty.noConfiguredProviders")).role("status"),
-                    );
-                }
-                for provider in rows {
-                    let mut row = col().full_width().separate(Space::Sm).child(
-                        text(&provider.name)
-                            .full_width()
-                            .wrap_anywhere()
-                            .text_role(TextRole::Title)
-                            .role("heading"),
-                    );
-                    if let Some(active) = &provider.active {
-                        let label = text(&active.label);
-                        row = row.child(chrome::setting_row(
-                            t("settings.accounts.current"),
-                            if active.environment {
-                                label.help(t("settings.providers.source.env"))
-                            } else {
-                                label
-                            },
-                        ));
-                    }
-                    body = body.child(chrome::card(row).key(format!("provider-{}", provider.id)));
-                }
-            }
-        }
-    }
     col()
         .full_width()
         .separate(Space::Md)
-        .child(chrome::card(chrome::disclosure(
-            t("settings.providers.models.title"),
-            catalog.expanded,
-            body,
-            toggle,
-        )))
+        .child(manager::Manager::view(catalog, available, layers, access))
         .child(websearch::view::<S>(
             &catalog.websearch,
             available,

@@ -167,21 +167,33 @@ impl Panel {
             prefs.memory.show(self.shown && paired);
         }
         let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-        let stats = self.stats.poll(
+        let stats_changed = self.stats.poll(
             target,
             self.shown && paired && self.section == Section::Stats,
             wake,
             now,
             tx,
         );
-        let integrations = self.integrations.poll(
+        let providers_changed = if self.shown && paired && self.section == Section::Providers {
+            self.catalog.poll(
+                target,
+                now,
+                Some(wake),
+                tx,
+                document_visible(),
+                |s: &mut State| &mut s.settings.web.catalog,
+            )
+        } else {
+            self.catalog.cancel_on_hide()
+        };
+        let integrations_changed = self.integrations.poll(
             target,
             self.shown && paired && self.section == Section::Integrations,
             wake,
             now,
             tx,
         );
-        stats | integrations | leave
+        stats_changed | providers_changed | integrations_changed | leave
     }
 
     pub fn shown(&self) -> bool {
@@ -264,12 +276,6 @@ impl Panel {
             | (self.section == Section::Remote
                 && self.local(prefs)
                 && self.remote.poll(prefs, wake))
-            | (self.shown
-                && self.section == Section::Providers
-                && self.catalog.poll(
-                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                    Some(wake),
-                ))
     }
 
     fn poll_notification_permission(&self) -> bool {
@@ -340,6 +346,19 @@ impl Panel {
     }
 }
 
+fn document_visible() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .is_none_or(|doc| doc.visibility_state() == web_sys::VisibilityState::Visible)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
+}
+
 pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
     rune_theme_codenomad::tabs::BarAction::Settings
         .button(touch, t("settings.title"), open)
@@ -347,7 +366,7 @@ pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
         .key("open-preferences")
 }
 
-fn open(s: &mut State) {
+pub(super) fn open(s: &mut State) {
     s.shell.leave_project();
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();
@@ -631,8 +650,8 @@ pub(super) fn view(
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
-            providers::content(&panel.catalog, available, |s: &mut State| {
-                s.settings.web.catalog.toggle()
+            providers::content(&panel.catalog, available, &mut layers, |s: &mut State| {
+                &mut s.settings.web.catalog
             })
         }
         Section::Integrations => {
@@ -713,7 +732,8 @@ pub(super) fn view(
                     .backend
                     .as_ref()
                     .is_some_and(|b| !super::ServerOwner::backend_verified(b));
-            col()
+            let wake = Some(s.wake.clone());
+            let mut body = col()
                 .full_width()
                 .children(
                     (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
@@ -750,14 +770,39 @@ pub(super) fn view(
                         }
                     },
                     |s| &mut s.settings.web.opencode,
-                ))
-                .child(
-                    panel
-                        .logging
-                        .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                            &mut s.settings.web.logging
-                        }),
-                )
+                ));
+            if local {
+                let logs_action = opencode::logs_action_view(
+                    &panel.opencode,
+                    prefs,
+                    &s.settings.shared,
+                    wake.clone(),
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.opencode,
+                );
+                body = body
+                    .child(opencode::executable_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake.clone(),
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(opencode::login_start_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake,
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(panel.logging.view(
+                        &s.settings.shared,
+                        &mut layers,
+                        logs_action,
+                        |s: &mut State| &mut s.settings.web.logging,
+                    ));
+            }
+            body
         }
         Section::Remote
             if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>

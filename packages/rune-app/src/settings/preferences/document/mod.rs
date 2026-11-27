@@ -2,8 +2,11 @@ mod choice;
 mod runtime;
 
 pub(super) use choice::Choice;
-pub(in crate::settings) use choice::env_var_is_masked;
 use choice::{ChoiceValue, Choices, is_transcript};
+pub(in crate::settings) use choice::{
+    OpenCodeBinariesOp, OpenCodeBinaryEntry, env_var_is_masked, normalize_opencode_binary,
+    parse_opencode_binaries,
+};
 
 use crate::settings::transcript_preset::{self, Row};
 use codenomad_client::{
@@ -305,6 +308,29 @@ impl Document {
             && !self.choice_failed(Choice::Environment)
     }
 
+    pub(super) fn stage_opencode_binary(&mut self, path: String) {
+        self.stage_value(Choice::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path));
+    }
+
+    pub(super) fn clear_failed_opencode_binary(&mut self, path: &str) {
+        if self.write.failed.contains(&Choice::OpenCodeBinary)
+            && !self.choice_pending(Choice::OpenCodeBinary)
+            && self.write.requested.get(&Choice::OpenCodeBinary)
+                == Some(&ChoiceValue::OpenCodeBinary(path.to_owned()))
+        {
+            self.write.failed.remove(&Choice::OpenCodeBinary);
+            self.write.requested.remove(&Choice::OpenCodeBinary);
+        }
+    }
+
+    pub(super) fn stage_opencode_binaries(&mut self, op: OpenCodeBinariesOp) {
+        self.stage_value(Choice::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op));
+    }
+
+    pub(super) fn transport_epoch(&self) -> u64 {
+        self.transport_epoch
+    }
+
     pub(super) fn reset_shortcuts(&mut self) {
         if !self.shortcuts_pending() {
             self.write
@@ -435,11 +461,16 @@ impl Document {
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
                 | Choice::ShortcutReset
+                | Choice::OpenCodeBinary
+                | Choice::OpenCodeBinaries
                 | Choice::PaletteMutation
         ) {
             self.write.failed.remove(&choice);
         }
-        if matches!(choice, Choice::NotificationRoute(..)) {
+        if matches!(
+            choice,
+            Choice::NotificationRoute(..) | Choice::OpenCodeBinaries
+        ) {
             self.read.fresh_for_write = false;
         }
         if self.confirmed_epoch != self.transport_epoch && !self.refreshing() {
@@ -527,7 +558,9 @@ impl Document {
             ChoiceValue::Text(value) => Some(*value),
             ChoiceValue::Shortcut(_)
             | ChoiceValue::Palette(_)
-            | ChoiceValue::Environment { .. } => None,
+            | ChoiceValue::Environment { .. }
+            | ChoiceValue::OpenCodeBinary(_)
+            | ChoiceValue::OpenCodeBinaries(_) => None,
         }
     }
 

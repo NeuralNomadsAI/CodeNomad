@@ -64,7 +64,15 @@ pub(super) async fn dispatch_marked(
     let mark = if inbox_mark > 0 {
         inbox_mark
     } else {
-        sessions::note_inbox_value(&b.workspace, &b.session, &state.inbox, &value)
+        sessions::note_inbox_value(
+            &b.workspace,
+            &b.session,
+            &state.inbox,
+            Some(state.history_revision.as_ref()),
+            Some(state.upstream.as_ref()),
+            Some(state.disconnect_mark.as_ref()),
+            &value,
+        )
     };
     if value["instanceId"] == b.workspace
         && state.provider_usage.is_some()
@@ -79,6 +87,21 @@ pub(super) async fn dispatch_marked(
             WorkspaceEvent::ProviderUsageRefresh(directory),
         ))
         .await?;
+    }
+    if value["type"] == "storage.configChanged"
+        && matches!(value["owner"].as_str(), Some("providerAccounts" | "*"))
+        && !b.workspace.is_empty()
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::ProvidersChanged {
+                workspace_id: b.workspace.clone(),
+            },
+        ))
+        .await?;
+        if value["owner"] == "providerAccounts" {
+            return Ok(());
+        }
     }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
@@ -128,6 +151,10 @@ pub(super) async fn dispatch_marked(
             .await?;
         }
     }
+    if let Some(event) = parse_temporary_changed(&value) {
+        out.send(Input::Workspace(epoch, event)).await?;
+        return Ok(());
+    }
     if value["type"] == "instance.event"
         && let Some((id, session_id)) = crate::settings::integrations::session_stream_event(&value)
         && id == b.workspace
@@ -142,6 +169,9 @@ pub(super) async fn dispatch_marked(
         .await?;
     }
     if let Some(event) = workspace_event(b, &value) {
+        if matches!(event, WorkspaceEvent::Stopped { .. }) {
+            state.close_placement();
+        }
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
     }
@@ -158,6 +188,9 @@ fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
 pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     if storage_owner(value) == Some(crate::settings::Owner::Config) {
         return Some(WorkspaceEvent::UiPreferencesChanged);
+    }
+    if let Some(event) = parse_temporary_changed(value) {
+        return Some(event);
     }
     if let Some(event) = parse_workspace_event(value) {
         return Some(event);
@@ -208,6 +241,14 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
     }
 }
 
+fn parse_temporary_changed(value: &Value) -> Option<WorkspaceEvent> {
+    if value["type"].as_str()? != "workspace.temporaryChanged" {
+        return None;
+    }
+    let folders = crate::temporary_workspaces::parse_folders(&value["folders"]).ok()?;
+    Some(WorkspaceEvent::TemporaryChanged { folders })
+}
+
 pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     let id = value["workspaceId"]
         .as_str()
@@ -215,6 +256,8 @@ pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     match value["type"].as_str()? {
         "workspace.stopped" => Some(WorkspaceEvent::Stopped {
             workspace_id: id.into(),
+            deleted: value["reason"].as_str() == Some("deleted"),
+            temporary_retained: value["temporaryRetained"].as_bool().unwrap_or(false),
         }),
         "workspace.worktreesChanged" => Some(WorkspaceEvent::WorktreesChanged {
             workspace_id: id.into(),

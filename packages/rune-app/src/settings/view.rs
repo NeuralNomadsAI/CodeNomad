@@ -235,6 +235,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.providers.suspend();
         self.integrations.suspend();
         if self.config_files.dirty() {
             self.confirm_close = Some(CloseConfirm::ConfigFiles);
@@ -311,6 +312,7 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.providers.suspend();
         self.integrations.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
@@ -506,22 +508,49 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     },
                 ),
             ),
-            Section::OpenCode => (
-                "opencode",
-                col()
-                    .full_width()
-                    .child(opencode::view(
-                        &s.opencode,
-                        &prefs,
-                        Window::start_opencode_install,
-                        |s: &mut Window| s.check_opencode(Some(true)),
-                        |s| &mut s.opencode,
-                    ))
-                    .child(
-                        s.logging
-                            .view(&s.shared, &mut layers, |s: &mut Window| &mut s.logging),
-                    ),
-            ),
+            Section::OpenCode => {
+                let wake = prefs.window_wake.clone();
+                let logs_action = opencode::logs_action_view(
+                    &s.opencode,
+                    &prefs,
+                    &s.shared,
+                    wake.clone(),
+                    &mut layers,
+                    |s: &mut Window| &mut s.opencode,
+                );
+                (
+                    "opencode",
+                    col()
+                        .full_width()
+                        .child(opencode::view(
+                            &s.opencode,
+                            &prefs,
+                            Window::start_opencode_install,
+                            |s: &mut Window| s.check_opencode(Some(true)),
+                            |s| &mut s.opencode,
+                        ))
+                        .child(opencode::executable_view(
+                            &s.opencode,
+                            &prefs,
+                            &s.shared,
+                            wake.clone(),
+                            |s: &mut Window| &mut s.opencode,
+                        ))
+                        .child(opencode::login_start_view(
+                            &s.opencode,
+                            &prefs,
+                            &s.shared,
+                            wake,
+                            |s: &mut Window| &mut s.opencode,
+                        ))
+                        .child(s.logging.view(
+                            &s.shared,
+                            &mut layers,
+                            logs_action,
+                            |s: &mut Window| &mut s.logging,
+                        )),
+                )
+            }
             Section::Conversation => {
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
@@ -562,6 +591,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .provider_target
                             .as_ref()
                             .is_some_and(providers::Target::online),
+                    &mut layers,
                 ),
             ),
             Section::Integrations => (

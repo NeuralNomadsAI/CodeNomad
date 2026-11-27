@@ -1,7 +1,7 @@
 //! Serialized command and SSE transport, epoch ownership and reconnect scheduling.
 use super::{
     Input, ReadingLane,
-    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event},
+    reader::{InboxReply, Lane, Reader, Turn, can_restart, reader_event, reader_inbox_delta},
     receipts,
 };
 use crate::{
@@ -17,6 +17,96 @@ use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
     time::Duration,
 };
+
+async fn reject_command(command: Command, out: &Sender<Event>, wake: &crate::Wake) {
+    let attempted = match command {
+        Command::Prompt(prompt) => prompt.id,
+        Command::Slash { attempt, .. } => Some(attempt),
+        _ => None,
+    };
+    if let Some(attempted) = attempted {
+        publish(
+            out,
+            wake,
+            Event::PromptAcknowledged {
+                attempted,
+                outcome: PromptOutcome::Rejected,
+            },
+        )
+        .await;
+    }
+}
+
+async fn close_and_reject_queued(
+    commands: &Receiver<Command>,
+    rx: &Receiver<Input>,
+    forward_done: &Receiver<()>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+) {
+    // Close admission before draining so no caller can enqueue after revocation starts.
+    commands.close();
+    loop {
+        while let Ok(queued) = rx.try_recv() {
+            if let Input::Command(command) = queued {
+                reject_command(command, out, wake).await;
+            }
+        }
+        if forward_done.is_closed() {
+            break;
+        }
+        if let Some(Input::Command(command)) =
+            runtime::recv_timeout(rx, Duration::from_millis(5)).await
+        {
+            reject_command(command, out, wake).await;
+        }
+    }
+    while let Ok(queued) = rx.try_recv() {
+        if let Input::Command(command) = queued {
+            reject_command(command, out, wake).await;
+        }
+    }
+    while let Ok(command) = commands.try_recv() {
+        reject_command(command, out, wake).await;
+    }
+}
+
+async fn finish_authentication_required(
+    commands: &Receiver<Command>,
+    rx: &Receiver<Input>,
+    forward_done: &Receiver<()>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    backend: &Backend,
+    confirmed: bool,
+) {
+    close_and_reject_queued(commands, rx, forward_done, out, wake).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed,
+        }),
+    )
+    .await;
+}
+
+fn can_admit_send(
+    backend: &Backend,
+    wire: &stream::State,
+    reading: Option<&ReadingLane>,
+    reader: &Reader,
+    ever_opened: bool,
+    out: &Sender<Event>,
+) -> bool {
+    !out.is_closed()
+        && !backend.client.server_identity_mismatch()
+        && !wire.placement_closed()
+        && !wire.auth_expired.load(SeqCst)
+        && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
+        && (reading.is_some() || !reader.historical && ever_opened)
+}
 
 pub(super) async fn next_input(
     rx: &Receiver<Input>,
@@ -112,7 +202,9 @@ pub(crate) async fn run_with_reading(
     reading: Option<ReadingLane>,
 ) -> history::Result<()> {
     let reading = reading.as_ref();
+    let pending_commands = commands.clone();
     let (tx, rx) = crate::bounded(128);
+    let (forward_done_tx, forward_done) = crate::bounded(1);
     let forward = tx.clone();
     runtime::spawn(async move {
         while let Ok(command) = commands.recv().await {
@@ -121,6 +213,7 @@ pub(crate) async fn run_with_reading(
             }
         }
         let _ = forward.send(Input::Command(Command::Close)).await;
+        drop(forward_done_tx);
     });
     let mut epoch = 1;
     let provider_usage = backend
@@ -141,6 +234,8 @@ pub(crate) async fn run_with_reading(
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
+    let mut ever_opened = false;
+    let mut stream_gap = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
     let mut retry: Option<Instant> = None;
@@ -182,6 +277,19 @@ pub(crate) async fn run_with_reading(
                 Turn::Process => {}
                 Turn::Next => continue,
                 Turn::Stop => return Ok(()),
+                Turn::AuthenticationExpired => {
+                    finish_authentication_required(
+                        &pending_commands,
+                        &rx,
+                        &forward_done,
+                        &out,
+                        &wake,
+                        &backend,
+                        true,
+                    )
+                    .await;
+                    return Ok(());
+                }
             }
         }
         if retry.is_some_and(|at| Instant::now() >= at) {
@@ -196,8 +304,18 @@ pub(crate) async fn run_with_reading(
         }
         match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
+                let stopped = matches!(event, crate::transport::WorkspaceEvent::Stopped { .. });
                 if !publish(&out, &wake, Event::Workspace(event)).await {
                     wire.cancel();
+                    return Ok(());
+                }
+                if stopped {
+                    wire.close_placement();
+                    wire.cancel();
+                    ReadingLane::invalidate_connection(reading);
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
+                    publish(&out, &wake, Event::Failed).await;
                     return Ok(());
                 }
             }
@@ -207,7 +325,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
-                attempts = 0;
+                ever_opened = true;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
                 reader.parked = false;
@@ -217,6 +335,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
+                stream_gap = opened && attempts == 0;
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
@@ -227,18 +346,34 @@ pub(crate) async fn run_with_reading(
                 attempts = attempts.saturating_add(1);
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
-                if attempts <= 6 {
-                    publish(&out, &wake, Event::Reconnecting).await;
-                } else if attempts == 7 && reading.is_none() {
-                    // Keep the same subscription owner after showing the outage.
-                    publish(&out, &wake, Event::Failed).await;
+                if !stream_gap {
+                    if attempts <= 6 {
+                        publish(&out, &wake, Event::Reconnecting).await;
+                    } else if attempts == 7 && reading.is_none() && !ever_opened {
+                        // Only fail an unestablished direct transport; once established, SSE outages
+                        // must not revoke HTTP send authority.
+                        publish(&out, &wake, Event::Failed).await;
+                    }
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(&out, &wake, Event::authentication_required(backend.clone())).await;
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    false,
+                )
+                .await;
                 return Ok(());
             }
             Some(Input::Unavailable(e, mark)) if e == epoch => {
+                // Upstream SSE unavailability over an open backend SSE stream is always a stream gap,
+                // never a revocation of HTTP send authority. Always publish ConnectionLost so detached
+                // history also reflects stream_offline for pagination buttons.
+                stream_gap = opened;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 reader.invalidate_inbox_flight();
@@ -252,9 +387,16 @@ pub(crate) async fn run_with_reading(
                     }),
                 )
                 .await;
-                if reading.is_some() || !reader.historical {
-                    publish(&out, &wake, Event::Reconnecting).await;
-                }
+                publish(
+                    &out,
+                    &wake,
+                    if stream_gap || reading.is_some() || reader.historical {
+                        Event::ConnectionLost
+                    } else {
+                        Event::Reconnecting
+                    },
+                )
+                .await;
                 wire.inbox.advance_applied(mark);
             }
             Some(Input::Available(e, v, mark)) if e == epoch => {
@@ -268,8 +410,9 @@ pub(crate) async fn run_with_reading(
                 )
                 .await;
                 if reading.is_some() {
+                    publish(&out, &wake, Event::UpstreamReady).await;
                     publish(&out, &wake, Event::AgentHint(true)).await;
-                } else if v > reader.fence && !reader.historical {
+                } else if !stream_gap && v > reader.fence && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
                 reader.dirty = true;
@@ -284,13 +427,14 @@ pub(crate) async fn run_with_reading(
                 if v > reader.fence {
                     reader.dirty = true;
                     reader.quiet = Instant::now() + Duration::from_millis(100);
-                    if reading.is_none() && !reader.historical {
+                    if !stream_gap && reading.is_none() && !reader.historical {
                         publish(&out, &wake, Event::Reconnecting).await;
                     }
                 }
                 wire.inbox.advance_applied(mark);
             }
             Some(Input::Command(Command::Retry)) => {
+                stream_gap = false;
                 ReadingLane::invalidate_connection(reading);
                 attempts = 0;
                 reader.dirty = true;
@@ -318,7 +462,22 @@ pub(crate) async fn run_with_reading(
                 };
                 let (edge, cancellation) = match command {
                     Command::Anchor(jump) => {
-                        reader.anchor(&lane, opened, jump).await;
+                        if matches!(
+                            reader.anchor(&lane, opened, jump).await,
+                            Turn::AuthenticationExpired
+                        ) {
+                            finish_authentication_required(
+                                &pending_commands,
+                                &rx,
+                                &forward_done,
+                                &out,
+                                &wake,
+                                &backend,
+                                true,
+                            )
+                            .await;
+                            return Ok(());
+                        }
                         continue;
                     }
                     Command::Page(edge, signal) => (edge, Some(signal)),
@@ -331,6 +490,19 @@ pub(crate) async fn run_with_reading(
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),
+                    Turn::AuthenticationExpired => {
+                        finish_authentication_required(
+                            &pending_commands,
+                            &rx,
+                            &forward_done,
+                            &out,
+                            &wake,
+                            &backend,
+                            true,
+                        )
+                        .await;
+                        return Ok(());
+                    }
                 }
             }
             Some(Input::Command(Command::SyncInbox(min_epoch))) => {
@@ -338,6 +510,7 @@ pub(crate) async fn run_with_reading(
                 reader.schedule_inbox_sync(Duration::ZERO);
             }
             Some(Input::Command(Command::Latest)) => {
+                stream_gap = false;
                 reader.clear_window();
                 reader.dirty = true;
                 reader.parked = false;
@@ -354,23 +527,57 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
-                if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
-                    .await
+                let admitted = can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out);
+                if let receipts::SlashReceipt::AuthenticationRequired { confirmed } =
+                    receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
+                        .await
                 {
+                    finish_authentication_required(
+                        &pending_commands,
+                        &rx,
+                        &forward_done,
+                        &out,
+                        &wake,
+                        &backend,
+                        confirmed,
+                    )
+                    .await;
                     return Ok(());
                 }
             }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
-                let Some(outcome) =
-                    receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
-                else {
-                    return Ok(());
+                let encoded =
+                    if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) {
+                        crate::prompt::encode(&prompt).ok()
+                    } else {
+                        None
+                    };
+                // Re-check placement and revocation right after encoding, before dispatching the POST.
+                let outcome = match encoded {
+                    Some(body)
+                        if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) =>
+                    {
+                        match receipts::prompt_encoded(&backend, &out, &wake, &wire, id, body).await
+                        {
+                            receipts::PromptReceipt::Outcome(outcome) => outcome,
+                            receipts::PromptReceipt::AuthenticationRequired { confirmed } => {
+                                finish_authentication_required(
+                                    &pending_commands,
+                                    &rx,
+                                    &forward_done,
+                                    &out,
+                                    &wake,
+                                    &backend,
+                                    confirmed,
+                                )
+                                .await;
+                                return Ok(());
+                            }
+                        }
+                    }
+                    _ => PromptOutcome::Rejected,
                 };
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && (reader.busy || prompt.delivery == Some(crate::prompt::Delivery::Queue))
@@ -419,6 +626,8 @@ pub(crate) async fn run_with_reading(
                         continue;
                     }
                     wire.cancel();
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
                     publish(
                         &out,
                         &wake,
@@ -480,6 +689,8 @@ pub(crate) async fn run_with_reading(
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
                         wire.cancel();
+                        close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                            .await;
                         return Err("session scope changed".into());
                     }
                     reader.clear_window_on_revert();
@@ -504,14 +715,12 @@ pub(crate) async fn run_with_reading(
                                         } else if reader.inbox.len() < crate::inbox::MAX_ITEMS {
                                             reader.inbox.push(item.clone());
                                         }
-                                        reader_event(
+                                        reader_inbox_delta(
                                             reading,
                                             reader.generation,
                                             &out,
                                             &wake,
-                                            Event::InboxDelta(crate::inbox::InboxDelta::Upsert(
-                                                item,
-                                            )),
+                                            crate::inbox::InboxDelta::Upsert(item),
                                         )
                                         .await;
                                     } else if !reader.historical && reader.inbox_overlap_repairs < 2
@@ -538,15 +747,15 @@ pub(crate) async fn run_with_reading(
                                     {
                                         existing.delivery = delivery;
                                     }
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                        crate::inbox::InboxDelta::Delivery {
                                             id: inbox_id,
                                             delivery,
-                                        }),
+                                        },
                                     )
                                     .await;
                                 }
@@ -555,14 +764,12 @@ pub(crate) async fn run_with_reading(
                             "session.inbox.delivered" => {
                                 if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
                                     reader.inbox.retain(|row| row.id != inbox_id);
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
-                                            inbox_id.to_owned(),
-                                        )),
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
                                     )
                                     .await;
                                 }
@@ -578,14 +785,12 @@ pub(crate) async fn run_with_reading(
                                     inbox_id.is_some_and(|id| reader.known.contains(id));
                                 if let Some(inbox_id) = inbox_id {
                                     reader.inbox.retain(|row| row.id != inbox_id);
-                                    reader_event(
+                                    reader_inbox_delta(
                                         reading,
                                         reader.generation,
                                         &out,
                                         &wake,
-                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
-                                            inbox_id.to_owned(),
-                                        )),
+                                        crate::inbox::InboxDelta::Removed(inbox_id.to_owned()),
                                     )
                                     .await;
                                 }
@@ -598,6 +803,47 @@ pub(crate) async fn run_with_reading(
                             _ => {
                                 reader.schedule_inbox_sync(Duration::from_millis(100));
                             }
+                        }
+                    } else {
+                        match kind {
+                            "session.inbox.enqueued" => {
+                                if let Some(item) = crate::inbox::decode_enqueued(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Upsert(item)),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivery.changed" => {
+                                if let Some((inbox_id, delivery)) =
+                                    crate::inbox::decode_delivery_changed(&native)
+                                {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Delivery {
+                                            id: inbox_id,
+                                            delivery,
+                                        }),
+                                    )
+                                    .await;
+                                }
+                            }
+                            "session.inbox.delivered" | "session.inbox.cancelled" => {
+                                if let Some(inbox_id) = crate::inbox::decode_inbox_id(&native) {
+                                    publish(
+                                        &out,
+                                        &wake,
+                                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(
+                                            inbox_id.to_owned(),
+                                        )),
+                                    )
+                                    .await;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     continue;
@@ -995,11 +1241,32 @@ pub(crate) async fn run_with_reading(
             out: &out,
             wake: &wake,
         };
-        if matches!(
-            reader.sync(&lane, opened, &mut connection_lost).await?,
-            Turn::Stop
-        ) {
-            return Ok(());
+        match reader.sync(&lane, opened, &mut connection_lost).await? {
+            Turn::Stop => return Ok(()),
+            Turn::AuthenticationExpired => {
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    true,
+                )
+                .await;
+                return Ok(());
+            }
+            Turn::Process | Turn::Next => {}
+        }
+        if reader.parked {
+            stream_gap = false;
+        }
+        if opened
+            && wire.upstream.load(SeqCst)
+            && (!reader.active_reader || reader.historical || (!reader.dirty && !reader.parked))
+        {
+            attempts = 0;
+            stream_gap = false;
         }
         reader.maybe_start_inbox(epoch, &backend, reading, &wire, opened, &inbox_tx);
     }

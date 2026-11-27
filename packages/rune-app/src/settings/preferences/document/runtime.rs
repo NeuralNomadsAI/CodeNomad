@@ -134,6 +134,8 @@ impl Document {
                 for choice in [
                     Choice::UpdateFeed,
                     Choice::Environment,
+                    Choice::OpenCodeBinary,
+                    Choice::OpenCodeBinaries,
                     Choice::PaletteMutation,
                 ] {
                     if self.write.pending.remove(&choice) {
@@ -410,6 +412,7 @@ impl Document {
             changed = true;
         }
         let sse_stale = backend.client.preferences_revision(owner) != self.snapshot_rev;
+        let binaries_need_fresh = self.write.pending.contains(&Choice::OpenCodeBinaries);
         let palette_needs_fresh = self.needs_fresh_palette_snapshot();
         let needs_fresh_on_stale = !atomic && self.has_stale_sensitive_write();
         let needs_fresh_on_disk = !atomic && self.needs_fresh_snapshot();
@@ -426,8 +429,10 @@ impl Document {
             }
         } else if writes_allowed
             && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
-                || ((needs_fresh_on_disk || palette_needs_fresh) && !self.read.fresh_for_write)
-                || (palette_needs_fresh && (self.read.queued || sse_stale))
+                || ((needs_fresh_on_disk || binaries_need_fresh || palette_needs_fresh)
+                    && !self.read.fresh_for_write)
+                || ((binaries_need_fresh || palette_needs_fresh)
+                    && (self.read.queued || sse_stale))
                 || (!self.write.uncertain.is_empty() && self.read.queued))
         {
             self.read.queued = false;
@@ -488,6 +493,7 @@ impl Document {
                 (Choice::Environment, value) => value.needs_atomic_mask(),
                 _ => false,
             });
+            let binaries_sensitive = sent.contains_key(&Choice::OpenCodeBinaries);
             let palette_sensitive = sent.get(&Choice::PaletteMutation).is_some_and(|value| {
                 matches!(
                     value,
@@ -496,7 +502,8 @@ impl Document {
                             .needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null))
                 )
             });
-            let needs_fresh = (!atomic && relies_on_atomic) || palette_sensitive;
+            let needs_fresh =
+                (!atomic && relies_on_atomic) || binaries_sensitive || palette_sensitive;
             if !atomic
                 && sent
                     .keys()

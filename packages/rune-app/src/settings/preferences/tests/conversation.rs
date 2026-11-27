@@ -107,6 +107,7 @@ fn pagination_401_checks_authentication_without_replaying_the_page() {
                 demand,
                 events: page_out,
                 connection: connection.clone(),
+                revoked: Default::default(),
             };
             let backend = backend.clone();
             platform::spawn(async move {
@@ -277,12 +278,14 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
             }))
             .await
             .unwrap();
-        let prompt = request(&listener).await;
+        let mut prompt = request(&listener).await;
         assert_eq!(
             prompt.first,
             "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
         );
-        prompt.reply(400, json!({})).await;
+        prompt
+            .reply_with_headers(400, json!({}), "x-codenomad-before-dispatch: 1\r\n")
+            .await;
         until(&events, |event| {
             matches!(
                 event,
@@ -461,7 +464,8 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
 }
 
 #[test]
-fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_relogin() {
+fn an_unmarked_native_command_401_with_a_live_backend_session_has_one_unconfirmed_receipt_and_no_relogin()
+ {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
         let (_sse, commands, events) = start(&listener, prefs.backend.take().unwrap()).await;
@@ -481,7 +485,7 @@ fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_rel
         status.reply(200, json!({"authenticated":true})).await;
         assert!(
             matches!(until(&events, |_| true).await, Event::PromptAcknowledged {
-            attempted, outcome: crate::transport::PromptOutcome::Rejected,
+            attempted, outcome: crate::transport::PromptOutcome::Unconfirmed,
         } if attempted == "fixture-attempt")
         );
         assert!(
@@ -516,7 +520,7 @@ fn retry_waits_for_the_opening_stream_to_report_authentication() {
 }
 
 #[test]
-fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
+fn settings_send_during_a_stream_outage_keeps_unconfirmed_lock_and_draft() {
     assert_direct_recovery(None);
 }
 
@@ -555,6 +559,17 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
                 .await;
             let reconnect = request(&listener).await;
             assert!(reconnect.first.starts_with("GET /api/events?"));
+            wait_until(|| {
+                runtime.update(|s, _| {
+                    crate::poll_chat(s, 8);
+                });
+                matches!(
+                    runtime.state.phase,
+                    crate::Phase::StreamDisconnected { running: false }
+                )
+            })
+            .await;
+            assert!(crate::composer::can_send(&runtime.state));
             Some(reconnect)
         } else {
             None
@@ -565,15 +580,32 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         runtime.frame(0.02);
         assert!(runtime.state.draft.text.is_empty());
         if let Some(reconnect) = reconnect {
-            reconnect.reply(401, json!({})).await;
-        } else {
             let prompt = request(&listener).await;
             assert_eq!(
                 prompt.first,
                 "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
             );
             assert_eq!(prompt.body["text"], "refused prompt");
-            prompt.reply(prompt_reply.unwrap(), json!({})).await;
+            prompt.reply(401, json!({})).await;
+            let status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            status.reply(200, json!({"authenticated":false})).await;
+            reconnect.reply(401, json!({})).await;
+        } else {
+            let mut prompt = request(&listener).await;
+            assert_eq!(
+                prompt.first,
+                "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
+            );
+            assert_eq!(prompt.body["text"], "refused prompt");
+            let status = prompt_reply.unwrap();
+            if status == 409 {
+                prompt
+                    .reply_with_headers(status, json!({}), "x-codenomad-before-dispatch: 1\r\n")
+                    .await;
+            } else {
+                prompt.reply(status, json!({})).await;
+            }
             if prompt_reply == Some(401) {
                 let status = request(&listener).await;
                 assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
@@ -615,7 +647,7 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
             );
         }
-        if prompt_reply != Some(401) {
+        if prompt_reply == Some(409) {
             let status = request(&listener).await;
             assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
             status.reply(200, json!({"authenticated":false})).await;
@@ -709,11 +741,34 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         identity
             .reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
             .await;
+        let placement = request(&listener).await;
+        assert_eq!(
+            placement.first,
+            "GET /workspaces/project/instance/api/session/session HTTP/1.1"
+        );
+        assert!(
+            placement
+                .headers
+                .to_ascii_lowercase()
+                .contains("\r\ncookie: fixture=renewed\r\n")
+        );
+        placement
+            .reply(
+                200,
+                json!({"data":{"id":"session","location":{"directory":"/project"}}}),
+            )
+            .await;
         wait_until(|| {
             update(&mut runtime);
             runtime.state.phase == crate::Phase::Reconnecting
         })
         .await;
+        assert_eq!(
+            crate::settings::bound_backend(&runtime.state)
+                .and_then(|backend| backend.session_directory)
+                .as_deref(),
+            Some("/project")
+        );
         assert!(runtime.find("direct-recovery-dialog").is_none());
         assert_eq!(runtime.state.draft.text, "refused prompt");
         let resumed_meta = request(&listener).await;
@@ -755,6 +810,12 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         .await;
         assert_eq!(runtime.state.draft.text, "refused prompt");
         assert_eq!(runtime.state.messages[0].id, "recent");
+        if prompt_reply.is_none() || prompt_reply == Some(401) {
+            assert!(
+                runtime.state.composer.unconfirmed_id().is_some(),
+                "unmarked 401 prompt must keep its unconfirmed lock when Sync omits the attempted ID"
+            );
+        }
     });
 }
 
@@ -833,6 +894,7 @@ fn closing_project_without_conversation_uses_the_renewed_cookie() {
         let project = crate::catalog::Project {
             id: "project".into(),
             path: "C:/fixture".into(),
+            temporary: false,
         };
         launcher.project = Some(project.clone());
         launcher.connection = Some(previous);
@@ -958,6 +1020,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         launcher.project = Some(crate::catalog::Project {
             id: "project".into(),
             path: "C:/fixture".into(),
+            temporary: false,
         });
         launcher.connection = Some(backend.clone());
         root.screen = crate::Screen::Chat {

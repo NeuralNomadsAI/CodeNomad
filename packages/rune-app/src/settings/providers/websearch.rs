@@ -111,11 +111,22 @@ impl WebSearch {
         }
     }
 
-    pub fn suspend(&mut self) {
+    pub fn suspend(&mut self) -> bool {
+        let changed = self.live.is_some()
+            || self.write_active
+            || self.seen_settled_id.is_some()
+            || self.scope_id.is_some()
+            || self.read_flight.is_some()
+            || self.snapshot.is_some()
+            || self.error
+            || self.open_picker.is_some()
+            || !self.selected_id.is_empty()
+            || !self.active_id.is_empty();
         self.live = None;
         self.write_active = false;
         self.seen_settled_id = None;
         self.reset_read_state(true);
+        changed
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -239,6 +250,12 @@ impl WebSearch {
             }
             self.read_flight = None;
             self.trailing = true;
+            self.open_picker = None;
+            self.active_id.clear();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.wipe_external_key = true;
+            }
             changed = true;
         }
 

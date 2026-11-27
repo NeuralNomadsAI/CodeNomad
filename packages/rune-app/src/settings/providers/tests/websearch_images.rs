@@ -1,5 +1,5 @@
-use super::*;
-use crate::backend::Backend;
+use super::super::*;
+use crate::{backend::Backend, platform};
 use rune::{Env, Runtime};
 use serde_json::{Value, json};
 use std::{
@@ -21,10 +21,12 @@ struct Harness {
 fn harness_view(s: &Harness, cx: &mut rune::Cx<Harness>) -> El {
     crate::strings::with_locale("en", || {
         rune_theme_codenomad::layout::render(cx, |_| {
-            render_groups(
+            let mut layers = Vec::new();
+            let content = render_groups(
                 &s.catalog,
                 s.available,
-                |s: &mut Harness| s.catalog.toggle(),
+                &mut layers,
+                |s: &mut Harness| &mut s.catalog,
                 #[cfg(not(target_arch = "wasm32"))]
                 Some(&s.catalog.websearch_key),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -33,7 +35,12 @@ fn harness_view(s: &Harness, cx: &mut rune::Cx<Harness>) -> El {
                 None,
                 #[cfg(target_arch = "wasm32")]
                 None,
-            )
+            );
+            let mut root = col().full_width().child(content);
+            for layer in layers {
+                root = root.child(layer);
+            }
+            root
         })
     })
 }
@@ -188,9 +195,12 @@ fn new_runtime(base: &str) -> Runtime<Harness> {
 
 async fn pump(rt: &mut Runtime<Harness>, label: &str, until: impl Fn(&Harness) -> bool) {
     for _ in 0..120 {
-        rt.update(|s, _| {
+        rt.update(|s, tx| {
             let target = s.available.then_some(s.target.as_ref()).flatten();
-            s.catalog.poll(target, Some(&s.wake));
+            s.catalog
+                .poll(target, 0.0, Some(&s.wake), tx, true, |s: &mut Harness| {
+                    &mut s.catalog
+                });
         });
         rt.frame(0.02);
         if until(&rt.state) {
@@ -284,11 +294,11 @@ fn lazy_disclosures_preserve_window_fold_state_and_do_not_fetch_while_folded() {
 
         let mut rt = new_runtime(&server.base);
         pump(&mut rt, "models-initial-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
+            h.catalog.models_settled()
         })
         .await;
 
-        assert!(rt.state.catalog.expanded);
+        assert!(rt.state.catalog.models_expanded());
         assert!(!rt.state.catalog.websearch.borrow().is_expanded());
         assert!(!rt.state.catalog.images.borrow().is_expanded());
         {
@@ -322,7 +332,7 @@ fn lazy_disclosures_preserve_window_fold_state_and_do_not_fetch_while_folded() {
         // Suspending (leaving Preferences / switching section) preserves fold state while clearing data.
         rt.update(|s, _| s.catalog.suspend());
         rt.frame(0.02);
-        assert!(rt.state.catalog.expanded);
+        assert!(rt.state.catalog.models_expanded());
         assert!(rt.state.catalog.websearch.borrow().is_expanded());
         assert!(rt.state.catalog.images.borrow().is_expanded());
         assert!(!rt.state.catalog.websearch.borrow().has_snapshot());
@@ -445,10 +455,7 @@ fn websearch_connections_key_connect_disconnect_and_defaults_flow() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
 
         // Open Web Search disclosure.
         click_disclosure(&mut rt, 1);
@@ -639,10 +646,7 @@ fn images_models_storage_overrides_blocked_and_error_flow() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
 
         click_disclosure(&mut rt, 2);
         pump(&mut rt, "images-load", |h| {
@@ -766,10 +770,7 @@ fn unsupported_404_501_endpoints_degrade_cleanly() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
 
         click_disclosure(&mut rt, 1);
         pump(&mut rt, "websearch-404", |h| {
@@ -879,10 +880,7 @@ fn domain_404_and_failed_post_write_readback_surface_error_and_lock_stale_contro
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
 
         click_disclosure(&mut rt, 2);
         pump(&mut rt, "images-load", |h| {
@@ -976,10 +974,7 @@ fn folded_write_failure_surfaces_error_upon_reopen() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt, 2);
         pump(&mut rt, "images-load", |h| {
             let img = h.catalog.images.borrow();
@@ -1065,10 +1060,7 @@ fn write_barrier_survives_project_switch_and_window_reopen() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt, 2);
         pump(&mut rt, "images-load", |h| {
             let img = h.catalog.images.borrow();
@@ -1094,8 +1086,15 @@ fn write_barrier_survives_project_switch_and_window_reopen() {
             }
         });
         for _ in 0..4 {
-            rt.update(|s, _| {
-                s.catalog.poll(s.target.as_ref(), Some(&s.wake));
+            rt.update(|s, tx| {
+                s.catalog.poll(
+                    s.target.as_ref(),
+                    0.0,
+                    Some(&s.wake),
+                    tx,
+                    true,
+                    |s: &mut Harness| &mut s.catalog,
+                );
             });
             rt.frame(0.02);
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1106,8 +1105,15 @@ fn write_barrier_survives_project_switch_and_window_reopen() {
             }
         });
         for _ in 0..4 {
-            rt.update(|s, _| {
-                s.catalog.poll(s.target.as_ref(), Some(&s.wake));
+            rt.update(|s, tx| {
+                s.catalog.poll(
+                    s.target.as_ref(),
+                    0.0,
+                    Some(&s.wake),
+                    tx,
+                    true,
+                    |s: &mut Harness| &mut s.catalog,
+                );
             });
             rt.frame(0.02);
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1115,14 +1121,18 @@ fn write_barrier_survives_project_switch_and_window_reopen() {
 
         // Recreate a fresh Preferences window while PUT is still in flight.
         let mut rt2 = new_runtime(&server.base);
-        pump(&mut rt2, "rt2-models", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt2, "rt2-models", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt2, 2);
         for _ in 0..4 {
-            rt2.update(|s, _| {
-                s.catalog.poll(s.target.as_ref(), Some(&s.wake));
+            rt2.update(|s, tx| {
+                s.catalog.poll(
+                    s.target.as_ref(),
+                    0.0,
+                    Some(&s.wake),
+                    tx,
+                    true,
+                    |s: &mut Harness| &mut s.catalog,
+                );
             });
             rt2.frame(0.02);
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1214,10 +1224,7 @@ fn passive_refresh_preserves_open_picker_focus_and_scope_paths() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt, 1);
         pump(&mut rt, "websearch-load", |h| {
             let ws = h.catalog.websearch.borrow();
@@ -1367,10 +1374,7 @@ fn session_move_revokes_write_authority_and_barrier_tracks_exact_write_id() {
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt, 2);
         pump(&mut rt, "images-load-a", |h| {
             let img = h.catalog.images.borrow();
@@ -1450,7 +1454,16 @@ fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_
                 ("GET", "/workspaces/ws1/instance/api/integration") => (
                     200,
                     "application/json",
-                    json!({"location": {"directory": current_dir}, "data": []}).to_string(),
+                    json!({
+                        "location": {"directory": current_dir},
+                        "data": [{
+                            "id": "tavily",
+                            "name": "Tavily",
+                            "methods": [{"type": "key", "label": "API key"}],
+                            "connections": []
+                        }]
+                    })
+                    .to_string(),
                 ),
                 ("GET", "/workspaces/ws1/instance/api/websearch/provider") => (
                     200,
@@ -1496,10 +1509,7 @@ fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_
         .await;
 
         let mut rt = new_runtime(&server.base);
-        pump(&mut rt, "models-load", |h| {
-            h.catalog.flight.is_none() && h.catalog.rows.is_some()
-        })
-        .await;
+        pump(&mut rt, "models-load", |h| h.catalog.models_settled()).await;
         click_disclosure(&mut rt, 1);
         pump(&mut rt, "websearch-load-a", |h| {
             let ws = h.catalog.websearch.borrow();
@@ -1581,7 +1591,13 @@ fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_
         assert!(!first_put.contains("/repo/a"));
 
         // 4. Coalesced disconnect+reconnect between polls (location_epoch invalidated without
-        //    observing native_online == false): writes stay locked until fresh read confirms /repo/c.
+        //    observing native_online == false): open connect form & typed key are wiped and
+        //    writes stay locked until fresh read confirms /repo/c.
+        click(&mut rt, "websearch-connect-open");
+        click(&mut rt, "websearch-api-key");
+        rt.paste("stale-secret-key");
+        rt.frame(0.02);
+        assert_eq!(rt.state.catalog.websearch_key.text, "stale-secret-key");
         *state.lock().unwrap() = ("/repo/c".into(), true);
         rt.update(|s, _| {
             s.target.as_mut().unwrap().invalidate_location();
@@ -1590,6 +1606,8 @@ fn native_stream_drop_and_reconnect_revoke_write_authority_until_fresh_location_
             h.catalog.websearch.borrow().is_idle()
         })
         .await;
+        assert!(rt.find("websearch-api-key").is_none());
+        assert!(rt.state.catalog.websearch_key.text.is_empty());
         click(&mut rt, "websearch-scope-project");
         rt.frame(0.02);
         assert!(rt.find("websearch-scope-project-default").is_none());
@@ -1652,7 +1670,8 @@ fn direct_native_outage_persists_before_capture_and_keeps_integrations_authority
     backend.session = "ses-direct".into();
     root.settings.shared.borrow_mut().backend = Some(backend);
 
-    // Native drop arrives while Preferences is closed (no Target yet) alongside Reconnecting.
+    // Native drop arrives while Preferences is closed (no Target yet) with the exact
+    // transport.rs sequence: NativeStreamStatus(false) followed by ConnectionLost.
     crate::settings::connection_event(
         &root,
         &Event::Workspace(WorkspaceEvent::NativeStreamStatus {
@@ -1661,7 +1680,7 @@ fn direct_native_outage_persists_before_capture_and_keeps_integrations_authority
         }),
         true,
     );
-    crate::settings::connection_event(&root, &Event::Reconnecting, true);
+    crate::settings::connection_event(&root, &Event::ConnectionLost, true);
 
     // Capturing Target during the outage must start offline so writes cannot proceed.
     let target = Target::capture(&root).unwrap();
@@ -1670,7 +1689,7 @@ fn direct_native_outage_persists_before_capture_and_keeps_integrations_authority
     let initial_provider_auth = target.provider_authority();
     root.settings.shared.borrow_mut().provider_target = Some(target);
 
-    // Native reconnect without ReadingLane (emits NativeStreamStatus(true) + Reconnecting)
+    // Native reconnect without ReadingLane (emits NativeStreamStatus(true), no AgentHint(true))
     // must restore Providers online without bumping Integrations' authority.
     crate::settings::connection_event(
         &root,
@@ -1680,11 +1699,76 @@ fn direct_native_outage_persists_before_capture_and_keeps_integrations_authority
         }),
         true,
     );
-    crate::settings::connection_event(&root, &Event::Reconnecting, true);
 
-    let shared = root.settings.shared.borrow();
-    let target = shared.provider_target.as_ref().unwrap();
-    assert!(target.online());
-    assert_eq!(target.integrations_source().3, initial_integrations_auth);
-    assert_ne!(target.provider_authority(), initial_provider_auth);
+    {
+        let shared = root.settings.shared.borrow();
+        let target = shared.provider_target.as_ref().unwrap();
+        assert!(target.online());
+        assert_eq!(target.integrations_source().3, initial_integrations_auth);
+        assert_ne!(target.provider_authority(), initial_provider_auth);
+    }
+
+    // Native drop while Target is already open (NativeStreamStatus(false) + ConnectionLost)
+    // must also recover online on NativeStreamStatus(true) without AgentHint(true).
+    let auth_before_open_outage = root
+        .settings
+        .shared
+        .borrow()
+        .provider_target
+        .as_ref()
+        .unwrap()
+        .provider_authority();
+    crate::settings::connection_event(
+        &root,
+        &Event::Workspace(WorkspaceEvent::NativeStreamStatus {
+            workspace_id: "ws-direct".into(),
+            connected: false,
+        }),
+        true,
+    );
+    crate::settings::connection_event(&root, &Event::ConnectionLost, true);
+    assert!(
+        !root
+            .settings
+            .shared
+            .borrow()
+            .provider_target
+            .as_ref()
+            .unwrap()
+            .online()
+    );
+
+    crate::settings::connection_event(
+        &root,
+        &Event::Workspace(WorkspaceEvent::NativeStreamStatus {
+            workspace_id: "ws-direct".into(),
+            connected: true,
+        }),
+        true,
+    );
+    {
+        let shared = root.settings.shared.borrow();
+        let target = shared.provider_target.as_ref().unwrap();
+        assert!(target.online());
+        assert_eq!(target.integrations_source().3, initial_integrations_auth);
+        assert_ne!(target.provider_authority(), auth_before_open_outage);
+    }
+
+    // Real host SSE ConnectionLost (without a paired NativeStreamStatus(false)) while
+    // Preferences is closed must make a newly captured Target start offline until AgentHint(true).
+    root.settings.shared.borrow_mut().provider_target = None;
+    crate::settings::connection_event(&root, &Event::ConnectionLost, true);
+    let host_offline = Target::capture(&root).unwrap();
+    assert!(!host_offline.online());
+    root.settings.shared.borrow_mut().provider_target = Some(host_offline);
+    crate::settings::connection_event(&root, &Event::AgentHint(true), true);
+    assert!(
+        root.settings
+            .shared
+            .borrow()
+            .provider_target
+            .as_ref()
+            .unwrap()
+            .online()
+    );
 }

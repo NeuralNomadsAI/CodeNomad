@@ -9,6 +9,7 @@ pub fn fixture(s: &mut State) {
     launcher.project = Some(Project {
         id: "header-windows".into(),
         path: "/repo".into(),
+        temporary: false,
     });
     launcher.sessions = vec![Session {
         id: "session".into(),

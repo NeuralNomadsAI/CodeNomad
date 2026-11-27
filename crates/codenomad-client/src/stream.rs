@@ -21,7 +21,9 @@ mod notifications;
 mod routing;
 mod sessions;
 mod staleness;
-pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch, SessionCatalogueChanges};
+pub use catalogue::{
+    AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves, SessionCatalogueChanges,
+};
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
 pub(crate) use hub::Hub;
@@ -38,8 +40,10 @@ pub struct State {
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub running: AtomicBool,
-    pub upstream: AtomicBool,
-    pub(crate) history_revision: AtomicU64,
+    pub upstream: Arc<AtomicBool>,
+    pub(crate) disconnect_mark: Arc<AtomicU64>,
+    pub(crate) auth_expired: AtomicBool,
+    pub(crate) history_revision: Arc<AtomicU64>,
     pub(crate) inbox: crate::inbox::InboxWire,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
@@ -58,8 +62,10 @@ impl Default for State {
             version: AtomicU64::new(0),
             alive: AtomicBool::new(false),
             running: AtomicBool::new(false),
-            upstream: AtomicBool::new(false),
-            history_revision: AtomicU64::new(0),
+            upstream: Arc::new(AtomicBool::new(false)),
+            disconnect_mark: Arc::new(AtomicU64::new(0)),
+            auth_expired: AtomicBool::new(false),
+            history_revision: Arc::new(AtomicU64::new(0)),
             inbox: crate::inbox::InboxWire::default(),
             preferences: None,
             preferences_notices: std::sync::OnceLock::new(),
@@ -109,6 +115,19 @@ impl State {
         } else {
             std::future::pending::<()>().await;
         }
+    }
+
+    pub(crate) fn close_placement(&self) {
+        self.inbox.invalidate_closed();
+        if let Some((cancel, _)) = &self.placement {
+            cancel.close();
+        }
+    }
+
+    pub(crate) fn placement_closed(&self) -> bool {
+        self.placement
+            .as_ref()
+            .is_some_and(|(cancel, _)| cancel.is_closed())
     }
 
     pub(crate) fn is_placement_changed(&self) -> bool {
@@ -169,14 +188,6 @@ impl State {
         self.closed.0.close();
     }
 
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn close_placement(&self) {
-        self.inbox.invalidate_closed();
-        if let Some((cancel, _)) = &self.placement {
-            cancel.close();
-        }
-    }
-
     async fn notify_preferences(
         &self,
         owner: crate::settings::Owner,
@@ -222,6 +233,7 @@ impl State {
             && !self.is_placement_changed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
+            && !self.placement_closed()
     }
     pub(crate) fn history_current(&self, revision: u64) -> bool {
         self.history_revision.load(SeqCst) == revision
@@ -230,6 +242,7 @@ impl State {
             && !self.is_placement_changed()
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
+            && !self.placement_closed()
     }
 }
 
@@ -291,6 +304,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
         let expired = result
             .as_ref()
             .is_err_and(crate::http::authentication_expired);
+        if expired {
+            state.auth_expired.store(true, SeqCst);
+        }
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }
@@ -333,11 +349,22 @@ pub(crate) async fn read(
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    opened_at(epoch, out, state, state.inbox.current_ingress()).await
+}
+
+pub(super) async fn opened_at(
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    mark: u64,
+) -> Result<()> {
     if let Some(signals) = &state.catalogue {
         signals.reconnected();
     }
     state.alive.store(true, SeqCst);
-    state.upstream.store(true, SeqCst);
+    if mark >= state.disconnect_mark.load(SeqCst) {
+        state.upstream.store(true, SeqCst);
+    }
     out.send(Input::Opened(epoch)).await?;
     if state.preferences.is_some() {
         state
