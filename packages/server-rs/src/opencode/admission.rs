@@ -51,15 +51,20 @@ pub fn below_minimum(version: &str) -> bool {
     release.as_slice() < minimum.as_slice()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capabilities {
+    pub reload: bool,
+}
+
 /// `assertSupportedOpenCode`, then for any other version than the reviewed minimum the declared
 /// HTTP contract (`negotiateRuntime`): read only, never a trial write.
-pub async fn admit(client: &Client, endpoint: &Endpoint) -> Result<(), Refusal> {
+pub async fn inspect(client: &Client, endpoint: &Endpoint) -> Result<Capabilities, Refusal> {
     let unsupported = |reason| Refusal::Unsupported { actual: endpoint.version.clone(), reason };
     if below_minimum(&endpoint.version) {
         return Err(unsupported("native_contract"));
     }
     if endpoint.version == MINIMUM_VERSION {
-        return Ok(());
+        return Ok(Capabilities { reload: true });
     }
     let target = endpoint.url.join("/openapi.json").map_err(|_| Refusal::Failed("Missing OpenCode contract".into()))?;
     let response = client
@@ -81,8 +86,12 @@ pub async fn admit(client: &Client, endpoint: &Endpoint) -> Result<(), Refusal> 
     contract(&document).map_err(unsupported)
 }
 
+pub async fn admit(client: &Client, endpoint: &Endpoint) -> Result<(), Refusal> {
+    inspect(client, endpoint).await.map(|_| ())
+}
+
 /// The declared contract checks of `negotiateRuntime`.
-pub fn contract(document: &Value) -> Result<(), &'static str> {
+pub fn contract(document: &Value) -> Result<Capabilities, &'static str> {
     let schemas = &document["components"]["schemas"];
     let resolve = |schema: &Value| match schema["$ref"].as_str().and_then(|r| r.strip_prefix("#/components/schemas/")) {
         Some(name) => schemas[name].clone(),
@@ -121,5 +130,5 @@ pub fn contract(document: &Value) -> Result<(), &'static str> {
     {
         return Err("native_contract");
     }
-    Ok(())
+    Ok(Capabilities { reload: has("/api/location/reload", "post") })
 }

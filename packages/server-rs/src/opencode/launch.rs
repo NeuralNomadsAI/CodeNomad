@@ -44,14 +44,65 @@ const DAEMON_EXCLUDED: &[&str] = &[
     "ELECTRON_NO_ASAR",
 ];
 
-/// `daemonProcessEnvironment` without configured overrides (the settings store is not ported).
+/// `daemonProcessEnvironment` without configured overrides.
 pub fn daemon_environment() -> Vec<(String, String)> {
-    env::vars()
-        .filter(|(key, _)| {
-            let key = key.to_ascii_uppercase();
-            !key.starts_with("CNRS_") && !DAEMON_EXCLUDED.contains(&key.as_str())
-        })
-        .collect()
+    daemon_environment_with_overrides(None).expect("host environment without overrides is always valid")
+}
+
+/// `daemonProcessEnvironment(serviceStartupEnvironment())` (`host-opencode-service.ts:51-57`,
+/// `manager.ts:1183-1214`): backend environment merged with profile `server.environmentVariables`,
+/// omitting internal storage/profile/auth variables and preserving backend `NODE_EXTRA_CA_CERTS`.
+pub fn daemon_environment_with_overrides(
+    overrides: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<Vec<(String, String)>, String> {
+    use std::collections::BTreeMap;
+
+    let excluded = |key: &str| {
+        let upper = key.to_ascii_uppercase();
+        upper.starts_with("CNRS_") || DAEMON_EXCLUDED.contains(&upper.as_str())
+    };
+    let map_key = |key: &str| if cfg!(windows) { key.to_ascii_uppercase() } else { key.to_owned() };
+
+    let mut merged: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for (key, value) in env::vars() {
+        if !excluded(&key) {
+            merged.insert(map_key(&key), (key, value));
+        }
+    }
+    if let Some(configured) = overrides {
+        for (key, value) in configured {
+            let Some(val) = value.as_str() else { continue };
+            let upper = key.to_ascii_uppercase();
+            if upper == "OPENCODE_DB" || upper == "XDG_STATE_HOME" {
+                continue;
+            }
+            if key.is_empty() || key.contains(['=', '\0']) || val.contains('\0') {
+                return Err(format!(
+                    "Invalid OpenCode service environment variable name: {}",
+                    if key.is_empty() { "(empty)" } else { key }
+                ));
+            }
+            if excluded(key) {
+                continue;
+            }
+            merged.insert(map_key(key), (key.clone(), val.to_owned()));
+        }
+    }
+    if let Ok(ca) = env::var("NODE_EXTRA_CA_CERTS") {
+        merged.retain(|_, (k, _)| !k.eq_ignore_ascii_case("NODE_EXTRA_CA_CERTS"));
+        merged.insert(map_key("NODE_EXTRA_CA_CERTS"), ("NODE_EXTRA_CA_CERTS".into(), ca));
+    }
+    Ok(merged.into_values().collect())
+}
+
+/// Reads profile `server.environmentVariables` from `config.yaml` (display read, matching TS
+/// `settings.getOwner("config", "server").environmentVariables`) and merges it for `service start`.
+pub fn daemon_environment_from_config(config_path: Option<&Path>) -> Result<Vec<(String, String)>, String> {
+    let overrides = config_path
+        .and_then(|path| crate::settings::document::read(path).ok())
+        .and_then(|doc| doc.get("server").and_then(serde_json::Value::as_object).cloned())
+        .and_then(|server| server.get("environmentVariables").and_then(serde_json::Value::as_object).cloned());
+    daemon_environment_with_overrides(overrides.as_ref())
 }
 
 /// `\\wsl$\<distro>\…` or `\\wsl.localhost\<distro>\…`: a WSL executable.
