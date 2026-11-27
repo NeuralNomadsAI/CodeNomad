@@ -17,6 +17,7 @@ fn stash(s: &mut State) {
         git.activate(false);
     }
     s.status_permissions.show(false);
+    s.status_services.show(false);
     s.status_usage.invalidate();
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
@@ -307,6 +308,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         tx.instant();
     }
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub(super) fn close_blocked(s: &State, index: usize) -> bool {

@@ -1,6 +1,6 @@
 //! Commit history and one commit's changed files with their contents.
 use super::{
-    TWO_MIB, bad, repo, run, sha,
+    TWO_MIB, bad, repo, run, run_with_stdin, sha,
     status_read::{changes, mime},
 };
 use crate::{Error, Shared, files};
@@ -14,6 +14,67 @@ use std::path::Path;
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, Error> {
     Ok(run(dir, args, TWO_MIB).await?.ok()?.text())
+}
+async fn has_alternates(dir: &Path) -> Result<bool, Error> {
+    let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).await?;
+    let alternates = Path::new(common.trim()).join("objects").join("info").join("alternates");
+    match std::fs::symlink_metadata(alternates) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        // Fail closed on permission or I/O errors: require reachability proof unless absence is confirmed.
+        Err(_) => Ok(true),
+    }
+}
+async fn ensure_commit_reachable(dir: &Path, commit: &str, err_msg: &str) -> Result<String, Error> {
+    let alt_before = has_alternates(dir).await?;
+    let verify = run(dir, &["rev-parse", "--verify", "--quiet", &format!("{commit}^{{commit}}")], 1024).await?;
+    if verify.code != 0 {
+        return Err(bad(err_msg));
+    }
+    let resolved = verify.text().trim().to_owned();
+    if !sha(&resolved) {
+        return Err(bad(err_msg));
+    }
+    if !alt_before && !has_alternates(dir).await? {
+        return Ok(resolved);
+    }
+    let on_head = run(dir, &["merge-base", "--is-ancestor", &resolved, "HEAD"], 1024).await?;
+    if on_head.code == 0 {
+        return Ok(resolved);
+    }
+    let on_ref =
+        run(dir, &["for-each-ref", &format!("--contains={resolved}"), "--count=1", "--format=%(refname)"], 4096)
+            .await?;
+    if on_ref.code == 0 && !on_ref.bytes.is_empty() {
+        return Ok(resolved);
+    }
+    // Preserve pinned history pagination anchors AND every ancestor commit shown on those pages
+    // after a local rebase/reset in shared clones by checking ancestry against this worktree's
+    // HEAD reflog tips.
+    let reflog = run(dir, &["log", "--no-show-signature", "-g", "--format=%H", "HEAD"], TWO_MIB).await?;
+    if reflog.code == 0 {
+        let mut tips = std::collections::HashSet::new();
+        let mut stdin = String::with_capacity(resolved.len() + 128);
+        stdin.push_str(&resolved);
+        stdin.push('\n');
+        for line in reflog.text().lines() {
+            let tip = line.trim();
+            if sha(tip) && tips.insert(tip.to_owned()) {
+                stdin.push('^');
+                stdin.push_str(tip);
+                stdin.push('\n');
+            }
+        }
+        if !tips.is_empty() {
+            // Omit `--ignore-missing` so a missing candidate `<resolved>` fails closed (exit 128)
+            // rather than producing an empty stdout that could be mistaken for ancestry.
+            let check = run_with_stdin(dir, &["rev-list", "--max-count=1", "--stdin"], stdin.as_bytes(), 1024).await?;
+            if check.code == 0 && check.bytes.is_empty() {
+                return Ok(resolved);
+            }
+        }
+    }
+    Err(bad(err_msg))
 }
 #[derive(Deserialize)]
 pub struct Page {
@@ -34,7 +95,7 @@ pub async fn history(
         if !sha(&h) {
             return Err(bad("Invalid commit ID"));
         }
-        Some(h)
+        Some(ensure_commit_reachable(&w.path, &h, "Invalid commit ID").await?)
     } else {
         let h = run(&w.path, &["rev-parse", "--verify", "--quiet", "HEAD"], 1024).await?;
         if h.code == 1 { None } else { Some(h.ok()?.text().trim().to_owned()) }
@@ -48,6 +109,7 @@ pub async fn history(
             &w.path,
             &[
                 "log",
+                "--no-show-signature",
                 "-z",
                 "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D",
                 "--max-count=51",
@@ -100,12 +162,26 @@ pub async fn commit_details(
     }
     let w = repo(&app, &id, &slug).await?;
     let _slot = app.file_reader.acquire().await.unwrap();
-    let text = git(&w.path, &["show", "-s", "--format=%P%x00%B", &format!("{commit}^{{commit}}"), "--"])
-        .await
-        .map_err(|_| bad("Object is not a commit"))?;
+    let commit = ensure_commit_reachable(&w.path, &commit, "Object is not a commit").await?;
+    let text = git(
+        &w.path,
+        &["show", "--no-show-signature", "-s", "--format=%P%x00%B", &format!("{commit}^{{commit}}"), "--"],
+    )
+    .await
+    .map_err(|_| bad("Object is not a commit"))?;
     let (parents, message) = text.split_once('\0').ok_or_else(|| bad("Object is not a commit"))?;
     let parent = parents.split_whitespace().next().filter(|p| sha(p));
-    let mut args = vec!["diff-tree", "--root", "--no-commit-id", "-r", "-M", "--name-status", "-z"];
+    let mut args = vec![
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "-r",
+        "-M",
+        "--name-status",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+    ];
     if let Some(parent) = parent {
         args.push(parent);
     }

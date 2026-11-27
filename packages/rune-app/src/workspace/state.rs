@@ -19,7 +19,7 @@ pub(crate) use notification::{
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
-pub(super) use panel_state::event_workspace_id;
+pub(crate) use panel_state::event_workspace_id;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
@@ -70,6 +70,56 @@ pub(super) struct Entry {
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
+}
+impl Entry {
+    pub(in crate::workspace) fn key_str(&self) -> &str {
+        &self.key
+    }
+    pub(in crate::workspace) fn saved_ref(&self) -> &Tab {
+        &self.saved
+    }
+    pub(in crate::workspace) fn cache_ref(&self) -> Option<&Cache> {
+        self.cache.as_ref()
+    }
+    pub(in crate::workspace) fn last_touched(&self) -> u64 {
+        self.history_touched
+    }
+    pub(in crate::workspace) fn project_root(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .map(|project| project.path.as_str())
+            .or_else(|| match &self.saved {
+                Tab::Workspace(saved) if !saved.folder.is_empty() => Some(saved.folder.as_str()),
+                _ => None,
+            })
+    }
+    pub(in crate::workspace) fn binding_ref(&self) -> Option<&Backend> {
+        self.binding.as_ref()
+    }
+    pub(in crate::workspace) fn missions_ref(&self) -> Option<&crate::missions::Panel> {
+        self.missions.as_ref()
+    }
+    pub(in crate::workspace) fn live_drafts_bytes(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        self.live_drafts.values().fold(0usize, |total, draft| {
+            total.saturating_add(draft.retained_bytes(seen))
+        })
+    }
+    pub(in crate::workspace) fn inactive_secondary_bytes(
+        &self,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
+        let cache_secondary = self.cache.as_ref().map_or(0, |cache| {
+            cache.evictable_secondary_bytes(active_outline_ptr)
+        });
+        let missions = self
+            .missions
+            .as_ref()
+            .map_or(0, crate::missions::Panel::evictable_inactive_bytes);
+        cache_secondary.saturating_add(missions)
+    }
 }
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
@@ -123,8 +173,70 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    memory_budget: super::memory_budget::Coordinator,
 }
 impl Ui {
+    pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
+        &self.entries
+    }
+    pub(in crate::workspace) fn active_tab_index(&self) -> usize {
+        self.active
+    }
+    pub(in crate::workspace) fn entry_cache_mut(&mut self, index: usize) -> Option<&mut Cache> {
+        self.entries.get_mut(index)?.cache.as_mut()
+    }
+    pub(in crate::workspace) fn evict_entry_secondary_caches(
+        &mut self,
+        index: usize,
+        active_outline_ptr: Option<usize>,
+    ) -> usize {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return 0;
+        };
+        let mut freed = entry.cache.as_mut().map_or(0, |cache| {
+            super::memory_budget::evict_cache_secondary(cache, active_outline_ptr)
+        });
+        if let Some(missions) = &mut entry.missions {
+            freed = freed.saturating_add(missions.evict_inactive_caches());
+        }
+        freed
+    }
+    pub(in crate::workspace) fn evict_active_closed_mission_cache(&mut self) -> usize {
+        self.entries
+            .get_mut(self.active)
+            .and_then(|entry| entry.missions.as_mut())
+            .map_or(0, crate::missions::Panel::evict_closed_reader_cache)
+    }
+    pub(in crate::workspace) fn memory_budget_mut(
+        &mut self,
+    ) -> &mut super::memory_budget::Coordinator {
+        &mut self.memory_budget
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn push_fixture_entry(
+        &mut self,
+        key: &str,
+        touched: u64,
+        cache: Cache,
+        missions: Option<crate::missions::Panel>,
+    ) {
+        let mut item = entry(key.into(), Tab::Blank);
+        item.history_touched = touched;
+        item.cache = Some(cache);
+        item.missions = missions;
+        self.entries.push(item);
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn take_entry_cache(&mut self, index: usize) -> Option<Cache> {
+        self.entries.get_mut(index)?.cache.take()
+    }
+    #[cfg(test)]
+    pub(in crate::workspace) fn entry_missions_ref(
+        &self,
+        index: usize,
+    ) -> Option<&crate::missions::Panel> {
+        self.entries.get(index)?.missions.as_ref()
+    }
     #[cfg(test)]
     pub(crate) fn mark_ready(&mut self) {
         self.ready = true;
@@ -178,6 +290,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            memory_budget: super::memory_budget::Coordinator::new(),
         }
     }
     fn changed(&mut self) {

@@ -1,45 +1,43 @@
 //! Browser-owned EventSource. Recovery owns reconnect epochs and backoff.
 use super::{
-    limits::{FRAME_LIMIT, reread},
-    staleness::{ProbeSource, STALE_THRESHOLD, Watchdog},
-    *,
+    Backend,
+    hub::{Hub, SharedStream},
+    limits::FRAME_LIMIT,
+    staleness::{ProbeSource, STALE_THRESHOLD, Watchdog, probe_stale},
 };
-use std::{cell::Cell, rc::Rc};
+use serde_json::json;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::SeqCst},
+};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{
     Document, Event, EventSource, EventSourceInit, MessageEvent, VisibilityState, Window,
 };
 
-const BACKLOG_LIMIT: usize = 2 * FRAME_LIMIT;
+type DocumentListener = (Document, Closure<dyn FnMut(Event)>);
 
-enum Frame {
-    Open,
-    Data(String, String),
-    Skipped,
-    Closed,
-}
 struct WakeListeners {
     window: Window,
     online: Option<Closure<dyn FnMut(Event)>>,
-    document: Option<(Document, Closure<dyn FnMut(Event)>)>,
+    document: Option<DocumentListener>,
 }
+
 impl WakeListeners {
-    fn attach(probe: &Sender<()>) -> Option<Self> {
+    fn attach() -> Option<Self> {
         let window = web_sys::window()?;
-        let online_tx = probe.clone();
         let online_cb: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-            let _ = online_tx.try_send(());
+            probe_stale();
         });
         let online = window
             .add_event_listener_with_callback("online", online_cb.as_ref().unchecked_ref())
             .is_ok()
             .then_some(online_cb);
         let document = window.document().and_then(|doc| {
-            let visible_tx = probe.clone();
             let visible_doc = doc.clone();
             let visible_cb: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
                 if visible_doc.visibility_state() == VisibilityState::Visible {
-                    let _ = visible_tx.try_send(());
+                    probe_stale();
                 }
             });
             doc.add_event_listener_with_callback(
@@ -56,6 +54,7 @@ impl WakeListeners {
         })
     }
 }
+
 impl Drop for WakeListeners {
     fn drop(&mut self) {
         if let Some(online) = &self.online {
@@ -71,6 +70,7 @@ impl Drop for WakeListeners {
         }
     }
 }
+
 struct Source {
     source: EventSource,
     _open: Closure<dyn FnMut(Event)>,
@@ -79,6 +79,7 @@ struct Source {
     _error: Closure<dyn FnMut(Event)>,
     _wake: Option<WakeListeners>,
 }
+
 impl Drop for Source {
     fn drop(&mut self) {
         self.source.close();
@@ -92,212 +93,275 @@ impl Drop for Source {
     }
 }
 
-pub(super) async fn read(
+struct ClearOnDrop(Arc<AtomicBool>);
+
+impl Drop for ClearOnDrop {
+    fn drop(&mut self) {
+        self.0.store(false, SeqCst);
+    }
+}
+
+fn spawn_pong(
     b: &Backend,
-    epoch: u64,
-    out: &Sender<Input>,
-    state: &State,
-) -> Result<()> {
-    let connection = format!("stream-{epoch}");
-    let mut url = reqwest::Url::parse(&format!("{}api/events", b.base))?;
-    url.query_pairs_mut()
-        .append_pair("clientId", &b.client_id)
-        .append_pair("connectionId", &connection)
-        .append_pair("userFiles", crate::attachments::USER_FILES_REFERENCE);
-    let options = EventSourceInit::new();
-    options.set_with_credentials(true);
-    let source = EventSource::new_with_event_source_init_dict(url.as_str(), &options)
-        .map_err(|_| "browser event stream unavailable")?;
-    let (tx, rx) = crate::bounded(128);
-    let (wake_tx, wake_rx) = crate::bounded(1);
-    let global_probe = ProbeSource::global().subscribe();
-    let wake_listeners = WakeListeners::attach(&wake_tx);
-    let watchdog = Arc::new(Watchdog::new(STALE_THRESHOLD));
-    let overflow = Rc::new(Cell::new(false));
-    let queued_bytes = Rc::new(Cell::new(0usize));
-    let quota = state.quota_ingress(b);
-    struct QuotaGuard(Option<crate::provider_usage::Ingress>);
-    impl Drop for QuotaGuard {
-        fn drop(&mut self) {
-            if let Some(quota) = &self.0 {
-                quota.transport(false);
-            }
-        }
+    connection: &str,
+    in_flight: &Arc<AtomicBool>,
+    watchdog: &Arc<Watchdog>,
+    cancel_rx: &crate::Receiver<()>,
+    abort_tx: &crate::Sender<()>,
+) -> Option<crate::Receiver<()>> {
+    if in_flight
+        .compare_exchange(false, true, SeqCst, SeqCst)
+        .is_err()
+    {
+        return None;
     }
-    let _quota_guard = QuotaGuard(quota.clone());
-    let quota_open = quota.clone();
-    let tx_open = tx.clone();
-    let fail_open = overflow.clone();
-    let close_open = source.clone();
-    let watchdog_open = watchdog.clone();
-    let on_open: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-        watchdog_open.activity();
-        if tx_open.try_send(Frame::Open).is_err() {
-            fail_open.set(true);
-            close_open.close();
-            if let Some(quota) = &quota_open {
-                quota.transport(false);
-            }
-        } else if let Some(quota) = &quota_open {
-            quota.transport(true);
+    let (done_tx, done_rx) = crate::bounded(1);
+    let b = b.clone();
+    let connection = connection.to_owned();
+    let in_flight = in_flight.clone();
+    let watchdog = watchdog.clone();
+    let pong_watchdog = watchdog.fork();
+    let pong_probe = ProbeSource::global().subscribe();
+    let cancel_rx = cancel_rx.clone();
+    let abort_tx = abort_tx.clone();
+    crate::runtime::spawn(async move {
+        let _done = done_tx;
+        let _guard = ClearOnDrop(in_flight);
+        let pong_probe = pong_probe;
+        enum PongStep {
+            Done(std::result::Result<reqwest::Response, reqwest::Error>),
+            Stale,
+            Cancelled,
         }
-    });
-    let message = |kind: &'static str| -> Closure<dyn FnMut(MessageEvent)> {
-        let tx = tx.clone();
-        let overflow = overflow.clone();
-        let queued_bytes = queued_bytes.clone();
-        let source = source.clone();
-        let quota = quota.clone();
-        let watchdog = watchdog.clone();
-        Closure::new(move |event: MessageEvent| {
-            watchdog.activity();
-            let data = event.data().as_string().unwrap_or_default();
-            let frame = if data.len() <= FRAME_LIMIT {
-                if kind == "message"
-                    && let Some(quota) = &quota
-                {
-                    quota.frame(&data);
-                }
-                Frame::Data(kind.into(), data)
-            } else {
-                if let Some(quota) = &quota {
-                    quota.skipped();
-                }
-                Frame::Skipped
-            };
-            let bytes = match &frame {
-                Frame::Data(_, data) => data.len(),
-                _ => 0,
-            };
-            let total = queued_bytes.get() + bytes;
-            if total > BACKLOG_LIMIT || tx.try_send(frame).is_err() {
-                overflow.set(true);
-                source.close();
-                if let Some(quota) = &quota {
-                    quota.transport(false);
-                }
-            } else {
-                queued_bytes.set(total);
-            }
-        })
-    };
-    let on_message = message("message");
-    let ping = message("codenomad.client.ping");
-    let tx_error = tx.clone();
-    let fail_error = overflow.clone();
-    let close_error = source.clone();
-    let quota_error = quota.clone();
-    let on_error: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-        if let Some(quota) = &quota_error {
-            quota.transport(false);
-        }
-        close_error.close();
-        if tx_error.try_send(Frame::Closed).is_err() {
-            fail_error.set(true);
-        }
-    });
-    source.set_onopen(Some(on_open.as_ref().unchecked_ref()));
-    source.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
-    source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    let _source = Source {
-        source,
-        _open: on_open,
-        _message: on_message,
-        ping,
-        _error: on_error,
-        _wake: wake_listeners,
-    };
-    _source
-        .source
-        .add_event_listener_with_callback(
-            "codenomad.client.ping",
-            _source.ping.as_ref().unchecked_ref(),
-        )
-        .map_err(|_| "browser ping listener unavailable")?;
-    enum Next<T> {
-        Ready(T),
-        Stale,
-    }
-    loop {
-        if state.cancelled.load(SeqCst) || out.is_closed() {
-            return Ok(());
-        }
-        if overflow.get() {
-            return Err("browser event queue budget reached".into());
-        }
-        // Activity is timestamped on EventSource arrival, so a pre-sleep buffered frame cannot
-        // mask a stream that has already gone silent past the threshold.
-        if watchdog.is_stale() {
-            return Err("browser event stream stale".into());
-        }
-        let frame = match rx.try_recv() {
-            Ok(frame) => Some(frame),
-            Err(_) => {
+        let step = futures_lite::future::or(
+            async {
                 futures_lite::future::or(
                     async {
-                        futures_lite::future::or(
-                            futures_lite::future::or(
-                                async {
-                                    let _ = wake_rx.recv().await;
-                                },
-                                global_probe.wait(),
-                            ),
-                            runtime::sleep(Duration::from_millis(25)),
-                        )
-                        .await;
-                        None
+                        let _ = cancel_rx.recv().await;
+                        PongStep::Cancelled
                     },
-                    async { rx.recv().await.ok() },
+                    async {
+                        pong_watchdog.wait_until_stale(&pong_probe, None).await;
+                        PongStep::Stale
+                    },
                 )
                 .await
+            },
+            async {
+                let res = b
+                    .client
+                    .post(format!("{}api/client-connections/pong", b.base))
+                    .json(&json!({"clientId": b.client_id, "connectionId": connection}))
+                    .send()
+                    .await
+                    .and_then(|response| response.error_for_status());
+                PongStep::Done(res)
+            },
+        )
+        .await;
+        match step {
+            PongStep::Done(Ok(_)) => watchdog.activity(),
+            PongStep::Done(Err(_)) | PongStep::Stale => {
+                let _ = abort_tx.try_send(());
             }
-        };
-        // Re-check after awaiting rx so a frame queued before sleep cannot mask staleness.
-        if watchdog.is_stale() {
-            return Err("browser event stream stale".into());
+            PongStep::Cancelled => {}
         }
-        match frame {
-            Some(Frame::Open) => {
-                let _pause = watchdog.pause();
-                b.client.children().invalidate_all(b);
-                opened(epoch, out, state).await?;
+        drop(pong_probe);
+        drop(_guard);
+        drop(_done);
+    });
+    Some(done_rx)
+}
+
+pub(super) async fn pump_shared(
+    hub: Arc<Hub>,
+    shared: Arc<SharedStream>,
+    b: Backend,
+    connection: String,
+    stop_rx: crate::Receiver<()>,
+) {
+    enum Signal {
+        Ping,
+        Closed,
+    }
+    enum Step {
+        Signal(std::result::Result<Signal, async_channel::RecvError>),
+        Stale,
+        Stopped,
+        PongAbort,
+    }
+    {
+        let Ok(mut url) = reqwest::Url::parse(&format!("{}api/events", b.base)) else {
+            shared.finish(&hub, false);
+            return;
+        };
+        url.query_pairs_mut()
+            .append_pair("clientId", &b.client_id)
+            .append_pair("connectionId", &connection)
+            .append_pair("userFiles", crate::attachments::USER_FILES_REFERENCE);
+        let options = EventSourceInit::new();
+        options.set_with_credentials(true);
+        let Ok(source) = EventSource::new_with_event_source_init_dict(url.as_str(), &options)
+        else {
+            shared.finish(&hub, false);
+            return;
+        };
+        let (signal_tx, signal_rx) = crate::bounded(8);
+        let global_probe = ProbeSource::global().subscribe();
+        let wake_listeners = WakeListeners::attach();
+        let watchdog = Arc::new(Watchdog::new(STALE_THRESHOLD));
+
+        let tx_open = signal_tx.clone();
+        let close_open = source.clone();
+        let watchdog_open = watchdog.clone();
+        let shared_open = shared.clone();
+        let backend_open = b.clone();
+        let on_open: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
+            if watchdog_open.is_stale() {
+                close_open.close();
+                let _ = tx_open.try_send(Signal::Closed);
+                return;
             }
-            Some(Frame::Data(kind, data)) if kind == "codenomad.client.ping" => {
-                queued_bytes.set(queued_bytes.get() - data.len());
-                // Pong POST is an independent network wait: keep staleness active so a dead link cuts it.
-                let pong_watchdog = watchdog.fork();
-                match futures_lite::future::or(
-                    async {
-                        pong_watchdog
-                            .wait_until_stale(&global_probe, Some(&wake_rx))
-                            .await;
-                        Next::Stale
-                    },
-                    async {
-                        Next::Ready(dispatch(b, epoch, out, state, &connection, &kind, &data).await)
-                    },
-                )
-                .await
-                {
-                    Next::Ready(result) => {
-                        result?;
-                        watchdog.activity();
-                    }
-                    Next::Stale => return Err("browser event stream stale".into()),
+            watchdog_open.activity();
+            backend_open.client.children().invalidate_all(&backend_open);
+            if !shared_open.mark_open() {
+                close_open.close();
+                let _ = tx_open.try_send(Signal::Closed);
+            }
+        });
+
+        let tx_msg = signal_tx.clone();
+        let close_msg = source.clone();
+        let hub_msg = hub.clone();
+        let shared_msg = shared.clone();
+        let backend_msg = b.clone();
+        let watchdog_msg = watchdog.clone();
+        let on_message: Closure<dyn FnMut(MessageEvent)> =
+            Closure::new(move |event: MessageEvent| {
+                // Reject pre-sleep buffered frames if the stream has already crossed the silence threshold.
+                if watchdog_msg.is_stale() {
+                    close_msg.close();
+                    let _ = tx_msg.try_send(Signal::Closed);
+                    return;
                 }
+                watchdog_msg.activity();
+                let data = event.data().as_string().unwrap_or_default();
+                if data.len() <= FRAME_LIMIT {
+                    shared_msg.broadcast_frame(&hub_msg, "message".into(), data);
+                } else {
+                    backend_msg.client.children().invalidate_all(&backend_msg);
+                    shared_msg.broadcast_skipped();
+                }
+            });
+
+        let tx_ping = signal_tx.clone();
+        let close_ping = source.clone();
+        let watchdog_ping = watchdog.clone();
+        let ping: Closure<dyn FnMut(MessageEvent)> = Closure::new(move |_: MessageEvent| {
+            if watchdog_ping.is_stale() {
+                close_ping.close();
+                let _ = tx_ping.try_send(Signal::Closed);
+                return;
             }
-            Some(Frame::Data(kind, data)) => {
-                let _pause = watchdog.pause();
-                queued_bytes.set(queued_bytes.get() - data.len());
-                dispatch(b, epoch, out, state, &connection, &kind, &data).await?
+            watchdog_ping.activity();
+            let _ = tx_ping.try_send(Signal::Ping);
+        });
+
+        let tx_error = signal_tx.clone();
+        let close_error = source.clone();
+        let on_error: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
+            close_error.close();
+            let _ = tx_error.try_send(Signal::Closed);
+        });
+
+        source.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+        source.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        let _source = Source {
+            source,
+            _open: on_open,
+            _message: on_message,
+            ping,
+            _error: on_error,
+            _wake: wake_listeners,
+        };
+        if _source
+            .source
+            .add_event_listener_with_callback(
+                "codenomad.client.ping",
+                _source.ping.as_ref().unchecked_ref(),
+            )
+            .is_err()
+        {
+            drop(_source);
+            shared.finish(&hub, false);
+            return;
+        }
+
+        let pong_in_flight = Arc::new(AtomicBool::new(false));
+        let (pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
+        let (pong_abort_tx, pong_abort_rx) = crate::bounded::<()>(1);
+        let mut pong_done: Option<crate::Receiver<()>> = None;
+        loop {
+            if watchdog.is_stale() || pong_abort_rx.try_recv().is_ok() {
+                break;
             }
-            Some(Frame::Skipped) => {
-                let _pause = watchdog.pause();
-                b.client.children().invalidate_all(b);
-                reread(epoch, out, state).await?;
+            let step = futures_lite::future::or(
+                async {
+                    futures_lite::future::or(
+                        async {
+                            let _ = stop_rx.recv().await;
+                            Step::Stopped
+                        },
+                        futures_lite::future::or(
+                            async {
+                                if pong_abort_rx.recv().await.is_ok() {
+                                    Step::PongAbort
+                                } else {
+                                    std::future::pending().await
+                                }
+                            },
+                            async {
+                                watchdog.wait_until_stale(&global_probe, None).await;
+                                Step::Stale
+                            },
+                        ),
+                    )
+                    .await
+                },
+                async { Step::Signal(signal_rx.recv().await) },
+            )
+            .await;
+            if watchdog.is_stale() {
+                break;
             }
-            Some(Frame::Closed) => return Err("browser event stream ended".into()),
-            None => {}
+            match step {
+                Step::Signal(Ok(Signal::Ping)) => {
+                    if let Some(done) = spawn_pong(
+                        &b,
+                        &connection,
+                        &pong_in_flight,
+                        &watchdog,
+                        &pong_cancel_rx,
+                        &pong_abort_tx,
+                    ) {
+                        pong_done = Some(done);
+                    }
+                }
+                Step::Signal(Ok(Signal::Closed))
+                | Step::Signal(Err(_))
+                | Step::Stale
+                | Step::Stopped
+                | Step::PongAbort => break,
+            }
+        }
+        drop(pong_cancel_tx);
+        drop(global_probe);
+        drop(_source);
+        shared.begin_close(&hub);
+        if let Some(done) = pong_done {
+            let _ = done.recv().await;
         }
     }
+    shared.finish(&hub, false);
 }

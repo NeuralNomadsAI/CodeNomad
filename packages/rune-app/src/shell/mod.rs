@@ -6,6 +6,7 @@ mod shortcuts;
 pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
 pub(crate) mod status_permissions;
+pub(crate) mod status_services;
 pub(crate) mod status_usage;
 #[cfg(target_arch = "wasm32")]
 mod web_orientation;
@@ -179,6 +180,13 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
         return true;
     }
     if event.key == Key::Escape && crate::timeline::dismiss_preview(s) {
+        return true;
+    }
+    if !tx.key_repeat()
+        && event.mods == Mods::default()
+        && event.key == Key::Escape
+        && s.status_services.dismiss_confirm(tx)
+    {
         return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {

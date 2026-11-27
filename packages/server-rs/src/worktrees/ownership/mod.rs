@@ -186,7 +186,7 @@ pub(super) fn registered_proof(
     Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media: false })
 }
 
-pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
+pub(crate) fn existing_directory(path: &Path) -> Option<&Path> {
     for ancestor in path.ancestors() {
         match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) => return metadata.is_dir().then_some(ancestor),
@@ -461,6 +461,25 @@ pub async fn resolve(app: &App, w: &Workspace, directory: &str) -> Option<Owned>
     resolve_checked(app, w, directory, false).await.ok().flatten()
 }
 
+/// Admits a subfolder under a non-Git workspace root only while the opened root's physical path
+/// is unchanged (`inventory::probe_root_checkout`), never following a redirected root symlink.
+async fn admit_non_git(root: &Path, resolved: &Path, target_exists: bool, strict: bool) -> Result<Option<Owned>, ()> {
+    let root_owned = root.to_path_buf();
+    let live = tokio::task::spawn_blocking(move || dunce::canonicalize(&root_owned).ok().as_ref() == Some(&root_owned))
+        .await
+        .unwrap_or(false);
+    if !live {
+        return Err(());
+    }
+    if strict && !matches!(strict_common_directory(root).await, Ok(None)) {
+        return Err(());
+    }
+    if (!strict || target_exists) && within(root, resolved) {
+        return Ok(Some(Owned { directory: resolved.to_string_lossy().into_owned(), checkout: root.to_path_buf() }));
+    }
+    Ok(None)
+}
+
 /// In strict discovery, distinguish a confirmed non-owner from an unreadable checkout.
 pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: bool) -> Result<Option<Owned>, ()> {
     let root = &w.path;
@@ -506,13 +525,11 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
         // `MissingGit` (`directoryOnly`) is never a strict absence verdict (TS `worktree-directory.ts:233`).
         crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
-        // `NonGit`: in strict mode, confirm absence directly on disk so an incomplete/broken `.git`
-        // stays an unverifiable `Err(())` (TS `worktree-directory.ts:236`).
+        // `NonGit`: Git is installed and the workspace root is not a repository, so subfolders
+        // inside the workspace root are owned (`native-worktrees.ts:66`, `worktree-directory.ts:230`).
+        // Verify the opened root's physical path is unchanged before admitting `resolved`.
         crate::worktrees::linked::HttpSnapshot::NonGit => {
-            if strict && matches!(strict_common_directory(root).await, Ok(None)) {
-                return Ok(None);
-            }
-            return Err(());
+            return admit_non_git(root, &resolved, target.is_some(), strict).await;
         }
     };
     let (owner, root_live) = {
@@ -554,10 +571,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
             crate::worktrees::linked::HttpSnapshot::Git(catalogue) => catalogue,
             crate::worktrees::linked::HttpSnapshot::MissingGit => return Err(()),
             crate::worktrees::linked::HttpSnapshot::NonGit => {
-                if strict && matches!(strict_common_directory(root).await, Ok(None)) {
-                    return Ok(None);
-                }
-                return Err(());
+                return admit_non_git(root, &resolved, target.is_some(), strict).await;
             }
         };
         let res_owned = resolved.clone();

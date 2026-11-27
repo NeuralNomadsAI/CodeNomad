@@ -16,6 +16,11 @@ use serde_json::Value;
 #[cfg(any(test, feature = "test-support"))]
 use serde_json::json;
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 #[derive(Default)]
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
@@ -29,6 +34,7 @@ pub(super) struct Preferences {
     pub(super) announced_update: Option<String>,
     palette_preview: Option<(bool, Option<&'static str>, ColorSchemeColors)>,
     binding_epoch: u64,
+    authority: Arc<AtomicU64>,
     config: Document,
     state: Document,
     server: Document,
@@ -46,9 +52,41 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    direct_access_lock: std::sync::Mutex<Option<(String, codenomad_client::Receiver<()>)>>,
 }
 
 impl Preferences {
+    pub(super) fn set_direct_access_lock(
+        &self,
+        owner: String,
+        lock: codenomad_client::Receiver<()>,
+    ) {
+        *self.direct_access_lock.lock().unwrap() = Some((owner, lock));
+    }
+
+    pub(super) fn clear_direct_access_lock(&self) {
+        *self.direct_access_lock.lock().unwrap() = None;
+    }
+
+    pub(super) fn direct_access_locked(&self, owner: Option<&str>) -> bool {
+        let Some(owner) = owner else {
+            return false;
+        };
+        let guard = self.direct_access_lock.lock().unwrap();
+        guard
+            .as_ref()
+            .is_some_and(|(lock_owner, rx)| lock_owner == owner && !rx.is_closed())
+    }
+
+    pub(super) fn take_finished_direct_access_lock(&self, owner: Option<&str>) -> bool {
+        let mut guard = self.direct_access_lock.lock().unwrap();
+        let finished = guard.as_ref().is_some_and(|(_, rx)| rx.is_closed());
+        if !finished {
+            return false;
+        }
+        let lock_owner = guard.take().map(|(id, _)| id);
+        owner.is_some() && owner == lock_owner.as_deref()
+    }
     pub(super) fn show_timeline(&self) -> bool {
         self.config
             .snapshot
@@ -298,7 +336,12 @@ impl Preferences {
         }
     }
 
+    fn revoke_send_authority(&self) {
+        self.authority.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(super) fn mark_transport_lost(&mut self) {
+        self.revoke_send_authority();
         if let Some(backend) = self.backend.clone() {
             self.seen_drop_generation = backend.client.drop_generation();
             let mut ids = self.active_client_ids(&backend);
@@ -384,6 +427,7 @@ impl Preferences {
         if !dropped {
             return false;
         }
+        self.revoke_send_authority();
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
@@ -605,10 +649,12 @@ impl Preferences {
             .zip(owner.as_ref())
             .is_some_and(|(old, new)| {
                 old.base == new.base
+                    && !new.client.attestation_revoked()
                     && old.client.server_identity().is_some()
                     && old.client.server_identity() == new.client.server_identity()
             });
         self.unwatch();
+        self.revoke_send_authority();
         if !same_address {
             self.seen_drops.clear();
             self.closing_stream_client_id = None;
@@ -733,6 +779,14 @@ impl Preferences {
         self.backend.is_some() && !self.authentication_required
     }
 
+    pub fn transport_lost(&self) -> bool {
+        self.transport_lost
+    }
+
+    pub(super) fn authority_handle(&self) -> Arc<AtomicU64> {
+        self.authority.clone()
+    }
+
     pub(super) fn awaiting_appearance(&self) -> bool {
         self.can_retry()
             && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())
@@ -794,6 +848,8 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.revoke_send_authority();
+        self.memory.on_authentication_required();
         self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
@@ -911,6 +967,7 @@ impl Preferences {
         let mut disconnected = false;
         if let Some(stream) = &self.stream {
             if stream.take_disconnected() {
+                self.revoke_send_authority();
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
@@ -951,11 +1008,26 @@ impl Preferences {
 
     fn poll_documents_inner(&mut self, revalidate_idle: bool) -> (bool, bool, bool) {
         let install = self.opencode_install.poll();
+        let memory_verified = !self.authentication_required
+            && !self.transport_lost
+            && self
+                .backend
+                .as_ref()
+                .is_some_and(super::ServerOwner::backend_verified);
+        let memory_writes = self
+            .memory
+            .poll_pending_writes(self.authority.load(Ordering::SeqCst), memory_verified);
         if self.authentication_required {
-            return (install, false, false);
+            if memory_writes {
+                self.revision += 1;
+            }
+            return (install | memory_writes, false, false);
         }
         let Some(backend) = self.backend.clone() else {
-            return (install, false, false);
+            if memory_writes {
+                self.revision += 1;
+            }
+            return (install | memory_writes, false, false);
         };
         let active_client_ids = self.active_client_ids(&backend);
         let seen_drops = self.seen_drops_sum(&active_client_ids);
@@ -1024,10 +1096,22 @@ impl Preferences {
         let changed = config_changed
             | state_changed
             | server_changed
-            | self.memory.poll(&backend, &main, &window)
-            | self
-                .memory
-                .poll_review(&backend, self.provider_target.as_ref(), &main, &window)
+            | memory_writes
+            | self.memory.poll(
+                &backend,
+                self.transport_lost,
+                &self.authority,
+                &main,
+                &window,
+            )
+            | self.memory.poll_review(
+                &backend,
+                self.provider_target.as_ref(),
+                self.transport_lost,
+                &self.authority,
+                &main,
+                &window,
+            )
             | install;
         let settled = config_settled | state_settled | server_settled;
         let dropped_mid_poll = self.observe_transport_drops();

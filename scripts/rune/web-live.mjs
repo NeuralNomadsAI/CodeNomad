@@ -72,15 +72,24 @@ function settleWithin(promise, abort, ms=2_000){
   ]).finally(()=>clearTimeout(timer))
 }
 
-async function fetchOwnedStatus(route, origin){
-  const response=await route.fetch({maxRedirects:0})
-  assert.equal(new URL(response.url()).origin,origin,'Auth status response must stay on the owned origin')
-  assert.equal(response.status(),200,'Auth status response must return 200 without redirecting')
-  return response
+async function fetchOwnedStatus(route, origin, context, attestedGet){
+  assert(typeof attestedGet==='function','Attested status fetcher required')
+  const requested=new URL(route.request().url())
+  assert.equal(requested.origin,origin,'Auth status request must stay on the owned origin')
+  const response=await attestedGet(`${requested.pathname}${requested.search}`,context)
+  assert.equal(response.status,200,'Auth status response must return 200 without redirecting')
+  const text=await response.text()
+  const body=JSON.parse(text)
+  const headers={}
+  const contentType=response.headers.get('content-type')
+  if(contentType)headers['content-type']=contentType
+  const cacheControl=response.headers.get('cache-control')
+  if(cacheControl)headers['cache-control']=cacheControl
+  return {status:response.status,headers,text,body}
 }
 
 async function verifySseAuthenticated503Recovery({
-  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,
+  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
 }){
   const again=new URL(await command('pair'))
   assert.equal(again.origin,url.origin)
@@ -147,12 +156,11 @@ async function verifySseAuthenticated503Recovery({
         }
         try {
           await releaseRecovered.promise
-          const response=await fetchOwnedStatus(route,url.origin)
-          const body=await response.json()
+          const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet)
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
           recoveredStatuses++
-          await route.fulfill({response})
+          await route.fulfill({status,headers,body:text})
           recoveredCaptured.resolve()
         } catch (err) {
           routeError??=err
@@ -230,7 +238,7 @@ async function verifySseAuthenticated503Recovery({
   return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y),onRestart,attestedGet}){
   const forbiddenBefore=forbiddenRequests.length
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
@@ -283,7 +291,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       return match&&!previous.includes(match[1])&&response.ok()&&response.request().postDataJSON()?.sessionID==='ses_existing'
     },{timeout:45000})
     void newHistory.catch(()=>{})
-    const {older,witness}=await command('restart')
+    const {older,witness,serverPid}=await command('restart')
+    assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Restarted fixture must report its new owned server PID')
+    if(onRestart)await onRestart(serverPid)
     assert(previous.length&&previous.every(id=>older.includes(id)),'Fixture had the browser-owned workspaces before reboot')
     assert.equal((await (await newHistory).json()).status,'window','Rebind the conversation while search is open')
     assert.equal(await search.getAttribute('aria-expanded'),'true','Search must stay open through restart')
@@ -293,8 +303,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     await hit(left)
     await text('Mobile Rust restart history').waitFor({timeout:45000})
     await connecting.waitFor({state:'hidden'})
-    const inventory=await context.request.get(`${url.origin}/api/workspaces`)
-    assert(inventory.ok())
+    assert(typeof attestedGet==='function','Attested GET helper required for mobileLive inventory check')
+    const inventory=await attestedGet('/api/workspaces',context)
+    assert(inventory.ok)
     const ids=(await inventory.json()).map(row=>row.id)
     assert(older.every(id=>!ids.includes(id)),'The restarted listener must not still have the old workspace ids')
     assert(ids.includes(witness),'Reopening by folder must leave the other occurrence intact')
@@ -386,13 +397,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               heldFollowUp=true
               postStaleStatus++
               try {
-                const response=await fetchOwnedStatus(route,url.origin)
-                const body=await response.json()
+                const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet)
                 assert.equal(body.authenticated,true)
                 assert(!body.pairingRequired)
                 followUpCaptured.resolve()
                 await releaseFollowUp.promise
-                await route.fulfill({response})
+                await route.fulfill({status,headers,body:text})
               } catch (err) {
                 followUpCaptured.reject(err)
                 await route.abort().catch(()=>{})
@@ -408,13 +418,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           blockEvents=true
           staleRequest=route.request()
           try {
-            const response=await fetchOwnedStatus(route,url.origin)
-            const body=await response.json()
+            const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet)
             assert.equal(body.authenticated,false)
             assert.equal(body.pairingRequired,true)
             staleCaptured.resolve()
             await releaseStale.promise
-            await route.fulfill({response})
+            await route.fulfill({status,headers,body:text})
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)
@@ -520,7 +529,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     evidence.repairedWithDraft=true
     evidence.crossOriginRePairLink=fromLink
     evidence.sseAuthenticated503Recovery=await verifySseAuthenticated503Recovery({
-      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,
+      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
     })
   }
   assert.equal(forbiddenRequests.length,forbiddenBefore,

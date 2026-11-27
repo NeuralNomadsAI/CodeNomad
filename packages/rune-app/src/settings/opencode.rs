@@ -1,6 +1,9 @@
 use super::Preferences;
+mod executable;
 pub(super) mod install;
 pub(super) mod logging;
+mod login_start;
+mod logs;
 use crate::{platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
@@ -12,6 +15,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
 pub(super) struct Status {
@@ -21,6 +25,9 @@ pub(super) struct Status {
     trailing: Option<bool>,
     failed: bool,
     details_open: bool,
+    executable: executable::State,
+    login_start: login_start::State,
+    logs: logs::State,
 }
 
 impl Status {
@@ -39,6 +46,7 @@ impl Status {
             can_upgrade: false,
             needs_shared_installation: false,
             foreign_installation: false,
+            has_installation_source: true,
             binary_path: None,
         });
     }
@@ -117,13 +125,34 @@ impl Status {
 
     pub fn step(&mut self, prefs: &mut Preferences, wake: &rune::Waker) -> bool {
         let allowed = prefs.can_retry();
+        let authority = prefs
+            .backend
+            .as_ref()
+            .filter(|_| allowed)
+            .map(|backend| backend.client_id.as_str());
+        let mut changed = authority != self.authority.as_deref();
+        if changed {
+            *self = Self {
+                authority: authority.map(str::to_owned),
+                ..Self::default()
+            };
+        }
         let admitted = prefs.opencode_install.admit(
             prefs.backend.as_ref().filter(|_| allowed),
             prefs.main_wake.clone(),
             wake.clone(),
         );
-        let changed = self.poll();
-        let changed = changed | admitted | self.read(prefs, Some(wake), None);
+        changed |= self.poll();
+        let (exec_changed, binary_changed) = self.executable.poll(prefs, wake, self.value.as_ref());
+        let login_changed = self.login_start.poll(prefs, wake);
+        let logs_changed = self.logs.poll(prefs, wake);
+        let refresh = binary_changed.then_some(false);
+        let changed = changed
+            | admitted
+            | exec_changed
+            | login_changed
+            | logs_changed
+            | self.read(prefs, Some(wake), refresh);
         if self.authority.as_deref()
             == prefs
                 .backend
@@ -292,4 +321,37 @@ pub(super) fn view<S: 'static>(
 
 fn version(label: &str, value: Option<&str>) -> El {
     chrome::setting_row(t(label), text(value.unwrap_or("—")).literal_direction())
+}
+
+pub(super) fn executable_view<S: 'static>(
+    status: &Status,
+    prefs: &Preferences,
+    shared: &Rc<RefCell<Preferences>>,
+    wake: Option<rune::Waker>,
+    access: fn(&mut S) -> &mut Status,
+) -> El {
+    status
+        .executable
+        .view(prefs, shared, status.value.as_ref(), wake, access)
+}
+
+pub(super) fn login_start_view<S: 'static>(
+    status: &Status,
+    prefs: &Preferences,
+    shared: &Rc<RefCell<Preferences>>,
+    wake: Option<rune::Waker>,
+    access: fn(&mut S) -> &mut Status,
+) -> El {
+    status.login_start.view(prefs, shared, wake, access)
+}
+
+pub(super) fn logs_action_view<S: 'static>(
+    status: &Status,
+    prefs: &Preferences,
+    shared: &Rc<RefCell<Preferences>>,
+    wake: Option<rune::Waker>,
+    layers: &mut Vec<El>,
+    access: fn(&mut S) -> &mut Status,
+) -> El {
+    status.logs.action_view(prefs, shared, wake, layers, access)
 }

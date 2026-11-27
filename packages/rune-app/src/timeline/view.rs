@@ -19,7 +19,7 @@ pub(super) struct Scroll {
     pub programmatic_rail: Option<f32>,
     pub rail_glide: Option<f32>,
     pub rail_glide_last: f32,
-    pub rail_glide_stalled: u8,
+    pub rail_glide_stalled_at: Option<f64>,
     pub rail_glide_interrupted: bool,
     pub halt_rail_glide: bool,
     pub rail_wheel: timeline::RailWheelOverride,
@@ -27,6 +27,7 @@ pub(super) struct Scroll {
     pub transcript_wheel_momentum: bool,
     pub last_hand_rail: bool,
     pub wheel_last_rail: Option<bool>,
+    pub wheel_pending_commit: Option<f64>,
     #[cfg(test)]
     pub last_rail_wheel_taken: bool,
     pub at: timeline::ScrollPosition,
@@ -120,6 +121,7 @@ pub(crate) fn observe_history_wheel(
     state.last_hand_rail = false;
     if event.dy != 0.0 {
         state.wheel_last_rail = Some(false);
+        state.wheel_pending_commit = Some(tx.clock());
     }
     wheel_scroll.set(state);
     super::navigation::hand_scrolled(s, false);
@@ -144,6 +146,7 @@ pub(crate) fn observe_history_scroll(s: &State) -> impl Fn(timeline::ScrollPosit
         let mut gesture = scroll.get();
         let previous = gesture.viewport;
         gesture.transcript_wheel_target = None;
+        gesture.wheel_pending_commit = None;
         gesture.viewport = at;
         // A virtual_rows commit during EdgeReturn clamps offset to 0.0 in Rune without
         // clearing rebound velocity, leaking Programmatic/Momentum until the next Direct input.
@@ -245,7 +248,17 @@ fn rail_scroll(s: &State, el: El) -> El {
                         state.transcript_wheel_momentum = event.momentum;
                         state.last_hand_rail = false;
                         state.wheel_last_rail = Some(false);
+                        state.wheel_pending_commit = Some(tx.clock());
                         wheel_scroll.set(state);
+                        if (target - state.viewport.offset[1]).abs() > 0.5
+                            && s.reader
+                                .as_ref()
+                                .is_some_and(crate::chat::reader::Reader::defers_scroll)
+                        {
+                            s.transcript_display
+                                .reading_mut()
+                                .note_pending_manual_scroll();
+                        }
                         tx.scroll_to_instant("history", state.viewport.offset[0], target);
                         if event.dy.abs() > event.dx.abs() {
                             let direction = if event.dy > 0.0 { Before } else { After };
@@ -269,8 +282,9 @@ fn rail_scroll(s: &State, el: El) -> El {
                     super::navigation::hand_scrolled(s, true);
                     state.last_hand_rail = true;
                     state.wheel_last_rail = Some(true);
+                    state.wheel_pending_commit = Some(tx.clock());
                     state.rail_glide = None;
-                    state.rail_glide_stalled = 0;
+                    state.rail_glide_stalled_at = None;
                     state.rail_glide_interrupted = false;
                     state.halt_rail_glide = false;
                 }
@@ -291,6 +305,9 @@ fn rail_scroll(s: &State, el: El) -> El {
                 {
                     state.last_rail_wheel_taken = taken;
                 }
+                if taken {
+                    state.wheel_pending_commit = Some(tx.clock());
+                }
                 wheel_scroll.set(state);
                 if taken {
                     return true;
@@ -305,22 +322,23 @@ fn rail_scroll(s: &State, el: El) -> El {
                 (at.offset[1] - target.clamp(0.0, at.max[1].max(0.0))).abs() <= 0.5
             });
             gesture.rail_wheel.clear_frame();
+            gesture.wheel_pending_commit = None;
             gesture.at = at;
             if let Some(aim) = gesture.rail_glide {
                 let clamped = aim.clamp(0.0, at.max[1].max(0.0));
                 if (at.offset[1] - clamped).abs() <= 0.5 {
                     gesture.rail_glide = None;
-                    gesture.rail_glide_stalled = 0;
+                    gesture.rail_glide_stalled_at = None;
                     gesture.rail_glide_interrupted = false;
                 } else if (at.offset[1] - gesture.rail_glide_last).abs() > 0.01 {
                     gesture.rail_glide_last = at.offset[1];
-                    gesture.rail_glide_stalled = 0;
+                    gesture.rail_glide_stalled_at = None;
                 }
             }
             let user_moved = timeline::rail_scrolled(at) && !programmatic;
             if user_moved {
                 if gesture.rail_glide.take().is_some() {
-                    gesture.rail_glide_stalled = 0;
+                    gesture.rail_glide_stalled_at = None;
                     gesture.rail_glide_interrupted = true;
                 }
                 gesture.last_hand_rail = true;

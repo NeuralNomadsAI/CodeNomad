@@ -46,19 +46,51 @@ pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
     )
 }
 
+#[derive(Clone, Copy)]
+enum RowSource {
+    Committed(usize),
+    Pending(usize),
+}
+
 pub fn rows(s: &State) -> El {
     let locale = locale();
     let groups = Groups::project(s);
+    let visible = s.transcript_display.messages.visible(&s.messages);
+    let pending = if s.history_detached {
+        &[][..]
+    } else {
+        s.transcript_display.queue.items()
+    };
+    let mut order = Vec::with_capacity(visible.len() + pending.len());
+    for index in 0..visible.len() {
+        order.push(RowSource::Committed(index));
+    }
+    for (index, item) in pending.iter().enumerate() {
+        if !visible.iter().any(|row| row.id == item.id) {
+            order.push(RowSource::Pending(index));
+        }
+    }
+    let keys = std::rc::Rc::new(order);
+    let rows = keys.clone();
     layout::transcript_rows(
-        s.transcript_display.messages.visible(&s.messages).len(),
-        |s: &State, i| s.messages[i].id.clone().into(),
+        keys.len(),
+        move |s: &State, i| match keys[i] {
+            RowSource::Committed(index) => s.messages[index].id.clone().into(),
+            RowSource::Pending(index) => {
+                s.transcript_display.queue.items()[index].id.clone().into()
+            }
+        },
         move |s: &State, i| {
-            crate::strings::with_locale(locale, || {
-                super::reading::row(
+            crate::strings::with_locale(locale, || match rows[i] {
+                RowSource::Committed(index) => super::reading::row(
                     s,
-                    s.messages[i].id.clone(),
-                    message_with_groups(s, i, &groups),
-                )
+                    s.messages[index].id.clone(),
+                    message_with_groups(s, index, &groups),
+                ),
+                RowSource::Pending(index) => {
+                    let item = &s.transcript_display.queue.items()[index];
+                    super::reading::row(s, item.id.clone(), super::queue::message(s, item))
+                }
             })
         },
     )

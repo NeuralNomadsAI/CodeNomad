@@ -414,7 +414,25 @@ fn wants_html(headers: &HeaderMap) -> bool {
     })
 }
 
-pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Result<Response, Error> {
+pub async fn admit(State(app): State<Shared>, req: Request, next: Next) -> Result<Response, Error> {
+    let no_store = remote::is_no_store_account_path(req.uri().path());
+    match admit_inner(app, req, next).await {
+        Ok(mut response) => {
+            if no_store && !response.status().is_success() {
+                response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            }
+            Ok(response)
+        }
+        Err(err) if no_store => {
+            let mut response = err.into_response();
+            response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok(response)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn admit_inner(app: Shared, mut req: Request, next: Next) -> Result<Response, Error> {
     let (key, device) = cookies(req.headers(), app.auth.cookie_name())?;
     let host = req.headers().get(header::HOST).and_then(|x| x.to_str().ok()).unwrap_or("");
     let selected = [format!("127.0.0.1:{}", app.port), format!("localhost:{}", app.port)];
