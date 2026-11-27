@@ -3155,6 +3155,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
                 "key": "re",
                 "title": "Regex",
                 "type": "string",
+                "required": true,
                 "pattern": "[unclosed"
             })],
         };
@@ -3636,7 +3637,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .get_mut(&("form-r13".into(), "single_custom".into()))
             .unwrap()
             .custom_editor()
-            .text = "\"Doe, Jane\"".into();
+            .text = "\"prod\"".into();
         assert!(
             agent_forms::validate(
                 &r13_form.fields[0],
@@ -3680,9 +3681,9 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .editor()
             .text = "https://[::1]:8080/ok".into();
         let r13_ans = agent_forms::answer(&r13_form, &r13_drafts)
-            .expect("quoted literal comma, hidden [''], UTF-16 parity, unicode email, and valid IPv6 URL must submit");
+            .expect("literal quotes, hidden [''], UTF-16 parity, unicode email, and valid IPv6 URL must submit");
         assert_eq!(r13_ans["hidden_empty_custom"], json!([""]));
-        assert_eq!(r13_ans["single_custom"], json!(["Doe, Jane"]));
+        assert_eq!(r13_ans["single_custom"], json!(["\"prod\""]));
         // Ordinary unquoted backslashes (e.g. Windows UNC paths) remain literal.
         r13_drafts
             .get_mut(&("form-r13".into(), "single_custom".into()))
@@ -3913,8 +3914,8 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         );
         assert_eq!(eans, json!({"tags": [], "reason": "non-prod"}));
 
-        // 4. Unquoted custom multiselect entries preserve literal double quotes verbatim
-        // (e.g. `Acme "West"`), while explicitly quoted entries still allow literal commas.
+        // 4. Custom multiselect entries preserve literal double quotes verbatim (e.g. `"prod"`
+        // and `Acme "West"`), matching Solid's comma-separated split.
         let quote_ms_form = Form {
             tool: None,
             infer_websearch: false,
@@ -3934,13 +3935,10 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .get_mut(&("form-r14-quotes".into(), "orgs".into()))
             .unwrap()
             .custom_editor()
-            .text = "Acme \"West\", \"Doe, Jane\", \"Doe, \"\"Jr.\"\"\"".into();
+            .text = "Acme \"West\", \"prod\"".into();
         let qans = agent_forms::answer(&quote_ms_form, &qdrafts)
-            .expect("unquoted quotes and quoted commas must both submit cleanly");
-        assert_eq!(
-            qans["orgs"],
-            json!(["Acme \"West\"", "Doe, Jane", "Doe, \"Jr.\""])
-        );
+            .expect("literal quotes in custom multiselect must submit verbatim");
+        assert_eq!(qans["orgs"], json!(["Acme \"West\"", "\"prod\""]));
     });
 }
 
@@ -4010,6 +4008,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
                 "key": "val",
                 "title": "Val",
                 "type": "string",
+                "required": true,
                 "pattern": "^?ok"
             })],
         };
@@ -4145,10 +4144,10 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
             .get_mut(&("form-r15-nbsp".into(), "names".into()))
             .unwrap()
             .custom_editor()
-            .text = "red,\u{00A0}\"Doe, Jane\"".into();
+            .text = "red,\u{00A0}\"blue\"".into();
         let nans = agent_forms::answer(&nbsp_form, &ndrafts)
-            .expect("quoted entry preceded by NBSP must stay one item under maxItems=2");
-        assert_eq!(nans["names"], json!(["red", "Doe, Jane"]));
+            .expect("NBSP-trimmed literal quote entry must submit cleanly under maxItems=2");
+        assert_eq!(nans["names"], json!(["red", "\"blue\""]));
 
         // Round 16 regressions:
         // 1. Form-level regex work budget prevents 32 required 64-option radio fields with heavy
@@ -4363,17 +4362,17 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         assert_eq!(omans["order"], json!(["beta", "alpha"]));
         assert_eq!(omans["dups"], json!(["alpha", "alpha"]));
 
-        // 7. BOM / U+FEFF before opening quote in custom multiselect keeps quoted name as one item.
+        // 7. BOM / U+FEFF before entry in custom multiselect is trimmed while keeping literal quotes.
         let mut bom_drafts = agent_forms::Drafts::new();
         agent_forms::seed(std::slice::from_ref(&nbsp_form), &mut bom_drafts);
         bom_drafts
             .get_mut(&("form-r15-nbsp".into(), "names".into()))
             .unwrap()
             .custom_editor()
-            .text = "red,\u{FEFF}\"Doe, Jane\"".into();
+            .text = "red,\u{FEFF}\"blue\"".into();
         let bom_ans = agent_forms::answer(&nbsp_form, &bom_drafts)
-            .expect("quoted entry preceded by U+FEFF must stay one item under maxItems=2");
-        assert_eq!(bom_ans["names"], json!(["red", "Doe, Jane"]));
+            .expect("U+FEFF-trimmed literal quote entry must submit cleanly under maxItems=2");
+        assert_eq!(bom_ans["names"], json!(["red", "\"blue\""]));
 
         // 8. Disjoint key namespaces: choice field `x` and free-text field `body:1:x` never
         // collide on sibling keys, and focus lookup returns the exact editor key.
@@ -5430,6 +5429,210 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
         assert!(
             t0.elapsed() < std::time::Duration::from_secs(2),
             "oversized custom paste across 64 multiselect options must bail out cleanly in render"
+        );
+    });
+}
+
+#[test]
+fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional_bad_pattern_and_bounded_option_descriptions()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Checking Production (`prod`) and pasting `prod, canary` into custom input deduplicates
+        // across checkbox + custom sources to `["prod", "canary"]` (satisfying `maxItems: 2`).
+        let dedup_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r22-dedup".into(),
+            title: "Deploy".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "maxItems": 2,
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let mut drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&dedup_form), &mut drafts);
+        let td = drafts
+            .get_mut(&("form-r22-dedup".into(), "targets".into()))
+            .unwrap();
+        td.toggle("prod");
+        td.custom_editor().text = "prod, canary".into();
+        let ans = agent_forms::answer(&dedup_form, &drafts)
+            .expect("checked prod + custom 'prod, canary' must deduplicate under maxItems=2");
+        assert_eq!(ans["targets"], json!(["prod", "canary"]));
+
+        // 2. Unpadded local date-time `2026-11-26 4:30` normalizes to UTC `2026-11-26T09:30:00.000Z`
+        // under US Eastern time (-05:00) instead of falling back to the raw timezone-less string.
+        let est_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+            let local = utc_secs - 5 * 3600;
+            let days = local.div_euclid(86_400);
+            let sod = local.rem_euclid(86_400);
+            let z = days + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = mp + if mp < 10 { 3 } else { -9 };
+            let y = y + i64::from(m <= 2);
+            Some((
+                y as i32,
+                m as i32,
+                d as i32,
+                (sod / 3600) as i32,
+                ((sod % 3600) / 60) as i32,
+            ))
+        };
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "2026-11-26 4:30",
+                est_clock
+            )
+            .as_deref(),
+            Some("2026-11-26T09:30:00.000Z")
+        );
+
+        // 3. Literal quotes like `"prod"` entered into custom multiselect stay `"prod"` verbatim.
+        let literal_quote_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r22-quotes".into(),
+            title: "Quotes".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": []
+            })],
+        };
+        let mut qdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&literal_quote_form), &mut qdrafts);
+        qdrafts
+            .get_mut(&("form-r22-quotes".into(), "tags".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "\"prod\"".into();
+        let qans = agent_forms::answer(&literal_quote_form, &qdrafts).unwrap();
+        assert_eq!(qans["tags"], json!(["\"prod\""]));
+
+        // 4. An unused optional field with malformed pattern `[unclosed` does not block submitting
+        // a sibling required field, while typing into the optional field still rejects the value.
+        let opt_bad_pat_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r22-opt-pat".into(),
+            title: "Profile".into(),
+            fields: vec![
+                json!({"key": "name", "title": "Name", "type": "string", "required": true}),
+                json!({"key": "note", "title": "Note", "type": "string", "pattern": "[unclosed"}),
+            ],
+        };
+        assert!(agent_forms::supported(&opt_bad_pat_form));
+        let mut pdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&opt_bad_pat_form), &mut pdrafts);
+        pdrafts
+            .get_mut(&("form-r22-opt-pat".into(), "name".into()))
+            .unwrap()
+            .editor()
+            .text = "Alice".into();
+        let pans = agent_forms::answer(&opt_bad_pat_form, &pdrafts)
+            .expect("untouched optional field with malformed pattern must not block required Name");
+        assert_eq!(pans, json!({"name": "Alice"}));
+        pdrafts
+            .get_mut(&("form-r22-opt-pat".into(), "note".into()))
+            .unwrap()
+            .editor()
+            .text = "typed".into();
+        assert!(
+            agent_forms::answer(&opt_bad_pat_form, &pdrafts).is_err(),
+            "supplying text into a field with malformed pattern must fail closed"
+        );
+
+        // 5. Ten options each with a 100 KiB description bound both initial visual layout and
+        // accessibility strings, exposing an incremental reveal button per truncated option.
+        let huge_opt_desc = "E".repeat(100_000);
+        let opts_10: Vec<serde_json::Value> = (0..10)
+            .map(|i| {
+                json!({
+                    "value": format!("opt_{i}"),
+                    "label": format!("Option {i}"),
+                    "description": huge_opt_desc
+                })
+            })
+            .collect();
+        let big_opt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r22-opt-desc".into(),
+            title: "Large options".into(),
+            fields: vec![json!({
+                "key": "choice",
+                "title": "Choice",
+                "type": "string",
+                "options": opts_10
+            })],
+        };
+        let (state, _rx) = state_with_form(big_opt_form);
+        let t0 = std::time::Instant::now();
+        let mut brt = Runtime::new(state, render_form, (420.0, 2600.0), Env::new(false, 1.0));
+        brt.frame(0.0);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(2),
+            "10x100KiB option descriptions must render quickly via bounded previews"
+        );
+        let btree = brt.accessibility_json();
+        let opt0_key = agent_forms::string_option_key("choice", "opt_0");
+        let opt0_node = find_node(&btree, &opt0_key).unwrap();
+        assert!(
+            opt0_node["description"]
+                .as_str()
+                .is_some_and(|d| d.len() < 400),
+            "option accessibility description must stay bounded (< 400 bytes), never 100 KiB"
+        );
+        let initial_desc_len: usize = brt
+            .elements()
+            .into_iter()
+            .filter(|e| e.key.as_deref() == Some("description"))
+            .filter_map(|e| e.text.map(|t| t.len()))
+            .sum();
+        assert!(
+            initial_desc_len < 4_000,
+            "initial visual option descriptions across 10 options must be bounded (< 4 KiB, got {initial_desc_len})"
+        );
+        // Activating the separate reveal button expands opt_0 by one bounded step without
+        // expanding sibling options or bloating opt_0's accessibility string.
+        let reveal0 = agent_forms::option_desc_reveal_key("choice", "opt_0");
+        let reveal0_node = find_node(&btree, &reveal0).unwrap();
+        assert!(
+            reveal0_node["name"]
+                .as_str()
+                .is_some_and(|n| n.contains("Option 0")),
+            "reveal button must identify its option in accessible name"
+        );
+        tap(&mut brt, &reveal0);
+        let after_desc_len: usize = brt
+            .elements()
+            .into_iter()
+            .filter(|e| e.key.as_deref() == Some("description"))
+            .filter_map(|e| e.text.map(|t| t.len()))
+            .sum();
+        assert!(
+            after_desc_len > initial_desc_len + 1_500 && after_desc_len < 6_000,
+            "revealing one step must expand opt_0 by ~2,000 chars only (got {after_desc_len})"
+        );
+        let btree_after = brt.accessibility_json();
+        let opt0_after = find_node(&btree_after, &opt0_key).unwrap();
+        assert!(
+            opt0_after["description"]
+                .as_str()
+                .is_some_and(|d| d.len() < 400),
+            "option accessibility description must stay bounded even after revealing more visual text"
         );
     });
 }

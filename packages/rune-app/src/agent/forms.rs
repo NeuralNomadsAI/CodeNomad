@@ -88,6 +88,10 @@ pub fn multi_option_key(field_key: &str, value: &str) -> String {
     opaque_option_key("multi", field_key, value)
 }
 
+pub fn option_desc_reveal_key(field_key: &str, value: &str) -> String {
+    opaque_option_key("reveal", field_key, value)
+}
+
 pub fn field_editor_key(field_key: &str) -> String {
     format!("field-{field_key}")
 }
@@ -155,7 +159,7 @@ fn field_kind(field: &Value) -> FieldKind {
 
 fn is_line_editable_custom(value: &str) -> bool {
     !value.is_empty()
-        && !value.contains(['\n', '\r', ',', '"'])
+        && !value.contains(['\n', '\r', ','])
         && string_constraints::trim_es(value) == value
         && value.trim() == value
 }
@@ -359,44 +363,6 @@ struct CustomEntry {
     value: String,
 }
 
-fn try_decode_quoted_entry(trimmed: &str) -> Option<String> {
-    let rest = trimmed.strip_prefix('"')?;
-    let mut out = String::with_capacity(rest.len());
-    let mut chars = rest.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\'
-            && let Some(&next) = chars.peek()
-            && matches!(next, ',' | '"' | '\\')
-        {
-            out.push(chars.next().unwrap());
-        } else if c == '"' {
-            if chars.peek() == Some(&'"') {
-                chars.next();
-                out.push('"');
-            } else if chars.peek().is_none() {
-                return Some(out);
-            } else {
-                return None;
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    None
-}
-
-fn decode_custom_entry(raw: &str) -> String {
-    let trimmed = string_constraints::trim_es(raw);
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    if let Some(decoded) = try_decode_quoted_entry(trimmed) {
-        return decoded;
-    }
-    // Keep ordinary unquoted text verbatim (preserving Windows/UNC backslashes like `\\server\share`).
-    trimmed.to_string()
-}
-
 fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
     let bytes = text.as_bytes();
     let mut entries = Vec::new();
@@ -404,46 +370,8 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
     while pos < bytes.len() {
         let start = pos;
         let mut i = pos;
-        while let Some(ch) = text[i..].chars().next() {
-            if ch != '\n' && ch != '\r' && string_constraints::is_es_whitespace(ch) {
-                i += ch.len_utf8();
-            } else {
-                break;
-            }
-        }
-        let mut in_quotes = if i < bytes.len() && bytes[i] == b'"' {
+        while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b',' {
             i += 1;
-            true
-        } else {
-            false
-        };
-        while i < bytes.len() {
-            let b = bytes[i];
-            if b == b'\n' {
-                break;
-            }
-            if in_quotes {
-                if b == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b',' | b'"' | b'\\')
-                {
-                    i += 2;
-                    continue;
-                }
-                if b == b'"' {
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
-                        i += 2;
-                        continue;
-                    }
-                    in_quotes = false;
-                    i += 1;
-                    continue;
-                }
-                i += 1;
-            } else {
-                if b == b',' {
-                    break;
-                }
-                i += 1;
-            }
         }
         let content_end = if i > start && bytes[i - 1] == b'\r' {
             i - 1
@@ -464,7 +392,9 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
                 }
             }
         }
-        let value = decode_custom_entry(&text[start..content_end]);
+        // Keep comma/newline-separated custom entries verbatim (preserving quotes and backslashes,
+        // matching Solid's `split(",").map(trim)`).
+        let value = string_constraints::trim_es(&text[start..content_end]).to_string();
         entries.push(CustomEntry {
             start,
             content_end,
@@ -645,6 +575,7 @@ pub struct Draft {
     pub dirty: bool,
     pub text_dirty: Cell<bool>,
     pub custom_dirty: Cell<bool>,
+    pub option_desc_reveals: HashMap<String, usize>,
 }
 impl Draft {
     pub fn choose(&mut self, value: &str) {
@@ -763,6 +694,13 @@ impl Draft {
         }
         self.dirty || self.text_dirty.get()
     }
+    pub fn reveal_option_description(&mut self, value: &str) {
+        let entry = self.option_desc_reveals.entry(value.into()).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
+    pub fn option_description_reveals(&self, value: &str) -> usize {
+        self.option_desc_reveals.get(value).copied().unwrap_or(0)
+    }
     pub fn is_custom_edited(&self) -> bool {
         if self.custom.text != self.custom_baseline {
             self.custom_dirty.set(true);
@@ -796,6 +734,7 @@ impl Default for Draft {
             dirty: false,
             text_dirty: Cell::new(false),
             custom_dirty: Cell::new(false),
+            option_desc_reveals: HashMap::new(),
         }
     }
 }
@@ -1305,7 +1244,7 @@ pub fn validate_budgeted(
 ) -> Result<Option<Value>, ValidationError> {
     if !valid_options_shape(field)
         || !valid_bounds(field)
-        || !string_constraints::valid_string_constraints(field)
+        || !string_constraints::valid_string_schema(field)
     {
         return Err(ValidationError::Unsupported);
     }
@@ -1629,7 +1568,19 @@ pub fn validate_budgeted(
                     }
                 }
                 if custom_edited {
+                    // Deduplicate entries already covered by checked checkboxes while preserving
+                    // multiplicity typed explicitly inside custom input (e.g. `prod, prod` when
+                    // `prod` is unchecked).
+                    let mut checkbox_dedup: HashSet<&str> = d
+                        .selected
+                        .iter()
+                        .chain(d.preserved_custom_selected.iter())
+                        .map(String::as_str)
+                        .collect();
                     for item in &parsed_custom {
+                        if checkbox_dedup.remove(item.as_str()) {
+                            continue;
+                        }
                         values.push(item.clone());
                     }
                 } else {

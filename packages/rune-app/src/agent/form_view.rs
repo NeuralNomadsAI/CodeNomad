@@ -103,6 +103,73 @@ fn bounded_note(text: &str, max_chars: usize) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn bounded_option_description(
+    scope: &std::rc::Rc<()>,
+    identity: &(String, String),
+    field_key: &str,
+    option_value: &str,
+    option_label: &str,
+    raw_description: Option<&str>,
+    reveals: usize,
+    locked: bool,
+    include_option_label: bool,
+) -> (Option<String>, Option<El>) {
+    let Some(raw) = raw_description else {
+        return (None, None);
+    };
+    let (shown, hidden, next_step) = form_controls::option_description_window(raw, reveals);
+    let button = (hidden > 0).then(|| {
+        let loc = locale();
+        let hidden_str = hidden.to_string();
+        let status = catalogue::format(
+            loc,
+            if hidden == 1 {
+                "messageBlock.hiddenText.one"
+            } else {
+                "messageBlock.hiddenText.other"
+            },
+            &[("count", &hidden_str)],
+        );
+        let reveal_text = if next_step == hidden {
+            t("messageBlock.hiddenText.showAll").to_string()
+        } else {
+            let more_str = next_step.to_string();
+            catalogue::format(
+                loc,
+                "messageBlock.hiddenText.showMore",
+                &[("count", &more_str)],
+            )
+        };
+        let short_label = bounded_note(option_label, 48);
+        let visible_label = if include_option_label {
+            format!("{short_label} · {reveal_text}")
+        } else {
+            reveal_text.clone()
+        };
+        let reveal_accessible = format!("{short_label} · {reveal_text} · {status}");
+        let rid = identity.clone();
+        let rval = option_value.to_string();
+        form_controls::clear_choice_button(
+            &agent_forms::option_desc_reveal_key(field_key, &rval),
+            &visible_label,
+            &reveal_accessible,
+            locked,
+            crate::screen::action_tx(scope, move |s: &mut State, _tx| {
+                if let Some(d) = s
+                    .agent
+                    .as_mut()
+                    .filter(|a| !a.forms_mutating())
+                    .and_then(|a| a.drafts.get_mut(&rid))
+                {
+                    d.reveal_option_description(&rval);
+                }
+            }),
+        )
+    });
+    (Some(shown), button)
+}
+
 fn field_title(field: &serde_json::Value) -> Option<&str> {
     field["title"]
         .as_str()
@@ -310,6 +377,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let mut children = Vec::new();
                 if !valid.is_empty() {
                     let total = valid.len();
+                    let mut reveal_buttons = Vec::new();
                     let items = valid
                         .iter()
                         .enumerate()
@@ -320,10 +388,24 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                                 || (custom_active && d.custom.text == option.value);
                             let value = option.value.to_string();
                             let id = identity.clone();
+                            let (shown_desc, reveal_button) = bounded_option_description(
+                                &scope,
+                                &identity,
+                                key,
+                                option.value,
+                                &label,
+                                option.description,
+                                d.option_description_reveals(option.value),
+                                locked,
+                                true,
+                            );
+                            if let Some(btn) = reveal_button {
+                                reveal_buttons.push(btn);
+                            }
                             form_controls::radio_option(
                                 &agent_forms::string_option_key(key, &value),
                                 &label,
-                                option.description,
+                                shown_desc.as_deref(),
                                 radio_note.as_deref(),
                                 selected,
                                 locked,
@@ -351,6 +433,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         radio_invalid,
                         items,
                     ));
+                    children.extend(reveal_buttons);
                     if field["required"] != true {
                         let id = identity.clone();
                         let first_option_key = agent_forms::string_option_key(key, valid[0].value);
@@ -456,36 +539,47 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 } else {
                     std::collections::HashSet::new()
                 };
-                let mut items: Vec<El> = valid
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, option)| {
-                        let label = option_label(option, index);
-                        let checked = d.selected.contains(option.value)
-                            || (!option.value.is_empty() && custom_checked.contains(option.value));
-                        let value = option.value.to_string();
-                        let id = identity.clone();
-                        form_controls::checkbox_option(
-                            &agent_forms::multi_option_key(key, &value),
-                            &label,
-                            option.description,
-                            choice_note.as_deref(),
-                            checked,
-                            locked,
-                            checkbox_invalid,
-                            crate::screen::action(&scope, move |s: &mut State| {
-                                if let Some(d) = s
-                                    .agent
-                                    .as_mut()
-                                    .filter(|a| !a.forms_mutating())
-                                    .and_then(|a| a.drafts.get_mut(&id))
-                                {
-                                    d.toggle(&value)
-                                }
-                            }),
-                        )
-                    })
-                    .collect();
+                let mut items: Vec<El> = Vec::new();
+                for (index, option) in valid.into_iter().enumerate() {
+                    let label = option_label(option, index);
+                    let checked = d.selected.contains(option.value)
+                        || (!option.value.is_empty() && custom_checked.contains(option.value));
+                    let value = option.value.to_string();
+                    let id = identity.clone();
+                    let (shown_desc, reveal_button) = bounded_option_description(
+                        &scope,
+                        &identity,
+                        key,
+                        option.value,
+                        &label,
+                        option.description,
+                        d.option_description_reveals(option.value),
+                        locked,
+                        false,
+                    );
+                    items.push(form_controls::checkbox_option(
+                        &agent_forms::multi_option_key(key, &value),
+                        &label,
+                        shown_desc.as_deref(),
+                        choice_note.as_deref(),
+                        checked,
+                        locked,
+                        checkbox_invalid,
+                        crate::screen::action(&scope, move |s: &mut State| {
+                            if let Some(d) = s
+                                .agent
+                                .as_mut()
+                                .filter(|a| !a.forms_mutating())
+                                .and_then(|a| a.drafts.get_mut(&id))
+                            {
+                                d.toggle(&value)
+                            }
+                        }),
+                    ));
+                    if let Some(btn) = reveal_button {
+                        items.push(btn);
+                    }
+                }
                 if allow_custom {
                     for (index, raw) in d.preserved_custom.iter().take(64).enumerate() {
                         let checked = d.preserved_custom_selected.contains(raw);

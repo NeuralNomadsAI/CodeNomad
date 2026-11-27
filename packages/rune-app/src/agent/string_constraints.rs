@@ -192,7 +192,7 @@ impl StringFormat {
     }
 }
 
-pub fn valid_string_constraints(field: &Value) -> bool {
+pub fn valid_string_schema(field: &Value) -> bool {
     if field["type"] != "string" {
         return true;
     }
@@ -200,6 +200,19 @@ pub fn valid_string_constraints(field: &Value) -> bool {
         None | Some(Value::Null) => {}
         Some(Value::String(raw)) if StringFormat::parse(raw).is_some() => {}
         _ => return false,
+    }
+    matches!(
+        field.get("pattern"),
+        None | Some(Value::Null) | Some(Value::String(_))
+    )
+}
+
+pub fn valid_string_constraints(field: &Value) -> bool {
+    if !valid_string_schema(field) {
+        return false;
+    }
+    if field["type"] != "string" || field["required"] != true {
+        return true;
     }
     match field.get("pattern") {
         None | Some(Value::Null) => true,
@@ -332,33 +345,39 @@ struct ParsedLocalDateTime {
 }
 
 fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime> {
-    if value.len() < 16 || !value.is_ascii() || !is_valid_date(&value[0..10]) {
+    if !value.is_ascii() {
         return None;
     }
-    let b = value.as_bytes();
-    if !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' {
+    let (year, ylen) = parse_iso_year_prefix(value)?;
+    let rest_after_year = value[ylen..].strip_prefix('-')?;
+    let (month, after_month) = take_1_or_2_digits(rest_after_year)?;
+    if !(1..=12).contains(&month) {
         return None;
     }
-    let year = parse_ascii_digits(&value[0..4])? as i64;
-    let month = parse_ascii_digits(&value[5..7])? as i64;
-    let day = parse_ascii_digits(&value[8..10])? as i64;
-    let hour = parse_ascii_digits(&value[11..13])? as i64;
-    let minute = parse_ascii_digits(&value[14..16])? as i64;
+    let after_m_dash = after_month.strip_prefix('-')?;
+    let (day, after_date) = take_1_or_2_digits(after_m_dash)?;
+    if !(1..=days_in_month_i64(year, month)).contains(&day) {
+        return None;
+    }
+    let b = after_date.as_bytes();
+    if b.is_empty() || !matches!(b[0], b'T' | b't' | b' ') {
+        return None;
+    }
+    let (hour, after_hour) = take_1_or_2_digits(&after_date[1..])?;
+    let after_h_colon = after_hour.strip_prefix(':')?;
+    let (minute, mut rest) = take_1_or_2_digits(after_h_colon)?;
     if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
         return None;
     }
     let mut second = 0i64;
     let mut millis = 0u32;
-    let mut rest = &value[16..];
     if let Some(after_colon) = rest.strip_prefix(':') {
-        if after_colon.len() < 2 {
+        let (sec, after_sec) = take_1_or_2_digits(after_colon)?;
+        if sec > 59 || (hour == 24 && sec != 0) {
             return None;
         }
-        second = parse_ascii_digits(&after_colon[0..2])? as i64;
-        if second > 59 || (hour == 24 && second != 0) {
-            return None;
-        }
-        rest = &after_colon[2..];
+        second = i64::from(sec);
+        rest = after_sec;
         if let Some(after_dot) = rest.strip_prefix('.') {
             let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
             if frac_len == 0 {
@@ -382,10 +401,10 @@ fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime
     }
     Some(ParsedLocalDateTime {
         year,
-        month,
-        day,
-        hour,
-        minute,
+        month: i64::from(month),
+        day: i64::from(day),
+        hour: i64::from(hour),
+        minute: i64::from(minute),
         second,
         millis,
     })
@@ -584,7 +603,6 @@ fn looks_like_legacy_numeric_date(s: &str) -> bool {
     false
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
     let b = s.as_bytes();
     if b.len() >= 7 && matches!(b[0], b'+' | b'-') {
@@ -607,7 +625,6 @@ fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
     None
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn days_in_month_i64(year: i64, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -623,7 +640,6 @@ fn days_in_month_i64(year: i64, month: u32) -> u32 {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn take_1_or_2_digits(s: &str) -> Option<(u32, &str)> {
     let len = s.bytes().take(2).take_while(u8::is_ascii_digit).count();
     if len == 0 {

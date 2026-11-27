@@ -764,6 +764,7 @@ pub fn clear_choice_button<S: 'static>(
                 .key("label")
                 .text_role(TextRole::Button)
                 .color(label_color)
+                .wrap_anywhere()
                 .a11y_hidden(),
         );
     if !disabled {
@@ -845,8 +846,42 @@ pub fn radio_group(
     group.children(items)
 }
 
+pub const OPTION_DESCRIPTION_INITIAL_CHARS: usize = 240;
+pub const OPTION_DESCRIPTION_REVEAL_STEP: usize = 2_000;
+
+/// Return `(shown_text, hidden_chars, next_reveal_chars)` for an option description so long
+/// authored explanations never force megabytes of eager text layout or accessibility duplication.
+pub fn option_description_window(desc: &str, reveal_steps: usize) -> (String, usize, usize) {
+    let limit = OPTION_DESCRIPTION_INITIAL_CHARS
+        .saturating_add(reveal_steps.saturating_mul(OPTION_DESCRIPTION_REVEAL_STEP));
+    let mut chars = desc.chars();
+    let prefix: String = chars.by_ref().take(limit).collect();
+    let hidden = chars.count();
+    if hidden == 0 {
+        (prefix, 0, 0)
+    } else {
+        (
+            format!("{prefix}…"),
+            hidden,
+            hidden.min(OPTION_DESCRIPTION_REVEAL_STEP),
+        )
+    }
+}
+
+fn bounded_a11y_snippet(raw: &str, max_chars: usize) -> String {
+    let mut chars = raw.chars();
+    let prefix: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
+}
+
 fn join_a11y_description(visible: Option<&str>, note: Option<&str>) -> Option<String> {
-    match (non_empty(visible), non_empty(note)) {
+    let bounded_visible =
+        non_empty(visible).map(|v| bounded_a11y_snippet(v, OPTION_DESCRIPTION_INITIAL_CHARS));
+    match (bounded_visible.as_deref(), non_empty(note)) {
         (Some(a), Some(b)) => Some(format!("{a} · {b}")),
         (Some(a), None) => Some(a.to_string()),
         (None, Some(b)) => Some(b.to_string()),
