@@ -133,8 +133,11 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   const afterPrevGate=at=>targetIndex===1
     ? (delay<SSE_RETRY1_MIN_MS||at>probes[0].fulfilledAt)
     : at>=probes[1].receivedAt
-  // Order A: Launcher opened the admitted SSE first, then active Conversation synced near targetIndex.
-  const conversationSecond=handover.sseOpenedAt<=probes[0].receivedAt&&
+  const priorConversation=targetIndex===1
+    ? convSyncs.some(at=>delay<SSE_RETRY1_MIN_MS?at<probes[0].receivedAt:at<=probes[0].fulfilledAt)
+    : convSyncs.some(at=>at<probes[1].receivedAt)
+  // Order A: Launcher opened the admitted SSE first (no prior Conversation sync), then active Conversation synced near targetIndex.
+  const conversationSecond=!priorConversation&&handover.sseOpenedAt<=probes[0].receivedAt&&
     convSyncs.some(at=>afterPrevGate(at)&&isNearHandoverProbe(at,probes,targetIndex))
   // Order B: Active Conversation already synced on P0, then Launcher attested via /api/meta 200 near targetIndex.
   const conversationFirst=convSyncs.some(at=>at<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS)&&
@@ -208,8 +211,10 @@ async function verifySseAuthenticated503Recovery({
       await page.bringToFront()
       let injectTransient503=false
       let sseScenarioActive=true
+      let handoverFrozen=false
       let sseGate='pass'
       let sseAdmittedAt=null
+      let admittedSseRequest=null
       let recovered=false
       let routeError=null
       const statusProbes=[]
@@ -263,11 +268,11 @@ async function verifySseAuthenticated503Recovery({
         }
       }
       const onSseResponse=res=>{
-        if(!injectTransient503)return
+        if(!injectTransient503||handoverFrozen)return
         const req=res.request()
         const target=new URL(res.url())
         if(target.origin!==url.origin||res.status()!==200)return
-        if(handover.sseOpenedAt===null&&req.resourceType()==='eventsource'&&target.pathname==='/api/events'){
+        if(handover.sseOpenedAt===null&&admittedSseRequest&&req===admittedSseRequest){
           const nowAt=performance.now()
           handover.sseResponseAt=nowAt
           handover.sseOpenedAt=sseAdmittedAt??nowAt
@@ -282,7 +287,7 @@ async function verifySseAuthenticated503Recovery({
       }
       const activeWorkspace=id=>!workspaces?.size||workspaces.has(id)
       const onSubscriberRequest=req=>{
-        if(!injectTransient503||sseAdmittedAt===null)return
+        if(!injectTransient503||handoverFrozen||sseAdmittedAt===null)return
         const target=new URL(req.url())
         if(target.origin!==url.origin)return
         if(req.method()==='GET'&&target.pathname==='/api/meta'){
@@ -307,14 +312,15 @@ async function verifySseAuthenticated503Recovery({
         }
       }
       const routeEvents=async route=>{
-        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='abort')return route.abort().catch(()=>{})
+        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(!await checkRoute(route))return
-        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='abort')return route.abort().catch(()=>{})
+        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='admit-one'){
           sseGate='hold'
           sseAdmittedAt=performance.now()
+          admittedSseRequest=route.request()
           return route.fallback()
         }
         if(sseGate==='hold'){
@@ -329,8 +335,10 @@ async function verifySseAuthenticated503Recovery({
       }
       const routeStatus=async route=>{
         const receivedAt=performance.now()
+        if(sseGate==='abort')return route.abort().catch(()=>{})
         if(!sseScenarioActive||route.request().method()!=='GET')return route.fallback()
         if(!await checkRoute(route))return
+        if(sseGate==='abort')return route.abort().catch(()=>{})
         if(!sseScenarioActive||!injectTransient503)return route.fallback()
         const probe={receivedAt,fulfilledAt:receivedAt}
         statusProbes.push(probe)
@@ -357,6 +365,7 @@ async function verifySseAuthenticated503Recovery({
           }
           return
         }
+        handoverFrozen=true
         try {
           const deliver=await releaseRecovered.promise
           if(!deliver||!injectTransient503){
