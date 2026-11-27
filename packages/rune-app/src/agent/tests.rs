@@ -544,7 +544,8 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
     assert!(
         out.try_send(super::Result::ActForm(
             crate::agent_api::FormReplyOutcome::Ok,
-            Some(vec![]),
+            None,
+            Some(crate::agent_api::FormsSnapshot::complete(vec![])),
             form_gen
         ))
         .is_ok()
@@ -581,7 +582,8 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
     assert!(
         out.try_send(super::Result::ActForm(
             crate::agent_api::FormReplyOutcome::Ok,
-            Some(vec![]),
+            None,
+            Some(crate::agent_api::FormsSnapshot::complete(vec![])),
             form_gen
         ))
         .is_ok()
@@ -1556,14 +1558,14 @@ fn permission_events_never_invalidate_or_starve_in_flight_forms_read() {
 
     // The slow initial GET /form response returns and unlocks forms immediately.
     out.try_send(super::Result::Forms(
-        Some(vec![Form {
+        Some(crate::agent_api::FormsSnapshot::complete(vec![Form {
             id: "form_1".into(),
             title: "Question".into(),
             fields: vec![],
             tool: None,
             infer_websearch: false,
             owner: Default::default(),
-        }]),
+        }])),
         initial_form_gen,
     ))
     .unwrap();
@@ -2043,14 +2045,14 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     ))
     .unwrap();
     out.try_send(super::Result::Forms(
-        Some(vec![Form {
+        Some(crate::agent_api::FormsSnapshot::complete(vec![Form {
             id: "form_1".into(),
             title: String::new(),
             fields: vec![],
             tool: None,
             infer_websearch: false,
             owner: Default::default(),
-        }]),
+        }])),
         form_gen,
     ))
     .unwrap();
@@ -2085,14 +2087,14 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     out.try_send(super::Result::Permissions(Some(vec![]), retry_perm_gen))
         .unwrap();
     out.try_send(super::Result::Forms(
-        Some(vec![Form {
+        Some(crate::agent_api::FormsSnapshot::complete(vec![Form {
             id: "form_1".into(),
             title: String::new(),
             fields: vec![],
             tool: None,
             infer_websearch: false,
             owner: Default::default(),
-        }]),
+        }])),
         retry_form_gen,
     ))
     .unwrap();
@@ -2115,6 +2117,7 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     };
     out.try_send(super::Result::ActForm(
         crate::agent_api::FormReplyOutcome::Failed,
+        None,
         None,
         form_act_gen,
     ))
@@ -2149,6 +2152,7 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     out.try_send(super::Result::ActForm(
         crate::agent_api::FormReplyOutcome::Failed,
         None,
+        None,
         form_act_gen,
     ))
     .unwrap();
@@ -2174,8 +2178,11 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     let form_gen_now = ui.forms_lane.generation;
     out.try_send(super::Result::Permissions(Some(vec![]), perm_gen_now))
         .unwrap();
-    out.try_send(super::Result::Forms(Some(vec![]), form_gen_now))
-        .unwrap();
+    out.try_send(super::Result::Forms(
+        Some(crate::agent_api::FormsSnapshot::complete(vec![])),
+        form_gen_now,
+    ))
+    .unwrap();
     assert!(ui.poll());
     assert!(!ui.error);
     assert!(!ui.known);
@@ -2186,4 +2193,255 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     assert!(ui.model_locked());
     assert!(ui.permissions_locked());
     assert!(ui.forms_locked());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn incomplete_global_form_scan_retains_global_form_and_draft_until_scanned_clean() {
+    use crate::files::test_http::{Http, wait};
+    use std::sync::Arc;
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake_tx, wake_rx) = super::bounded::<()>(16);
+        let wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let mut ui = super::Ui::new(super::start(http.backend.clone(), wake));
+        ui.online = true;
+
+        let global_form_json = json!({
+            "id": "frm_global_auth",
+            "sessionID": "global",
+            "title": "MCP Auth",
+            "fields": [
+                {"key": "auth", "title": "Authorize", "type": "external", "url": "https://example.com/auth"},
+                {"key": "note", "title": "Note", "type": "string"}
+            ]
+        });
+
+        // Pass 1: pending-requests returns status:"ok" with a project-owned global form.
+        let (mut got_session, mut got_perm, mut got_form, mut got_pending) =
+            (false, false, false, false);
+        while !got_session || !got_perm || !got_form || !got_pending {
+            let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session ")
+            {
+                got_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/private"},"time":{"busy":0,"idle":1}}}),
+                )
+                .await;
+            } else if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/permission ")
+            {
+                got_perm = true;
+                req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
+            {
+                got_form = true;
+                req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees":[{"directory":"/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_pending = true;
+                req.reply(
+                    200,
+                    json!({
+                        "supported": true,
+                        "directories": [{
+                            "directory": "/private",
+                            "status": "ok",
+                            "locations": [{
+                                "location": {"directory": "/private"},
+                                "permissions": [],
+                                "forms": [global_form_json]
+                            }]
+                        }]
+                    }),
+                )
+                .await;
+            } else {
+                panic!("unexpected pass-1 request: {}", req.header);
+            }
+        }
+        while !ui.known || !ui.pending_known {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        let model_req = http.accept().await;
+        model_req.reply(200, json!({"data":[]})).await;
+        while !ui.idle() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert_eq!(ui.forms.len(), 1);
+        assert_eq!(ui.forms[0].id, "frm_global_auth");
+
+        // User acknowledges external link and types into the global form draft.
+        ui.drafts
+            .get_mut(&("frm_global_auth".into(), "auth".into()))
+            .unwrap()
+            .toggle_external_acknowledged();
+        ui.drafts
+            .get_mut(&("frm_global_auth".into(), "note".into()))
+            .unwrap()
+            .choose("keep-my-draft");
+
+        // Pass 2: refresh hits pending-requests status:"error" (e.g. directory changed/unavailable).
+        ui.refresh_forms();
+        let req_form = http.accept().await;
+        assert!(
+            req_form
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
+        );
+        req_form.reply(200, json!({"data":[]})).await;
+        let req_wt = http.accept().await;
+        assert!(
+            req_wt
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+        );
+        req_wt
+            .reply(200, json!({"worktrees":[{"directory":"/private"}]}))
+            .await;
+        let req_pending = http.accept().await;
+        assert!(
+            req_pending
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+        );
+        req_pending
+            .reply(
+                200,
+                json!({
+                    "supported": true,
+                    "directories": [{
+                        "directory": "/private",
+                        "status": "error",
+                        "reason": "changed"
+                    }]
+                }),
+            )
+            .await;
+        while ui.forms_lane.reading {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert_eq!(
+            ui.forms.len(),
+            1,
+            "incomplete pending-requests scan must retain existing global form"
+        );
+        assert_eq!(ui.forms[0].id, "frm_global_auth");
+        assert!(
+            ui.drafts
+                .get(&("frm_global_auth".into(), "auth".into()))
+                .unwrap()
+                .external_acknowledged,
+            "global form acknowledgement draft must survive incomplete scan"
+        );
+        assert_eq!(
+            ui.drafts
+                .get(&("frm_global_auth".into(), "note".into()))
+                .unwrap()
+                .edit
+                .text,
+            "keep-my-draft",
+            "global form text draft must survive incomplete scan"
+        );
+
+        // Pass 3: worktree read fails (500) and unscoped /api/form scans a different directory.
+        ui.refresh_forms();
+        let req_form = http.accept().await;
+        req_form.reply(200, json!({"data":[]})).await;
+        let req_wt = http.accept().await;
+        assert!(
+            req_wt
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+        );
+        req_wt
+            .reply(500, json!({"error":"worktrees unavailable"}))
+            .await;
+        let req_unscoped = http.accept().await;
+        assert!(
+            req_unscoped
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/form ")
+        );
+        req_unscoped
+            .reply(200, json!({"location":{"directory":"/other"},"data":[]}))
+            .await;
+        while ui.forms_lane.reading {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert_eq!(
+            ui.forms.len(),
+            1,
+            "failed worktree list must retain global forms in unscanned directories"
+        );
+        assert_eq!(
+            ui.drafts
+                .get(&("frm_global_auth".into(), "note".into()))
+                .unwrap()
+                .edit
+                .text,
+            "keep-my-draft"
+        );
+
+        // Pass 4: authoritative status:"ok" with empty forms for /private clears form and draft.
+        ui.refresh_forms();
+        let req_form = http.accept().await;
+        req_form.reply(200, json!({"data":[]})).await;
+        let req_wt = http.accept().await;
+        req_wt
+            .reply(200, json!({"worktrees":[{"directory":"/private"}]}))
+            .await;
+        let req_pending = http.accept().await;
+        req_pending
+            .reply(
+                200,
+                json!({
+                    "supported": true,
+                    "directories": [{
+                        "directory": "/private",
+                        "status": "ok",
+                        "locations": [{
+                            "location": {"directory": "/private"},
+                            "permissions": [],
+                            "forms": []
+                        }]
+                    }]
+                }),
+            )
+            .await;
+        while ui.forms_lane.reading {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert!(
+            ui.forms.is_empty(),
+            "authoritative empty scan of /private must clear settled global form"
+        );
+        assert!(
+            !ui.drafts
+                .contains_key(&("frm_global_auth".into(), "note".into())),
+            "draft must be pruned once global form is confirmed gone"
+        );
+    });
 }

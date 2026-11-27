@@ -10,7 +10,7 @@ pub(crate) mod view;
 #[cfg(test)]
 mod viewport_tests;
 use crate::{
-    agent_api::{Action, Form, Model, Permission, Snapshot},
+    agent_api::{Action, Form, FormsSnapshot, Model, Permission, Snapshot},
     agent_forms::{self, Drafts},
     backend::Backend,
 };
@@ -30,13 +30,18 @@ enum Result {
     Read(Snapshot, bool, u64),
     Session(Snapshot, Option<String>, bool, u64),
     Permissions(Option<Vec<Permission>>, u64),
-    Forms(Option<Vec<Form>>, u64),
+    Forms(Option<FormsSnapshot>, u64),
     Catalog(Option<Vec<Model>>, String, u64),
     Act(bool, Snapshot, Option<String>, u64),
     ActPermission(bool, Option<Vec<Permission>>, u64),
-    ActForm(crate::agent_api::FormReplyOutcome, Option<Vec<Form>>, u64),
+    ActForm(
+        crate::agent_api::FormReplyOutcome,
+        Option<String>,
+        Option<FormsSnapshot>,
+        u64,
+    ),
     ActFormOutcome(crate::agent_api::FormReplyOutcome, u64),
-    ActFormSnapshot(Option<Vec<Form>>, u64),
+    ActFormSnapshot(Option<FormsSnapshot>, u64),
     Stop(bool),
     VerifiedIdle(String, bool),
 }
@@ -501,10 +506,14 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
                     w();
                 }
                 PendingJob::Act(action, generation) => {
+                    let settled_id = match &action {
+                        Action::Answer(id, _, _, _) | Action::Cancel(id, _) => Some(id.clone()),
+                        _ => None,
+                    };
                     let outcome = b.agent_form_action(&action).await;
                     if matches!(outcome, crate::agent_api::FormReplyOutcome::Ok) {
                         let snapshot = b.forms_snapshot().await;
-                        if o.send(Result::ActForm(outcome, snapshot, generation))
+                        if o.send(Result::ActForm(outcome, settled_id, snapshot, generation))
                             .await
                             .is_err()
                         {
@@ -1225,19 +1234,20 @@ impl Ui {
         self.reconcile_selected();
     }
 
-    fn apply_forms(&mut self, forms: Option<Vec<Form>>) {
+    fn apply_forms(&mut self, forms: Option<FormsSnapshot>, settled_id: Option<&str>) {
         let current_requests = !std::mem::take(&mut self.forms_lane.hint_during_job);
         self.forms_lane.known = forms.is_some();
         self.sync_pending_known();
-        if let Some(forms) = forms {
+        if let Some(snapshot) = forms {
+            let merged = snapshot.merge_prior(&self.forms, settled_id);
             if self.online {
                 self.attention.observe_kind(
                     1,
-                    forms.iter().map(|f| f.id.clone()),
+                    merged.iter().map(|f| f.id.clone()),
                     current_requests,
                 );
             }
-            self.forms = forms;
+            self.forms = merged;
             agent_forms::seed(&self.forms, &mut self.drafts);
             if let Some(rejection) = self.pending_field_rejection.take() {
                 if self
@@ -1336,7 +1346,12 @@ impl Ui {
         self.sync_error();
     }
 
-    fn handle_act_form_snapshot(&mut self, forms: Option<Vec<Form>>, generation: u64) {
+    fn handle_act_form_snapshot(
+        &mut self,
+        forms: Option<FormsSnapshot>,
+        settled_id: Option<&str>,
+        generation: u64,
+    ) {
         self.forms_lane.reading = false;
         if self.scope_missing {
             self.forms_lane.reconciling = false;
@@ -1347,7 +1362,7 @@ impl Ui {
         self.sync_error();
         if fresh {
             self.forms_lane.reconciling = forms.is_none();
-            self.apply_forms(forms);
+            self.apply_forms(forms, settled_id);
         } else {
             self.forms_lane.reconciling = true;
             self.forms_lane.trailing = true;
@@ -1357,10 +1372,10 @@ impl Ui {
     #[cfg(test)]
     fn snapshot(&mut self, mut s: Snapshot, generation: u64) {
         let permissions = s.permissions.take();
-        let forms = s.forms.take();
+        let forms = s.forms.take().map(FormsSnapshot::complete);
         self.apply_session(s, generation);
         self.apply_permissions(permissions);
-        self.apply_forms(forms);
+        self.apply_forms(forms, None);
     }
 
     pub fn poll(&mut self) -> bool {
@@ -1408,7 +1423,7 @@ impl Ui {
                         }
                         self.forms_lane.error |= forms.is_none();
                         self.sync_error();
-                        self.apply_forms(forms);
+                        self.apply_forms(forms, None);
                     }
                 }
                 Result::Catalog(models, directory, generation) => {
@@ -1452,15 +1467,15 @@ impl Ui {
                         }
                     }
                 }
-                Result::ActForm(outcome, forms, generation) => {
+                Result::ActForm(outcome, settled_id, forms, generation) => {
                     self.handle_act_form_outcome(outcome);
-                    self.handle_act_form_snapshot(forms, generation);
+                    self.handle_act_form_snapshot(forms, settled_id.as_deref(), generation);
                 }
                 Result::ActFormOutcome(outcome, _generation) => {
                     self.handle_act_form_outcome(outcome);
                 }
                 Result::ActFormSnapshot(forms, generation) => {
-                    self.handle_act_form_snapshot(forms, generation);
+                    self.handle_act_form_snapshot(forms, None, generation);
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;

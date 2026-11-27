@@ -5999,7 +5999,10 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         results_tx
             .try_send(crate::agent::Result::ActForm(
                 crate::agent_api::FormReplyOutcome::Failed,
-                Some(vec![focus_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    focus_form.clone(),
+                ])),
                 pending_gen,
             ))
             .unwrap();
@@ -6204,7 +6207,10 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "{\"error\":\"Form field does not match pattern: token\"}".into(),
                 )),
-                Some(vec![deferred_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    deferred_form.clone(),
+                ])),
                 def_gen,
             ))
             .unwrap();
@@ -6304,7 +6310,10 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         results_tx
             .try_send(crate::agent::Result::ActForm(
                 crate::agent_api::FormReplyOutcome::Failed,
-                Some(vec![retry_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    retry_form.clone(),
+                ])),
                 g1,
             ))
             .unwrap();
@@ -6608,7 +6617,10 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "{\"error\":\"Form field does not match pattern: code\"}".into(),
                 )),
-                Some(vec![two_def_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    two_def_form.clone(),
+                ])),
                 g,
             ))
             .unwrap();
@@ -7013,7 +7025,10 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "{\"error\":\"Form field does not match pattern: code.\"}".into(),
                 )),
-                Some(vec![dotted_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    dotted_form.clone(),
+                ])),
                 gen1,
             ))
             .unwrap();
@@ -7062,6 +7077,7 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "{\"error\":\"Form validation failed\"}".into(),
                 )),
+                None,
                 None,
                 gen2,
             ))
@@ -7430,7 +7446,10 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "{\"error\":\"Form field does not match pattern: code\"}".into(),
                 )),
-                Some(vec![def_form.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    def_form.clone(),
+                ])),
                 act_gen,
             ))
             .unwrap();
@@ -7444,7 +7463,10 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         };
         results_tx
             .try_send(crate::agent::Result::Forms(
-                Some(vec![def_form.clone(), other_form]),
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    def_form.clone(),
+                    other_form,
+                ])),
                 read_gen,
             ))
             .unwrap();
@@ -7908,7 +7930,9 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         // Follow-up GET finally arrives.
         out_tx
             .try_send(crate::agent::Result::ActFormSnapshot(
-                Some(vec![reject_form.clone()]),
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    reject_form.clone(),
+                ])),
                 sent_gen,
             ))
             .unwrap();
@@ -8318,7 +8342,10 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
                     "Form field does not match pattern: code".into(),
                 )),
-                Some(vec![schema_v1.clone()]),
+                None,
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    schema_v1.clone(),
+                ])),
                 act_gen,
             ))
             .unwrap();
@@ -8335,7 +8362,9 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         };
         out_tx
             .try_send(crate::agent::Result::Forms(
-                Some(vec![schema_v2.clone()]),
+                Some(crate::agent_api::FormsSnapshot::complete(vec![
+                    schema_v2.clone(),
+                ])),
                 refresh_gen,
             ))
             .unwrap();

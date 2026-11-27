@@ -112,6 +112,87 @@ fn tool_source(row: &Value) -> Option<ToolSource> {
         call: call.into(),
     })
 }
+#[derive(Clone)]
+pub struct FormsSnapshot {
+    pub forms: Vec<Form>,
+    /// Whether every project global-form directory was authoritatively scanned without errors
+    /// or truncation. When `false`, previously known `FormOwner::Global` forms whose directory
+    /// is not listed in `scanned_global_directories` must be retained.
+    pub global_complete: bool,
+    pub scanned_global_directories: Vec<String>,
+}
+
+impl FormsSnapshot {
+    pub fn complete(forms: Vec<Form>) -> Self {
+        Self {
+            forms,
+            global_complete: true,
+            scanned_global_directories: Vec::new(),
+        }
+    }
+
+    pub fn merge_prior(self, prior: &[Form], settled_id: Option<&str>) -> Vec<Form> {
+        if self.global_complete {
+            return self.forms;
+        }
+        let mut merged = self.forms;
+        let mut seen: std::collections::HashSet<String> =
+            merged.iter().map(|form| form.id.clone()).collect();
+        for existing in prior {
+            if merged.len() >= 128 {
+                break;
+            }
+            if settled_id == Some(existing.id.as_str()) {
+                continue;
+            }
+            let FormOwner::Global(ref location) = existing.owner else {
+                continue;
+            };
+            let dir_scanned = location.as_ref().is_some_and(|loc| {
+                self.scanned_global_directories
+                    .iter()
+                    .any(|scanned| crate::same_server_path(scanned, &loc.directory))
+            });
+            if !dir_scanned && seen.insert(existing.id.clone()) {
+                merged.push(existing.clone());
+            }
+        }
+        merged
+    }
+}
+
+struct GlobalFormsScan {
+    forms: Vec<Form>,
+    complete: bool,
+    scanned_directories: Vec<String>,
+}
+
+impl GlobalFormsScan {
+    fn incomplete() -> Self {
+        Self {
+            forms: Vec::new(),
+            complete: false,
+            scanned_directories: Vec::new(),
+        }
+    }
+}
+
+enum PendingRequestsOutcome {
+    Supported(GlobalFormsScan),
+    Unsupported,
+    Failed,
+}
+
+fn push_scanned_directory(scanned: &mut Vec<String>, directory: &str) {
+    if !directory.trim().is_empty()
+        && !scanned
+            .iter()
+            .any(|existing| crate::same_server_path(existing, directory))
+    {
+        scanned.push(directory.to_owned());
+    }
+}
+
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
@@ -375,7 +456,7 @@ impl Backend {
             .and_then(|v| permissions(&v, &self.session))
             .ok()
     }
-    pub async fn forms_snapshot(&self) -> Option<Vec<Form>> {
+    pub async fn forms_snapshot(&self) -> Option<FormsSnapshot> {
         let deadline = crate::runtime::Instant::now() + CONTROL_READ_BUDGET;
         let session_raw = self
             .control_get_within(
@@ -387,23 +468,37 @@ impl Backend {
         let mut out = forms(&session_raw, &self.session).ok()?;
         let mut seen: std::collections::HashSet<String> =
             out.iter().map(|form| form.id.clone()).collect();
-        for global in self.global_forms_within(deadline).await {
+        let global = self.global_forms_within(deadline).await;
+        let mut truncated = false;
+        for form in global.forms {
             if out.len() >= 128 {
+                truncated = true;
                 break;
             }
-            if seen.insert(global.id.clone()) {
-                out.push(global);
+            if seen.insert(form.id.clone()) {
+                out.push(form);
             }
         }
-        Some(out)
+        Some(FormsSnapshot {
+            forms: out,
+            global_complete: global.complete && !truncated,
+            scanned_global_directories: if truncated {
+                Vec::new()
+            } else {
+                global.scanned_directories
+            },
+        })
     }
 
-    async fn workspace_form_directories(&self, deadline: crate::runtime::Instant) -> Vec<String> {
+    async fn workspace_form_directories(
+        &self,
+        deadline: crate::runtime::Instant,
+    ) -> Option<(Vec<String>, bool)> {
         let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
         if timeout.is_zero() {
-            return Vec::new();
+            return None;
         }
-        let Ok(response) = self
+        let response = self
             .client
             .get(format!(
                 "{}api/workspaces/{}/worktrees",
@@ -413,16 +508,14 @@ impl Backend {
             .send()
             .await
             .and_then(|r| r.error_for_status())
-        else {
-            return Vec::new();
-        };
-        let Ok(data) = read_json(response).await else {
-            return Vec::new();
-        };
-        let Some(trees) = data["worktrees"].as_array().filter(|v| v.len() <= 128) else {
-            return Vec::new();
-        };
+            .ok()?;
+        let data = read_json(response).await.ok()?;
+        let trees = data["worktrees"].as_array()?;
+        if trees.len() > 128 {
+            return None;
+        }
         let mut dirs = Vec::new();
+        let mut all_fit = true;
         for tree in trees {
             if tree["nestedFolderMissing"].as_bool() == Some(true) {
                 continue;
@@ -432,36 +525,39 @@ impl Backend {
                 .or_else(|| tree["directory"].as_str())
                 .filter(|d| !d.trim().is_empty() && !d.contains('\0') && d.len() <= 4096)
             else {
+                all_fit = false;
                 continue;
             };
             if !dirs.iter().any(|existing: &String| existing == dir) {
-                dirs.push(dir.to_owned());
                 if dirs.len() >= 64 {
+                    all_fit = false;
                     break;
                 }
+                dirs.push(dir.to_owned());
             }
         }
-        dirs
+        Some((dirs, all_fit))
     }
 
     async fn pending_requests_global_forms(
         &self,
         directories: &[String],
+        all_dirs_fit: bool,
         deadline: crate::runtime::Instant,
-    ) -> Option<Vec<Form>> {
+    ) -> PendingRequestsOutcome {
         if directories.is_empty() {
-            return None;
+            return PendingRequestsOutcome::Unsupported;
         }
         let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
         if timeout.is_zero() {
-            return None;
+            return PendingRequestsOutcome::Failed;
         }
         let query: Vec<(&str, &str)> = directories
             .iter()
             .take(64)
             .map(|dir| ("directories", dir.as_str()))
             .collect();
-        let response = self
+        let response = match self
             .client
             .get(format!(
                 "{}api/workspaces/{}/pending-requests",
@@ -471,41 +567,100 @@ impl Backend {
             .timeout(timeout)
             .send()
             .await
-            .and_then(|r| r.error_for_status())
-            .ok()?;
-        let body = read_json(response).await.ok()?;
-        if body["supported"] != true {
-            return None;
+        {
+            Ok(resp) => resp,
+            Err(_) => return PendingRequestsOutcome::Failed,
+        };
+        let status = response.status();
+        if matches!(status.as_u16(), 404 | 405 | 501) {
+            return PendingRequestsOutcome::Unsupported;
         }
-        let entries = body["directories"].as_array()?;
+        if !status.is_success() {
+            return PendingRequestsOutcome::Failed;
+        }
+        let Ok(body) = read_json(response).await else {
+            return PendingRequestsOutcome::Failed;
+        };
+        if body["supported"] == false {
+            return PendingRequestsOutcome::Unsupported;
+        }
+        if body["supported"] != true {
+            return PendingRequestsOutcome::Failed;
+        }
+        let Some(entries) = body["directories"].as_array() else {
+            return PendingRequestsOutcome::Failed;
+        };
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let mut scanned_directories = Vec::new();
+        let mut all_ok = all_dirs_fit && entries.len() <= 64;
         for entry in entries.iter().take(64) {
             if entry["status"] != "ok" {
+                all_ok = false;
                 continue;
             }
-            let fallback_dir = entry["directory"].as_str();
-            let Some(locations) = entry["locations"].as_array() else {
+            let Some(entry_dir) = entry["directory"].as_str().filter(|d| !d.trim().is_empty())
+            else {
+                all_ok = false;
                 continue;
             };
+            let Some(locations) = entry["locations"].as_array() else {
+                all_ok = false;
+                continue;
+            };
+            let mut entry_complete = locations.len() <= 64;
+            let mut loc_dirs = Vec::new();
             for loc_entry in locations.iter().take(64) {
-                let location = parse_form_location(&loc_entry["location"], fallback_dir);
-                if let Some(form_rows) = loc_entry["forms"].as_array().filter(|v| v.len() <= 128) {
-                    decode_global_form_rows(form_rows, &location, &mut seen, &mut out);
+                let location = parse_form_location(&loc_entry["location"], Some(entry_dir));
+                if let Some(ref loc) = location {
+                    loc_dirs.push(loc.directory.clone());
                 }
-                if out.len() >= 128 {
-                    return Some(out);
+                if let Some(form_rows) = loc_entry["forms"].as_array() {
+                    if form_rows.len() > 128 {
+                        entry_complete = false;
+                    } else {
+                        let before = out.len();
+                        decode_global_form_rows(form_rows, &location, &mut seen, &mut out);
+                        if out.len() >= 128 && out.len() > before {
+                            entry_complete = false;
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                } else {
+                    entry_complete = false;
                 }
             }
+            if entry_complete {
+                push_scanned_directory(&mut scanned_directories, entry_dir);
+                for dir in loc_dirs {
+                    push_scanned_directory(&mut scanned_directories, &dir);
+                }
+            } else {
+                all_ok = false;
+            }
+            if out.len() >= 128 {
+                all_ok = false;
+                break;
+            }
         }
-        Some(out)
+        let all_requested_scanned = directories.iter().all(|requested| {
+            scanned_directories
+                .iter()
+                .any(|scanned| crate::same_server_path(scanned, requested))
+        });
+        PendingRequestsOutcome::Supported(GlobalFormsScan {
+            forms: out,
+            complete: all_ok && all_requested_scanned,
+            scanned_directories,
+        })
     }
 
     async fn list_global_forms_at(
         &self,
         location: Option<&FormLocation>,
         deadline: crate::runtime::Instant,
-    ) -> Result<Vec<Form>> {
+    ) -> Result<(Vec<Form>, Option<FormLocation>, bool)> {
         let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
         if timeout.is_zero() {
             return Err("control read timed out".into());
@@ -527,49 +682,100 @@ impl Backend {
         let body = read_json(response).await?;
         let rows = rows(&body)?;
         let resolved_location = parse_form_location(&body["location"], fallback_dir);
+        let complete = body["complete"].as_bool() != Some(false) && rows.len() <= 128;
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
         decode_global_form_rows(rows, &resolved_location, &mut seen, &mut out);
-        Ok(out)
+        Ok((out, resolved_location, complete))
     }
 
-    async fn global_forms_within(&self, deadline: crate::runtime::Instant) -> Vec<Form> {
-        let directories = self.workspace_form_directories(deadline).await;
-        if let Some(from_snapshot) = self
-            .pending_requests_global_forms(&directories, deadline)
+    async fn global_forms_within(&self, deadline: crate::runtime::Instant) -> GlobalFormsScan {
+        let Some((directories, all_dirs_fit)) = self.workspace_form_directories(deadline).await
+        else {
+            // Worktree discovery failed: attempt a best-effort unscoped read so new default-scope
+            // global forms appear, while keeping the scan incomplete to retain other worktrees' forms.
+            if let Ok((forms, resolved_location, complete)) =
+                self.list_global_forms_at(None, deadline).await
+            {
+                let mut scanned_directories = Vec::new();
+                if complete && let Some(loc) = resolved_location {
+                    push_scanned_directory(&mut scanned_directories, &loc.directory);
+                }
+                return GlobalFormsScan {
+                    forms,
+                    complete: false,
+                    scanned_directories,
+                };
+            }
+            return GlobalFormsScan::incomplete();
+        };
+        if directories.is_empty() {
+            if let Ok((forms, resolved_location, complete)) =
+                self.list_global_forms_at(None, deadline).await
+            {
+                let mut scanned_directories = Vec::new();
+                if complete && let Some(loc) = resolved_location {
+                    push_scanned_directory(&mut scanned_directories, &loc.directory);
+                }
+                return GlobalFormsScan {
+                    forms,
+                    complete: all_dirs_fit && complete,
+                    scanned_directories,
+                };
+            }
+            return GlobalFormsScan::incomplete();
+        }
+        match self
+            .pending_requests_global_forms(&directories, all_dirs_fit, deadline)
             .await
         {
-            return from_snapshot;
+            PendingRequestsOutcome::Supported(scan) => return scan,
+            PendingRequestsOutcome::Failed => return GlobalFormsScan::incomplete(),
+            PendingRequestsOutcome::Unsupported => {}
         }
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        if directories.is_empty() {
-            if let Ok(forms) = self.list_global_forms_at(None, deadline).await {
-                for form in forms {
-                    if seen.insert(form.id.clone()) {
-                        out.push(form);
-                    }
-                }
-            }
-            return out;
-        }
+        let mut scanned_directories = Vec::new();
+        let mut all_ok = all_dirs_fit && directories.len() <= 16;
         for dir in directories.iter().take(16) {
             let loc = FormLocation {
                 directory: dir.clone(),
                 workspace_id: None,
             };
-            if let Ok(forms) = self.list_global_forms_at(Some(&loc), deadline).await {
-                for form in forms {
-                    if out.len() >= 128 {
-                        return out;
+            match self.list_global_forms_at(Some(&loc), deadline).await {
+                Ok((forms, resolved_location, complete)) => {
+                    let mut truncated = false;
+                    for form in forms {
+                        if out.len() >= 128 {
+                            truncated = true;
+                            break;
+                        }
+                        if seen.insert(form.id.clone()) {
+                            out.push(form);
+                        }
                     }
-                    if seen.insert(form.id.clone()) {
-                        out.push(form);
+                    if complete && !truncated {
+                        push_scanned_directory(&mut scanned_directories, dir);
+                        if let Some(resolved) = resolved_location {
+                            push_scanned_directory(&mut scanned_directories, &resolved.directory);
+                        }
+                    } else {
+                        all_ok = false;
                     }
+                    if truncated {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    all_ok = false;
                 }
             }
         }
-        out
+        GlobalFormsScan {
+            forms: out,
+            complete: all_ok,
+            scanned_directories,
+        }
     }
 
     async fn pending_forms_for_owner(&self, owner: &FormOwner) -> Result<Vec<Form>> {
@@ -583,7 +789,7 @@ impl Backend {
             FormOwner::Global(location) => {
                 let deadline = crate::runtime::Instant::now() + CONTROL_READ_BUDGET;
                 match self.list_global_forms_at(location.as_ref(), deadline).await {
-                    Ok(found)
+                    Ok((found, _, _))
                         if !found.is_empty()
                             || location.as_ref().is_none_or(|l| l.workspace_id.is_none()) =>
                     {
@@ -592,19 +798,26 @@ impl Backend {
                     result => {
                         if let Some(loc) = location
                             && loc.workspace_id.is_some()
-                            && let Some(snapshot) = self
+                            && let PendingRequestsOutcome::Supported(scan) = self
                                 .pending_requests_global_forms(
                                     std::slice::from_ref(&loc.directory),
+                                    true,
                                     deadline,
                                 )
                                 .await
+                            && (scan.complete
+                                || scan
+                                    .scanned_directories
+                                    .iter()
+                                    .any(|d| crate::same_server_path(d, &loc.directory)))
                         {
-                            return Ok(snapshot
+                            return Ok(scan
+                                .forms
                                 .into_iter()
                                 .filter(|f| f.owner == *owner)
                                 .collect());
                         }
-                        result
+                        result.map(|(found, _, _)| found)
                     }
                 }
             }
@@ -1270,7 +1483,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert!(seen.lock().unwrap()[0].contains("/session/ses_split/permission"));
         let forms = rt.block_on(backend.forms_snapshot()).unwrap();
-        assert_eq!(forms.len(), 1);
+        assert_eq!(forms.forms.len(), 1);
         let requests = seen.lock().unwrap().clone();
         assert!(
             requests
@@ -1464,39 +1677,69 @@ mod tests {
                     .unwrap()
                     .push((first_line.clone(), dir_hdr, loc_hdr));
                 let cur_mode = mode_srv.load(Ordering::SeqCst);
-                let body = if first_line.starts_with("GET ")
+                let (status_line, body) = if first_line.starts_with("GET ")
                     && first_line.contains("/session/ses_g/form")
                 {
-                    r#"{"data":[{"id":"f_sess","sessionID":"ses_g","title":"Session Q","fields":[{"key":"ok","type":"boolean"}]}]}"#.to_string()
+                    (
+                        "200 OK",
+                        r#"{"data":[{"id":"f_sess","sessionID":"ses_g","title":"Session Q","fields":[{"key":"ok","type":"boolean"}]}]}"#.to_string(),
+                    )
                 } else if first_line.starts_with("GET ")
-                    && first_line.contains("/api/workspaces/workspace/worktrees")
+                    && first_line.contains("/api/workspaces/ws1/worktrees")
                 {
-                    if cur_mode == 0 {
-                        r#"{"worktrees":[{"directory":"/工作/100% ready"}]}"#.to_string()
-                    } else {
-                        r#"{"worktrees":[{"directory":"/worktree"}]}"#.to_string()
+                    match cur_mode {
+                        0 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/工作/100% ready"}]}"#.to_string(),
+                        ),
+                        1 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/worktree"}]}"#.to_string(),
+                        ),
+                        2 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/工作/100% ready"}]}"#.to_string(),
+                        ),
+                        _ => (
+                            "500 Internal Server Error",
+                            r#"{"error":"worktrees down"}"#.to_string(),
+                        ),
                     }
                 } else if first_line.starts_with("GET ")
-                    && first_line.contains("/api/workspaces/workspace/pending-requests")
+                    && first_line.contains("/api/workspaces/ws1/pending-requests")
                 {
-                    if cur_mode == 0 {
-                        r#"{"supported":true,"directories":[{"directory":"/工作/100% ready","status":"ok","locations":[{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"permissions":[],"forms":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]},{"id":"f_other","sessionID":"ses_other","title":"Other","fields":[{"key":"x","type":"string"}]}]}]}]}"#.to_string()
-                    } else {
-                        r#"{"supported":false}"#.to_string()
+                    match cur_mode {
+                        0 => (
+                            "200 OK",
+                            r#"{"supported":true,"directories":[{"directory":"/工作/100% ready","status":"ok","locations":[{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"permissions":[],"forms":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]},{"id":"f_other","sessionID":"ses_other","title":"Other","fields":[{"key":"x","type":"string"}]}]}]}]}"#.to_string(),
+                        ),
+                        1 => ("200 OK", r#"{"supported":false}"#.to_string()),
+                        _ => (
+                            "200 OK",
+                            r#"{"supported":true,"directories":[{"directory":"/工作/100% ready","status":"error","reason":"changed"}]}"#.to_string(),
+                        ),
                     }
                 } else if first_line.starts_with("GET ")
                     && first_line.contains("/instance/api/form")
                 {
                     if cur_mode == 0 {
-                        r#"{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"data":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]}]}"#.to_string()
+                        (
+                            "200 OK",
+                            r#"{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"data":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]}]}"#.to_string(),
+                        )
+                    } else if cur_mode == 1 {
+                        (
+                            "200 OK",
+                            r#"{"location":{"directory":"/worktree"},"data":[{"id":"f_global_plain","sessionID":"global","title":"MCP Plain","fields":[{"key":"auth","type":"external","url":"https://example.com/plain"}]},{"id":"f_foreign","sessionID":"ses_other","title":"Foreign","fields":[{"key":"x","type":"string"}]}]}"#.to_string(),
+                        )
                     } else {
-                        r#"{"location":{"directory":"/worktree"},"data":[{"id":"f_global_plain","sessionID":"global","title":"MCP Plain","fields":[{"key":"auth","type":"external","url":"https://example.com/plain"}]},{"id":"f_foreign","sessionID":"ses_other","title":"Foreign","fields":[{"key":"x","type":"string"}]}]}"#.to_string()
+                        ("503 Service Unavailable", r#"{"error":"busy"}"#.to_string())
                     }
                 } else {
-                    r#"{"ok":true}"#.to_string()
+                    ("200 OK", r#"{"ok":true}"#.to_string())
                 };
                 let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
                     body
                 );
@@ -1510,7 +1753,9 @@ mod tests {
             .unwrap();
 
         // Mode 0: pending-requests discovers global form with Unicode directory + legacy workspaceID.
-        let discovered = rt.block_on(backend.forms_snapshot()).unwrap();
+        let discovered_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(discovered_snap.global_complete);
+        let discovered = discovered_snap.forms;
         assert_eq!(
             discovered.len(),
             2,
@@ -1577,7 +1822,9 @@ mod tests {
         // Mode 1: fallback to GET /api/form when pending-requests is unsupported; no workspaceID
         // means x-opencode-directory only (no x-codenomad-location).
         mode.store(1, Ordering::SeqCst);
-        let discovered_fallback = rt.block_on(backend.forms_snapshot()).unwrap();
+        let discovered_fallback_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(discovered_fallback_snap.global_complete);
+        let discovered_fallback = discovered_fallback_snap.forms;
         assert_eq!(discovered_fallback.len(), 2);
         assert_eq!(discovered_fallback[1].id, "f_global_plain");
         assert_eq!(
@@ -1605,6 +1852,24 @@ mod tests {
             .expect("plain global form reply must target /session/global/form/{id}/reply");
         assert_eq!(plain_reply.1.as_deref(), Some("%2Fworktree"));
         assert_eq!(plain_reply.2, None);
+
+        // Mode 2: pending-requests status:"error" marks scan incomplete and retains prior global form.
+        mode.store(2, Ordering::SeqCst);
+        let partial_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(!partial_snap.global_complete);
+        assert!(partial_snap.scanned_global_directories.is_empty());
+        let merged = partial_snap.merge_prior(&discovered, None);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[1].id, "f_global_legacy");
+
+        // Mode 3: worktrees 500 + unscoped /api/form 503 marks scan incomplete and retains prior global form.
+        mode.store(3, Ordering::SeqCst);
+        let failed_wt_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(!failed_wt_snap.global_complete);
+        assert!(failed_wt_snap.scanned_global_directories.is_empty());
+        let merged_wt = failed_wt_snap.merge_prior(&discovered, None);
+        assert_eq!(merged_wt.len(), 2);
+        assert_eq!(merged_wt[1].id, "f_global_legacy");
 
         // Session-owned form sends neither location header.
         recorded.lock().unwrap().clear();
