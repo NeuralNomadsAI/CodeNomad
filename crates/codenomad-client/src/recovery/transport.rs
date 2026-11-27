@@ -228,7 +228,8 @@ pub(crate) async fn run_with_reading(
     let make_wire = || {
         Arc::new(
             stream::State::observing_preferences(out.clone(), wake.clone())
-                .with_provider_usage(provider_usage.clone()),
+                .with_provider_usage(provider_usage.clone())
+                .with_session_deleted(reading.and_then(|r| r.on_session_deleted.clone())),
         )
     };
     let mut wire = make_wire();
@@ -667,14 +668,15 @@ pub(crate) async fn run_with_reading(
                     reader.quiet = Instant::now();
                     continue;
                 }
-                if matches!(kind, "session.deleted" | "session.revert.committed") {
+                if kind == "session.deleted" {
+                    wire.cancel();
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
+                    publish(&out, &wake, Event::SessionDeleted).await;
+                    return Err("session scope changed".into());
+                }
+                if kind == "session.revert.committed" {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
-                    if kind == "session.deleted" {
-                        wire.cancel();
-                        close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
-                            .await;
-                        return Err("session scope changed".into());
-                    }
                     reader.clear_window_on_revert();
                     reader.parked = false;
                     reader.dirty = reader.active_reader;

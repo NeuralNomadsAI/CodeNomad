@@ -67,34 +67,14 @@ pub(crate) fn session_cleanup_protected(s: &State, project_id: &str, session_id:
             };
             known_in_project |= has_row;
         }
-        if entry.rebind_after_send.as_deref() == Some(session_id) {
+        if entry_protects_session(ui, entry, session_id) {
             return true;
         }
-        if let Tab::Workspace(saved) = &entry.saved {
-            if saved.active_session_id.as_deref() == Some(session_id) {
-                return true;
-            }
-            if ui.has_closed_unconfirmed_for(saved, session_id) {
-                return true;
-            }
-            if saved
-                .drafts
-                .get(session_id)
-                .is_some_and(|text| !text.is_empty())
-                || saved.attachment_drafts.contains(session_id)
-                || saved.attachment_parts.contains_key(session_id)
-            {
-                return true;
-            }
-        }
-        if entry
-            .live_drafts
-            .get(session_id)
-            .is_some_and(super::drafts::LiveDraft::has_content)
-            || entry.pending_drafts.contains(session_id)
-        {
-            return true;
-        }
+    }
+    if let Some(stashed) = s.temporary.stashed_for_snapshot()
+        && entry_protects_session(ui, &stashed.entry, session_id)
+    {
+        return true;
     }
     if !known_in_project {
         return true;
@@ -152,4 +132,32 @@ pub(crate) fn remove_cleaned_session(s: &mut State, project_id: &str, session_id
         }
     }
     removed
+}
+
+fn entry_protects_session(ui: &super::Ui, entry: &super::Entry, session_id: &str) -> bool {
+    if entry.rebind_after_send.as_deref() == Some(session_id) {
+        return true;
+    }
+    if let Tab::Workspace(saved) = &entry.saved {
+        if saved.active_session_id.as_deref() == Some(session_id) {
+            return true;
+        }
+        if ui.has_closed_unconfirmed_for(saved, session_id) {
+            return true;
+        }
+        if saved
+            .drafts
+            .get(session_id)
+            .is_some_and(|text| !text.is_empty())
+            || saved.attachment_drafts.contains(session_id)
+            || saved.attachment_parts.contains_key(session_id)
+        {
+            return true;
+        }
+    }
+    entry
+        .live_drafts
+        .get(session_id)
+        .is_some_and(super::drafts::LiveDraft::has_content)
+        || entry.pending_drafts.contains(session_id)
 }

@@ -178,6 +178,9 @@ pub(super) async fn relay(
         state.history_revision.fetch_add(1, SeqCst);
     }
     if own && value["type"] == "instance.event" {
+        if native["type"] == "session.deleted" && native["data"]["sessionID"] == b.session {
+            state.notify_session_deleted();
+        }
         children::observe(b, native);
         if let Some(urgent) = native["type"]
             .as_str()

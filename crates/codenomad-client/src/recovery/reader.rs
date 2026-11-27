@@ -823,6 +823,7 @@ pub struct ReadingLane {
     pub demand: demand::Observer,
     pub events: Sender<(u64, u64, Event)>,
     pub connection: Arc<AtomicU64>,
+    pub on_session_deleted: Option<Arc<dyn Fn() + Send + Sync>>,
     pub revoked: Arc<AtomicBool>,
 }
 
@@ -1209,6 +1210,7 @@ mod diagnostic_tests {
                 demand: demand_rx,
                 events: reader_tx.clone(),
                 connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                on_session_deleted: None,
                 revoked: Default::default(),
             };
             let wake: crate::Wake = Arc::new(|| {});

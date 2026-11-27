@@ -980,3 +980,67 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
             );
         });
 }
+
+#[test]
+fn valid_frame_preceding_invalid_utf8_in_same_chunk_is_delivered() {
+    use futures_lite::{StreamExt, future::poll_once};
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            let (out, recovery) = crate::bounded(1);
+            let (events, _display) = crate::bounded(4);
+            let watch = crate::provider_usage::Watch::default();
+            let state = State::observing_preferences(events, Arc::new(|| {}))
+                .with_provider_usage(Some(watch.clone()));
+            let (send, chunks) = crate::bounded(2);
+            let mut wire = std::pin::pin!(native::read_frames(
+                &backend,
+                1,
+                &out,
+                &state,
+                "stream",
+                chunks.map(Ok),
+            ));
+            // Fill the bounded downstream queue first so the next chunk hits backpressure.
+            let ok_frame = format!("data: {}\n\n", json!({"type": "memory.changed"})).into_bytes();
+            send.send(ok_frame.clone()).await.unwrap();
+            assert!(poll_once(&mut wire).await.is_none());
+            assert!(out.is_full());
+            let before = watch.current();
+
+            // Send two valid frames followed by invalid UTF-8 in one chunk: quota authority must
+            // revoke immediately while backpressured, AND every preceding valid frame must still
+            // be delivered once `recovery` drains.
+            let mut chunk = [ok_frame.as_slice(), ok_frame.as_slice()].concat();
+            chunk.extend_from_slice(b"data: \xff\xfe\n\n");
+            send.send(chunk).await.unwrap();
+            assert!(poll_once(&mut wire).await.is_none());
+            assert_eq!(
+                watch.current().0,
+                before.0 + 1,
+                "quota authority must revoke immediately upon chunk decode error"
+            );
+
+            drop(send);
+            let drain = async {
+                assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
+                for _ in 0..3 {
+                    assert!(matches!(
+                        recovery.recv().await.unwrap(),
+                        Input::Workspace(1, WorkspaceEvent::MemoryChanged)
+                    ));
+                }
+            };
+            let (result, ()) = tokio::time::timeout(
+                Duration::from_secs(2),
+                futures_lite::future::zip(wire, drain),
+            )
+            .await
+            .unwrap();
+            assert!(result.is_err(), "invalid UTF-8 line must fail the stream");
+        });
+}

@@ -296,6 +296,19 @@ pub(crate) fn restore_stashed(
     }
     let insert_at = stashed.original_index.min(ui.entries.len());
     ui.entries.insert(insert_at, stashed.entry);
+    if let Tab::Workspace(w) = &ui.entries[insert_at].saved
+        && !ui.entries[insert_at].pending_drafts.is_empty()
+    {
+        let scope = super::ProjectScope::from_workspace(w);
+        let ids: Vec<String> = ui.entries[insert_at]
+            .pending_drafts
+            .iter()
+            .cloned()
+            .collect();
+        for id in ids {
+            super::drafts::sync_pending_closed_projections(ui, &scope, &id);
+        }
+    }
     if activate_restored {
         ui.active = insert_at;
         ui.changed();
@@ -321,41 +334,43 @@ pub(crate) fn finish_discarded(
     tx: &mut Tx,
 ) {
     s.notifications.forget_tab(&stashed.tab_key);
+    let mut propagate_to_active = None;
     if let Some(ui) = &mut s.workspace {
-        if keep_drafts {
-            if let Tab::Workspace(mut saved) = stashed.entry.saved {
+        let entry = std::mem::replace(&mut stashed.entry, super::entry(String::new(), Tab::Blank));
+        if let Tab::Workspace(mut saved) = entry.saved.clone() {
+            if keep_drafts {
                 saved.temporary = false;
-                saved
-                    .drafts
-                    .retain(|id, _| !stashed.entry.pending_drafts.contains(id));
-                saved
-                    .attachment_drafts
-                    .retain(|id| !stashed.entry.pending_drafts.contains(id));
-                saved
-                    .attachment_parts
-                    .retain(|id, _| !stashed.entry.pending_drafts.contains(id));
-                saved.drafts.extend(
-                    stashed
-                        .entry
-                        .cleared
-                        .into_iter()
-                        .filter(|id| !stashed.entry.pending_drafts.contains(id))
-                        .map(|id| (id, String::new())),
-                );
-                ui.closed.push(saved);
-                if ui.closed.len() > 16 {
-                    ui.closed.remove(0);
-                }
             }
-        } else {
-            let folder = &stashed.folder;
-            let backend_id = stashed.backend_id.as_deref();
-            let server_id = stashed.server_id.as_deref();
-            ui.closed.retain(|w| {
-                !(same_folder(&w.folder, folder) && matches_backend(w, backend_id, server_id))
-            });
+            let active_idx = ui.active;
+            let (to_active, locks) = tabs::archive_or_purge_closed_workspace(
+                ui,
+                entry,
+                saved,
+                keep_drafts,
+                false,
+                active_idx,
+            );
+            tabs::propagate_closed_locks_to_entries(ui, &locks);
+            propagate_to_active = to_active;
+        } else if !keep_drafts {
+            let scope = super::ProjectScope {
+                backend_id: stashed.backend_id.clone(),
+                server_id: if stashed.backend_id.is_some() {
+                    stashed.server_id.clone()
+                } else {
+                    None
+                },
+                folder: stashed.folder.clone(),
+            };
+            tabs::purge_closed_scope(ui, &scope, entry.live_drafts.into_keys());
         }
         ui.changed();
+    }
+    if let Some(attempt_id) = propagate_to_active
+        && s.composer.unconfirmed_state().is_none()
+    {
+        s.composer
+            .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
     }
     if release_on_server {
         crate::shell::blank_cleanup::abort_for_project(s, &stashed.project.id);
@@ -950,5 +965,300 @@ mod tests {
                 "stashed temporary tab must still be restored into the tab strip"
             );
         });
+    }
+
+    #[test]
+    fn finish_discarded_keeps_parallel_provenance_aligned_respects_clear_authority_and_purges_locks()
+     {
+        let mut s = init();
+        let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let temp_project = Project {
+            id: "ws-temp".into(),
+            path: "/tmp/cn-temp".into(),
+            temporary: true,
+        };
+        let mut l = Launcher::fixture();
+        l.connection = Some(backend.clone());
+        l.server_id = Some("srv-test".into());
+        l.project = Some(temp_project.clone());
+        s.screen = Screen::Launcher(l);
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let mut temp_ws = crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/tmp/cn-temp".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: Some("ws-temp".into()),
+            active_session_id: Some("ses-temp".into()),
+            drafts: std::collections::BTreeMap::from([("ses-temp".into(), "temp draft".into())]),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut temp_entry = entry("tab-temp".into(), Tab::Workspace(temp_ws.clone()));
+        temp_entry.project = Some(temp_project.clone());
+        temp_entry.binding = Some(backend.clone());
+
+        // Seed ui.closed with [temp_ws, other_a (unconfirmed "same"), other_b (independent "same")].
+        let other_a = crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/repo/other".into(),
+            project_name: None,
+            temporary: false,
+            occurrence: 1,
+            workspace_id: Some("ws-other".into()),
+            active_session_id: Some("ses-other".into()),
+            drafts: std::collections::BTreeMap::from([("ses-other".into(), "same".into())]),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut other_b = other_a.clone();
+        other_b.occurrence = 2;
+
+        let derived_a = super::super::drafts::DraftCopy::from_workspace(&other_a, "ses-other")
+            .expect("derived copy a");
+        let mut derived_b_ws = other_b.clone();
+        derived_b_ws
+            .drafts
+            .insert("ses-other".into(), "origin-b".into());
+        let derived_b = super::super::drafts::DraftCopy::from_workspace(&derived_b_ws, "ses-other")
+            .expect("derived copy b");
+        ui.closed = vec![temp_ws.clone(), other_a.clone(), other_b.clone()];
+        ui.closed_restored = vec![
+            std::collections::HashSet::from(["ses-temp".into()]),
+            std::collections::HashSet::from(["ses-restored-a".into()]),
+            std::collections::HashSet::from(["ses-restored-b".into()]),
+        ];
+        ui.closed_derived_from = vec![
+            Default::default(),
+            std::collections::BTreeMap::from([("ses-other".into(), derived_a.clone())]),
+            std::collections::BTreeMap::from([("ses-other".into(), derived_b.clone())]),
+        ];
+        ui.closed_unconfirmed_attempts = vec![
+            Default::default(),
+            std::collections::BTreeMap::from([("ses-other".into(), "att-a".into())]),
+            Default::default(),
+        ];
+        ui.remember_closed_unconfirmed(
+            &temp_ws,
+            "ses-temp".into(),
+            crate::composer::UnconfirmedPrompt::locked("att-temp".into()),
+        );
+        // Also seed an edited/cleared unconfirmed lock from an earlier session on the same
+        // temporary workspace (absent from closed_unconfirmed_attempts and active_session_id).
+        ui.remember_closed_unconfirmed(
+            &temp_ws,
+            "ses-temp-edited".into(),
+            crate::composer::UnconfirmedPrompt::locked("att-temp-edited".into()),
+        );
+        ui.remember_closed_unconfirmed(
+            &other_a,
+            "ses-other".into(),
+            crate::composer::UnconfirmedPrompt::fixture_unedited_text("att-a".into(), "same"),
+        );
+        ui.entries = vec![entry("tab-0".into(), Tab::Blank), temp_entry];
+        ui.active = 1;
+        s.workspace = Some(ui);
+
+        let mut rt = Runtime::new(s, crate::view, (800.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            let stashed = stash_for_discard(s, "tab-temp", None, tx).expect("stash temp");
+            finish_discarded(s, stashed, false, false, tx);
+        });
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        assert_eq!(ui.closed.len(), 2);
+        assert_eq!(ui.closed_restored.len(), 2);
+        assert_eq!(ui.closed_derived_from.len(), 2);
+        assert_eq!(ui.closed_unconfirmed_attempts.len(), 2);
+        assert!(ui.closed_restored[0].contains("ses-restored-a"));
+        assert!(ui.closed_restored[1].contains("ses-restored-b"));
+        assert_eq!(ui.closed_derived_from[0].get("ses-other"), Some(&derived_a));
+        assert_eq!(ui.closed_derived_from[1].get("ses-other"), Some(&derived_b));
+        assert_eq!(
+            ui.closed_unconfirmed_attempts[0]
+                .get("ses-other")
+                .map(String::as_str),
+            Some("att-a"),
+            "removing leading temporary archive must shift parallel provenance vectors in lockstep"
+        );
+        assert!(ui.closed_unconfirmed_attempts[1].is_empty());
+        assert!(
+            ui.closed_unconfirmed_id(&temp_ws, "ses-temp").is_none(),
+            "successful temporary discard must release closed_unconfirmed locks for deleted project"
+        );
+        assert!(
+            ui.closed_unconfirmed_id(&temp_ws, "ses-temp-edited")
+                .is_none(),
+            "successful temporary discard must release edited/cleared closed_unconfirmed locks for deleted project"
+        );
+        assert_eq!(
+            ui.closed_unconfirmed_id(&other_a, "ses-other"),
+            Some("att-a")
+        );
+
+        // Confirming att-a must erase only other_a and preserve independent other_b.
+        let mut ui = rt.state.workspace.take().unwrap();
+        super::super::drafts::confirm_unconfirmed_for(
+            &mut rt.state,
+            &mut ui,
+            &other_a,
+            "ses-other",
+            "att-a",
+        );
+        rt.state.workspace = Some(ui);
+        let ui = rt.state.workspace.as_ref().unwrap();
+        assert!(!ui.closed[0].drafts.contains_key("ses-other"));
+        assert_eq!(
+            ui.closed[1].drafts.get("ses-other").map(String::as_str),
+            Some("same"),
+            "independent closed draft must remain untouched after late confirmation"
+        );
+
+        // Now verify finish_discarded(..., keep_drafts = true) (e.g. 404 fallback) respects
+        // clear_authority: erases the matching restored copy while preserving an independent draft
+        // and never writing a blanket empty tombstone.
+        temp_ws.drafts.clear();
+        temp_ws.drafts.insert("ses-indep".into(), "keep me".into());
+        let mut old_restored_ws = temp_ws.clone();
+        old_restored_ws.occurrence = 3;
+        old_restored_ws.drafts.clear();
+        old_restored_ws
+            .drafts
+            .insert("ses-indep".into(), "older restored text".into());
+        let mut stashed_404_ws = temp_ws.clone();
+        stashed_404_ws.occurrence = 2;
+        stashed_404_ws.drafts.clear();
+        let mut stashed_404_entry = entry("tab-temp-404".into(), Tab::Workspace(stashed_404_ws));
+        stashed_404_entry.project = Some(temp_project);
+        stashed_404_entry.binding = Some(backend);
+        stashed_404_entry.cleared.insert("ses-indep".into());
+        stashed_404_entry.clear_authority.insert(
+            "ses-indep".into(),
+            super::super::drafts::ClearAuthority::Copy(
+                super::super::drafts::DraftCopy::from_workspace(&old_restored_ws, "ses-indep")
+                    .expect("draft copy"),
+            ),
+        );
+        rt.update(|s, tx| {
+            let ui = s.workspace.as_mut().unwrap();
+            ui.closed.push(temp_ws.clone());
+            ui.closed_restored.push(Default::default());
+            ui.closed_derived_from.push(Default::default());
+            ui.closed_unconfirmed_attempts.push(Default::default());
+            ui.closed.push(old_restored_ws.clone());
+            ui.closed_restored
+                .push(std::collections::HashSet::from(["ses-indep".into()]));
+            ui.closed_derived_from.push(Default::default());
+            ui.closed_unconfirmed_attempts.push(Default::default());
+            ui.entries.push(stashed_404_entry);
+            let stashed = stash_for_discard(s, "tab-temp-404", None, tx).expect("stash 404");
+            finish_discarded(s, stashed, true, false, tx);
+        });
+        let ui = rt.state.workspace.as_ref().unwrap();
+        assert_eq!(ui.closed.len(), ui.closed_restored.len());
+        assert_eq!(ui.closed.len(), ui.closed_derived_from.len());
+        assert_eq!(ui.closed.len(), ui.closed_unconfirmed_attempts.len());
+        assert!(
+            !ui.closed[ui.closed.len() - 2]
+                .drafts
+                .contains_key("ses-indep"),
+            "matching older restored copy must be erased by clear_authority during keep_drafts discard"
+        );
+        let last = ui.closed.last().unwrap();
+        assert!(
+            !last.drafts.contains_key("ses-indep"),
+            "keep_drafts discard must not write a blanket empty tombstone"
+        );
+        let scope = super::super::ProjectScope::from_workspace(&temp_ws);
+        let peek = super::super::drafts::peek_closed_state_for_scope(ui, &scope, "ses-indep", &[]);
+        assert_eq!(
+            peek.bundle.and_then(|b| b.text).as_deref(),
+            Some("keep me"),
+            "independent closed draft must remain visible after keep_drafts discard with non-matching clear_authority"
+        );
+    }
+
+    #[test]
+    fn stashed_temporary_tab_protects_its_local_draft_from_blank_session_cleanup() {
+        let mut rt = Runtime::new(
+            crate::init(),
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let temp_project = crate::catalog::Project {
+            id: "ws-temp".into(),
+            path: "/tmp/cleanup-guard".into(),
+            temporary: true,
+        };
+        let mut open_ws = super::super::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/tmp/cleanup-guard".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: None,
+            active_session_id: Some("ses_other".into()),
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut open_entry =
+            super::super::entry("tab-open".into(), Tab::Workspace(open_ws.clone()));
+        open_entry.project = Some(temp_project.clone());
+        open_entry.sessions = vec![codenomad_client::catalog::Session {
+            id: "ses_blank".into(),
+            title: "Blank".into(),
+        }];
+        ui.entries = vec![open_entry];
+        ui.active = 0;
+
+        let mut launcher = crate::launcher::Launcher::fixture();
+        launcher.project = Some(temp_project.clone());
+        launcher.sessions = vec![codenomad_client::catalog::Session {
+            id: "ses_blank".into(),
+            title: "Blank".into(),
+        }];
+        rt.state.screen = crate::Screen::Launcher(launcher);
+        rt.state.workspace = Some(ui);
+
+        assert!(
+            !crate::workspace::session_cleanup_protected(&rt.state, "ws-temp", "ses_blank"),
+            "without a stashed draft, ses_blank should be eligible for cleanup"
+        );
+
+        open_ws
+            .drafts
+            .insert("ses_blank".into(), "unsent draft on stashed tab".into());
+        let stashed_entry = super::super::entry("tab-stashed".into(), Tab::Workspace(open_ws));
+        let stashed = StashedTemporary {
+            tab_key: "tab-stashed".into(),
+            original_index: 0,
+            was_active: false,
+            created_blank_key: None,
+            project: temp_project,
+            backend: Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            folder: "/tmp/cleanup-guard".into(),
+            backend_id: None,
+            server_id: None,
+            entry: stashed_entry,
+            return_focus: None,
+        };
+        rt.state.temporary.fixture_stash(stashed);
+
+        assert!(
+            crate::workspace::session_cleanup_protected(&rt.state, "ws-temp", "ses_blank"),
+            "stashed temporary tab holding a local draft must protect its session from blank cleanup"
+        );
     }
 }

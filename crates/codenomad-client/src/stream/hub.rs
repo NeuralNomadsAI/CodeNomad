@@ -46,7 +46,7 @@ struct SubQueue {
     items: VecDeque<(HubItem, u64)>,
     bytes: usize,
     closed: bool,
-    pending_session_moved: Option<(Arc<(String, String)>, u64)>,
+    pending_terminal: Option<(Arc<(String, String)>, u64)>,
 }
 
 impl SubQueue {
@@ -79,6 +79,7 @@ struct SubscriberSignals {
     closed: Option<Sender<()>>,
     placement: Option<Sender<()>>,
     inbox: Option<crate::inbox::InboxWire>,
+    session_deleted: Option<super::SessionDeletedHook>,
     history_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
     upstream: Option<Arc<std::sync::atomic::AtomicBool>>,
     disconnect_mark: Option<Arc<std::sync::atomic::AtomicU64>>,
@@ -145,6 +146,11 @@ impl Subscriber {
         if let Some(tx) = &self.signals.placement {
             tx.close();
         }
+    }
+
+    fn take_session_deleted_hook(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        let hook = self.signals.session_deleted.as_ref()?;
+        (!hook.1.swap(true, SeqCst)).then(|| hook.0.clone())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -245,14 +251,19 @@ impl Subscriber {
 
     /// Returns `false` if this subscriber exceeded its local queue budget.
     /// Caller revokes guard and quota before calling `close_overflow()`.
-    fn try_push_frame(&self, frame: Arc<(String, String)>, session_moved: bool, mark: u64) -> bool {
+    fn try_push_frame(
+        &self,
+        frame: Arc<(String, String)>,
+        terminal_scope_change: bool,
+        mark: u64,
+    ) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
         }
-        if session_moved {
-            queue.pending_session_moved = Some((frame.clone(), mark));
+        if terminal_scope_change {
+            queue.pending_terminal = Some((frame.clone(), mark));
         }
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
@@ -275,8 +286,8 @@ impl Subscriber {
         queue.closed = true;
         queue.items.clear();
         queue.bytes = 0;
-        if let Some((moved, mark)) = queue.pending_session_moved.take() {
-            queue.items.push_back((HubItem::Frame(moved), mark));
+        if let Some((terminal, mark)) = queue.pending_terminal.take() {
+            queue.items.push_back((HubItem::Frame(terminal), mark));
         }
         queue.items.push_back((
             HubItem::Closed {
@@ -322,11 +333,11 @@ impl Subscriber {
             let size = frame.0.len().saturating_add(frame.1.len());
             queue.bytes = queue.bytes.saturating_sub(size);
             if queue
-                .pending_session_moved
+                .pending_terminal
                 .as_ref()
-                .is_some_and(|(moved, _)| Arc::ptr_eq(moved, frame))
+                .is_some_and(|(terminal, _)| Arc::ptr_eq(terminal, frame))
             {
-                queue.pending_session_moved = None;
+                queue.pending_terminal = None;
             }
         }
         Some((item, mark))
@@ -481,6 +492,7 @@ impl SharedStream {
         let class = classify_frame(&frame.0, &frame.1);
         let notify_quota = frame.0.is_empty() || frame.0 == "message";
         let mut wakes = Vec::new();
+        let mut deleted_hooks = Vec::new();
         let became_empty = {
             let mut inner = self.inner.lock().unwrap();
             if matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
@@ -509,7 +521,7 @@ impl SharedStream {
                 FrameClass::SessionMoved { workspace, session } => {
                     hub.note_session_location_change(workspace, session);
                 }
-                FrameClass::None => {}
+                FrameClass::SessionDeleted { .. } | FrameClass::None => {}
             }
             inner.subscribers.retain(|sub| {
                 let session_moved = matches!(
@@ -517,11 +529,20 @@ impl SharedStream {
                     FrameClass::SessionMoved { workspace, session }
                         if sub.matches_conversation(workspace, session)
                 );
-                if session_moved {
+                let session_deleted = matches!(
+                    &class,
+                    FrameClass::SessionDeleted { workspace, session }
+                        if sub.matches_conversation(workspace, session)
+                );
+                let terminal_scope_change = session_moved || session_deleted;
+                if terminal_scope_change {
                     sub.signal_placement();
                 }
+                if session_deleted && let Some(hook) = sub.take_session_deleted_hook() {
+                    deleted_hooks.push(hook);
+                }
                 let mark = sub.note_inbox_frame(&frame.0, &frame.1);
-                let kept = sub.try_push_frame(frame.clone(), session_moved, mark);
+                let kept = sub.try_push_frame(frame.clone(), terminal_scope_change, mark);
                 if !kept {
                     if let Some(hook) = &sub.guard_hook {
                         hook.revoke(true);
@@ -555,6 +576,9 @@ impl SharedStream {
                 }
                 inner.stop.take();
             }
+        }
+        for hook in deleted_hooks {
+            hook();
         }
         for quota in wakes {
             quota.wake();
@@ -670,20 +694,20 @@ enum FrameClass {
     ReplayStopped { id: String, error: bool },
     WorkspaceLocationChanged(String),
     SessionMoved { workspace: String, session: String },
+    SessionDeleted { workspace: String, session: String },
 }
 
 fn classify_frame(kind: &str, data: &str) -> FrameClass {
     if !(kind.is_empty() || kind == "message") {
         return FrameClass::None;
     }
-    let is_status = data.contains("\"instance.eventStatus\"");
-    let is_stopped = !is_status && data.contains("\"workspace.stopped\"");
-    let is_worktrees = !is_status
-        && !is_stopped
-        && (data.contains("\"workspace.worktreesChanged\"")
-            || data.contains("\"worktree.updated\""));
-    let is_moved = !is_status && !is_stopped && !is_worktrees && data.contains("\"session.moved\"");
-    if !is_status && !is_stopped && !is_worktrees && !is_moved {
+    if !data.contains("\"instance.eventStatus\"")
+        && !data.contains("\"workspace.stopped\"")
+        && !data.contains("\"workspace.worktreesChanged\"")
+        && !data.contains("\"worktree.updated\"")
+        && !data.contains("\"session.moved\"")
+        && !data.contains("\"session.deleted\"")
+    {
         return FrameClass::None;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
@@ -732,17 +756,26 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
         return FrameClass::WorkspaceLocationChanged(id.to_owned());
     }
     if value["type"] == "instance.event"
-        && value["event"]["type"] == "session.moved"
         && let Some(workspace) = value["instanceId"].as_str()
     {
-        let session = value["event"]["data"]["sessionID"]
-            .as_str()
-            .or_else(|| value["event"]["data"]["id"].as_str())
-            .unwrap_or("");
-        return FrameClass::SessionMoved {
-            workspace: workspace.to_owned(),
-            session: session.to_owned(),
-        };
+        if value["event"]["type"] == "session.moved" {
+            let session = value["event"]["data"]["sessionID"]
+                .as_str()
+                .or_else(|| value["event"]["data"]["id"].as_str())
+                .unwrap_or("");
+            return FrameClass::SessionMoved {
+                workspace: workspace.to_owned(),
+                session: session.to_owned(),
+            };
+        }
+        if value["event"]["type"] == "session.deleted"
+            && let Some(session) = value["event"]["data"]["sessionID"].as_str()
+        {
+            return FrameClass::SessionDeleted {
+                workspace: workspace.to_owned(),
+                session: session.to_owned(),
+            };
+        }
     }
     FrameClass::None
 }
@@ -1071,6 +1104,7 @@ pub(super) async fn read_shared(
         closed: Some(state.closed_signal()),
         placement: state.placement_signal(),
         inbox: state.catalogue.is_none().then(|| state.inbox.clone()),
+        session_deleted: state.session_deleted_hook(),
         history_revision: state
             .catalogue
             .is_none()
