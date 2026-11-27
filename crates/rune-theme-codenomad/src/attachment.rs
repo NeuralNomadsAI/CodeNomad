@@ -132,3 +132,22 @@ pub fn chip(name: &str, glyph: Option<&'static Icon>, action: Option<El>) -> El 
         )
         .children(action)
 }
+
+pub fn status_badge(label: &str) -> El {
+    let t = tokens(layout::dark());
+    let size = t.number("font-size-xs").px();
+    row()
+        .center_y()
+        .shrink()
+        .min_w(0.0)
+        .px(t.space(Space::Sm).px())
+        .py(t.space(Space::Xs).px())
+        .radius(t.length(Length::ChipRadius).px())
+        .fill(t.color("badge-neutral-bg"))
+        .role("status")
+        .child(
+            text(label)
+                .font(TextStyle::new(size, t.number("font-weight-medium").px()))
+                .color(t.color("text-secondary")),
+        )
+}

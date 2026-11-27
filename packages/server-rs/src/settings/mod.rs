@@ -35,6 +35,24 @@ const SERVER_PROFILES: &[&str] = &["remoteServers"];
 pub struct Settings {
     pub location: Location,
     write: Mutex<()>,
+    #[cfg(test)]
+    write_enter: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    #[cfg(test)]
+    write_exit: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+#[cfg(test)]
+impl Settings {
+    pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.write.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub(crate) fn arm_write_hooks(&self) -> (tokio::sync::oneshot::Receiver<()>, tokio::sync::oneshot::Receiver<()>) {
+        let (enter_tx, enter_rx) = tokio::sync::oneshot::channel();
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        *self.write_enter.lock().unwrap_or_else(|e| e.into_inner()) = Some(enter_tx);
+        *self.write_exit.lock().unwrap_or_else(|e| e.into_inner()) = Some(exit_tx);
+        (enter_rx, exit_rx)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -77,7 +95,14 @@ impl From<Unreadable> for Failure {
 
 impl Settings {
     pub fn new(location: Location) -> Self {
-        Settings { location, write: Mutex::new(()) }
+        Settings {
+            location,
+            write: Mutex::new(()),
+            #[cfg(test)]
+            write_enter: Mutex::new(None),
+            #[cfg(test)]
+            write_exit: Mutex::new(None),
+        }
     }
     fn file(&self, kind: Kind) -> &std::path::Path {
         if kind == Kind::Config { &self.location.config } else { &self.location.state }
@@ -225,11 +250,27 @@ impl Settings {
         name: &str,
         patch: &Value,
         patch_history_order: &[String],
-        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+        mut check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
         on_committed: impl FnOnce(&Value, &[String]),
     ) -> Result<(Value, Vec<String>), Failure> {
         if !patch.is_object() {
             return Err(Failure::Invalid("Patch must be a JSON object".into()));
+        }
+        #[cfg(test)]
+        struct ExitSignal<'a>(&'a Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
+        #[cfg(test)]
+        impl Drop for ExitSignal<'_> {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+        #[cfg(test)]
+        let _exit_signal = ExitSignal(&self.write_exit);
+        #[cfg(test)]
+        if let Some(tx) = self.write_enter.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = tx.send(());
         }
         let _write = self.write.lock().unwrap();
         let file = self.file(kind);
@@ -270,8 +311,18 @@ impl Settings {
             None
         };
         check(&before, &doc)?;
-        document::write_with_history_order(file, &doc, history_order.as_deref())
-            .map_err(|e| Failure::Invalid(e.to_string()))?;
+        let mut rename_failure: Option<Failure> = None;
+        let write_result = document::write_with_history_order_checked(file, &doc, history_order.as_deref(), || {
+            if let Err(failure) = check(&before, &doc) {
+                rename_failure = Some(failure);
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "pre-rename check rejected"));
+            }
+            Ok(())
+        });
+        if let Some(failure) = rename_failure {
+            return Err(failure);
+        }
+        write_result.map_err(|e| Failure::Invalid(e.to_string()))?;
         let final_order = history_order.unwrap_or(combined_order);
         let saved = Value::Object(owner(doc.get(name)));
         on_committed(&saved, &final_order);
@@ -284,7 +335,7 @@ impl Settings {
         name: &str,
         patch: &Value,
         patch_history_order: &[String],
-        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+        check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
     ) -> Result<(Value, Vec<String>), Failure> {
         self.patch_checked_committed(kind, name, patch, patch_history_order, check, |_, _| {})
     }
@@ -348,14 +399,23 @@ fn sanitized(name: &str, value: Value) -> Value {
 
 /// `mergePatchOwner` for other domains (memory, SideCars, Stats), published like the reference's.
 pub fn patch_owner(app: &App, kind: Kind, name: &str, patch: Value) -> Result<Value, Failure> {
-    let (saved, _) = app.settings.patch_checked_committed(
-        kind,
-        name,
-        &patch,
-        &[],
-        |_, _| Ok(()),
-        |saved, order| publish_with_order(app, kind, name, saved.clone(), order),
-    )?;
+    patch_owner_checked(app, kind, name, patch, |_, _| Ok(()), || {})
+}
+
+/// `mergePatchOwner` with a pre-commit authorization check and post-commit hook executed under the
+/// settings write lock.
+pub fn patch_owner_checked(
+    app: &App,
+    kind: Kind,
+    name: &str,
+    patch: Value,
+    check: impl FnMut(&Doc, &Doc) -> Result<(), Failure>,
+    on_committed: impl FnOnce(),
+) -> Result<Value, Failure> {
+    let (saved, _) = app.settings.patch_checked_committed(kind, name, &patch, &[], check, |saved, order| {
+        on_committed();
+        publish_with_order(app, kind, name, saved.clone(), order);
+    })?;
     Ok(saved)
 }
 

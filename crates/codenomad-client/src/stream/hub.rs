@@ -1,9 +1,10 @@
 //! Connection-scoped SSE multiplexer: one physical `/api/events` stream per `(Http, base)`
 //! shared across all open tabs, `CatalogueWatch`, and `PreferencesWatch`.
 use super::{
-    Backend, Input, Result, Sender, State, dispatch,
-    limits::{FRAME_LIMIT, reread},
+    Backend, Input, Result, Sender, State,
+    limits::{FRAME_LIMIT, reread_marked},
     opened,
+    routing::dispatch_marked,
 };
 use crate::{Receiver, bounded, http::StreamDropGuard, runtime};
 use std::{
@@ -40,15 +41,16 @@ pub(super) enum HubItem {
 
 #[derive(Default)]
 struct SubQueue {
-    items: VecDeque<HubItem>,
+    items: VecDeque<(HubItem, u64)>,
     bytes: usize,
     closed: bool,
-    pending_session_moved: Option<Arc<(String, String)>>,
+    pending_session_moved: Option<(Arc<(String, String)>, u64)>,
 }
 
 impl SubQueue {
     fn max_items(&self) -> usize {
-        MAX_SUBSCRIBER_FRAMES + usize::from(matches!(self.items.front(), Some(HubItem::Opened)))
+        MAX_SUBSCRIBER_FRAMES
+            + usize::from(matches!(self.items.front(), Some((HubItem::Opened, _))))
     }
 }
 
@@ -74,6 +76,7 @@ struct SubscriberSignals {
     conversation: Option<(String, String)>,
     closed: Option<Sender<()>>,
     placement: Option<Sender<()>>,
+    inbox: Option<crate::inbox::InboxWire>,
 }
 
 struct Subscriber {
@@ -122,15 +125,54 @@ impl Subscriber {
     }
 
     fn signal_closed(&self) {
+        if let Some(inbox) = &self.signals.inbox {
+            inbox.invalidate_closed();
+        }
         if let Some(tx) = &self.signals.closed {
             tx.close();
         }
     }
 
     fn signal_placement(&self) {
+        if let Some(inbox) = &self.signals.inbox {
+            inbox.invalidate_closed();
+        }
         if let Some(tx) = &self.signals.placement {
             tx.close();
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_inbox_chunk(&self) {
+        if let Some(inbox) = &self.signals.inbox {
+            inbox.begin_chunk();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn end_inbox_chunk_quiet(&self, clean: bool) -> Option<crate::Wake> {
+        self.signals
+            .inbox
+            .as_ref()
+            .and_then(|inbox| inbox.end_chunk_quiet(clean))
+    }
+
+    fn note_inbox_frame(&self, kind: &str, data: &str) -> u64 {
+        if kind != "codenomad.client.ping"
+            && let Some((workspace, session)) = &self.signals.conversation
+            && let Some(inbox) = &self.signals.inbox
+        {
+            super::sessions::note_inbox_frame(workspace, session, inbox, data)
+        } else {
+            0
+        }
+    }
+
+    fn note_inbox_skipped(&self) -> u64 {
+        self.signals
+            .inbox
+            .as_ref()
+            .map_or(0, crate::inbox::InboxWire::record_ingress)
     }
 
     fn seed_opened(&self, replays: &[Arc<(String, String)>], force_skipped: bool) -> bool {
@@ -138,7 +180,7 @@ impl Subscriber {
         if queue.closed {
             return false;
         }
-        queue.items.push_back(HubItem::Opened);
+        queue.items.push_back((HubItem::Opened, 0));
         let mut skipped = false;
         for frame in replays {
             let size = frame.0.len().saturating_add(frame.1.len());
@@ -147,16 +189,19 @@ impl Subscriber {
             {
                 queue.items.clear();
                 queue.bytes = 0;
-                queue.items.push_back(HubItem::Opened);
-                queue.items.push_back(HubItem::Skipped);
+                queue.items.push_back((HubItem::Opened, 0));
+                let mark = self.note_inbox_skipped();
+                queue.items.push_back((HubItem::Skipped, mark));
                 skipped = true;
                 break;
             }
+            let mark = self.note_inbox_frame(&frame.0, &frame.1);
             queue.bytes = queue.bytes.saturating_add(size);
-            queue.items.push_back(HubItem::Frame(frame.clone()));
+            queue.items.push_back((HubItem::Frame(frame.clone()), mark));
         }
         if !skipped && force_skipped {
-            queue.items.push_back(HubItem::Skipped);
+            let mark = self.note_inbox_skipped();
+            queue.items.push_back((HubItem::Skipped, mark));
             skipped = true;
         }
         let _ = self.wake_tx.try_send(());
@@ -168,20 +213,20 @@ impl Subscriber {
         if queue.closed {
             return;
         }
-        queue.items.push_back(HubItem::Opened);
+        queue.items.push_back((HubItem::Opened, 0));
         let _ = self.wake_tx.try_send(());
     }
 
     /// Returns `false` if this subscriber exceeded its local queue budget.
     /// Caller revokes guard and quota before calling `close_overflow()`.
-    fn try_push_frame(&self, frame: Arc<(String, String)>, session_moved: bool) -> bool {
+    fn try_push_frame(&self, frame: Arc<(String, String)>, session_moved: bool, mark: u64) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
         }
         if session_moved {
-            queue.pending_session_moved = Some(frame.clone());
+            queue.pending_session_moved = Some((frame.clone(), mark));
         }
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
@@ -189,7 +234,7 @@ impl Subscriber {
             false
         } else {
             queue.bytes = queue.bytes.saturating_add(size);
-            queue.items.push_back(HubItem::Frame(frame));
+            queue.items.push_back((HubItem::Frame(frame), mark));
             let _ = self.wake_tx.try_send(());
             true
         }
@@ -204,22 +249,27 @@ impl Subscriber {
         queue.closed = true;
         queue.items.clear();
         queue.bytes = 0;
-        if let Some(moved) = queue.pending_session_moved.take() {
-            queue.items.push_back(HubItem::Frame(moved));
+        if let Some((moved, mark)) = queue.pending_session_moved.take() {
+            queue.items.push_back((HubItem::Frame(moved), mark));
         }
-        queue.items.push_back(HubItem::Closed {
-            auth_expired: false,
-        });
+        queue.items.push_back((
+            HubItem::Closed {
+                auth_expired: false,
+            },
+            0,
+        ));
         let _ = self.wake_tx.try_send(());
     }
 
-    fn push_skipped(&self) {
+    fn push_skipped(&self, mark: u64) {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return;
         }
-        if !matches!(queue.items.back(), Some(HubItem::Skipped)) {
-            queue.items.push_back(HubItem::Skipped);
+        if let Some((HubItem::Skipped, existing)) = queue.items.back_mut() {
+            *existing = (*existing).max(mark);
+        } else {
+            queue.items.push_back((HubItem::Skipped, mark));
         }
         let _ = self.wake_tx.try_send(());
     }
@@ -230,36 +280,49 @@ impl Subscriber {
             return;
         }
         queue.closed = true;
-        queue.items.push_back(HubItem::Closed { auth_expired });
+        queue.items.push_back((HubItem::Closed { auth_expired }, 0));
         let _ = self.wake_tx.try_send(());
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     fn pop(&self) -> Option<HubItem> {
+        self.pop_marked().map(|(item, _)| item)
+    }
+
+    fn pop_marked(&self) -> Option<(HubItem, u64)> {
         let mut queue = self.queue.lock().unwrap();
-        let item = queue.items.pop_front()?;
+        let (item, mark) = queue.items.pop_front()?;
         if let HubItem::Frame(frame) = &item {
             let size = frame.0.len().saturating_add(frame.1.len());
             queue.bytes = queue.bytes.saturating_sub(size);
             if queue
                 .pending_session_moved
                 .as_ref()
-                .is_some_and(|moved| Arc::ptr_eq(moved, frame))
+                .is_some_and(|(moved, _)| Arc::ptr_eq(moved, frame))
             {
                 queue.pending_session_moved = None;
             }
         }
-        Some(item)
+        Some((item, mark))
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     async fn recv(&self) -> HubItem {
+        self.recv_marked().await.0
+    }
+
+    async fn recv_marked(&self) -> (HubItem, u64) {
         loop {
-            if let Some(item) = self.pop() {
+            if let Some(item) = self.pop_marked() {
                 return item;
             }
             if self.wake_rx.recv().await.is_err() {
-                return self.pop().unwrap_or(HubItem::Closed {
-                    auth_expired: false,
-                });
+                return self.pop_marked().unwrap_or((
+                    HubItem::Closed {
+                        auth_expired: false,
+                    },
+                    0,
+                ));
             }
         }
     }
@@ -347,6 +410,7 @@ impl SharedStream {
         if !matches!(inner.phase, Phase::Closing | Phase::Closed { .. }) {
             inner.chunk_active = true;
             for sub in &inner.subscribers {
+                sub.begin_inbox_chunk();
                 if let Some(quota) = &sub.quota {
                     quota.begin_chunk();
                 }
@@ -358,10 +422,14 @@ impl SharedStream {
     #[cfg(not(target_arch = "wasm32"))]
     fn end_chunk(&self, clean: bool) {
         let mut wakes = Vec::new();
+        let mut inbox_wakes = Vec::new();
         {
             let mut inner = self.inner.lock().unwrap();
             inner.chunk_active = false;
             for sub in &inner.subscribers {
+                if let Some(wake) = sub.end_inbox_chunk_quiet(clean) {
+                    inbox_wakes.push(wake);
+                }
                 if let Some(quota) = &sub.quota {
                     let wake = if clean {
                         quota.finish_chunk_quiet()
@@ -373,6 +441,9 @@ impl SharedStream {
                     }
                 }
             }
+        }
+        for wake in inbox_wakes {
+            wake();
         }
         for quota in wakes {
             quota.wake();
@@ -411,7 +482,8 @@ impl SharedStream {
                 if session_moved {
                     sub.signal_placement();
                 }
-                let kept = sub.try_push_frame(frame.clone(), session_moved);
+                let mark = sub.note_inbox_frame(&frame.0, &frame.1);
+                let kept = sub.try_push_frame(frame.clone(), session_moved, mark);
                 if !kept {
                     if let Some(hook) = &sub.guard_hook {
                         hook.revoke(true);
@@ -459,7 +531,8 @@ impl SharedStream {
                 return;
             }
             for sub in &inner.subscribers {
-                sub.push_skipped();
+                let mark = sub.note_inbox_skipped();
+                sub.push_skipped(mark);
                 if let Some(quota) = &sub.quota
                     && quota.skipped_quiet()
                 {
@@ -654,6 +727,10 @@ impl Hub {
                                 let chunk_active = inner.chunk_active;
                                 #[cfg(target_arch = "wasm32")]
                                 let chunk_active = false;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if chunk_active {
+                                    sub.begin_inbox_chunk();
+                                }
                                 if let Some(quota) = &sub.quota
                                     && quota.attach_open_quiet(&replays, skipped, chunk_active)
                                 {
@@ -808,6 +885,7 @@ pub(super) async fn read_shared(
             .then(|| (backend.workspace.clone(), backend.session.clone())),
         closed: Some(state.closed_signal()),
         placement: state.placement_signal(),
+        inbox: state.catalogue.is_none().then(|| state.inbox.clone()),
     };
     enum SubscribeStep {
         Ready(Subscription),
@@ -835,20 +913,29 @@ pub(super) async fn read_shared(
         },
         async {
             loop {
-                match sub.sub.recv().await {
-                    HubItem::Opened => {
+                match sub.sub.recv_marked().await {
+                    (HubItem::Opened, _) => {
                         backend.client.children().invalidate_all(backend);
                         opened(epoch, out, state).await?;
                     }
-                    HubItem::Frame(frame) => {
-                        dispatch(backend, epoch, out, state, &connection, &frame.0, &frame.1)
-                            .await?;
+                    (HubItem::Frame(frame), mark) => {
+                        dispatch_marked(
+                            backend,
+                            epoch,
+                            out,
+                            state,
+                            &connection,
+                            &frame.0,
+                            &frame.1,
+                            mark,
+                        )
+                        .await?;
                     }
-                    HubItem::Skipped => {
+                    (HubItem::Skipped, mark) => {
                         backend.client.children().invalidate_all(backend);
-                        reread(epoch, out, state).await?;
+                        reread_marked(epoch, out, state, mark).await?;
                     }
-                    HubItem::Closed { auth_expired } => {
+                    (HubItem::Closed { auth_expired }, _) => {
                         if auth_expired {
                             return Err(Box::new(AuthenticationExpired) as crate::history::Error);
                         }

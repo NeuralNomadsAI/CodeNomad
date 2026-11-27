@@ -92,6 +92,11 @@ impl Reader {
     }
 
     #[cfg(test)]
+    pub(crate) fn bookmark(&self) -> &Bookmark {
+        &self.bookmark
+    }
+
+    #[cfg(test)]
     pub(crate) fn open() -> (Self, ReadingLane) {
         Self::open_inner()
     }
@@ -385,6 +390,16 @@ impl Reader {
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
         self.resume_pending = false;
+    }
+
+    pub(crate) fn anchor_in_place(&mut self, bookmark: Bookmark) {
+        self.bookmark = bookmark;
+        self.bookmark_width = 0.0;
+        self.width_grew_while_deferred = false;
+        self.resume_manual_seq = None;
+        self.reconciled_manual_scroll = false;
+        self.awaiting_manual_probe = ManualProbeWait::Idle;
+        self.pending_scroll = true;
     }
 
     pub(crate) fn failed(&mut self) {
@@ -807,6 +822,15 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
         && let Bookmark::Message { id, .. } = &reader.bookmark
         && !rows.iter().any(|row| &row.id == id)
     {
+        if page.newer.is_none()
+            && s.transcript_display
+                .queue
+                .items()
+                .iter()
+                .any(|item| &item.id == id)
+        {
+            return false;
+        }
         reader.bookmark = Bookmark::Latest;
         if !reader.awaiting_manual_probe() {
             s.transcript_display
@@ -816,6 +840,95 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
         }
     }
     false
+}
+
+pub(crate) fn preserve_anchor_on_displacement(
+    s: &mut State,
+    previous: &[crate::history::Row],
+    next: &[crate::history::Row],
+) {
+    if previous.is_empty()
+        || s.reader
+            .as_ref()
+            .is_none_or(|reader| reader.is_resuming() || reader.has_pending_scroll())
+    {
+        return;
+    }
+    let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let cached_gap = s.history_detached || s.reader.as_ref().is_some_and(|reader| reader.gap);
+    let Bookmark::Message { id, offset } = s
+        .transcript_display
+        .reading()
+        .live_bookmark(history_bounds, cached_gap)
+    else {
+        return;
+    };
+    let Some(next_pos) = next.iter().position(|row| row.id == id) else {
+        return;
+    };
+    let prev_pos = previous.iter().position(|row| row.id == id);
+    let prefix_changed = match prev_pos {
+        Some(prev_pos) => {
+            prev_pos != next_pos
+                || previous[..prev_pos]
+                    .iter()
+                    .zip(&next[..next_pos])
+                    .any(|(a, b)| a.id != b.id)
+        }
+        None => true,
+    };
+    let displaced = prefix_changed || !codenomad_client::history::order_consistent(previous, next);
+    if displaced && let Some(reader) = &mut s.reader {
+        reader.anchor_in_place(Bookmark::Message { id, offset });
+    }
+}
+
+pub(crate) fn preserve_anchor_on_inbox_change(
+    s: &mut State,
+    next: &[codenomad_client::inbox::QueuedPrompt],
+) {
+    if s.history_detached
+        || s.reader
+            .as_ref()
+            .is_none_or(|reader| reader.is_resuming() || reader.has_pending_scroll())
+    {
+        return;
+    }
+    let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let cached_gap = s.reader.as_ref().is_some_and(|reader| reader.gap);
+    let Bookmark::Message { id, offset } = s
+        .transcript_display
+        .reading()
+        .live_bookmark(history_bounds, cached_gap)
+    else {
+        return;
+    };
+    if next.iter().any(|item| item.id == id)
+        && let Some(reader) = &mut s.reader
+    {
+        reader.anchor_in_place(Bookmark::Message { id, offset });
+    }
+}
+
+pub(crate) fn reconcile_queued_bookmark(
+    s: &mut State,
+    items: &[codenomad_client::inbox::QueuedPrompt],
+) {
+    if let Some(reader) = &mut s.reader
+        && !reader.resume_pending
+        && reader.pending_scroll
+        && let Bookmark::Message { id, .. } = &reader.bookmark
+        && !s.messages.iter().any(|row| row.id == *id)
+        && !items.iter().any(|item| item.id == *id)
+    {
+        reader.bookmark = Bookmark::Latest;
+        if !reader.awaiting_manual_probe() {
+            s.transcript_display
+                .reading_mut()
+                .reset_to_latest(s.revision);
+            reader.resume_manual_seq = Some(s.transcript_display.reading().manual_scroll_seq());
+        }
+    }
 }
 
 pub(crate) fn suspend(s: &mut State) {
@@ -863,7 +976,13 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
             if reading_visible {
                 let target = match &reader.bookmark {
                     Bookmark::Message { id, offset }
-                        if s.messages.iter().any(|row| row.id == *id) =>
+                        if s.messages.iter().any(|row| row.id == *id)
+                            || (!s.history_detached
+                                && s.transcript_display
+                                    .queue
+                                    .items()
+                                    .iter()
+                                    .any(|item| item.id == *id)) =>
                     {
                         Bookmark::Message {
                             id: id.clone(),

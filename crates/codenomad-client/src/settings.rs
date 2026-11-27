@@ -4,6 +4,7 @@ pub mod info;
 pub mod integrations;
 pub mod memory;
 mod opencode_actions;
+pub mod provider_auth;
 mod providers;
 pub mod remote;
 pub mod stats;
@@ -14,7 +15,11 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
-pub use opencode_actions::{install_opencode, local_opencode_offer, opencode_local};
+pub use opencode_actions::{
+    BinaryValidation, LoginStartError, LoginStartState, OpenCodeLogs, install_opencode,
+    local_opencode_offer, opencode_local, opencode_login_start, opencode_logs,
+    set_opencode_login_start, validate_opencode_binary,
+};
 pub(crate) use providers::provider_change;
 pub use providers::{Provider, providers};
 use serde_json::Value;
@@ -142,6 +147,7 @@ pub struct OpenCodeStatus {
     pub can_upgrade: bool,
     pub needs_shared_installation: bool,
     pub foreign_installation: bool,
+    pub has_installation_source: bool,
     pub binary_path: Option<String>,
 }
 
@@ -198,6 +204,9 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
         needs_shared_installation: data["needsSharedInstallation"] == true,
         foreign_installation: data["foreignInstallation"].is_object()
             && data["installationSource"] != "managed",
+        has_installation_source: data["installationSource"]
+            .as_str()
+            .is_some_and(|source| !source.is_empty()),
         binary_path: data["binaryPath"]
             .as_str()
             .filter(|p| !p.is_empty() && p.len() <= 32768 && !p.contains(char::is_control))
@@ -344,7 +353,7 @@ impl PreferencesWatch {
                                         connected_state.store(true, SeqCst);
                                         if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
                                     }
-                                    Input::Hint(_, _) => 11 | 16 | 32,
+                                    Input::Hint(_, _, _) => 11 | 16 | 32,
                                     Input::Preferences(Owner::Config) => 1,
                                     Input::Preferences(Owner::State) => 2,
                                     Input::Preferences(Owner::Server) => 32,

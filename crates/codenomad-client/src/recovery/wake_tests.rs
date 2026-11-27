@@ -455,6 +455,33 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 .unwrap();
             let (_, _, ev) = snapshots.recv().await.unwrap();
             assert!(matches!(ev, Event::ReaderSync { .. }));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut inbox = BufReader::new(socket);
+            let req = read_request_line(&mut inbox).await;
+            assert!(
+                req.starts_with("GET /workspaces/workspace/instance/api/session/session/inbox"),
+                "unexpected inbox request: {req}"
+            );
+            let inbox_body = r#"{"data":[]}"#;
+            inbox
+                .get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{inbox_body}",
+                        inbox_body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let (_, _, ev) = snapshots.recv().await.unwrap();
+            assert!(matches!(
+                ev,
+                Event::Inbox {
+                    authoritative: true,
+                    ..
+                }
+            ));
 
             // 3. Drop SSE twice so automatic backoff is 1000 ms; Command::Retry must wake
             // reconnect well before that automatic backoff.
