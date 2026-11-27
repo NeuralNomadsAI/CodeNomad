@@ -10,7 +10,7 @@ pub(crate) mod login_start;
 mod logs;
 mod prompt;
 pub mod proxy;
-mod proxy_body;
+pub(crate) mod proxy_body;
 mod proxy_write;
 pub mod scope;
 pub mod service_action;
