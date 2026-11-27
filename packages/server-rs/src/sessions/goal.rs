@@ -209,6 +209,30 @@ async fn revalidate_session(
     Ok(())
 }
 
+/// True for `/api/workspaces/:id/sessions/:sessionId/goal` (including percent-encoded static
+/// segments and `;` parameter delimiters), so pre-handler auth/origin refusals emit `no-store`.
+pub(crate) fn is_goal_path(path: &str) -> bool {
+    let path = path.split_once(';').map_or(path, |(head, _)| head);
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let mut parts = rest.split('/');
+    let (Some(api), Some(workspaces), Some(ws), Some(sessions), Some(sid), Some(goal), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let eq = |seg: &str, expected: &str| {
+        seg == expected || percent_encoding::percent_decode_str(seg).decode_utf8().ok().is_some_and(|s| s == expected)
+    };
+    !ws.is_empty()
+        && !sid.is_empty()
+        && eq(api, "api")
+        && eq(workspaces, "workspaces")
+        && eq(sessions, "sessions")
+        && eq(goal, "goal")
+}
+
 async fn wait_workspace_closed(app: &App, workspace: &Workspace) {
     loop {
         let notified = app.workspace_closed.notified();
@@ -230,14 +254,14 @@ pub async fn read(
     if let Err(err) = principal.live() {
         return no_store(err.into_response());
     }
+    let Ok(workspace) = app.workspace(&id) else {
+        return no_store(error(Status::FORBIDDEN, "Session does not belong to workspace").into_response());
+    };
+    if workspace.location["directory"].as_str().is_none() {
+        return no_store(error(Status::FORBIDDEN, "Session does not belong to workspace").into_response());
+    }
     let deadline = Instant::now() + READ_TIMEOUT;
     let run = async {
-        let Ok(workspace) = app.workspace(&id) else {
-            return no_store(error(Status::FORBIDDEN, "Session does not belong to workspace").into_response());
-        };
-        if workspace.location["directory"].as_str().is_none() {
-            return no_store(error(Status::FORBIDDEN, "Session does not belong to workspace").into_response());
-        }
         let Ok(endpoint) = app.native.acquire(deadline).await else {
             return unavailable();
         };
@@ -245,7 +269,6 @@ pub async fn read(
         let result = tokio::select! {
             biased;
             _ = app.native.wait_retired(&endpoint) => unavailable(),
-            _ = wait_workspace_closed(&app, &workspace) => unavailable(),
             res = work => res,
         };
         if let Err(err) = principal.live() {
@@ -256,6 +279,7 @@ pub async fn read(
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => no_store(crate::auth::unauthorized().into_response()),
+        _ = wait_workspace_closed(&app, &workspace) => unavailable(),
         res = tokio::time::timeout_at(deadline, run) => res.unwrap_or_else(|_| unavailable()),
     }
 }
@@ -346,17 +370,25 @@ async fn execute(
     let Ok(body) = serde_json::from_slice::<Value>(&raw) else {
         return unavailable();
     };
-    if status != Status::OK {
-        return if is_method_not_found(status, &headers, &body) { unsupported() } else { unavailable() };
-    }
-    if !is_json_content_type(&headers) {
+    let unsupported_hit = if status != Status::OK {
+        if is_method_not_found(status, &headers, &body) {
+            true
+        } else {
+            return unavailable();
+        }
+    } else if !is_json_content_type(&headers) {
         return unavailable();
-    }
+    } else {
+        false
+    };
     if revalidate_session(app, workspace, endpoint, session_id, &project_id, &target, is_current, remaining)
         .await
         .is_err()
     {
         return unavailable();
+    }
+    if unsupported_hit {
+        return unsupported();
     }
     let Some(output) = body.as_object().and_then(|o| o.get("output")) else {
         return unavailable();

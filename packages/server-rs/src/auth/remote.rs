@@ -178,9 +178,10 @@ pub async fn admit(
     next: Next,
 ) -> Response {
     let no_store_account = is_no_store_account_path(req.uri().path());
-    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
+    let no_store_always = crate::integrations::is_integrations_path(req.uri().path())
+        || crate::sessions::goal::is_goal_path(req.uri().path());
     let mut response = admit_inner(state, req, next).await;
-    if no_store_integrations || (no_store_account && !response.status().is_success()) {
+    if no_store_always || (no_store_account && !response.status().is_success()) {
         response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     response

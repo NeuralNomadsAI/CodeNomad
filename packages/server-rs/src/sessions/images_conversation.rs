@@ -2,7 +2,7 @@
 //! conversation through `codenomad.session-pruning` / `imagesConversation`, matching
 //! `packages/server/src/server/routes/images-conversation.ts`.
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 use tokio::time::Instant;
 
 use super::{
-    design_git_exclude::exclude_design_folder,
+    design_git_exclude::exclude_design_folder_cancellable,
     pruning::{
         OwnedTarget, fetch_session_bounded, is_json_content_type, prepare_pruning, prove_ownership, valid_location_str,
     },
@@ -28,7 +28,7 @@ use super::{
 use crate::{
     App, Error, Shared, Workspace,
     auth::Principal,
-    error,
+    error, git,
     opencode::{self, Endpoint, proxy_body},
     shared::fastify,
     worktrees::{fence, ownership},
@@ -271,6 +271,173 @@ async fn wait_workspace_closed(app: &App, workspace: &Workspace) {
     }
 }
 
+enum LocalRepo {
+    Git(PathBuf),
+    NonGit,
+    MissingGit,
+}
+
+enum Precheck {
+    Owned(PathBuf),
+    Denied,
+    Unavailable,
+}
+
+async fn local_common_dir(dir: &Path, timeout: Duration) -> Result<LocalRepo, ()> {
+    if timeout.is_zero() {
+        return Err(());
+    }
+    let out = match tokio::time::timeout(
+        timeout,
+        git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024),
+    )
+    .await
+    {
+        Ok(Ok(out)) => out,
+        Ok(Err(err)) if git::is_missing_git(&err) => return Ok(LocalRepo::MissingGit),
+        _ => return Err(()),
+    };
+    if out.not_a_repository() {
+        return Ok(LocalRepo::NonGit);
+    }
+    let out = out.ok().map_err(|_| ())?;
+    let trimmed = out.text().trim().to_owned();
+    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok())
+        .await
+        .map_err(|_| ())?
+        .map(LocalRepo::Git)
+        .ok_or(())
+}
+
+async fn local_worktree_toplevel(dir: &Path, timeout: Duration) -> Result<Option<PathBuf>, ()> {
+    if timeout.is_zero() {
+        return Err(());
+    }
+    let out = match tokio::time::timeout(
+        timeout,
+        git::run(dir, &["rev-parse", "--path-format=absolute", "--show-toplevel"], 16 * 1024),
+    )
+    .await
+    {
+        Ok(Ok(out)) => out,
+        Ok(Err(err)) if git::is_missing_git(&err) => return Ok(None),
+        _ => return Err(()),
+    };
+    if out.code != 0 {
+        return Ok(None);
+    }
+    let trimmed = out.text().trim().to_owned();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok()).await.map_err(|_| ())
+}
+
+async fn local_repo_root(dir: &Path, timeout: Duration) -> PathBuf {
+    local_worktree_toplevel(dir, timeout).await.ok().flatten().unwrap_or_else(|| dir.to_path_buf())
+}
+
+async fn local_worktree_listed(repo_root: &Path, toplevel: &Path, timeout: Duration) -> Result<bool, ()> {
+    if timeout.is_zero() {
+        return Err(());
+    }
+    let out = tokio::time::timeout(timeout, git::run(repo_root, &["worktree", "list", "--porcelain"], 512 * 1024))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    if out.code != 0 {
+        return Err(());
+    }
+    let text = out.text();
+    let target = toplevel.to_path_buf();
+    let paths: Vec<String> = text
+        .lines()
+        .filter_map(|line| line.strip_suffix('\r').unwrap_or(line).strip_prefix("worktree "))
+        .map(str::to_owned)
+        .collect();
+    tokio::task::spawn_blocking(move || {
+        paths.into_iter().any(|entry| dunce::canonicalize(&entry).ok().as_deref() == Some(target.as_path()))
+    })
+    .await
+    .map_err(|_| ())
+}
+
+/// Pure-local ownership and checkout-root discovery before entering `WorktreeDeletionFence` or
+/// acquiring OpenCode, ensuring unowned or deleting directories never start or probe the daemon.
+async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadline: Instant) -> Precheck {
+    if directory.contains('\0')
+        || !crate::files::paths::local_absolute(directory)
+        || !crate::files::paths::under(&app.scope, Path::new(directory))
+    {
+        return Precheck::Denied;
+    }
+    let scope = app.scope.clone();
+    let dir_owned = directory.to_owned();
+    let (path, anchor) =
+        match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope, &dir_owned)).await {
+            Ok(Ok(Some(resolved))) => resolved,
+            Ok(Ok(None)) => return Precheck::Denied,
+            _ => return Precheck::Unavailable,
+        };
+    let rem = || deadline.saturating_duration_since(Instant::now());
+    if path == workspace.path {
+        return Precheck::Owned(local_repo_root(&workspace.path, rem()).await);
+    }
+    let external = !ownership::within(&workspace.path, &path);
+    let root_repo = match local_common_dir(&workspace.path, rem()).await {
+        Ok(repo) => repo,
+        Err(()) => return Precheck::Unavailable,
+    };
+    if external {
+        let LocalRepo::Git(root_common) = root_repo else {
+            return Precheck::Denied;
+        };
+        let target_common = match local_common_dir(&anchor, rem()).await {
+            Ok(LocalRepo::Git(common)) => common,
+            Ok(_) => return Precheck::Denied,
+            Err(()) => return Precheck::Unavailable,
+        };
+        if target_common != root_common {
+            return Precheck::Denied;
+        }
+        let toplevel = match local_worktree_toplevel(&anchor, rem()).await {
+            Ok(Some(tl)) if tl.starts_with(&app.scope) => tl,
+            Ok(_) => return Precheck::Denied,
+            Err(()) => return Precheck::Unavailable,
+        };
+        let root_toplevel = local_repo_root(&workspace.path, rem()).await;
+        if toplevel == root_toplevel {
+            return Precheck::Denied;
+        }
+        return match local_worktree_listed(&workspace.path, &toplevel, rem()).await {
+            Ok(true) => Precheck::Owned(toplevel),
+            Ok(false) => Precheck::Denied,
+            Err(()) => Precheck::Unavailable,
+        };
+    }
+    match root_repo {
+        LocalRepo::MissingGit => Precheck::Denied,
+        LocalRepo::NonGit => {
+            let root = workspace.path.clone();
+            let live = tokio::task::spawn_blocking(move || dunce::canonicalize(&root).ok().as_ref() == Some(&root))
+                .await
+                .unwrap_or(false);
+            if live { Precheck::Owned(workspace.path.clone()) } else { Precheck::Unavailable }
+        }
+        LocalRepo::Git(root_common) => match local_common_dir(&anchor, rem()).await {
+            Ok(LocalRepo::Git(target_common)) if target_common == root_common => {
+                match local_worktree_toplevel(&anchor, rem()).await {
+                    Ok(Some(tl)) if tl.starts_with(&app.scope) => Precheck::Owned(tl),
+                    Ok(_) => Precheck::Denied,
+                    Err(()) => Precheck::Unavailable,
+                }
+            }
+            Ok(_) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+            Err(()) => Precheck::Unavailable,
+        },
+    }
+}
+
 pub async fn handle(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -282,16 +449,16 @@ pub async fn handle(
         Err(response) => return response,
     };
 
+    // Authorize the workspace and directory before any OpenCode request: reading a
+    // Location boots its services (configuration discovery, plugins).
+    let Ok(workspace) = app.workspace(&id) else {
+        return denied();
+    };
+    let Some(base_dir) = workspace.location["directory"].as_str().map(str::to_owned) else {
+        return denied();
+    };
     let deadline = Instant::now() + RPC_TIMEOUT;
     let run = async {
-        // Authorize the caller's directory before any OpenCode request: reading a
-        // Location boots its services (configuration discovery, plugins).
-        let Ok(workspace) = app.workspace(&id) else {
-            return denied();
-        };
-        let Some(base_dir) = workspace.location["directory"].as_str().map(str::to_owned) else {
-            return denied();
-        };
         let mut displays = vec![fence::capture_display(&parsed.directory)];
         if fence::normalize(&base_dir) != fence::normalize(&parsed.directory) {
             displays.push(fence::capture_display(&base_dir));
@@ -303,21 +470,14 @@ pub async fn handle(
             displays.push(fence::capture_display(&ws_identity));
         }
 
-        if parsed.directory.contains('\0')
-            || !crate::files::paths::local_absolute(&parsed.directory)
-            || !crate::files::paths::under(&app.scope, Path::new(&parsed.directory))
-        {
-            return denied();
-        }
-        let owned = match ownership::resolve_checked(&app, &workspace, &parsed.directory, false).await {
-            Ok(Some(owned)) => owned,
-            Ok(None) => return denied(),
-            Err(()) => return unavailable(),
+        let checkout = match local_precheck(&app, &workspace, &parsed.directory, deadline).await {
+            Precheck::Owned(checkout) => checkout,
+            Precheck::Denied => return denied(),
+            Precheck::Unavailable => return unavailable(),
         };
         let scope_clone = app.scope.clone();
-        let checkout_probe = owned.checkout.clone();
         let Ok(checkout_path) =
-            tokio::task::spawn_blocking(move || fence::checkout_root(&scope_clone, &checkout_probe)).await
+            tokio::task::spawn_blocking(move || fence::checkout_root(&scope_clone, &checkout)).await
         else {
             return unavailable();
         };
@@ -332,12 +492,13 @@ pub async fn handle(
         let Ok(endpoint) = app.native.acquire(deadline).await else {
             return unavailable();
         };
-        let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)).await;
-        let work = admitted(&app, &principal, &workspace, &endpoint, &parsed, &displays, deadline);
+        let work = async {
+            let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)).await;
+            admitted(&app, &principal, &workspace, &endpoint, &parsed, &displays, deadline).await
+        };
         let result = tokio::select! {
             biased;
             _ = app.native.wait_retired(&endpoint) => unavailable(),
-            _ = wait_workspace_closed(&app, &workspace) => unavailable(),
             res = work => res,
         };
         if let Err(err) = principal.live() {
@@ -349,6 +510,7 @@ pub async fn handle(
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => crate::auth::unauthorized().into_response(),
+        _ = wait_workspace_closed(&app, &workspace) => unavailable(),
         res = tokio::time::timeout_at(deadline, run) => res.unwrap_or_else(|_| unavailable()),
     }
 }
@@ -518,7 +680,21 @@ async fn admitted(
     if revalidate_target(app, workspace, endpoint, &target, is_current).await.is_err() {
         return unavailable();
     }
-    let git_exclusion = exclude_design_folder(&target.path, remaining()).await;
+    let valid_for_exclude: Arc<dyn Fn() -> bool + Send + Sync> = {
+        let app_c = Arc::clone(app);
+        let principal_c = principal.clone();
+        let workspace_c = workspace.clone();
+        let endpoint_c = Arc::clone(endpoint);
+        let displays_c: Vec<Arc<AtomicBool>> = displays.to_vec();
+        Arc::new(move || {
+            !principal_c.0.is_cancelled()
+                && Instant::now() < deadline
+                && app_c.native.current(&endpoint_c)
+                && super::permission_mode::workspace_current(&app_c, &workspace_c)
+                && displays_c.iter().all(|d| d.load(Relaxed))
+        })
+    };
+    let git_exclusion = exclude_design_folder_cancellable(&target.path, deadline, valid_for_exclude).await;
     if revalidate_target(app, workspace, endpoint, &target, is_current).await.is_err() {
         return unavailable();
     }

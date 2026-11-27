@@ -416,15 +416,16 @@ fn wants_html(headers: &HeaderMap) -> bool {
 
 pub async fn admit(State(app): State<Shared>, req: Request, next: Next) -> Result<Response, Error> {
     let no_store_account = remote::is_no_store_account_path(req.uri().path());
-    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
+    let no_store_always = crate::integrations::is_integrations_path(req.uri().path())
+        || crate::sessions::goal::is_goal_path(req.uri().path());
     match admit_inner(app, req, next).await {
         Ok(mut response) => {
-            if no_store_integrations || (no_store_account && !response.status().is_success()) {
+            if no_store_always || (no_store_account && !response.status().is_success()) {
                 response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             }
             Ok(response)
         }
-        Err(err) if no_store_integrations || no_store_account => {
+        Err(err) if no_store_always || no_store_account => {
             let mut response = err.into_response();
             response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             Ok(response)

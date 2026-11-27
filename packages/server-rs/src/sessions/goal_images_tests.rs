@@ -25,7 +25,9 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::design_git_exclude::{GitExclusion, design_exclude_rule, exclude_design_folder, git_exclude_patterns};
+use super::design_git_exclude::{
+    GitExclusion, design_exclude_rule, exclude_design_folder, exclude_design_folder_cancellable, git_exclude_patterns,
+};
 use crate::{
     App, Shared, Workspace,
     auth::{self, Principal, devices, remote, tls},
@@ -592,6 +594,28 @@ async fn session_goal_reads_validates_maps_rpc_errors_and_cancels() {
         g.session_dir = h.workspace_dir.to_string_lossy().into_owned();
     }
 
+    // 5b. Session move/project change during rpc.method_not_found returns unavailable (not stale unsupported).
+    {
+        let mut g = h.mock.lock().unwrap();
+        g.session_gets = 0;
+        g.change_project_on_get = Some((3, "prj_other".into()));
+        g.rpc_status = Status::BAD_REQUEST;
+        g.rpc_raw_body =
+            Some(json!({"_tag": "RpcError", "type": "rpc.method_not_found", "message": "missing"}).to_string());
+    }
+    let stale_unsup = h.client.get(url("ses_a")).send().await.unwrap();
+    assert_eq!(stale_unsup.status(), Status::OK);
+    assert_eq!(stale_unsup.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(stale_unsup.json::<Value>().await.unwrap(), json!({ "status": "unavailable" }));
+    {
+        let mut g = h.mock.lock().unwrap();
+        g.change_project_on_get = None;
+        g.session_project_id = "prj_1".into();
+        g.rpc_status = Status::OK;
+        g.rpc_raw_body = None;
+        g.rpc_output = Some(Value::Null);
+    }
+
     // 6. Client HTTP disconnect aborts the in-flight upstream RPC promptly.
     let dropped = Arc::new(Notify::new());
     let started = {
@@ -675,6 +699,21 @@ async fn design_git_exclude_formats_rules_and_updates_real_git_repos_safely() {
         "# user rule\n*.tmp\n\n# codenomad\n.codenomad/design/\n/apps/ui/.codenomad/design/\n"
     );
     assert!(!repo.join(".gitignore").exists());
+
+    // Cancelled caller never mutates .git/info/exclude.
+    let cancel_sub = repo.join("apps/cancelled");
+    fs::create_dir_all(&cancel_sub).unwrap();
+    let before_cancel = fs::read_to_string(&exclude_file).unwrap();
+    assert_eq!(
+        exclude_design_folder_cancellable(
+            &cancel_sub,
+            tokio::time::Instant::now() + Duration::from_secs(10),
+            Arc::new(|| false),
+        )
+        .await,
+        GitExclusion::Unavailable
+    );
+    assert_eq!(fs::read_to_string(&exclude_file).unwrap(), before_cancel);
 }
 
 #[tokio::test]
@@ -715,38 +754,39 @@ async fn images_conversation_enforces_ownership_fence_permissions_git_exclude_an
         Status::PAYLOAD_TOO_LARGE
     );
 
-    // 2. Unowned directory or unknown workspace returns 403 with 0 OpenCode requests.
+    // 2. Unowned existing/missing directory, .git admin dir, or unknown workspace returns 403 with 0 OpenCode requests.
     let foreign = TempDir::new("images-foreign");
-    assert_eq!(
-        h.client
-            .post(&url)
-            .json(&json!({ "directory": foreign.0.to_string_lossy(), "mode": "open" }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        Status::FORBIDDEN
-    );
-    assert_eq!(
-        h.client
-            .post(format!("{}/api/workspaces/{}/images-conversation", h.base, Uuid::new_v4()))
-            .json(&json!({ "directory": dir_str, "mode": "open" }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        Status::FORBIDDEN
-    );
+    for (target_url, target_dir) in [
+        (url.clone(), foreign.0.to_string_lossy().into_owned()),
+        (url.clone(), foreign.0.join("does-not-exist").to_string_lossy().into_owned()),
+        (url.clone(), h.workspace_dir.join(".git").to_string_lossy().into_owned()),
+        (format!("{}/api/workspaces/{}/images-conversation", h.base, Uuid::new_v4()), dir_str.clone()),
+    ] {
+        assert_eq!(
+            h.client
+                .post(target_url)
+                .json(&json!({ "directory": target_dir, "mode": "open" }))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            Status::FORBIDDEN
+        );
+    }
     assert_eq!(h.mock.lock().unwrap().location_calls, 0);
     assert_eq!(h.mock.lock().unwrap().calls.len(), 0);
 
-    // 3. Active WorktreeDeletionFence returns 409 before reaching OpenCode.
+    // 3. Active WorktreeDeletionFence (root or cold-cache subfolder) returns 409 before reaching OpenCode.
     let identity = fence::identity(&h.workspace_dir);
+    let sub_dir = h.workspace_dir.join("sub");
+    fs::create_dir_all(&sub_dir).unwrap();
     {
         let _blocked = fence::block(std::slice::from_ref(&identity)).await.unwrap();
-        let blocked_res =
-            h.client.post(&url).json(&json!({ "directory": dir_str, "mode": "open" })).send().await.unwrap();
-        assert_eq!(blocked_res.status(), Status::CONFLICT);
+        for dir in [&dir_str, &sub_dir.to_string_lossy().into_owned()] {
+            let blocked_res =
+                h.client.post(&url).json(&json!({ "directory": dir, "mode": "open" })).send().await.unwrap();
+            assert_eq!(blocked_res.status(), Status::CONFLICT);
+        }
     }
     assert_eq!(h.mock.lock().unwrap().location_calls, 0);
 
@@ -930,6 +970,17 @@ async fn remote_control_admits_goal_and_images_conversation_routes() {
         let addr = listener.local_addr().unwrap();
         let srv = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let base = format!("http://{addr}");
+
+        // Unpaired remote GET goal returns 401 with Cache-Control: no-store.
+        let unauth_goal = h
+            .client
+            .get(format!("{base}/api/workspaces/{}/sessions/ses_a/goal", h.workspace_id))
+            .header(header::HOST, host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauth_goal.status(), Status::UNAUTHORIZED);
+        assert_eq!(unauth_goal.headers()[header::CACHE_CONTROL], "no-store");
 
         let browser_cookie = pair_remote_cookie(&h.client, &h.app, &base, host, origin, ingress, false).await;
         let server_cookie = pair_remote_cookie(&h.client, &h.app, &base, host, origin, ingress, true).await;

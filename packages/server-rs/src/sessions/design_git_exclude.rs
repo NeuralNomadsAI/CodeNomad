@@ -5,11 +5,15 @@ use std::{
     ffi::OsStr,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use regex::Regex;
+use tokio::time::Instant;
 
 use crate::git;
 
@@ -34,14 +38,14 @@ impl GitExclusion {
     }
 }
 
-static EXCLUDE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+static EXCLUDE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
 static NOT_REPO_RE: OnceLock<Regex> = OnceLock::new();
 
-fn lock_for(path: &Path) -> Arc<Mutex<()>> {
+fn lock_for(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     let key = path.to_string_lossy().to_lowercase();
     let map = EXCLUDE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
-    guard.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+    guard.entry(key).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
 }
 
 fn is_not_repository(code: i32, stderr: &str) -> bool {
@@ -147,33 +151,131 @@ fn parse_rev_parse(bytes: &[u8]) -> Option<(String, PathBuf, PathBuf)> {
     Some((prefix.to_owned(), PathBuf::from(common_raw), PathBuf::from(exclude_raw)))
 }
 
-fn append_verified(dir: &Path, common_path: &Path, exclude_path: &Path, rule: &str) -> GitExclusion {
-    if !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
-        return GitExclusion::Unavailable;
+struct DropCancel(Arc<AtomicBool>);
+
+impl Drop for DropCancel {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
     }
-    let Ok(common_canon) = dunce::canonicalize(common_path) else {
-        return GitExclusion::Unavailable;
+}
+
+fn verify_exclude_handle(
+    info: &cap_std::fs::Dir,
+    expected_info_path: &Path,
+    file_comp: &OsStr,
+    file: &cap_std::fs::File,
+) -> bool {
+    let Ok(meta) = file.metadata() else {
+        return false;
     };
-    let rel = match exclude_path.strip_prefix(common_path).or_else(|_| exclude_path.strip_prefix(&common_canon)) {
-        Ok(r) => r.to_path_buf(),
-        Err(_) => return GitExclusion::Unavailable,
-    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        let _ = expected_info_path;
+        let Ok(link_meta) = info.symlink_metadata(file_comp) else {
+            return false;
+        };
+        !link_meta.is_symlink() && link_meta.is_file() && link_meta.dev() == meta.dev() && link_meta.ino() == meta.ino()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+            GetFileInformationByHandle, GetFinalPathNameByHandleW,
+        };
+        let _ = info;
+        let handle = file.as_raw_handle();
+        let mut info_rec: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(handle, &mut info_rec) } == 0 {
+            return false;
+        }
+        if (info_rec.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+            || (info_rec.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+        {
+            return false;
+        }
+        let len = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+        if len == 0 {
+            return false;
+        }
+        let mut buf = vec![0u16; len as usize];
+        let written = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), len, 0) };
+        if written == 0 || written as usize >= buf.len() {
+            return false;
+        }
+        let actual =
+            dunce::simplified(Path::new(&std::ffi::OsString::from_wide(&buf[..written as usize]))).to_path_buf();
+        actual == expected_info_path.join(file_comp)
+    }
+}
+
+fn open_verified_exclude(
+    info: &cap_std::fs::Dir,
+    expected_info_path: &Path,
+    file_comp: &OsStr,
+    writable: bool,
+) -> Result<cap_std::fs::File, std::io::Error> {
+    let mut opts = cap_std::fs::OpenOptions::new();
+    opts.read(true);
+    if writable {
+        opts.append(true).create(true);
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = info.open_with(file_comp, &opts)?;
+    if !verify_exclude_handle(info, expected_info_path, file_comp, &file) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "exclude handle verification failed"));
+    }
+    Ok(file)
+}
+
+fn validate_exclude_target(common_path: &Path, exclude_path: &Path) -> Option<PathBuf> {
+    let common_canon = dunce::canonicalize(common_path).ok()?;
+    let rel = exclude_path.strip_prefix(common_path).or_else(|_| exclude_path.strip_prefix(&common_canon)).ok()?;
     let mut comps = rel.components();
     let (Some(Component::Normal(info_comp)), Some(Component::Normal(file_comp)), None) =
         (comps.next(), comps.next(), comps.next())
     else {
-        return GitExclusion::Unavailable;
+        return None;
     };
     if info_comp != OsStr::new("info") || file_comp != OsStr::new("exclude") {
+        return None;
+    }
+    Some(common_canon)
+}
+
+fn append_verified(
+    dir: &Path,
+    common_canon: &Path,
+    rule: &str,
+    aborted: &(dyn Fn() -> bool + Send + Sync),
+) -> GitExclusion {
+    if aborted() || !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
         return GitExclusion::Unavailable;
     }
+    let info_comp = OsStr::new("info");
+    let file_comp = OsStr::new("exclude");
+    let expected_info_path = common_canon.join(info_comp);
 
-    let lock = lock_for(&common_canon.join(info_comp).join(file_comp));
-    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-
-    let Ok(common_dir) = cap_std::fs::Dir::open_ambient_dir(&common_canon, cap_std::ambient_authority()) else {
+    let Ok(common_dir) = cap_std::fs::Dir::open_ambient_dir(common_canon, cap_std::ambient_authority()) else {
         return GitExclusion::Unavailable;
     };
+    if aborted() {
+        return GitExclusion::Unavailable;
+    }
     if let Err(err) = common_dir.create_dir(info_comp)
         && err.kind() != std::io::ErrorKind::AlreadyExists
     {
@@ -191,7 +293,6 @@ fn append_verified(dir: &Path, common_path: &Path, exclude_path: &Path, rule: &s
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt;
-        let expected_info_path = common_canon.join(info_comp);
         if dunce::canonicalize(&expected_info_path).ok().as_deref() != Some(expected_info_path.as_path()) {
             return GitExclusion::Unavailable;
         }
@@ -206,7 +307,6 @@ fn append_verified(dir: &Path, common_path: &Path, exclude_path: &Path, rule: &s
     {
         use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
         use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-        let expected_info_path = common_canon.join(info_comp);
         let handle = info.as_raw_handle();
         let len = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
         if len == 0 {
@@ -223,61 +323,54 @@ fn append_verified(dir: &Path, common_path: &Path, exclude_path: &Path, rule: &s
             return GitExclusion::Unavailable;
         }
     }
-    #[cfg(unix)]
-    let add_nonblock = |opts: &mut cap_std::fs::OpenOptions| {
-        use cap_std::fs::OpenOptionsExt;
-        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-        const O_NONBLOCK: i32 = 0x0004;
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-        const O_NONBLOCK: i32 = 0x0800;
-        opts.custom_flags(O_NONBLOCK);
+
+    if aborted() {
+        return GitExclusion::Unavailable;
+    }
+    let (mut file, writable) = match open_verified_exclude(&info, &expected_info_path, file_comp, true) {
+        Ok(file) => (file, true),
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            let Ok(ro) = open_verified_exclude(&info, &expected_info_path, file_comp, false) else {
+                return GitExclusion::Unavailable;
+            };
+            (ro, false)
+        }
+        Err(_) => return GitExclusion::Unavailable,
     };
 
     let mut existing = Vec::new();
-    match info.symlink_metadata(file_comp) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(m) if m.is_file() && !m.is_symlink() => {
-            let mut read_opts = cap_std::fs::OpenOptions::new();
-            read_opts.read(true);
-            #[cfg(unix)]
-            add_nonblock(&mut read_opts);
-            let Ok(mut reader) = info.open_with(file_comp, &read_opts) else {
-                return GitExclusion::Unavailable;
-            };
-            if !reader.metadata().is_ok_and(|m| m.is_file()) {
-                return GitExclusion::Unavailable;
-            }
-            if (&mut reader).take(EXCLUDE_READ_LIMIT as u64 + 1).read_to_end(&mut existing).is_err()
-                || existing.len() > EXCLUDE_READ_LIMIT
-            {
-                return GitExclusion::Unavailable;
-            }
-        }
-        _ => return GitExclusion::Unavailable,
+    if (&mut file).take(EXCLUDE_READ_LIMIT as u64 + 1).read_to_end(&mut existing).is_err()
+        || existing.len() > EXCLUDE_READ_LIMIT
+    {
+        return GitExclusion::Unavailable;
     }
 
     let Some(addition) = format_append(&existing, rule) else {
         return GitExclusion::Excluded;
     };
-    let mut append_opts = cap_std::fs::OpenOptions::new();
-    append_opts.append(true).create(true);
-    #[cfg(unix)]
-    add_nonblock(&mut append_opts);
-    let Ok(mut writer) = info.open_with(file_comp, &append_opts) else {
-        return GitExclusion::Unavailable;
-    };
-    if !writer.metadata().is_ok_and(|m| m.is_file()) {
+    if !writable || aborted() || !verify_exclude_handle(&info, &expected_info_path, file_comp, &file) {
         return GitExclusion::Unavailable;
     }
-    if writer.write_all(addition.as_bytes()).is_err() {
+    if file.write_all(addition.as_bytes()).is_err() {
         return GitExclusion::Unavailable;
     }
     GitExclusion::Excluded
 }
 
+#[cfg(test)]
 pub(super) async fn exclude_design_folder(dir: &Path, remaining: Duration) -> GitExclusion {
-    let budget = remaining.min(GIT_TIMEOUT);
-    if budget.is_zero() {
+    exclude_design_folder_cancellable(dir, Instant::now() + remaining, Arc::new(|| true)).await
+}
+
+pub(super) async fn exclude_design_folder_cancellable(
+    dir: &Path,
+    deadline: Instant,
+    still_valid: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> GitExclusion {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let _drop_cancel = DropCancel(Arc::clone(&dropped));
+    let budget = deadline.saturating_duration_since(Instant::now()).min(GIT_TIMEOUT);
+    if budget.is_zero() || !still_valid() {
         return GitExclusion::Unavailable;
     }
     let git_out = tokio::time::timeout(
@@ -292,6 +385,9 @@ pub(super) async fn exclude_design_folder(dir: &Path, remaining: Duration) -> Gi
     let Ok(Ok(output)) = git_out else {
         return GitExclusion::Unavailable;
     };
+    if !still_valid() || Instant::now() >= deadline {
+        return GitExclusion::Unavailable;
+    }
     if output.code != 0 {
         let stderr = String::from_utf8_lossy(output.stderr());
         return if is_not_repository(output.code, &stderr) {
@@ -303,9 +399,34 @@ pub(super) async fn exclude_design_folder(dir: &Path, remaining: Duration) -> Gi
     let Some((prefix, common_path, exclude_path)) = parse_rev_parse(&output.bytes) else {
         return GitExclusion::Unavailable;
     };
+    let Some(common_canon) =
+        tokio::task::spawn_blocking(move || validate_exclude_target(&common_path, &exclude_path)).await.ok().flatten()
+    else {
+        return GitExclusion::Unavailable;
+    };
+    if !still_valid() || Instant::now() >= deadline {
+        return GitExclusion::Unavailable;
+    }
+
+    // Acquire per-file serialization asynchronously so cancellation drops the waiter
+    // before spawning any blocking write worker.
+    let lock = lock_for(&common_canon.join("info").join("exclude"));
+    let Ok(file_guard) = tokio::time::timeout_at(deadline, lock.lock_owned()).await else {
+        return GitExclusion::Unavailable;
+    };
+    if !still_valid() || Instant::now() >= deadline {
+        return GitExclusion::Unavailable;
+    }
+
     let rule = design_exclude_rule(&prefix);
     let dir_owned = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || append_verified(&dir_owned, &common_path, &exclude_path, &rule))
-        .await
-        .unwrap_or(GitExclusion::Unavailable)
+    let dropped_worker = Arc::clone(&dropped);
+    let valid_worker = Arc::clone(&still_valid);
+    tokio::task::spawn_blocking(move || {
+        let _guard = file_guard;
+        let aborted = || dropped_worker.load(Ordering::Acquire) || !valid_worker() || Instant::now() >= deadline;
+        append_verified(&dir_owned, &common_canon, &rule, &aborted)
+    })
+    .await
+    .unwrap_or(GitExclusion::Unavailable)
 }
