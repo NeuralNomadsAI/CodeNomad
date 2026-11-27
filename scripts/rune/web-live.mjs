@@ -234,6 +234,7 @@ async function verifySseAuthenticated503Recovery({
       let recoveryReserved=false
       let sseGate='pass'
       let metaGate='pass'
+      let admittedMetaRequest=null
       let admittedSseRequest=null
       let sseResponseAt=null
       let recovered=false
@@ -288,10 +289,11 @@ async function verifySseAuthenticated503Recovery({
       }
       const continueSseRoute=async route=>{
         const err=await drainWithin([route.continue()],'SSE+503 route continue',5_000)
-        if(!err)return
-        if(sseTeardown&&/Route is already handled/i.test(String(err?.message??err)))return
+        if(!err)return true
+        if(sseTeardown&&/Route is already handled/i.test(String(err?.message??err)))return true
         onSseFulfillError(err)
         await abortRouteOrClose(route,'SSE+503 route continue recovery')
+        return false
       }
       const checkRoute=async route=>{
         try {
@@ -329,13 +331,42 @@ async function verifySseAuthenticated503Recovery({
         if(!observeStatusEpisode||req.method()!=='GET')return
         if(isAuthStatusUrl(req.url()))observedStatusRequests.push(performance.now())
       }
+      const releaseMetaAdmission=req=>{
+        if(sseScenarioActive&&sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
+          admittedMetaRequest=null
+          if(metaGate==='block'&&sseGate==='admit-one')metaGate='admit-one'
+        }
+      }
+      const releaseSseAdmission=req=>{
+        if(sseScenarioActive&&sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
+          admittedSseRequest=null
+          if(sseGate==='hold')sseGate='admit-one'
+          if(metaGate==='block')metaGate='admit-one'
+        }
+      }
+      const onSseRequestFailed=req=>{
+        if(!observeStatusEpisode)return
+        releaseMetaAdmission(req)
+        releaseSseAdmission(req)
+      }
       const onSseResponse=res=>{
         if(!observeStatusEpisode)return
-        if(sseResponseAt===null&&admittedSseRequest&&res.request()===admittedSseRequest&&res.status()===200){
-          sseResponseAt=performance.now()
+        const req=res.request()
+        if(sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
+          if(res.status()===200){
+            sseResponseAt=performance.now()
+            if(metaGate==='admit-one')metaGate='block'
+            if(sseGate==='admit-one')sseGate='hold'
+          } else {
+            releaseSseAdmission(req)
+          }
           return
         }
-        if(res.request().method()!=='GET')return
+        if(sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
+          if(res.status()!==200)releaseMetaAdmission(req)
+          return
+        }
+        if(req.method()!=='GET')return
         if(isAuthStatusUrl(res.url()))observedStatusCodes.push(res.status())
       }
       const routeMeta=route=>trackPending(pendingSseRoutes,(async()=>{
@@ -345,8 +376,11 @@ async function verifySseAuthenticated503Recovery({
         if(metaGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||entryGate==='pass'||metaGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
+          const req=route.request()
+          admittedMetaRequest=req
           metaGate='block'
-          return continueSseRoute(route)
+          if(!await continueSseRoute(route))releaseMetaAdmission(req)
+          return
         }
         if(entryGate==='hold'||metaGate==='hold')return holdRoute(route)
         await fulfillOrAbort(pendingSseFulfills,route,
@@ -359,10 +393,12 @@ async function verifySseAuthenticated503Recovery({
         if(sseGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||entryGate==='pass'||sseGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
+          const req=route.request()
           sseGate='hold'
           metaGate='block'
-          admittedSseRequest=route.request()
-          return continueSseRoute(route)
+          admittedSseRequest=req
+          if(!await continueSseRoute(route))releaseSseAdmission(req)
+          return
         }
         if(entryGate!=='block'&&sseGate==='hold')return holdRoute(route)
         await fulfillOrAbort(pendingSseFulfills,route,
@@ -445,6 +481,7 @@ async function verifySseAuthenticated503Recovery({
       let cleanupError=null
       try {
         page.on('request',onStatusRequest)
+        page.on('requestfailed',onSseRequestFailed)
         page.on('response',onSseResponse)
         try {
           await withBudget(setupDeadline,'installing SSE 503 /api/meta route',()=>page.route(metaUrl,routeMeta))
@@ -626,6 +663,7 @@ async function verifySseAuthenticated503Recovery({
       } finally {
         observeStatusEpisode=false
         page.off('request',onStatusRequest)
+        page.off('requestfailed',onSseRequestFailed)
         page.off('response',onSseResponse)
       }
   })
@@ -895,14 +933,17 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         })())
         // Intercept the VERY FIRST /api/auth/status triggered by device revocation (before #pairing-recovery opens),
         // then block SSE reconnects until the pairing overlay dismisses so focus/visibility alone drives recovery.
+        const focusDeadline=now()+45_000
+        const runFocus=(label,fn,capMs)=>focusStep(withBudget(
+          capMs?Math.min(focusDeadline,now()+capMs):focusDeadline,label,fn))
         let focusCleanupError=null
         try {
           page.on('requestfailed',onAuthFailed)
           page.on('response',onAuthResponse)
-          await page.route(eventsUrl,holdEvents)
-          await page.route(authStatusUrl,holdStaleStatus)
+          await runFocus('installing focus recovery /api/events route',()=>page.route(eventsUrl,holdEvents))
+          await runFocus('installing focus recovery /api/auth/status route',()=>page.route(authStatusUrl,holdStaleStatus))
           try {
-            await focusStep(page.evaluate(()=>{
+            await runFocus('installing focus return listeners',()=>page.evaluate(()=>{
               globalThis.__runeReturnSignal=null
               const onFocus=()=>{ globalThis.__runeReturnSignal='focus' }
               const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeReturnSignal='visibility' }
@@ -915,25 +956,27 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
                 delete globalThis.__runeReturnSignal
               }
             }))
-            await focusStep(command('revoke'))
-            await focusStep(withBudget(now()+10_000,'first pre-pairing auth status capture',
-              ()=>focusStep(staleCaptured.promise)))
-            assert.equal(await focusStep(dialog.count()),0,'#pairing-recovery must not be open yet while the first /api/auth/status is held')
+            await runFocus('revoking session before focus recovery',()=>focusStep(command('revoke')))
+            await runFocus('first pre-pairing auth status capture',()=>focusStep(staleCaptured.promise),10_000)
+            assert.equal(await runFocus('pairing dialog absent while first status held',()=>dialog.count()),0,
+              '#pairing-recovery must not be open yet while the first /api/auth/status is held')
             // Re-pair in the prepared tab and return focus BEFORE the first status probe delivers pairingRequired=true.
-            await focusStep(pairFlow.complete())
-            await focusStep(page.bringToFront())
+            await runFocus('completing pairing in prepared tab',()=>focusStep(pairFlow.complete()))
+            await runFocus('returning focus to original tab',()=>page.bringToFront())
             // Headless shell keeps every page visible/focused across tabs; when bringToFront emits
             // neither signal, dispatch window focus so Rune's real FocusCheck listener runs before release.
-            const returnSignal=await focusStep(page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{
-              if(!globalThis.__runeReturnSignal)window.dispatchEvent(new Event('focus'))
-              requestAnimationFrame(()=>requestAnimationFrame(()=>{
-                const signal=globalThis.__runeReturnSignal
-                globalThis.__runeCleanupReturnSignal?.()
-                resolve(signal)
-              }))
-            }))))
+            const returnSignal=await runFocus('observing focus or visibility return frames',
+              ()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{
+                if(!globalThis.__runeReturnSignal)window.dispatchEvent(new Event('focus'))
+                requestAnimationFrame(()=>requestAnimationFrame(()=>{
+                  const signal=globalThis.__runeReturnSignal
+                  globalThis.__runeCleanupReturnSignal?.()
+                  resolve(signal)
+                }))
+              }))),10_000)
             assert(returnSignal==='focus'||returnSignal==='visibility','Expected a focus or visibility return signal before releasing the held status probe')
-            assert.equal(await focusStep(dialog.count()),0,'Focus return must precede opening of #pairing-recovery')
+            assert.equal(await runFocus('pairing dialog absent after focus return',()=>dialog.count()),0,
+              'Focus return must precede opening of #pairing-recovery')
             assert(!staleDone,'Focus return must precede delivery of the held first status probe')
             assert.equal(staleAborted,null,'Held first status probe must still be in flight when focus returns')
             assert.equal(authStatusRequests,1,'No follow-up /api/auth/status may start before the held probe is delivered')
@@ -948,23 +991,28 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           if(focusRouteError)throw focusRouteError
           if(staleError)throw staleError
           assert.equal(staleAborted,null,'Held first status probe must not abort before browser delivery')
-          const staleBrowserResponse=await focusStep(withBudget(now()+5_000,'browser receipt of held first auth status',
-            ()=>focusStep(staleReceivedByBrowser.promise)))
+          const staleBrowserResponse=await runFocus('browser receipt of held first auth status',
+            ()=>focusStep(staleReceivedByBrowser.promise),5_000)
           assert.equal(staleBrowserResponse.status(),200)
-          assert.equal(await focusStep(staleBrowserResponse.finished()),null,'Browser must finish reading the held first status response')
-          assert.equal((await focusStep(staleBrowserResponse.json())).pairingRequired,true,'Browser must receive pairingRequired=true from the first probe')
+          assert.equal(await runFocus('finishing held first auth status response',
+            ()=>staleBrowserResponse.finished(),5_000),null,'Browser must finish reading the held first status response')
+          assert.equal((await runFocus('reading held first auth status JSON',
+            ()=>staleBrowserResponse.json(),5_000)).pairingRequired,true,'Browser must receive pairingRequired=true from the first probe')
           // Returning focus while the first status probe was in flight must queue a follow-up check
           // immediately once pairingRequired=true opens #pairing-recovery, without any click or SSE help.
-          await focusStep(withBudget(now()+10_000,'follow-up auth status after first stale probe',
-            ()=>focusStep(followUpCaptured.promise)))
-          await focusStep(dialog.waitFor())
-          await focusStep(text(messages['rune.pairing_guide']).waitFor())
-          assert.equal(await focusStep(dialog.getByRole('textbox').count()),0,'Browser pairing never shows a password form')
+          await runFocus('follow-up auth status after first stale probe',()=>focusStep(followUpCaptured.promise),10_000)
+          await runFocus('pairing overlay visible after stale probe',
+            ms=>dialog.waitFor({timeout:Math.max(1,Math.round(ms))}))
+          await runFocus('pairing guide visible after stale probe',
+            ms=>text(messages['rune.pairing_guide']).waitFor({timeout:Math.max(1,Math.round(ms))}))
+          assert.equal(await runFocus('no password textbox in pairing overlay',
+            ()=>dialog.getByRole('textbox').count()),0,'Browser pairing never shows a password form')
           releaseFollowUp.resolve()
           await settleFollowUp()
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
-          await focusStep(dialog.waitFor({state:'detached',timeout:10_000}))
+          await runFocus('pairing overlay detached after focus recovery',
+            ms=>dialog.waitFor({state:'detached',timeout:Math.max(1,Math.round(ms))}),10_000)
           assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
           blockEvents=false
           if(focusForbiddenError)throw focusForbiddenError
