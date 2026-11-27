@@ -165,9 +165,63 @@ fn is_local_git_target(text: &str) -> bool {
     }
 }
 
+fn config_stamp_matches(path: &Path, expected: &Option<ConfigStamp>) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => expected.is_none(),
+        Ok(meta) => {
+            let Some(exp) = expected.as_ref() else {
+                return false;
+            };
+            meta_stamp(&meta).as_ref() == Some(&exp.entry) && config_stamp(path).as_ref() == Some(expected)
+        }
+        Err(_) => false,
+    }
+}
+
+fn canonical_dir_in(scope: &Path, path: &Path, expected: &Path) -> bool {
+    if !scope.as_os_str().is_empty() && expected.starts_with(scope) {
+        path.to_str().is_some_and(|s| {
+            super::ownership::resolve_media_path_checked(scope, s)
+                .ok()
+                .flatten()
+                .is_some_and(|(p, a)| p == a && p == expected)
+        })
+    } else {
+        dunce::canonicalize(path).ok().as_deref() == Some(expected)
+    }
+}
+
+fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
+    if !scope.as_os_str().is_empty() && expected.starts_with(scope) {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Some(exp_parent) = expected.parent() else {
+            return false;
+        };
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        let Some(exp_name) = expected.file_name() else {
+            return false;
+        };
+        canonical_dir_in(scope, parent, exp_parent) && {
+            let joined = exp_parent.join(name);
+            std::fs::symlink_metadata(&joined).is_ok_and(|m| m.is_file())
+                && (name == exp_name || dunce::canonicalize(&joined).ok().as_deref() == Some(expected))
+        }
+    } else {
+        dunce::canonicalize(path).ok().as_deref() == Some(expected)
+    }
+}
+
 impl Physical {
+    #[cfg(test)]
     fn live(&self) -> bool {
-        let canonical = |path: &Path| dunce::canonicalize(path).ok().as_deref() == Some(path);
+        self.live_in(Path::new(""))
+    }
+    fn live_in(&self, scope: &Path) -> bool {
+        let canonical = |path: &Path| canonical_dir_in(scope, path, path);
         canonical(&self.root)
             && canonical(&self.admin)
             && canonical(&self.common)
@@ -175,15 +229,18 @@ impl Physical {
             && identity(&self.admin).ok().as_ref() == Some(&self.admin_id)
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
             && super::ownership::valid_git_admin(&self.admin, &self.common)
-            && config_stamp(&self.common.join("config")).as_ref() == Some(&self.stamp[0])
-            && config_stamp(&self.admin.join("config.worktree")).as_ref() == Some(&self.stamp[1])
+            && config_stamp_matches(&self.common.join("config"), &self.stamp[0])
+            && config_stamp_matches(&self.admin.join("config.worktree"), &self.stamp[1])
             && match (&self.marker, &self.backlink, &self.common_marker) {
                 (Some(marker), Some(backlink), Some(common_marker)) => {
-                    linked_markers(&self.root, &self.admin, &self.common)
-                        .is_ok_and(|[m, b, c]| &m == marker && &b == backlink && &c == common_marker)
+                    small(&self.root.join(".git")).ok().as_ref() == Some(marker)
+                        && small(&self.admin.join("gitdir")).ok().as_ref() == Some(backlink)
+                        && small(&self.admin.join("commondir")).ok().as_ref() == Some(common_marker)
+                        && linked_markers_in(scope, &self.root, &self.admin, &self.common)
+                            .is_ok_and(|[m, b, c]| &m == marker && &b == backlink && &c == common_marker)
                 }
                 (Some(marker), None, None) => {
-                    separate_marker(&self.root, &self.common).is_ok_and(|m| &m == marker)
+                    separate_marker_live_in(scope, &self.root, &self.common, marker)
                         && std::fs::symlink_metadata(self.admin.join("commondir"))
                             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
                 }
@@ -194,9 +251,9 @@ impl Physical {
     }
     /// Also verifies that `opened` still canonicalizes to itself and intermediate discovery markers
     /// (`.git`, `HEAD`, `commondir`) between `opened` and `self.root` are unchanged since probing.
-    fn live_for(&self, opened: &Path) -> bool {
-        self.live()
-            && dunce::canonicalize(opened).ok().as_deref() == Some(opened)
+    fn live_for_in(&self, scope: &Path, opened: &Path) -> bool {
+        self.live_in(scope)
+            && canonical_dir_in(scope, opened, opened)
             && ancestor_markers(opened, &self.root).as_ref() == Some(&self.ancestors)
     }
 }
@@ -242,6 +299,10 @@ pub async fn readable_checkout(path: &Path) -> bool {
 }
 
 fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
+    linked_markers_in(Path::new(""), root, admin, common)
+}
+
+fn linked_markers_in(scope: &Path, root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
     if admin.parent() != Some(common.join("worktrees").as_path()) {
         return Err(conflict("Foreign worktree administration"));
     }
@@ -251,20 +312,39 @@ fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 
         .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
         .filter(|path| !path.is_empty())
         .ok_or_else(native_error)?;
-    if dunce::canonicalize(root.join(gitdir)).ok().as_deref() != Some(admin) {
+    if !canonical_dir_in(scope, &root.join(gitdir), admin) {
         return Err(conflict("Git worktree marker changed"));
     }
     let backlink = small(&admin.join("gitdir"))?;
     let text = std::str::from_utf8(&backlink).map_err(|_| native_error())?.trim_end();
-    if dunce::canonicalize(admin.join(text)).ok().as_ref() != Some(&root.join(".git")) {
+    if !canonical_file_in(scope, &admin.join(text), &root.join(".git")) {
         return Err(conflict("Foreign Git backlink"));
     }
     let common_marker = small(&admin.join("commondir"))?;
     let text = std::str::from_utf8(&common_marker).map_err(|_| native_error())?.trim_end();
-    if dunce::canonicalize(admin.join(text)).ok().as_deref() != Some(common) {
+    if !canonical_dir_in(scope, &admin.join(text), common) {
         return Err(conflict("Foreign Git common directory"));
     }
     Ok([marker, backlink, common_marker])
+}
+
+fn separate_marker_live_in(scope: &Path, root: &Path, common: &Path, expected: &[u8]) -> bool {
+    let dot_git = root.join(".git");
+    if expected.is_empty() {
+        return std::fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.file_type().is_symlink())
+            && canonical_dir_in(scope, &dot_git, common);
+    }
+    let Ok(marker) = small(&dot_git) else {
+        return false;
+    };
+    if marker != expected {
+        return false;
+    }
+    std::str::from_utf8(&marker)
+        .ok()
+        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .filter(|path| !path.is_empty())
+        .is_some_and(|gitdir| canonical_dir_in(scope, &root.join(gitdir), common))
 }
 
 fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
@@ -524,7 +604,7 @@ impl Tree {
         self.projected_link.as_ref().map_or(&self.path, |link| &link.1).as_os_str().len()
     }
     fn link_live(&self) -> bool {
-        self.projected_link.as_ref().is_none_or(|link| dunce::canonicalize(&link.0).ok().as_ref() == Some(&link.1))
+        self.projected_link.as_ref().is_none_or(|link| canonical_dir_in(&self.scope, &link.0, &link.1))
     }
     pub(super) fn public(&self) -> Value {
         let label = self.branch.clone().unwrap_or_else(|| {
@@ -582,7 +662,7 @@ impl Tree {
             && !self.nested_missing
             && self.projected_link.is_none()
             && self.identity.is_some()
-            && self.layout.live()
+            && self.layout.live_in(&self.scope)
             && self.link_live()
             && identity(dir).ok() == self.identity
     }
@@ -593,7 +673,7 @@ impl Tree {
             && !self.nested_missing
             && self.projected_link.is_none()
             && self.identity.is_some()
-            && self.layout.live()
+            && self.layout.live_in(&self.scope)
             && self.link_live()
             && identity(&self.path).ok() == self.identity
     }
@@ -607,20 +687,24 @@ impl Tree {
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
         if let Some(link) = &self.projected_link {
             let (link_path, target, target_layout, target_id) = link.as_ref();
-            return dir.starts_with(target)
-                && self.layout.live()
-                && target_layout.live()
-                && link_path.to_str().is_some_and(|s| {
+            let link_live = || {
+                link_path.to_str().is_some_and(|s| {
                     super::ownership::resolve_media_path_checked(&self.scope, s)
                         .ok()
                         .flatten()
                         .is_some_and(|(p, a)| p == a && p == *target)
                 })
+            };
+            return dir.starts_with(target)
+                && link_live()
+                && self.layout.live_in(&self.scope)
+                && target_layout.live_in(&self.scope)
+                && link_live()
                 && identity(target).ok().as_deref() == Some(target_id.as_str());
         }
         // Exact prefix match prevents cross-workspace matches on case-sensitive NTFS when
         // projected `Projet` is absent while a distinct sibling `projet` exists.
-        if !dir.starts_with(&self.path) || !self.layout.live() || !self.link_live() {
+        if !dir.starts_with(&self.path) || !self.layout.live_in(&self.scope) {
             return false;
         }
         let Some((resolved, anchor)) = self
@@ -641,7 +725,7 @@ impl Tree {
     }
     pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
         super::ownership::within(&self.path, dir)
-            && self.layout.live()
+            && self.layout.live_in(&self.scope)
             && self.path.to_str().and_then(super::ownership::resolve_directory).as_deref() == Some(&self.path)
             && super::ownership::existing_directory(&self.path).is_some()
     }
@@ -663,7 +747,7 @@ impl Catalogue {
     }
     pub fn by_registered(&self, dir: &str) -> Option<&Tree> {
         let path = physical(dir)?;
-        self.trees.iter().find(|t| t.registered() == path && t.layout.live())
+        self.trees.iter().find(|t| t.registered() == path && t.layout.live_in(&t.scope))
     }
     pub fn response(&self) -> Value {
         json!({"isGitRepo":true,"defaultDirectory":self.parent,"worktrees":self.trees.iter().map(Tree::public).collect::<Vec<_>>()})
@@ -688,7 +772,7 @@ impl Catalogue {
     /// Re-verifies locally (no Git subprocess) that the workspace root checkout still matches
     /// the cached layout and ancestor markers.
     pub(crate) fn root_live_for(&self, opened: &Path) -> bool {
-        self.get("root").is_ok_and(|root| root.layout.live_for(opened))
+        self.get("root").is_ok_and(|root| root.layout.live_for_in(&root.scope, opened))
     }
 }
 pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {
@@ -785,8 +869,9 @@ async fn root_at(
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
     let opened_path = w.path.clone();
+    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
     let (live_ok, local, main) = tokio::task::spawn_blocking(move || {
-        let ok = local.live_for(&opened_path) && main.live();
+        let ok = local.live_for_in(&live_scope, &opened_path) && main.live_in(&live_scope);
         (ok, local, main)
     })
     .await
@@ -976,13 +1061,14 @@ async fn catalogue_in_at(
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
+            let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
             let repo_layouts = repo_layouts.clone();
             match tokio::task::spawn_blocking(
                 move || -> Result<
                     Option<(Physical, PathBuf, Option<String>, Option<Box<(PathBuf, PathBuf, Physical, String)>>, bool)>,
                     Error,
                 > {
-                    if !check.live() {
+                    if !check.live_in(&live_scope) {
                         // A layout that vanished mid-scan is omitted; a config change rejects the
                         // whole scan rather than publishing a partial inventory (TS `git-worktrees.ts:128-135`).
                         return if git_layout_gone(&root) { Ok(None) } else { Err(config_changed_error()) };
@@ -1105,8 +1191,10 @@ async fn catalogue_in_at(
         .chain(std::iter::once(main.clone()))
         .chain(checked.iter().map(|t| t.layout.clone()))
         .collect();
-    let all_live =
-        tokio::task::spawn_blocking(move || layouts.iter().all(Physical::live)).await.map_err(|_| native_error())?;
+    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
+    let all_live = tokio::task::spawn_blocking(move || layouts.iter().all(|layout| layout.live_in(&live_scope)))
+        .await
+        .map_err(|_| native_error())?;
     if !all_live {
         return Err(config_changed_error());
     }
