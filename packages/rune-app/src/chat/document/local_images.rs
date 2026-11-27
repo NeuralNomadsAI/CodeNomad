@@ -260,7 +260,7 @@ impl Plan {
                     return markdown::prose_image(el);
                 };
                 let content = if slot.image.is_some() {
-                    markdown::prose_image(el)
+                    markdown::prose_image(el).label(slot.label.clone())
                 } else if let Some(size) = slot.placeholder_size {
                     markdown::prose_image_placeholder(size, slot.drawn.get()[3], &slot.label)
                 } else {
@@ -750,6 +750,10 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str, allow_relative: bool)
     }
 }
 
+fn tool_reads_input_path(tool: &Tool) -> bool {
+    matches!(tool.name.as_str(), "read" | "read_file" | "view")
+}
+
 fn input_matches_picture_name(input: &KnownPath, picture_name: &KnownPath) -> bool {
     if input.comparable == picture_name.comparable {
         return true;
@@ -792,7 +796,7 @@ pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
         if let Some(name) = picture_raw {
             paths.push(name.into());
         }
-        let allow_input = picture_raw.is_none()
+        let allow_input = (picture_raw.is_none() && tool_reads_input_path(tool))
             || picture_known
                 .as_ref()
                 .zip(input_known.as_ref())
@@ -837,7 +841,7 @@ fn collect_tool_candidates(row_id: &str, tool: &Tool, call: u64, out: &mut Vec<C
         let mut paths = Vec::new();
         let picture_raw = picture.name.as_deref().filter(|value| !value.is_empty());
         let picture_known = picture_raw.and_then(KnownPath::new);
-        let allow_input = picture_raw.is_none()
+        let allow_input = (picture_raw.is_none() && tool_reads_input_path(tool))
             || picture_known
                 .as_ref()
                 .zip(input_path.as_ref())

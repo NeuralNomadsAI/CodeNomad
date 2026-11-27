@@ -1903,15 +1903,28 @@ fn converting_tool_output_with_different_name_does_not_shadow_input_file_and_ref
         }]
     }))
     .unwrap();
+    let convert_unnamed = history::decode_message(&json!({
+        "id": "m4", "type": "assistant", "time": {"completed": 4},
+        "content": [{
+            "type": "tool", "id": "call-convert-unnamed", "name": "convert",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/source.png"},
+                "content": [{"type": "file", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
     let candidates = session_candidates(&[
         read_source.into(),
         convert_tool.into(),
         convert_short.into(),
+        convert_unnamed.into(),
     ]);
     assert_eq!(
         match_local_image(&candidates, "/tmp/source.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline(PNG_A.into())),
-        "a tool outputting a differently named image must not index it under its input filePath"
+        "a non-read tool outputting an unnamed or differently named image must not index it under its input filePath"
     );
     assert_eq!(
         match_local_image(&candidates, "/tmp/resultat.png", true).map(|c| &c.source),
@@ -1928,5 +1941,79 @@ fn converting_tool_output_with_different_name_does_not_shadow_input_file_and_ref
     assert_eq!(
         plan.fallback_label()("file:///tmp/projet/../chart.png", true).as_deref(),
         Some("chart.png")
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn decoded_empty_alt_local_image_keeps_filename_accessible_label() {
+    let read_msg = history::decode_message(&json!({
+        "id": "m1", "type": "assistant", "time": {"completed": 1},
+        "content": [{
+            "type": "tool", "id": "call-read", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![read_msg.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                super::super::prose(
+                    s,
+                    "m2",
+                    "frag-empty-alt".into(),
+                    "![](/tmp/chart.png)",
+                    false,
+                )
+            })
+        },
+        (800.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(1.0 / 60.0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let mut ready = false;
+        rt.update(|s, tx| {
+            if crate::chat::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+            let plan = prepare(
+                s,
+                "frag-empty-alt",
+                "![](/tmp/chart.png)",
+                false,
+                Conversation::Root,
+            );
+            ready = plan
+                .stamp
+                .iter()
+                .any(|(_, _, stamp)| matches!(stamp, SlotStamp::Ready(_)));
+        });
+        rt.frame(1.0 / 60.0);
+        if ready {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "empty-alt local image did not decode"
+        );
+        std::thread::yield_now();
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("\"role\":\"image\"") && tree.contains("chart.png"),
+        "decoded empty-alt local image must keep filename as accessible label: {tree}"
+    );
+    assert!(
+        !tree.contains("Image preview"),
+        "decoded empty-alt local image must not fall back to generic English label: {tree}"
     );
 }

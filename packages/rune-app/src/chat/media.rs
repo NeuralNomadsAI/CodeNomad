@@ -59,13 +59,20 @@ struct Entry {
     last_seen: u64,
 }
 
+fn mipmap_pixels(mut w: usize, mut h: usize) -> usize {
+    let mut pixels = w.saturating_mul(h);
+    while w > 1 || h > 1 {
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+        pixels = pixels.saturating_add(w.saturating_mul(h));
+    }
+    pixels
+}
+
 fn decoded_bytes_for(width: u32, height: u32, frames: usize) -> usize {
-    let base = (width as usize)
-        .saturating_mul(height as usize)
+    mipmap_pixels(width as usize, height as usize)
         .saturating_mul(4)
-        .saturating_mul(frames.max(1));
-    // Account for mipmap storage (~1/3 of base pixel area).
-    base.saturating_add(base / 3)
+        .saturating_mul(frames.max(1))
 }
 
 fn decoded_bytes(image: &Image, frames: usize) -> usize {
@@ -73,6 +80,9 @@ fn decoded_bytes(image: &Image, frames: usize) -> usize {
 }
 
 fn encoded_frame_count(bytes: &[u8]) -> usize {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return apng_frame_count(bytes);
+    }
     if cfg!(target_arch = "wasm32") {
         return 1;
     }

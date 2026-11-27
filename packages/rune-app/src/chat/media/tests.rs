@@ -297,9 +297,9 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
             },
         );
     }
-    // 3 images = 3 * 170 = 510 bytes (with 1/3 mipmap overhead); budget 340 evicts only oldest
+    // 3 images = 3 * 172 = 516 bytes (exact mipmap sum); budget 344 evicts only oldest
     // offscreen (`off-old`) and keeps visible.
-    assert!(pictures.evict_offscreen_decoded(None, 340));
+    assert!(pictures.evict_offscreen_decoded(None, 344));
     assert!(pictures.images["off-old"].image.is_none());
     assert!(!pictures.images["off-old"].settled);
     assert_eq!(
@@ -450,7 +450,21 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
     assert!(!animated_within_budget(&huge_gif, huge_frames));
     assert!(animated_within_budget(&gif, 3));
 
-    // Minimal APNG header with acTL num_frames = 12 before IDAT.
+    // Narrow 8192x1 1400-frame GIF needs ~2x mipmap storage (~91.7 MiB > 64 MiB) and is rejected.
+    let mut narrow_gif = Vec::new();
+    narrow_gif.extend_from_slice(b"GIF89a");
+    narrow_gif.extend_from_slice(&8192u16.to_le_bytes());
+    narrow_gif.extend_from_slice(&1u16.to_le_bytes());
+    narrow_gif.extend_from_slice(&[0x00, 0, 0]);
+    for _ in 0..1400 {
+        narrow_gif.extend_from_slice(&[0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0x00, 0x02, 0x00]);
+    }
+    narrow_gif.push(0x3B);
+    let narrow_frames = encoded_frame_count_native(&narrow_gif);
+    assert_eq!(narrow_frames, 1400);
+    assert!(!animated_within_budget(&narrow_gif, narrow_frames));
+
+    // Minimal APNG header with acTL num_frames = 12 before IDAT (counted on both native & wasm32).
     let mut apng = Vec::new();
     apng.extend_from_slice(b"\x89PNG\r\n\x1a\n");
     apng.extend_from_slice(&8u32.to_be_bytes());
@@ -458,7 +472,7 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
     apng.extend_from_slice(&12u32.to_be_bytes());
     apng.extend_from_slice(&0u32.to_be_bytes());
     apng.extend_from_slice(&0u32.to_be_bytes()); // CRC placeholder
-    assert_eq!(encoded_frame_count_native(&apng), 12);
+    assert_eq!(encoded_frame_count(&apng), 12);
 
     // Minimal WebP container with 4 ANMF chunks.
     let mut webp = Vec::new();
