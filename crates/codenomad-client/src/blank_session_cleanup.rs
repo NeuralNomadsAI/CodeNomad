@@ -66,16 +66,14 @@ fn unwrap_data(value: &Value) -> &Value {
     value.get("data").unwrap_or(value)
 }
 
-fn map_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
+fn map_session_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         Err(BlankCleanupError::Unauthorized)
     } else if status.is_success() {
         Ok(())
     } else if matches!(
         status,
-        reqwest::StatusCode::NOT_FOUND
-            | reqwest::StatusCode::METHOD_NOT_ALLOWED
-            | reqwest::StatusCode::NOT_IMPLEMENTED
+        reqwest::StatusCode::METHOD_NOT_ALLOWED | reqwest::StatusCode::NOT_IMPLEMENTED
     ) {
         Err(BlankCleanupError::RouteUnavailable)
     } else if status.is_server_error() {
@@ -88,6 +86,14 @@ fn map_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupE
             "HTTP {}",
             status.as_u16()
         )))
+    }
+}
+
+fn map_workspace_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        Err(BlankCleanupError::RouteUnavailable)
+    } else {
+        map_session_preflight_status(status)
     }
 }
 
@@ -120,7 +126,7 @@ impl Backend {
             .send()
             .await
             .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-        map_preflight_status(response.status())?;
+        map_session_preflight_status(response.status())?;
         let page = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(is_empty_page(&page))
     }
@@ -139,7 +145,7 @@ impl Backend {
             .send()
             .await
             .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-        map_preflight_status(response.status())?;
+        map_session_preflight_status(response.status())?;
         let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(unwrap_data(&body).clone())
     }
@@ -191,7 +197,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_preflight_status(response.status())?;
+            map_session_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(unwrap_data(&body).as_array().is_some_and(Vec::is_empty))
         };
@@ -219,7 +225,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_preflight_status(response.status())?;
+            map_workspace_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(is_empty_page(&body))
         };
@@ -233,7 +239,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_preflight_status(response.status())?;
+            map_workspace_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(
                 unwrap_data(&body)
@@ -587,7 +593,18 @@ mod tests {
             let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
             let project = test_project();
 
-            for status in [404u16, 405, 501] {
+            // A 404 on a session-scoped preflight route (e.g. concurrently deleted session)
+            // skips only that candidate instead of aborting the whole sweep.
+            let task = tokio::spawn({
+                let backend = backend.clone();
+                let project = project.clone();
+                async move { backend.verify_blank_session(&project, "ses_gone").await }
+            });
+            let _ = serve_once(&listener, 404, json!({})).await;
+            let err = task.await.unwrap().unwrap_err();
+            assert!(!err.is_route_unavailable() && !err.is_unavailable());
+
+            for status in [405u16, 501] {
                 let task = tokio::spawn({
                     let backend = backend.clone();
                     let project = project.clone();

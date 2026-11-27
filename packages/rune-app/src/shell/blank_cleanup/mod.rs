@@ -398,26 +398,47 @@ fn spawn_delete(s: &State, backend: Backend, project: Project, session_id: Strin
     }
 }
 
-fn finish_sweep(s: &mut State, sweep: Sweep, tx: &mut Tx) {
-    if sweep.deleted_count == 0 || !sweep_current(s, &sweep) {
+fn finish_sweep(s: &mut State, sweep: Sweep, unavailable: Option<&BlankCleanupError>, tx: &mut Tx) {
+    if !sweep_current(s, &sweep) {
         return;
     }
-    let count = sweep.deleted_count.to_string();
-    let key = if sweep.deleted_count == 1 {
-        "sessionState.cleanup.toast.one"
-    } else {
-        "sessionState.cleanup.toast.other"
-    };
-    let message = catalogue::format(locale(), key, &[("count", &count)]);
-    notifications::emit(s, notifications::Category::Sessions, None, message);
-    if s.screen
-        .launcher()
-        .and_then(|l| l.project.as_ref())
-        .is_some_and(|project| project.id == sweep.project.id)
-    {
-        workspace::schedule_catalogue_refresh(s);
+    let mut emitted = false;
+    if sweep.deleted_count > 0 {
+        let count = sweep.deleted_count.to_string();
+        let key = if sweep.deleted_count == 1 {
+            "sessionState.cleanup.toast.one"
+        } else {
+            "sessionState.cleanup.toast.other"
+        };
+        let message = catalogue::format(locale(), key, &[("count", &count)]);
+        notifications::emit(s, notifications::Category::Sessions, None, message);
+        if s.screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .is_some_and(|project| project.id == sweep.project.id)
+        {
+            workspace::schedule_catalogue_refresh(s);
+        }
+        emitted = true;
     }
-    tx.instant();
+    if let Some(err) = unavailable {
+        let body = if err.is_route_unavailable() {
+            t("instanceShell.worktree.unavailable")
+        } else {
+            t("remoteRestore.unreachable")
+        };
+        notifications::emit_outcome(
+            s,
+            notifications::Category::Sessions,
+            Some(t("commands.scrubSessions.label").into()),
+            body,
+            true,
+        );
+        emitted = true;
+    }
+    if emitted {
+        tx.instant();
+    }
 }
 
 fn handle_unauthorized(s: &mut State, backend: &Backend) {
@@ -448,7 +469,7 @@ fn advance(s: &mut State, tx: &mut Tx) -> bool {
         s.blank_cleanup.sweep = Some(sweep);
         return true;
     }
-    finish_sweep(s, *sweep, tx);
+    finish_sweep(s, *sweep, None, tx);
     true
 }
 
@@ -493,7 +514,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true
             }
             Err(err) if err.is_unavailable() => {
-                finish_sweep(s, *sweep, tx);
+                finish_sweep(s, *sweep, Some(&err), tx);
                 true
             }
             Ok(true) => {
@@ -522,8 +543,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true
             }
             Err(err) if err.is_unavailable() => {
-                // Route unavailable or server/network outage: stop sweeping immediately.
-                finish_sweep(s, *sweep, tx);
+                // Route unavailable or server/network outage: stop sweeping and notify the user.
+                finish_sweep(s, *sweep, Some(&err), tx);
                 true
             }
             Ok(true) => {

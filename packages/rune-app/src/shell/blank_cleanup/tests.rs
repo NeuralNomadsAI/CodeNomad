@@ -451,7 +451,7 @@ fn route_unavailable_degrades_gracefully_and_stops_sweep() {
     });
     drive_cleanup(&mut rt);
 
-    // Stopped immediately on 404 without preflighting ses_blank_2.
+    // Stopped immediately on 404 without preflighting ses_blank_2 and surfaced an error notice.
     let seen = server.requests();
     assert!(!seen.iter().any(|r| r.contains("ses_blank_2")));
     assert_eq!(rt.state.screen.launcher().unwrap().sessions.len(), 2);
@@ -459,6 +459,77 @@ fn route_unavailable_degrades_gracefully_and_stops_sweep() {
         !rt.elements()
             .iter()
             .any(|el| el.text.as_deref().is_some_and(|t| t.contains("Cleaned up")))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.text.as_deref() == Some("Unavailable")),
+        "expected unavailable notice when cleanup route returns 404/501"
+    );
+}
+
+#[test]
+fn preflight_404_on_deleted_session_skips_candidate_and_continues_sweep() {
+    let server = MockCleanupServer::start(|first| {
+        if first.contains("ses_gone") {
+            return (404, json!({"name": "SessionNotFoundError"}));
+        }
+        if first.starts_with("POST /api/workspaces/ws-clean/session-cleanup/ses_blank_2") {
+            return (200, json!({"deleted": true}));
+        }
+        if first.contains("/message?") {
+            return (200, json!({"data": [], "cursor": {}}));
+        }
+        if first.starts_with("GET /workspaces/ws-clean/instance/api/session/ses_blank_2 HTTP/") {
+            return (
+                200,
+                json!({"data": {"id": "ses_blank_2", "projectID": "proj-1", "location": {"directory": "/repo"}, "time": {"updated": 1}}}),
+            );
+        }
+        if first.contains("/inbox") {
+            return (200, json!({"data": []}));
+        }
+        if first.contains("parentID=") {
+            return (200, json!({"data": [], "cursor": {}}));
+        }
+        if first.contains("/api/session/active") {
+            return (200, json!({"data": {}}));
+        }
+        (404, json!({}))
+    });
+
+    let mut rt = cleanup_runtime(
+        server.backend.clone(),
+        vec![
+            Session {
+                id: "ses_gone".into(),
+                title: "Gone".into(),
+            },
+            Session {
+                id: "ses_blank_2".into(),
+                title: "Blank 2".into(),
+            },
+        ],
+        None,
+    );
+
+    rt.update(|s, tx| {
+        assert!(open_confirm(s, None, tx));
+        confirm(s, tx);
+    });
+    drive_cleanup(&mut rt);
+
+    let seen = server.requests();
+    assert!(
+        seen.iter()
+            .any(|r| r.starts_with("POST /api/workspaces/ws-clean/session-cleanup/ses_blank_2")),
+        "a 404 on a concurrently deleted session must skip it and continue sweeping"
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.text.as_deref() == Some("Cleaned up 1 blank session")),
+        "expected cleanup toast after skipping missing session"
     );
 }
 
