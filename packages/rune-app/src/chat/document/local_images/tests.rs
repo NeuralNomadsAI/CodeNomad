@@ -12,6 +12,7 @@ fn candidate(paths: &[&str], tag: &str) -> Candidate {
         paths: paths.iter().filter_map(|s| KnownPath::new(s)).collect(),
         source: PictureSource::Inline(tag.into()),
         mime: "image/png".into(),
+        call: None,
     }
 }
 
@@ -214,6 +215,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
             paths: vec![KnownPath::new("/tmp/chart.png").unwrap()],
             source: PictureSource::Unavailable,
             mime: "image/png".into(),
+            call: Some(2),
         },
         candidate(&["/tmp/chart.png"], "stale-old"),
     ];
@@ -230,11 +232,48 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
             paths: vec![KnownPath::new("/b/chart.png").unwrap()],
             source: PictureSource::Unavailable,
             mime: "image/png".into(),
+            call: Some(2),
         },
         candidate(&["/a/chart.png"], "other-file"),
     ];
     assert_eq!(
         match_local_image(&ambiguous_with_unavailable, "chart.png", true),
+        None
+    );
+
+    // Two distinct images with the same name returned by a single tool call must be ambiguous,
+    // even when an older tool call returned a single image with that name.
+    let older_single = history::decode_message(&json!({
+        "id":"m-single","type":"assistant","time":{"completed":1},
+        "content":[{
+            "type":"tool","id":"call-single","name":"mcp",
+            "state":{
+                "status":"completed",
+                "content":[{"type":"file","name":"chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let same_call_dups = history::decode_message(&json!({
+        "id":"m-dups","type":"assistant","time":{"completed":2},
+        "content":[{
+            "type":"tool","id":"call-dups","name":"mcp",
+            "state":{
+                "status":"completed",
+                "content":[
+                    {"type":"file","name":"chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")},
+                    {"type":"file","name":"chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")},
+                    {"type":"file","name":"/tmp/same-abs.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")},
+                    {"type":"file","name":"/tmp/same-abs.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}
+                ]
+            }
+        }]
+    }))
+    .unwrap();
+    let dup_candidates = session_candidates(&[older_single.into(), same_call_dups.into()]);
+    assert_eq!(match_local_image(&dup_candidates, "chart.png", true), None);
+    assert_eq!(
+        match_local_image(&dup_candidates, "/tmp/same-abs.png", true),
         None
     );
 
@@ -1257,30 +1296,99 @@ fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels
         }]
     }))
     .unwrap();
-    let huge_output = "x".repeat(2_200_000);
+    let filler = |id: &str, call: &str, t: u64| {
+        history::decode_message(&json!({
+            "id":id,"type":"assistant","time":{"completed":t},
+            "content":[{
+                "type":"tool","id":call,"name":"bash",
+                "state":{
+                    "status":"completed",
+                    "content":[{"type":"text","text":"x".repeat(600_000)}]
+                }
+            }]
+        }))
+        .unwrap()
+    };
     let newer_truncated = history::decode_message(&json!({
-        "id":"c2","type":"assistant","time":{"completed":2},
+        "id":"c5","type":"assistant","time":{"completed":5},
         "content":[{
             "type":"tool","id":"call-new","name":"read",
             "state":{
                 "status":"completed",
                 "input":{"filePath":"/tmp/child-chart.png"},
-                "output":huge_output,
-                "content":[{"type":"file","name":"child-chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}]
+                "content":[
+                    {"type":"text","text":"y".repeat(600_000)},
+                    {"type":"file","name":"child-chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}
+                ]
             }
         }]
     }))
     .unwrap();
-    let mut child_state = init();
-    let _lease = child_state.transcript_display.children.install(
-        "child-trunc",
+
+    // Control: without the newer truncated reread, the older read resolves cleanly.
+    let mut intact_state = init();
+    let _intact_lease = intact_state.transcript_display.children.install(
+        "child-intact",
         history::Page {
-            rows: vec![older_read.into(), newer_truncated.into()],
+            rows: vec![older_read.clone().into()],
             older: None,
             newer: None,
             running: false,
             user_file_references: false,
         },
+    );
+    assert!(intact_state.transcript_display.children.poll());
+    let intact_plan = prepare(
+        &intact_state,
+        "task-out-intact",
+        "![Chart](/tmp/child-chart.png)",
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "child-intact",
+        },
+    );
+    assert_eq!(
+        intact_plan.fallback_label()("/tmp/child-chart.png", true),
+        None
+    );
+
+    // With total tool bytes > STEP_BYTES (2 MiB), water-filling keeps `call-old` intact while
+    // truncating `call-new` and recording its path shadow.
+    let mut child_state = init();
+    let _lease = child_state.transcript_display.children.install(
+        "child-trunc",
+        history::Page {
+            rows: vec![
+                older_read.into(),
+                filler("c2", "call-f2", 2).into(),
+                filler("c3", "call-f3", 3).into(),
+                filler("c4", "call-f4", 4).into(),
+                newer_truncated.into(),
+            ],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        },
+    );
+    assert!(child_state.transcript_display.children.poll());
+    let (steps, shadows) = child_state
+        .transcript_display
+        .children
+        .verified_tool_state(None, "child-trunc");
+    assert_eq!(steps.len(), 5);
+    assert!(
+        !steps[0].1.pictures.is_empty(),
+        "older small read must stay intact under water-filling"
+    );
+    assert!(
+        steps[4].1.pictures.is_empty(),
+        "oversized newer reread must have its pictures truncated"
+    );
+    assert!(
+        shadows.is_some_and(|map| map.contains_key(&("c5".into(), "call-new".into()))),
+        "truncated newer reread must record its image path shadow"
     );
     let child_plan = prepare(
         &child_state,

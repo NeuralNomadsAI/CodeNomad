@@ -71,6 +71,8 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         .sum();
     let mut truncated_tools = HashSet::new();
     let mut truncated_tool_images = HashMap::new();
+    let mut truncated_image_bytes = 0usize;
+    let mut truncated_tool_images_overflow = false;
     let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
         kept_tools
             .into_iter()
@@ -99,9 +101,26 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
                     tool.clone()
                 } else {
                     truncated_tools.insert((row.id.clone(), tool.id.clone()));
-                    let shadows = crate::chat::document::tool_image_paths(tool);
-                    if !shadows.is_empty() {
-                        truncated_tool_images.insert((row.id.clone(), tool.id.clone()), shadows);
+                    if !truncated_tool_images_overflow {
+                        let shadows = crate::chat::document::tool_image_paths(tool);
+                        if !shadows.is_empty() {
+                            let too_long = shadows
+                                .iter()
+                                .flatten()
+                                .any(|p| p.len() > MAX_TRUNCATED_IMAGE_PATH_BYTES);
+                            let bytes: usize = shadows.iter().flatten().map(String::len).sum();
+                            if too_long
+                                || truncated_image_bytes.saturating_add(bytes)
+                                    > MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES
+                            {
+                                truncated_tool_images_overflow = true;
+                                truncated_tool_images.clear();
+                            } else {
+                                truncated_image_bytes += bytes;
+                                truncated_tool_images
+                                    .insert((row.id.clone(), tool.id.clone()), shadows);
+                            }
+                        }
                     }
                     Arc::new(tool.with_budget(cap))
                 };
@@ -167,6 +186,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         steps_incomplete: steps_truncated || page.older.is_some(),
         truncated_tools,
         truncated_tool_images,
+        truncated_tool_images_overflow,
         reports,
     }
 }

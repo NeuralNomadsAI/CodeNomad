@@ -29,6 +29,8 @@ const CHILD_LIMIT: usize = 12;
 const RETAINED_LIMIT: usize = 24;
 const WAITING_LIMIT: usize = 32;
 pub(super) const STEP_BYTES: usize = 2 << 20;
+pub(super) const MAX_TRUNCATED_IMAGE_PATH_BYTES: usize = 4 * 1024;
+pub(super) const MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES: usize = 32 * 1024;
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
@@ -119,6 +121,7 @@ struct Snapshot {
     steps_incomplete: bool,
     truncated_tools: HashSet<(String, String)>,
     truncated_tool_images: HashMap<(String, String), Vec<Vec<String>>>,
+    truncated_tool_images_overflow: bool,
     reports: Reports,
 }
 
@@ -290,6 +293,16 @@ impl Children {
                     .saturating_add(report.report.state.len())
                     .saturating_add(report.report.body.len());
             }
+            for ((msg_id, tool_id), groups) in &entry.snapshot.truncated_tool_images {
+                total = total
+                    .saturating_add(msg_id.len())
+                    .saturating_add(tool_id.len());
+                for paths in groups {
+                    for path in paths {
+                        total = total.saturating_add(path.len());
+                    }
+                }
+            }
         }
         total
     }
@@ -407,7 +420,7 @@ impl Children {
         }
         self.entries
             .get(&key)
-            .filter(|entry| !entry.load_error)
+            .filter(|entry| !entry.load_error && !entry.snapshot.truncated_tool_images_overflow)
             .map_or((&[], None), |entry| {
                 (
                     entry.snapshot.steps.as_slice(),

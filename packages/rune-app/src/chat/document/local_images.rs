@@ -56,6 +56,7 @@ pub(super) struct Candidate {
     pub(super) paths: Vec<KnownPath>,
     pub(super) source: PictureSource,
     pub(super) mime: String,
+    pub(super) call: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -588,16 +589,26 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
         return Match::Miss;
     }
     if target.starts_with('/') || windows_path(&target) {
+        let mut matched: Option<&'a Candidate> = None;
         for candidate in candidates {
             if candidate
                 .paths
                 .iter()
                 .any(|known| known.comparable == target)
             {
-                return Match::Found(candidate);
+                if let Some(first) = matched {
+                    if first.call.is_some() && first.call == candidate.call {
+                        return Match::Ambiguous;
+                    }
+                    break;
+                }
+                matched = Some(candidate);
+                if candidate.call.is_none() {
+                    break;
+                }
             }
         }
-        return Match::Miss;
+        return matched.map_or(Match::Miss, Match::Found);
     }
     let mut stripped = target.as_str();
     while let Some(rest) = stripped.strip_prefix("./") {
@@ -608,7 +619,7 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     }
     let rel = format!("/{stripped}");
     let rel_lower = rel.to_lowercase();
-    let mut matched_paths: HashMap<&str, &'a Candidate> = HashMap::new();
+    let mut matched_paths: HashMap<&str, (Option<u64>, Option<&'a Candidate>)> = HashMap::new();
     for candidate in candidates {
         let mut best: Option<&str> = None;
         for known in &candidate.paths {
@@ -627,15 +638,26 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
             }
         }
         if let Some(key) = best {
-            matched_paths.entry(key).or_insert(candidate);
+            match matched_paths.entry(key) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert((candidate.call, Some(candidate)));
+                }
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    let (owner_call, entry) = slot.get_mut();
+                    if owner_call.is_some() && *owner_call == candidate.call {
+                        *entry = None;
+                    }
+                }
+            }
         }
     }
     match matched_paths.len() {
         0 => Match::Miss,
-        1 => matched_paths
-            .into_values()
-            .next()
-            .map_or(Match::Miss, Match::Found),
+        1 => match matched_paths.into_values().next() {
+            Some((_, Some(candidate))) => Match::Found(candidate),
+            Some((_, None)) => Match::Ambiguous,
+            None => Match::Miss,
+        },
         _ => Match::Ambiguous,
     }
 }
@@ -670,7 +692,7 @@ pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> Vec<Vec<String>> {
     out
 }
 
-fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
+fn collect_tool_candidates(tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
     if tool.status != "completed" || tool.pictures.is_empty() {
         return;
     }
@@ -703,6 +725,7 @@ fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
                 paths,
                 source: picture.source.clone(),
                 mime: picture.mime.clone(),
+                call: Some(call),
             });
         }
     }
@@ -710,10 +733,12 @@ fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
 
 pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     let mut out = Vec::new();
+    let mut next_call = 1u64;
     for row in messages.iter().rev() {
         for part in row.parts.iter().rev() {
             if let Part::Tool(tool) = part {
-                collect_tool_candidates(tool, &mut out);
+                collect_tool_candidates(tool, next_call, &mut out);
+                next_call += 1;
             }
         }
     }
@@ -725,7 +750,10 @@ fn child_candidates(
     truncated_images: Option<&HashMap<(String, String), Vec<Vec<String>>>>,
 ) -> Vec<Candidate> {
     let mut out = Vec::new();
+    let mut next_call = 1u64;
     for (row_id, tool) in steps.iter().rev() {
+        let call = next_call;
+        next_call += 1;
         if let Some(shadows) =
             truncated_images.and_then(|map| map.get(&(row_id.clone(), tool.id.clone())))
         {
@@ -739,12 +767,13 @@ fn child_candidates(
                         paths,
                         source: PictureSource::Unavailable,
                         mime: String::new(),
+                        call: Some(call),
                     });
                 }
             }
             continue;
         }
-        collect_tool_candidates(tool, &mut out);
+        collect_tool_candidates(tool, call, &mut out);
     }
     out
 }
