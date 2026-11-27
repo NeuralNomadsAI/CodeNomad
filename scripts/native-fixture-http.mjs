@@ -46,7 +46,7 @@ export {
 }
 
 const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
-const repoRootReal=realpathSync(repoRoot)
+const repoRootReal=realpathSync.native(repoRoot)
 const worktreesDir=path.dirname(repoRootReal)
 const worktreeNodeModules=path.join(repoRoot,'node_modules')
 
@@ -67,20 +67,20 @@ export function sameWorktreeRepoAndManifests(dirA,dirB){
     if(!existsSync(fileA)||!existsSync(fileB)||hash(fileA)!==hash(fileB))return false
   }
   const verifiedCommonGitDir=dir=>{
-    const dirReal=realpathSync(dir)
+    const dirReal=realpathSync.native(dir)
     const dotGit=path.join(dirReal,'.git')
     if(!existsSync(dotGit)||lstatSync(dotGit).isDirectory())return null
     const raw=readFileSync(dotGit,'utf8').trim()
     const match=/^gitdir:\s*(.+)$/i.exec(raw)
     if(!match)return null
-    const gitDir=realpathSync(path.resolve(dirReal,match[1].trim()))
+    const gitDir=realpathSync.native(path.resolve(dirReal,match[1].trim()))
     const commonFile=path.join(gitDir,'commondir')
     const backlinkFile=path.join(gitDir,'gitdir')
     if(!existsSync(commonFile)||!existsSync(backlinkFile))return null
-    const commonDir=realpathSync(path.resolve(gitDir,readFileSync(commonFile,'utf8').trim()))
+    const commonDir=realpathSync.native(path.resolve(gitDir,readFileSync(commonFile,'utf8').trim()))
     const worktreesRoot=path.join(commonDir,'worktrees')
     if(!isWithin(worktreesRoot,gitDir)||gitDir===worktreesRoot)return null
-    const backlinkDotGit=realpathSync(path.resolve(gitDir,readFileSync(backlinkFile,'utf8').trim()))
+    const backlinkDotGit=realpathSync.native(path.resolve(gitDir,readFileSync(backlinkFile,'utf8').trim()))
     if(backlinkDotGit!==dotGit)return null
     return commonDir
   }
@@ -152,7 +152,7 @@ export function stripFixtureServerSecrets(env){
 
 export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
-  const rootReal=realpathSync(nodeModulesDir)
+  const rootReal=realpathSync.native(nodeModulesDir)
   const inWorktree=isWithin(repoRootReal,rootReal)
   // Worktrees created under .codenomad/worktrees may mount node_modules as a read-only junction/symlink
   // to a lockfile-identical sibling worktree (never the parent checkout).
@@ -171,11 +171,11 @@ export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
 export function assertWorktreeModuleResolution(specifier,fromFile,nodeModulesDir=worktreeNodeModules){
   const {nodeModulesReal}=worktreeDependencyRoots(nodeModulesDir)
   const scopedRequire=createRequire(fromFile)
-  const cjsResolved=realpathSync(scopedRequire.resolve(specifier))
+  const cjsResolved=realpathSync.native(scopedRequire.resolve(specifier))
   assert(isWithin(nodeModulesReal,cjsResolved)&&cjsResolved!==nodeModulesReal,
     `Dependency ${specifier} (CJS) from ${fromFile} resolved outside worktree node_modules: ${cjsResolved}`)
   const pkg=packageNameOf(specifier)
-  const pkgJsonPath=realpathSync(scopedRequire.resolve(`${pkg}/package.json`))
+  const pkgJsonPath=realpathSync.native(scopedRequire.resolve(`${pkg}/package.json`))
   assert(isWithin(nodeModulesReal,pkgJsonPath)&&pkgJsonPath!==nodeModulesReal,
     `Package metadata for ${specifier} from ${fromFile} resolved outside worktree node_modules: ${pkgJsonPath}`)
   const pkgDir=path.dirname(pkgJsonPath)
@@ -193,7 +193,7 @@ export function assertWorktreeModuleResolution(specifier,fromFile,nodeModulesDir
   for(const target of candidateTargets){
     const abs=path.resolve(pkgDir,target)
     if(!existsSync(abs))continue
-    const real=realpathSync(abs)
+    const real=realpathSync.native(abs)
     assert(isWithin(nodeModulesReal,real)&&real!==nodeModulesReal,
       `Dependency ${specifier} entry ${target} from ${fromFile} resolved outside worktree node_modules: ${real}`)
   }
@@ -210,10 +210,10 @@ export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModu
   if(nodeModulesDir===worktreeNodeModules){
     const resolvedUrl=import.meta.resolve(specifier)
     assert(resolvedUrl.startsWith('file://'),`Dependency ${specifier} must resolve to a local file`)
-    resolvedPath=realpathSync(fileURLToPath(resolvedUrl))
+    resolvedPath=realpathSync.native(fileURLToPath(resolvedUrl))
   }else{
     const scopedRequire=createRequire(path.join(path.dirname(nodeModulesDir),'package.json'))
-    resolvedPath=realpathSync(scopedRequire.resolve(specifier))
+    resolvedPath=realpathSync.native(scopedRequire.resolve(specifier))
   }
   assert(isWithin(rootReal,resolvedPath)&&resolvedPath!==rootReal,
     `Dependency ${specifier} resolved outside worktree node_modules: ${resolvedPath}`)
@@ -225,7 +225,7 @@ export const isLocalAbsolutePath=value=>typeof value==='string'&&value.length>0&
 
 export function resolveLocalExecutable(raw,label='executable'){
   assert(isLocalAbsolutePath(raw),`Pass an absolute local ${label}`)
-  const resolved=realpathSync(raw)
+  const resolved=realpathSync.native(raw)
   assert(isLocalAbsolutePath(resolved),`Resolved ${label} must stay on a local filesystem`)
   return resolved
 }
