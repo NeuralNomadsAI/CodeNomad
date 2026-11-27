@@ -319,6 +319,9 @@ test("a missing selected coordinator is never recreated and original proof still
     // If the deleted session reappears before publication, the absence fence aborts the CAS.
     f.sessions.set(original.coordinatorSessionID, { id: original.coordinatorSessionID, projectID: "project", location: { directory: "/project" } })
     assert.throws(() => admission.current(), /Native state changed|Selected native session exists/)
+    // Without an absence fence, a missing reused coordinator stays unknown rather than settling unfenced.
+    f.sessions.delete("ses_existing")
+    assert.equal((await admitNativeScheduledPassage({ ...input, settlementFence: undefined })).kind, "unknown")
   })
   assert.deepEqual(f.counts(), { creates: 0, sends: 0, environments: 0 })
   // Once admission has been attempted or recorded, absence must preserve uncertainty.

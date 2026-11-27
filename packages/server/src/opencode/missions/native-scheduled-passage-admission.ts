@@ -66,8 +66,9 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   if (!exists && !dispatchAllowed(doc)) return { kind: "not-started", current: publicationCurrent }
   if (pending.coordinatorReused && !exists) {
     const fence = input.settlementFence?.()
-    fence?.absentSession?.(pending.coordinatorSessionID)
-    return { kind: "not-started", current: () => { publicationCurrent(); return fence ? fence.current() : true } }
+    if (!fence?.absentSession) return { kind: "unknown" }
+    fence.absentSession(pending.coordinatorSessionID)
+    return { kind: "not-started", current: () => { publicationCurrent(); return fence.current() } }
   }
   if (pending.coordinatorReused && pending.admittedAt === null && !observed?.present && !pending.admissionAttempted) {
     if (!dispatchAllowed(doc)) return { kind: "not-started", current: publicationCurrent }
