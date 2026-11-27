@@ -13,6 +13,10 @@ const FIELD: &str = "command-palette-query";
 const FOCUS: &str = "command-palette-query/value/input";
 const CLOSE_KEY: &str = "command-palette-close";
 
+pub(super) fn item_key(id: &str) -> String {
+    format!("command-palette-item-{id}")
+}
+
 #[derive(Default)]
 pub(crate) struct Palette {
     open: bool,
@@ -108,6 +112,7 @@ pub(crate) fn open(s: &mut State, tx: &mut Tx) {
     palette.query.focused = true;
     palette.selected_id = None;
     palette.return_focus = return_focus;
+    tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
     tx.focus_when_shown(FOCUS, true);
     tx.instant();
 }
@@ -167,7 +172,7 @@ fn resolved_selection(
     items.iter().position(|item| !item.disabled).or(Some(0))
 }
 
-fn move_selection(s: &mut State, delta: isize) {
+fn move_selection(s: &mut State, delta: isize, tx: &mut Tx) {
     let items = visible_commands(s);
     let Some(current) = resolved_selection(&items, s.command_palette.selected_id) else {
         s.command_palette.selected_id = None;
@@ -180,13 +185,25 @@ fn move_selection(s: &mut State, delta: isize) {
         let step = delta.unsigned_abs() % len;
         (current + len - step) % len
     };
-    s.command_palette.selected_id = Some(items[next].id);
+    let id = items[next].id;
+    s.command_palette.selected_id = Some(id);
+    if next == 0 {
+        tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
+    }
+    tx.scroll_into_view_in(theme::LIST, item_key(id));
 }
 
-fn select_edge(s: &mut State, end: bool) {
+fn select_edge(s: &mut State, end: bool, tx: &mut Tx) {
     let items = visible_commands(s);
     let target = if end { items.last() } else { items.first() };
-    s.command_palette.selected_id = target.map(|item| item.id);
+    let id = target.map(|item| item.id);
+    s.command_palette.selected_id = id;
+    if let Some(id) = id {
+        if !end {
+            tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
+        }
+        tx.scroll_into_view_in(theme::LIST, item_key(id));
+    }
 }
 
 pub(super) fn execute_by_id(s: &mut State, id: &'static str, tx: &mut Tx) -> bool {
@@ -278,19 +295,19 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.mods == Mods::default() {
         match event.key {
             Key::Down => {
-                move_selection(s, 1);
+                move_selection(s, 1, tx);
                 return true;
             }
             Key::Up => {
-                move_selection(s, -1);
+                move_selection(s, -1, tx);
                 return true;
             }
             Key::Home => {
-                select_edge(s, false);
+                select_edge(s, false, tx);
                 return true;
             }
             Key::End => {
-                select_edge(s, true);
+                select_edge(s, true, tx);
                 return true;
             }
             Key::Enter if tx.focused() != Some(CLOSE_KEY) => {
