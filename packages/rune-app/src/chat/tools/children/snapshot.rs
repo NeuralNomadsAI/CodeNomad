@@ -70,6 +70,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         .map(|(_, tool)| tool.retained_bytes())
         .sum();
     let mut truncated_tools = HashSet::new();
+    let mut truncated_tool_images = HashMap::new();
     let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
         kept_tools
             .into_iter()
@@ -98,6 +99,10 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
                     tool.clone()
                 } else {
                     truncated_tools.insert((row.id.clone(), tool.id.clone()));
+                    let shadows = crate::chat::document::tool_image_paths(tool);
+                    if !shadows.is_empty() {
+                        truncated_tool_images.insert((row.id.clone(), tool.id.clone()), shadows);
+                    }
                     Arc::new(tool.with_budget(cap))
                 };
                 (row.id.clone(), bounded)
@@ -161,6 +166,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         steps_truncated,
         steps_incomplete: steps_truncated || page.older.is_some(),
         truncated_tools,
+        truncated_tool_images,
         reports,
     }
 }

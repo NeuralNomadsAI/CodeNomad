@@ -233,4 +233,9 @@ fn stale_save_dialog_after_cancel_or_message_eviction_does_not_write() {
     assert!(state.attachments.saving);
     assert!(!state.attachments.error);
     assert!(Reader::confirm_save_dialog(&mut state, fresh_token));
+
+    // 4. Transient offline/disconnect preserves an already-fetched open save dialog.
+    state.attachments.offline();
+    assert!(state.attachments.saving);
+    assert!(Reader::confirm_save_dialog(&mut state, fresh_token));
 }

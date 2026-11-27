@@ -118,6 +118,7 @@ struct Snapshot {
     steps_truncated: bool,
     steps_incomplete: bool,
     truncated_tools: HashSet<(String, String)>,
+    truncated_tool_images: HashMap<(String, String), Vec<Vec<String>>>,
     reports: Reports,
 }
 
@@ -392,19 +393,27 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
-    pub(in crate::chat) fn verified_tools(
+    pub(in crate::chat) fn verified_tool_state(
         &self,
         parent: Option<&str>,
         id: &str,
-    ) -> &[(String, Arc<Tool>)] {
+    ) -> (
+        &[(String, Arc<Tool>)],
+        Option<&HashMap<(String, String), Vec<Vec<String>>>>,
+    ) {
         let key = child_key(parent, id);
         if self.unavailable.contains(&key) {
-            return &[];
+            return (&[], None);
         }
         self.entries
             .get(&key)
             .filter(|entry| !entry.load_error)
-            .map_or(&[], |entry| entry.snapshot.steps.as_slice())
+            .map_or((&[], None), |entry| {
+                (
+                    entry.snapshot.steps.as_slice(),
+                    Some(&entry.snapshot.truncated_tool_images),
+                )
+            })
     }
 
     pub(super) fn steps_truncated(&self, parent: Option<&str>, id: &str) -> bool {

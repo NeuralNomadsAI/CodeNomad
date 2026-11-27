@@ -143,6 +143,11 @@ impl Actions {
             reread: false,
         });
     }
+
+    #[cfg(test)]
+    pub(in crate::chat) fn fixture_set_boundary(&mut self, id: Option<&str>) {
+        self.boundary = id.map(str::to_owned);
+    }
 }
 
 fn available(s: &State) -> bool {

@@ -640,6 +640,36 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     }
 }
 
+pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> Vec<Vec<String>> {
+    if tool.status != "completed" || tool.pictures.is_empty() {
+        return Vec::new();
+    }
+    let input_path = tool
+        .input
+        .get("filePath")
+        .or_else(|| tool.input.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    let single = tool.pictures.len() == 1;
+    let mut out = Vec::new();
+    for picture in &tool.pictures {
+        let mut paths = Vec::new();
+        if let Some(name) = picture.name.as_deref().filter(|value| !value.is_empty()) {
+            paths.push(name.to_owned());
+        }
+        if single
+            && let Some(path) = input_path
+            && !paths.iter().any(|existing| existing == path)
+        {
+            paths.push(path.to_owned());
+        }
+        if !paths.is_empty() {
+            out.push(paths);
+        }
+    }
+    out
+}
+
 fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
     if tool.status != "completed" || tool.pictures.is_empty() {
         return;
@@ -690,9 +720,30 @@ pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     out
 }
 
-fn child_candidates(steps: &[(String, Arc<Tool>)]) -> Vec<Candidate> {
+fn child_candidates(
+    steps: &[(String, Arc<Tool>)],
+    truncated_images: Option<&HashMap<(String, String), Vec<Vec<String>>>>,
+) -> Vec<Candidate> {
     let mut out = Vec::new();
-    for (_, tool) in steps.iter().rev() {
+    for (row_id, tool) in steps.iter().rev() {
+        if let Some(shadows) =
+            truncated_images.and_then(|map| map.get(&(row_id.clone(), tool.id.clone())))
+        {
+            for raw_paths in shadows {
+                let paths: Vec<KnownPath> = raw_paths
+                    .iter()
+                    .filter_map(|raw| KnownPath::new(raw))
+                    .collect();
+                if !paths.is_empty() {
+                    out.push(Candidate {
+                        paths,
+                        source: PictureSource::Unavailable,
+                        mime: String::new(),
+                    });
+                }
+            }
+            continue;
+        }
         collect_tool_candidates(tool, &mut out);
     }
     out
@@ -735,9 +786,13 @@ pub(super) fn prepare(
         return Plan::empty(clip);
     }
     let candidates = match conversation {
-        Conversation::Root => session_candidates(&s.messages),
+        Conversation::Root => session_candidates(crate::chat::anchors::visible_rows(s)),
         Conversation::Child { parent, id } => {
-            child_candidates(s.transcript_display.children.verified_tools(parent, id))
+            let (steps, truncated_images) = s
+                .transcript_display
+                .children
+                .verified_tool_state(parent, id);
+            child_candidates(steps, truncated_images)
         }
         Conversation::None => Vec::new(),
     };

@@ -71,6 +71,15 @@ impl Reader {
         self.write = None;
         self.error = false;
     }
+    pub fn offline(&mut self) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|request| request.source.needs_backend())
+        {
+            self.pending = None;
+        }
+    }
     fn begin_save(&mut self, source: DownloadSource) -> u64 {
         self.generation = self.generation.wrapping_add(1);
         let token = self.generation;
@@ -187,8 +196,9 @@ fn download_source(file: &crate::content::File) -> Option<DownloadSource> {
 }
 
 fn contains(s: &State, target: &DownloadSource) -> bool {
+    let rows = super::anchors::visible_rows(s);
     match target {
-        DownloadSource::Reference(reference) => s.messages.iter().any(|row| {
+        DownloadSource::Reference(reference) => rows.iter().any(|row| {
             row.id == reference.message
                 && row.parts.iter().any(|part| {
                     matches!(part, crate::content::Part::File(file)
@@ -199,7 +209,7 @@ fn contains(s: &State, target: &DownloadSource) -> bool {
             file_id,
             source,
             mime,
-        } => s.messages.iter().any(|row| {
+        } => rows.iter().any(|row| {
             row.parts.iter().any(|part| {
                 matches!(part, crate::content::Part::File(file)
                     if file.id == *file_id

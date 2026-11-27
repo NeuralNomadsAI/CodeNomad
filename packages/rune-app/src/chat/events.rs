@@ -487,7 +487,7 @@ fn drain_chat(
                 if !s.history_detached {
                     s.phase = Phase::Reconnecting;
                 }
-                s.attachments.cancel();
+                s.attachments.offline();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
                     a.attention.disconnected();

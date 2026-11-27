@@ -1204,3 +1204,98 @@ fn nested_images_flatten_local_and_remote_inner_destinations() {
         }
     }
 }
+
+#[test]
+fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels() {
+    // 1. Root conversation hides tool images from messages at or after the active revert boundary.
+    let kept = history::decode_message(&json!({
+        "id":"m1","type":"assistant","time":{"completed":1},
+        "content":[{"type":"text","text":"![Chart](/tmp/reverted.png)"}]
+    }))
+    .unwrap();
+    let reverted_tool = history::decode_message(&json!({
+        "id":"m2","type":"assistant","time":{"completed":2},
+        "content":[{
+            "type":"tool","id":"call-rev","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/reverted.png"},
+                "content":[{"type":"file","name":"reverted.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut s = init();
+    s.messages = vec![kept.into(), reverted_tool.into()];
+    s.transcript_display
+        .messages
+        .fixture_set_boundary(Some("m2"));
+    let plan = prepare(
+        &s,
+        "m1-prose",
+        "![Chart](/tmp/reverted.png)",
+        false,
+        Conversation::Root,
+    );
+    let fallback = plan.fallback_label();
+    assert_eq!(
+        fallback("/tmp/reverted.png", true).as_deref(),
+        Some("reverted.png"),
+        "reverted tool image must not resolve for visible prose"
+    );
+
+    // 2. Child task snapshot truncation of a newer reread shadows an older kept read of the same path.
+    let older_read = history::decode_message(&json!({
+        "id":"c1","type":"assistant","time":{"completed":1},
+        "content":[{
+            "type":"tool","id":"call-old","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/child-chart.png"},
+                "content":[{"type":"file","name":"child-chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let huge_output = "x".repeat(2_200_000);
+    let newer_truncated = history::decode_message(&json!({
+        "id":"c2","type":"assistant","time":{"completed":2},
+        "content":[{
+            "type":"tool","id":"call-new","name":"read",
+            "state":{
+                "status":"completed",
+                "input":{"filePath":"/tmp/child-chart.png"},
+                "output":huge_output,
+                "content":[{"type":"file","name":"child-chart.png","mime":"image/png","uri":format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut child_state = init();
+    let _lease = child_state.transcript_display.children.install(
+        "child-trunc",
+        history::Page {
+            rows: vec![older_read.into(), newer_truncated.into()],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        },
+    );
+    let child_plan = prepare(
+        &child_state,
+        "task-out",
+        "![Chart](/tmp/child-chart.png)",
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "child-trunc",
+        },
+    );
+    let child_fallback = child_plan.fallback_label();
+    assert_eq!(
+        child_fallback("/tmp/child-chart.png", true).as_deref(),
+        Some("child-chart.png"),
+        "truncated newer child reread must shadow older kept pixels"
+    );
+}
