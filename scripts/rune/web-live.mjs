@@ -88,6 +88,28 @@ async function fetchOwnedStatus(route, origin, context, attestedGet){
   return {status:response.status,headers,text,body}
 }
 
+export function shouldServeSse503(probes){
+  if(probes.length<=2)return true
+  if(probes.length===3){
+    const delay1=probes[1].receivedAt-probes[0].fulfilledAt
+    const delay2=probes[2].receivedAt-probes[1].fulfilledAt
+    return !(delay1>=750&&delay2>=1600&&delay2>delay1)
+  }
+  return false
+}
+
+export function assertSse503Backoff(probes){
+  assert(probes.length===3||probes.length===4,
+    `Expected 3 or 4 /api/auth/status probes for one multiplexed SSE episode, observed ${probes.length}`)
+  const start=probes.length-3
+  const retryDelay1Ms=probes[start+1].receivedAt-probes[start].fulfilledAt
+  const retryDelay2Ms=probes[start+2].receivedAt-probes[start+1].fulfilledAt
+  assert(retryDelay1Ms>=750,`Expected first bounded retry delay (~1 s, >=750 ms), observed ${Math.round(retryDelay1Ms)} ms`)
+  assert(retryDelay2Ms>=1600,`Expected second bounded retry delay (~2 s, >=1600 ms), observed ${Math.round(retryDelay2Ms)} ms`)
+  assert(retryDelay2Ms>retryDelay1Ms,`Expected second retry delay (${Math.round(retryDelay2Ms)} ms) to exceed first (${Math.round(retryDelay1Ms)} ms)`)
+  return {retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes:start}
+}
+
 async function verifySseAuthenticated503Recovery({
   page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
 }){
@@ -102,6 +124,7 @@ async function verifySseAuthenticated503Recovery({
   let recoveredStatuses=0
   let retryDelay1Ms=0
   let retryDelay2Ms=0
+  let coalescedSlotProbes=0
   let forbiddenError=null
   const tab=await context.newPage()
   try {
@@ -112,7 +135,7 @@ async function verifySseAuthenticated503Recovery({
       let sseGate='pass'
       let routeError=null
       let sseBeforeFirstProbe=0
-      const statusTimes=[]
+      const statusProbes=[]
       const first503Served=Promise.withResolvers()
       const releaseRecovered=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
@@ -142,15 +165,23 @@ async function verifySseAuthenticated503Recovery({
         return route.fulfill({status:503,contentType:'application/json',body:'{}'})
       }
       const routeStatus=async route=>{
+        const receivedAt=performance.now()
         if(route.request().method()!=='GET')return route.fallback()
         if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
         if(!injectTransient503)return route.fallback()
-        statusTimes.push(performance.now())
-        const attempt=statusTimes.length
+        const probe={receivedAt,fulfilledAt:receivedAt}
+        statusProbes.push(probe)
+        const attempt=statusProbes.length
         if(attempt===1)sseBeforeFirstProbe=eventSources()
-        if(attempt<=2){
+        if(recoveredStatuses>0||attempt>4){
+          routeError??=new Error(`Unexpected /api/auth/status probe #${attempt} after bounded SSE 503 recovery`)
+          await route.abort().catch(()=>{})
+          return
+        }
+        if(shouldServeSse503(statusProbes)){
           transient503s++
           await route.fulfill({status:503,contentType:'application/json',body:'{}'})
+          probe.fulfilledAt=performance.now()
           if(attempt===1)first503Served.resolve()
           return
         }
@@ -161,6 +192,7 @@ async function verifySseAuthenticated503Recovery({
           assert(!body.pairingRequired)
           recoveredStatuses++
           await route.fulfill({status,headers,body:text})
+          probe.fulfilledAt=performance.now()
           recoveredCaptured.resolve()
         } catch (err) {
           routeError??=err
@@ -211,14 +243,9 @@ async function verifySseAuthenticated503Recovery({
         const accidentalSignals=await step(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[]))
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
         assert(sseBeforeFirstProbe>beforeSseAuth,'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
-        assert.equal(statusTimes.length,3,'Expected exactly three /api/auth/status probes for one SSE-authenticated episode')
-        assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
+        ;({retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes}=assertSse503Backoff(statusProbes))
+        assert.equal(transient503s,statusProbes.length-1,'Every pre-recovery /api/auth/status probe must receive 503')
         assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
-        retryDelay1Ms=statusTimes[1]-statusTimes[0]
-        retryDelay2Ms=statusTimes[2]-statusTimes[1]
-        assert(retryDelay1Ms>=750,`Expected first bounded retry delay (~1 s, >=750 ms), observed ${Math.round(retryDelay1Ms)} ms`)
-        assert(retryDelay2Ms>=1600,`Expected second bounded retry delay (~2 s, >=1600 ms), observed ${Math.round(retryDelay2Ms)} ms`)
-        assert(retryDelay2Ms>retryDelay1Ms,`Expected second retry delay (${Math.round(retryDelay2Ms)} ms) to exceed first (${Math.round(retryDelay1Ms)} ms)`)
       } catch (err) {
         if(forbiddenError)throw forbiddenError
         throw err
@@ -235,7 +262,7 @@ async function verifySseAuthenticated503Recovery({
   await connecting.waitFor({state:'hidden',timeout:15_000})
   assert.equal(await (await focus()).inputValue(),draft)
   assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
-  return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
+  return {transient503s,recoveredStatuses,coalescedSlotProbes,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
 }
 
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y),onRestart,attestedGet}){

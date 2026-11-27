@@ -272,7 +272,7 @@ const upstream=createServer(async(req,res)=>{
         }
         if(req.method==='DELETE'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){keyboardFormSettled=true;return json({data:{}})}
       }
-      if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
+      if(req.method==='GET'&&/^\/api\/session\/[^/]+\/(permission|form|inbox)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
     if(url.pathname==='/api/event') {
