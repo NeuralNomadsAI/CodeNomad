@@ -52,6 +52,7 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
         })
         .on_change(screen::action_tx(&scope, |s, tx| {
             s.command_palette.selected_id = None;
+            s.command_palette.ignore_pointer_hover = true;
             tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
         }))
         .on_key({
@@ -86,7 +87,7 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
             let shortcut = item.shortcut(s);
             let hover_scope = scope.clone();
             let press_scope = scope.clone();
-            rows.push(theme::command_row(
+            let mut row_el = theme::command_row(
                 item_key(id),
                 item.label.as_ref(),
                 item.description.as_deref(),
@@ -94,7 +95,10 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
                 selected == Some(index),
                 item.disabled,
                 move |s: &mut State, hovered, _| {
-                    if hovered && s.current_scope(&hover_scope) {
+                    if hovered
+                        && s.current_scope(&hover_scope)
+                        && !s.command_palette.ignore_pointer_hover
+                    {
                         s.command_palette.selected_id = Some(id);
                     }
                 },
@@ -105,7 +109,22 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
                         });
                     }
                 },
-            ));
+            );
+            if !item.disabled {
+                let move_scope = scope.clone();
+                row_el = row_el.on_pointer_move(move |s: &mut State, p| {
+                    if !s.current_scope(&move_scope) {
+                        return;
+                    }
+                    let pos = (p.x, p.y);
+                    if s.command_palette.last_pointer_pos != Some(pos) {
+                        s.command_palette.last_pointer_pos = Some(pos);
+                        s.command_palette.ignore_pointer_hover = false;
+                        s.command_palette.selected_id = Some(id);
+                    }
+                });
+            }
+            rows.push(row_el);
         }
     }
     let list = theme::list(title, palette.viewport.1, rows);

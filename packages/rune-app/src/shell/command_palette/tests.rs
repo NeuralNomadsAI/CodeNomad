@@ -723,3 +723,98 @@ fn keyboard_navigation_scrolls_list_updates_active_descendant_and_rename_falls_b
         "rename-instance executed by click without prior focus must restore focus to theme::TRIGGER"
     );
 }
+
+#[test]
+fn stationary_pointer_over_scrolling_list_does_not_override_keyboard_selection() {
+    let mut rt = runtime(workspace_state(2));
+    rt.set_viewport((1400.0, 260.0), 1.0);
+    settle(&mut rt);
+
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    let items = strings::with_locale("en", || visible_commands(&rt.state));
+    assert!(items.len() >= 8);
+    let enabled: Vec<_> = items.iter().filter(|item| !item.disabled).collect();
+    assert!(enabled.len() >= 4);
+    let first_id = items[0].id;
+    let second_id = enabled[1].id;
+    let last_id = items.last().unwrap().id;
+    let first_key = item_key(first_id);
+    let second_key = item_key(second_id);
+    let last_key = item_key(last_id);
+
+    // Move the pointer onto the second enabled row: real pointer movement selects it.
+    let (px, py) = rt
+        .find(&second_key)
+        .expect("second enabled command row visible");
+    rt.pointer_move(px, py);
+    settle(&mut rt);
+    assert_eq!(rt.state.command_palette.selected_id, Some(second_id));
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(second_key.as_str())
+    );
+
+    // Keep the pointer stationary over the list and press End to scroll past the fold.
+    // Let Rune's scroll glide finish and re-evaluate hover under the stationary pointer.
+    send_key(&mut rt, Key::End, Mods::default());
+    for _ in 0..45 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(last_id),
+        "scroll-retargeted hover under a stationary pointer must not overwrite End selection"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(last_key.as_str()),
+        "activeDescendant must stay on the keyboard-selected row after scroll settles"
+    );
+
+    // A duplicate pointer event at the exact same coordinates must still not steal selection.
+    rt.pointer_move(px, py);
+    settle(&mut rt);
+    assert_eq!(rt.state.command_palette.selected_id, Some(last_id));
+
+    // Genuine pointer movement onto a scrolled-in enabled row re-enables hover selection.
+    let scrolled_enabled = enabled
+        .iter()
+        .rev()
+        .find(|item| {
+            item.id != last_id
+                && item.id != second_id
+                && rt.elements().into_iter().any(|el| {
+                    el.key.as_deref() == Some(item_key(item.id).as_str()) && el.visible[3] > 4.0
+                })
+        })
+        .expect("another enabled row visible after End");
+    let scrolled_key = item_key(scrolled_enabled.id);
+    let (mx, my) = rt.find(&scrolled_key).expect("scrolled enabled row center");
+    rt.pointer_move(mx, my);
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(scrolled_enabled.id),
+        "moving the pointer after scrolling to End must select the row under the moved cursor"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(scrolled_key.as_str())
+    );
+
+    // Press Home while the pointer rests stationary: selection must stay on the first row.
+    send_key(&mut rt, Key::Home, Mods::default());
+    for _ in 0..45 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(first_id),
+        "stationary pointer must not override Home selection after scrolling back to top"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(first_key.as_str())
+    );
+}

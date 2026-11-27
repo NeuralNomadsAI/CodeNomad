@@ -347,7 +347,9 @@ pub(crate) fn restore_stashed(
         tx.instant();
     }
     capture(s);
-    if let Some(target) = focus_target {
+    if let Some(target) = focus_target
+        && tx.focused().is_none()
+    {
         tx.return_focus(target, tx.focus_visible());
     }
     !active_busy

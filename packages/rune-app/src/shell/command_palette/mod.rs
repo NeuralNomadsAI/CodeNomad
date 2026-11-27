@@ -23,6 +23,8 @@ pub(crate) struct Palette {
     scope: Option<std::rc::Rc<()>>,
     query: TextEdit,
     selected_id: Option<&'static str>,
+    ignore_pointer_hover: bool,
+    last_pointer_pos: Option<(f32, f32)>,
     return_focus: Option<String>,
     viewport: (f32, f32),
     close_control: WindowCloseState,
@@ -34,6 +36,8 @@ impl Palette {
         self.scope = None;
         self.query = TextEdit::new("");
         self.selected_id = None;
+        self.ignore_pointer_hover = false;
+        self.last_pointer_pos = None;
         self.return_focus = None;
         self.close_control = WindowCloseState::default();
     }
@@ -111,6 +115,8 @@ pub(crate) fn open(s: &mut State, tx: &mut Tx) {
     palette.query = TextEdit::new("");
     palette.query.focused = true;
     palette.selected_id = None;
+    palette.ignore_pointer_hover = true;
+    palette.last_pointer_pos = None;
     palette.return_focus = return_focus;
     tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
     tx.focus_when_shown(FOCUS, true);
@@ -187,6 +193,7 @@ fn move_selection(s: &mut State, delta: isize, tx: &mut Tx) {
     };
     let id = items[next].id;
     s.command_palette.selected_id = Some(id);
+    s.command_palette.ignore_pointer_hover = true;
     if next == 0 {
         tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
     }
@@ -198,6 +205,7 @@ fn select_edge(s: &mut State, end: bool, tx: &mut Tx) {
     let target = if end { items.last() } else { items.first() };
     let id = target.map(|item| item.id);
     s.command_palette.selected_id = id;
+    s.command_palette.ignore_pointer_hover = true;
     if let Some(id) = id {
         if !end {
             tx.scroll_to_instant(theme::LIST, 0.0, 0.0);

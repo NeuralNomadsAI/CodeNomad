@@ -398,13 +398,13 @@ fn capture_return_focus(s: &mut State, tab_key: &str, tx: &Tx) -> Option<String>
 
 fn same_abandon_target(current: &Backend, orig: &Backend) -> bool {
     current.base == orig.base
-        && match (
-            current.client.server_identity(),
-            orig.client.server_identity(),
-        ) {
-            (Some(a), Some(b)) => a == b,
-            _ => true,
-        }
+        && matches!(
+            (
+                current.client.server_identity(),
+                orig.client.server_identity(),
+            ),
+            (Some(a), Some(b)) if a == b
+        )
 }
 
 fn spawn_abandon(s: &mut State, backend: Backend, path: String, request_id: Option<String>) {
@@ -715,17 +715,19 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             .and_then(|l| l.connection.clone())
     {
         let mut keep = Vec::new();
+        let mut dispatched = false;
         for item in std::mem::take(&mut s.temporary.pending_abandons) {
-            if same_abandon_target(&conn, &item.backend) {
-                if s.temporary.in_flight_abandons.len() < 16 {
-                    spawn_abandon(s, conn.clone(), item.path, item.request_id);
-                } else if keep.len() < 16 {
-                    keep.push(item);
-                }
+            if same_abandon_target(&conn, &item.backend)
+                && s.temporary.in_flight_abandons.len() < 16
+            {
+                spawn_abandon(s, conn.clone(), item.path, item.request_id);
+                dispatched = true;
+            } else if keep.len() < 16 {
+                keep.push(item);
             }
         }
         s.temporary.pending_abandons = keep;
-        changed = true;
+        changed |= dispatched;
     }
     if let Some(stashed) = s.temporary.pending_restore.take() {
         let _ = workspace::restore_stashed(s, *stashed, false, tx);
