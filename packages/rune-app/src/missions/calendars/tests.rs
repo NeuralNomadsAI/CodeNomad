@@ -364,11 +364,15 @@ fn ui_renders_calendars_pre_first_launch_history_and_inline_editor() {
     assert!(detail_json.contains("Nightly sweep"));
     assert!(detail_json.contains("if · Explicit files change · Cargo.toml"));
     assert!(detail_json.contains("Keep coordinator active with /goal"));
-    assert!(find_node(&tree, "mission-calendar-history-0").is_some());
-    assert!(find_node(&tree, "mission-calendar-history-19").is_some());
+    let first_history = find_node(&tree, "mission-calendar-history-0")
+        .expect("newest history entry")
+        .to_string();
+    let last_history = find_node(&tree, "mission-calendar-history-19")
+        .expect("oldest history entry")
+        .to_string();
     assert!(find_node(&tree, "mission-calendar-history-20").is_none());
 
-    // Newest entry (index 0 in display) is entry #20 ("completed").
+    // Newest entry (index 0 in display) is entry #20 ("completed"), oldest (#19) is entry #1 ("failed").
     let newest = format_history_entry(
         &CalendarLaunchHistoryEntry {
             at: 1700000000000u64 + 20 * 60_000,
@@ -377,7 +381,23 @@ fn ui_renders_calendars_pre_first_launch_history_and_inline_editor() {
         "en",
         "UTC",
     );
+    let oldest = format_history_entry(
+        &CalendarLaunchHistoryEntry {
+            at: 1700000000000u64 + 60_000,
+            outcome: "failed".into(),
+        },
+        "en",
+        "UTC",
+    );
     assert!(newest.ends_with("· Completed"));
+    assert!(
+        first_history.contains(&newest),
+        "history-0 should render newest entry {newest}, got {first_history}"
+    );
+    assert!(
+        last_history.contains(&oldest),
+        "history-19 should render oldest entry {oldest}, got {last_history}"
+    );
 
     // Open inline editor and verify controls + add criterion.
     let (ex, ey) = rt.find("mission-calendar-edit").unwrap();
@@ -655,4 +675,196 @@ fn http_crud_pause_resume_delete_and_auth_expired_round_trip() {
 
         server.abort();
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
+    let mut panel = test_panel("http://127.0.0.1:1/");
+    panel
+        .calendars
+        .fixture_set_entries(vec![decode_calendar(calendar_json(
+            "cal_a", "Original", false, None, None, None,
+        ))]);
+
+    // Simulate an in-flight GET started before a mutation.
+    let (cancel_read, read_cancelled) = bounded(1);
+    panel.calendars.active_read = Some((1, cancel_read));
+    panel.calendars.owed_refresh = true;
+    panel.calendars.serial = 1;
+
+    // Starting a mutation cancels the older GET and clears pre-mutation owed_refresh.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    panel.toggle_calendar_pause("cal_a");
+    assert!(read_cancelled.is_closed());
+    assert!(!panel.calendars.busy_read());
+    assert!(!panel.calendars.owed_refresh);
+    let mutation_serial = panel.calendars.active_mutation.expect("mutation active");
+
+    // A stale GET completion from serial 1 cannot overwrite anything.
+    panel
+        .calendars
+        .out
+        .try_send(Completion {
+            kind: OpKind::Read,
+            serial: 1,
+            outcome: Ok(CalendarOutcome::Ok(vec![decode_calendar(calendar_json(
+                "cal_a",
+                "Stale Before Mutation",
+                false,
+                None,
+                None,
+                None,
+            ))])),
+        })
+        .unwrap();
+
+    // A passive refresh arriving while the mutation is in flight does NOT start a concurrent GET.
+    panel
+        .calendars
+        .refresh(&panel.backend, &panel.reads, &panel.wake);
+    assert!(!panel.calendars.busy_read());
+    assert!(panel.calendars.owed_refresh);
+
+    // Mutation finishes with the authoritative paused snapshot, then dispatches the deferred read.
+    panel
+        .calendars
+        .out
+        .try_send(Completion {
+            kind: OpKind::Mutate,
+            serial: mutation_serial,
+            outcome: Ok(CalendarOutcome::Ok(vec![decode_calendar(calendar_json(
+                "cal_a", "Original", true, None, None, None,
+            ))])),
+        })
+        .unwrap();
+    let (changed, mutated) = panel
+        .calendars
+        .poll(&panel.backend, &panel.reads, &panel.wake);
+    assert!(changed);
+    assert!(mutated);
+    assert!(panel.calendars.entries[0].paused);
+    assert!(
+        panel.calendars.busy_read(),
+        "deferred refresh runs after mutation settles"
+    );
+    panel.calendars.cancel();
+
+    // A 404 calendar-missing mutation also schedules a follow-up resync read.
+    panel.calendars.active_mutation = Some(99);
+    panel
+        .calendars
+        .out
+        .try_send(Completion {
+            kind: OpKind::Mutate,
+            serial: 99,
+            outcome: Ok(CalendarOutcome::Missing),
+        })
+        .unwrap();
+    let (changed, mutated) = panel
+        .calendars
+        .poll(&panel.backend, &panel.reads, &panel.wake);
+    assert!(changed);
+    assert!(!mutated);
+    assert_eq!(
+        panel.calendars.feedback,
+        Some("missions.scheduleList.conflict")
+    );
+    assert!(
+        panel.calendars.busy_read(),
+        "Missing triggers follow-up read"
+    );
+    panel.calendars.cancel();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn passive_refresh_does_not_flicker_loading_and_route_absent_pauses_until_reconnect() {
+    let mut panel = test_panel("http://127.0.0.1:1/");
+    // While an initial/passive read is running with no entries, section does not flicker into view.
+    let (cancel, _rx) = bounded(1);
+    panel.calendars.active_read = Some((1, cancel));
+    let mut rt = Runtime::new(
+        (panel, TextEdit::new("")),
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                panel_view(&s.0, |s: &mut (Panel, TextEdit)| (Some(&mut s.0), &mut s.1))
+            })
+        },
+        (460.0, 760.0),
+        Env::new(true, 1.0),
+    );
+    rt.frame(0.02);
+    assert!(
+        rt.find("mission-calendars-section").is_none(),
+        "empty passive read must not flicker a loading section"
+    );
+
+    // With an existing snapshot, passive refresh keeps the snapshot without injecting a loading banner.
+    rt.update(|s, tx| {
+        s.0.calendars
+            .fixture_set_entries(vec![decode_calendar(calendar_json(
+                "cal_keep",
+                "Keep visible",
+                false,
+                None,
+                None,
+                None,
+            ))]);
+        let (cancel2, _rx2) = bounded(1);
+        s.0.calendars.active_read = Some((2, cancel2));
+        tx.instant();
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let section = find_node(&tree, "mission-calendars-section")
+        .expect("section stays visible")
+        .to_string();
+    assert!(section.contains("Keep visible"));
+    assert!(
+        !section.contains("Loading"),
+        "passive refresh must not flicker a Loading note over the snapshot"
+    );
+
+    // Hiding cancels delete confirmation as well as active reads.
+    rt.state.0.calendars.request_delete("cal_keep");
+    assert!(rt.state.0.calendars.pending_delete().is_some());
+    rt.state.0.calendars.cancel();
+    assert!(rt.state.0.calendars.pending_delete().is_none());
+
+    // An uncoded error on initial read (e.g. older server 404) suppresses further passive reads until reconnect.
+    let mut older = test_panel("http://127.0.0.1:1/");
+    older.calendars.active_read = Some((3, bounded(1).0));
+    older
+        .calendars
+        .out
+        .try_send(Completion {
+            kind: OpKind::Read,
+            serial: 3,
+            outcome: Err("unexpected Mission calendar response (404 Not Found)".into()),
+        })
+        .unwrap();
+    let _ = older
+        .calendars
+        .poll(&older.backend, &older.reads, &older.wake);
+    assert!(older.calendars.unavailable);
+    assert!(!older.calendars.failed);
+    older
+        .calendars
+        .refresh(&older.backend, &older.reads, &older.wake);
+    assert!(
+        !older.calendars.busy_read(),
+        "route_absent skips repeated doomed passive reads"
+    );
+
+    // Reconnect clears route_absent so the next refresh probes again.
+    let rt_tokio = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt_tokio.enter();
+    older.calendars.on_reconnect();
+    older
+        .calendars
+        .refresh(&older.backend, &older.reads, &older.wake);
+    assert!(older.calendars.busy_read());
+    older.calendars.cancel();
 }

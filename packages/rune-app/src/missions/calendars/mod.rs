@@ -40,6 +40,7 @@ pub(crate) struct Calendars {
     active_read: Option<(u64, Sender<()>)>,
     active_mutation: Option<u64>,
     owed_refresh: bool,
+    route_absent: bool,
     pub(super) entries: Vec<CalendarView>,
     pub(super) selected: Option<String>,
     pub(super) loaded: bool,
@@ -61,6 +62,7 @@ impl Default for Calendars {
             active_read: None,
             active_mutation: None,
             owed_refresh: false,
+            route_absent: false,
             entries: Vec::new(),
             selected: None,
             loaded: false,
@@ -85,6 +87,7 @@ impl Calendars {
         self.entries.len().saturating_mul(512)
     }
 
+    #[cfg(test)]
     pub(crate) fn busy_read(&self) -> bool {
         self.active_read.is_some()
     }
@@ -114,20 +117,35 @@ impl Calendars {
             cancel.close();
         }
         self.owed_refresh = false;
+        self.delete_confirm = None;
+    }
+
+    pub(crate) fn on_reconnect(&mut self) {
+        self.cancel();
+        self.route_absent = false;
     }
 
     pub(crate) fn reset_for_rebind(&mut self) {
         self.cancel();
         self.active_mutation = None;
-        self.delete_confirm = None;
+        self.route_absent = false;
     }
 
     pub(crate) fn refresh(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
-        if self.active_read.is_some() {
+        if self.route_absent {
+            return;
+        }
+        if self.active_mutation.is_some() || self.active_read.is_some() {
             self.owed_refresh = true;
             return;
         }
         self.start_read(backend, reads, wake);
+    }
+
+    pub(crate) fn retry_refresh(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
+        self.route_absent = false;
+        self.failed = false;
+        self.refresh(backend, reads, wake);
     }
 
     fn start_read(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
@@ -180,7 +198,11 @@ impl Calendars {
                     changed = true;
                     let owed = std::mem::take(&mut self.owed_refresh);
                     self.apply_outcome(OpKind::Read, done.outcome, backend);
-                    if owed && self.auth_expired.is_none() {
+                    if owed
+                        && self.active_mutation.is_none()
+                        && self.auth_expired.is_none()
+                        && !self.route_absent
+                    {
                         self.start_read(backend, reads, wake);
                     }
                 }
@@ -189,11 +211,22 @@ impl Calendars {
                         continue;
                     }
                     self.active_mutation = None;
+                    if let Some((_, cancel)) = self.active_read.take() {
+                        cancel.close();
+                    }
                     changed = true;
+                    let owed = std::mem::take(&mut self.owed_refresh);
+                    let needs_resync = matches!(
+                        done.outcome,
+                        Ok(CalendarOutcome::Missing | CalendarOutcome::Unavailable) | Err(_)
+                    );
                     if matches!(done.outcome, Ok(CalendarOutcome::Ok(_))) {
                         mutated = true;
                     }
                     self.apply_outcome(OpKind::Mutate, done.outcome, backend);
+                    if (owed || needs_resync) && self.auth_expired.is_none() && !self.route_absent {
+                        self.start_read(backend, reads, wake);
+                    }
                 }
             }
         }
@@ -207,6 +240,7 @@ impl Calendars {
                 self.loaded = true;
                 self.failed = false;
                 self.unavailable = false;
+                self.route_absent = false;
                 if kind == OpKind::Mutate {
                     self.feedback = None;
                     self.editor = None;
@@ -251,8 +285,9 @@ impl Calendars {
                         self.failed = true;
                     } else {
                         // Older servers without `/missions/calendars` return 404 without a code:
-                        // stay safely inactive instead of cluttering one-time Missions.
+                        // stay safely inactive until reconnect or rebind instead of repeating doomed reads.
                         self.unavailable = true;
+                        self.route_absent = true;
                     }
                 } else {
                     self.feedback = Some("missions.control.mutation.error");
@@ -340,6 +375,11 @@ impl Calendars {
     }
 
     fn spawn_mutation(&mut self, backend: &Backend, wake: &Wake, op: MutationOp) {
+        // Cancel any in-flight GET so an older snapshot cannot overwrite this mutation's result.
+        if let Some((_, cancel)) = self.active_read.take() {
+            cancel.close();
+        }
+        self.owed_refresh = false;
         self.serial = self.serial.wrapping_add(1);
         let serial = self.serial;
         self.active_mutation = Some(serial);

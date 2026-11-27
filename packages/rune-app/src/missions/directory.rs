@@ -327,7 +327,7 @@ impl Panel {
 
     pub(super) fn refresh_calendars(&mut self) {
         self.calendars
-            .refresh(&self.backend, &self.reads, &self.wake);
+            .retry_refresh(&self.backend, &self.reads, &self.wake);
     }
 
     pub(super) fn toggle_calendar_pause(&mut self, id: &str) {
@@ -357,7 +357,7 @@ impl Panel {
             // A reconnect retires publication authority while keeping the display.
             self.detail.cancel();
             self.observation.cancel();
-            self.calendars.cancel();
+            self.calendars.on_reconnect();
             self.reader.invalidate();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {

@@ -90,7 +90,7 @@ impl CriterionDraft {
             }
             LaunchCriterion::FilesChanged { paths } => {
                 draft.kind = CriterionKind::FilesChanged;
-                draft.primary = TextEdit::new(&paths.join("\n"));
+                draft.primary = TextEdit::new(paths.join("\n"));
                 draft.secondary = TextEdit::new("");
             }
             LaunchCriterion::BranchCommits { directory, git_ref } => {

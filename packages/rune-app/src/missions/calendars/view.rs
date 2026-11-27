@@ -25,11 +25,12 @@ use rune_theme_codenomad::{
 pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<OpenTask<S>>) -> El {
     let calendars = &ui.calendars;
     let should_show = !calendars.entries.is_empty()
-        || calendars.busy_read()
         || calendars.failed
         || calendars.busy_mutation()
         || calendars.feedback.is_some();
-    if !should_show {
+    if !should_show
+        || (calendars.unavailable && calendars.entries.is_empty() && calendars.feedback.is_none())
+    {
         return rune::el();
     }
 
@@ -64,9 +65,7 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
         section = section.child(list);
     }
 
-    if calendars.busy_read() {
-        section = section.child(theme::note(t("missions.control.loading"), "status"));
-    } else if calendars.failed {
+    if calendars.failed {
         let retry_owner = owner.clone();
         section = section
             .child(theme::note(t("missions.scheduleList.readFailed"), "alert"))
