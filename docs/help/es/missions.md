@@ -144,6 +144,8 @@ Cerrar CodeNomad no detiene trabajo nativo. Las programaciones nativas activadas
 
 Algunas acciones de coordinación y recuperación necesitan el servidor CodeNomad.
 
+Una Misión puntual en curso sigue asignando sus tareas y entregando sus informes aunque ninguna ventana de CodeNomad tenga el proyecto abierto. Las variables de entorno y los ajustes de permisos cambiados en CodeNomad vuelven a aplicarse a esas conversaciones cuando el proyecto está abierto.
+
 ## Pausa, parada y acciones no confirmadas {#controls-recovery}
 
 Pausa puntual deja acabar los pasos actuales sin empezar otros; interrumpir solicita interrupción inmediata. Parar es terminal y requiere confirmación. La pausa de programación cierra futuros inicios y pide interrumpir la pasada actual. Los efectos de herramientas pueden continuar.

@@ -181,6 +181,29 @@ test("mission discovery waits for cold ownership validation and still rejects co
   }
 })
 
+test("a mission input runs the caller's own effect only when no backend can own the session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-mission-unowned-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const removals: Array<() => Promise<void>> = []
+  const servers: http.Server[] = []
+  try {
+    assert.equal(await sendMissionInput("ses_free", "prompt", {}, async () => "own"), "own", "no backend runs")
+    let status = 404
+    const other = await listen(async (_body, response) => { response.statusCode = status; return { error: "Not this backend" } })
+    servers.push(other.server)
+    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(other.url)))
+    assert.equal(await sendMissionInput("ses_free", "prompt", {}, async () => "own"), "own", "every backend disowns the session")
+    await assert.rejects(sendMissionInput("ses_free", "prompt", {}), /exactly one owning/)
+    status = 500
+    await assert.rejects(sendMissionInput("ses_free", "prompt", {}, async () => assert.fail("ownership is unknown")), /exactly one owning/)
+  } finally {
+    await Promise.all(removals.map(remove => remove()))
+    await Promise.all(servers.map(closeServer))
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 const fixtureSnapshot = { url: "https://example.test/", snapshot: "WebKit native result", collapsed: 0 }
 
 test("WSL translates the exact Unicode LOCALAPPDATA reported by cmd.exe", { skip: process.platform !== "win32" }, async t => {

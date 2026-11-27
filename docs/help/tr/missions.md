@@ -144,6 +144,8 @@ CodeNomad'ı kapatmak yerel işi durdurmaz. Etkin yerel programlar hizmet/makine
 
 Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
+Çalışan tek seferlik Görev, projeyi açık tutan bir CodeNomad penceresi yokken de işlerini atamayı ve raporlarını iletmeyi sürdürür. CodeNomad'da değiştirilen ortam değişkenleri ve izin ayarları, proje açıldığında bu konuşmalara yeniden uygulanır.
+
 ## Duraklatma, durdurma ve doğrulanmamış işlemler {#controls-recovery}
 
 Tek seferlik Duraklat, yeni iş başlatmadan mevcut adımları bitirir; hemen kesme, doğrudan kesinti ister. Durdur kalıcıdır ve onay gerekir. Programı duraklatmak gelecekteki başlatmaları kapatır ve mevcut geçişin kesilmesini ister. Araç etkileri devam edebilir.

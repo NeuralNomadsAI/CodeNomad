@@ -165,6 +165,8 @@ Closing a project or CodeNomad does not stop native OpenCode work. Armed native 
 
 Some coordination and recovery actions need the CodeNomad backend.
 
+A running one-time Mission keeps assigning its tasks and delivering their reports while no CodeNomad window has the project open. Environment variables and permission settings changed in CodeNomad apply to those conversations again once the project is open.
+
 ## Pause, Stop and unconfirmed actions {#controls-recovery}
 
 One-time **Pause** lets current steps finish without starting new work. **Interrupt now** requests immediate interruption. **Stop** is terminal and asks for confirmation. Native schedule Pause closes future admission and requests interruption of its current passage. Tool effects may continue after an interruption; inspect partial results.

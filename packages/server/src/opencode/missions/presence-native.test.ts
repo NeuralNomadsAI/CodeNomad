@@ -176,7 +176,8 @@ export default { ...desktop, async setup(ctx) {
     await writeFile(lease, "")
     await until(registered)
     assert.equal(await rpc.setups({}, { location }), 2)
-    assert.equal(await rpc.transforms({}, { location }), 1, "presence never registers tools again")
+    // The Mission tools and the calendar tool, both at plugin load.
+    assert.equal(await rpc.transforms({}, { location }), 2, "presence never registers tools again")
     const coordinator = await client.session.create({ location, title: "Lifetime fixture" })
     const invoke = (tool: string, input: unknown, callID: string) => call(coordinator.id, tool, input, callID)
     await invoke("inspect", { start: { objective: "Finish after close", template: "custom" } }, "start")

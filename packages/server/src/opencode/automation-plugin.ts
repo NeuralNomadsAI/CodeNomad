@@ -624,6 +624,8 @@ async function probeMissionBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
   purpose: "mission" | "mission-preferences" | "mission-prepare",
+  /** Counts backends that neither claimed nor disowned the session (a refused connection is no backend). */
+  unknown?: { count: number },
 ): Promise<DiscoveredBridgeRegistration[]> {
   const strict = purpose === "mission-preferences" || purpose === "mission-prepare"
   const found: DiscoveredBridgeRegistration[] = []
@@ -639,10 +641,12 @@ async function probeMissionBridges(
         }
         if (strict && response.status === 404 && response.body.code === undefined) throw missionRecoveryControlError("mission-preferences-update-required")
         if (strict && !(response.status === 404 && response.body.code === "mission-not-owner")) throw new Error("Mission backend ownership is unavailable")
+        if (unknown && response.status !== 404) unknown.count++
         return undefined
       } catch (error) {
         if (isConnectionRefused(error)) return undefined
         if (strict) throw error
+        if (unknown) unknown.count++
         return undefined
       }
     }))
@@ -694,12 +698,16 @@ export async function readMissionConfigurations(sessionID: string): Promise<unkn
 }
 
 export async function sendMissionInput(sessionID: string,
-  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "schedule" | "settings" | "project-read" | "project-control" | "project-control-verify" | "project-update" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "schedule" | "settings" | "project-read" | "project-control" | "project-control-verify" | "project-update" | "task-sessions" | "interrupt", input: unknown,
+  /** Runs instead when every CodeNomad backend disowns the session, or none runs: the caller's own native effect. */
+  unowned?: () => Promise<unknown>): Promise<unknown> {
   let targets: DiscoveredBridgeRegistration[]
   const requiresDefaults = kind === "prepare" || kind === "schedule" || kind === "settings" || kind === "project-read" || kind.startsWith("project-control") || kind === "project-update"
   try {
     // A backend without native browsers can still claim the session for dispatch.
-    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults ? "mission" : undefined }), sessionID, requiresDefaults ? "mission-prepare" : "mission")
+    const unknown = { count: 0 }
+    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults ? "mission" : undefined }), sessionID, requiresDefaults ? "mission-prepare" : "mission", unknown)
+    if (unowned && !targets.length && !unknown.count) return unowned()
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
     if (error instanceof MissionControlError && error.code === "mission-preferences-update-required") throw error

@@ -2021,7 +2021,8 @@ export class MissionControl {
     // when a late root is now readable. GET existence cannot settle an ACK loss.
     if (ownsCreation && this.options.createManagedRoot) {
       this.assertActive()
-      return this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      const created = await this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      if (created) return created
     }
     if (actor.managed && !ownsCreation) {
       // managed is immutable cleanup provenance, not a create permit for every

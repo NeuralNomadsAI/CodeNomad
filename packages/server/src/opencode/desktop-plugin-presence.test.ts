@@ -280,3 +280,22 @@ test("separate bundles retain overlapping readers and evict only finally unsubsc
   assert.equal(shared.scans(), 2, "The final cross-bundle unsubscribe must evict even a deduplicated array reader")
   assert.equal(sharedDisposed, 1)
 })
+
+test("a follower registers without presence on request and keeps its registration while retained", async t => {
+  const f = await fixture(t)
+  await fs.rm(f.lease)
+  let registered = 0, disposed = 0, wanted = false, retained = true
+  const stop = await followPresence(f.directory, async () => { registered++; return () => { disposed++ } }, undefined,
+    async () => retained, undefined, () => wanted)
+  t.after(stop)
+  assert.equal(registered, 0)
+  wanted = true
+  await stop.reconcile()
+  assert.deepEqual([registered, disposed], [1, 0])
+  wanted = false
+  await stop.reconcile()
+  assert.deepEqual([registered, disposed], [1, 0], "retained without presence or request")
+  retained = false
+  await stop.reconcile()
+  assert.deepEqual([registered, disposed], [1, 1])
+})
