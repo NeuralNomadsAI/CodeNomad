@@ -3,21 +3,23 @@
 // the others wrote: TLS authority and certificates, paired and revoked devices, `config.yaml` and
 // `state.yaml`, server identity, local password and agent memory. `node roundtrip.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, readdir } from "node:fs/promises"
 import https from "node:https"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
-import { parse as parseYaml } from "yaml"
-import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { assertPrivateHost, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const args = process.argv.slice(2)
 const lanFlag = args.includes("--lan")
-const exe = args.find(arg => !arg.startsWith("-"))
-assert(path.isAbsolute(exe ?? ""), "usage: node roundtrip.mjs <absolute opencode executable> [--lan]")
+const rawExe = args.find(arg => !arg.startsWith("-"))
+assert(path.isAbsolute(rawExe ?? ""), "usage: node roundtrip.mjs <absolute opencode executable> [--lan]")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+const { spawnFixtureChild: spawn } = await import("../../../scripts/native-fixture-guards.mjs")
+const { parse: parseYaml } = await import("yaml")
+const { withProductRuntime } = await import("../../../scripts/native-product-fixture.mjs")
+const { assertPrivateHost, fromDist, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 await useBenchTemp()
 const ciEnabled = (() => {
   const raw = (process.env.CI ?? "").trim().toLowerCase()
@@ -48,6 +50,7 @@ async function serve(label, fixture, config, extra = []) {
   const args = ["serve", "--host", ip, "--https", "true", "--http", "true", "--http-port", String(httpPort),
     "--https-port", String(httpsPort), "--generate-token", ...extra]
   const env = { ...fixture.env }
+  await sanitizeBenchEnvPath(env, { allowedRoot: fixture.root })
   Object.assign(env, { CLI_CONFIG: config, CLI_UI_NO_UPDATE: "1", CNRS_FIXTURE_URL: fixture.connection.endpoint.url,
     CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password, CNRS_FIXTURE_PID: String((await fixture.client.server.info()).pid) })
   const [command, prefix] = label.startsWith("ts") ? [process.execPath, [path.join(import.meta.dirname, "ts-server.mjs")]] : [rustBinary(), []]
