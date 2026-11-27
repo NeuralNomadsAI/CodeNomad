@@ -24,12 +24,19 @@ export const MISSION_CALENDAR_PERMISSIONS = Object.freeze([
 /** Metadata key of a conversation allowed to carry calendars. */
 export const MISSION_CALENDAR_CARRIER = "codenomad.mission-calendar"
 
+/** Past launches a programmed Mission remembers: when, and how each ended. */
+export const MISSION_CALENDAR_HISTORY = 20
+const launchSchema = z.object({ at: z.number().int().nonnegative(), outcome: z.string().min(1).max(40) }).strict()
 const slotSchema = z.object({ version: z.literal(1),
-  // `ended`: seen no longer active, so later runs need not ask Missions again.
+  // `outcome`: seen no longer active, so later runs need not ask Missions again.
   launched: z.object({ automationID: z.string().min(1).max(100), run: z.number().int().positive(), missionID: z.string().min(1).max(100),
-    ended: z.literal(true).optional() }).strict().optional(),
-  checkpoints: missionCheckpointsSchema.optional() }).strict()
-/** A calendar with several date rules is several Automations naming the same calendar: they share its slot. */
+    at: z.number().int().nonnegative(), outcome: z.string().min(1).max(40).optional() }).strict().optional(),
+  /** The conversation every launch coordinates in, once the first launch created it. */
+  coordinatorSessionID: z.string().min(1).max(240).optional(),
+  history: z.array(launchSchema).max(MISSION_CALENDAR_HISTORY).optional(),
+  /** Replaced Missions whose removal did not finish. */
+  retiring: z.array(z.string().min(1).max(100)).max(8).optional(),
+  checkpoints: missionCheckpointsSchema.optional() }).strict()/** A calendar with several date rules is several Automations naming the same calendar: they share its slot. */
 export const missionCalendarIDSchema = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 /** The calendar's latest Mission and event checkpoints, per project and calendar (its only Automation's ID when it names none). */
 export const missionCalendarKey = (projectToken: string, calendar: string) => `codenomad-missions/calendar-v1/${projectToken}/${calendar}`
@@ -59,24 +66,28 @@ export const missionCalendarNews = (events: readonly MissionCalendarEvent[], roo
   return { checkpoints: reads.map(read => read.checkpoint), changed: reads.some(read => read.changed) }
 }
 
-export type MissionCalendarResult = { missionID: string; status: MissionMap["status"] } | { waiting: string } | { idle: true }
+/** What a run did. `missionID` is the programmed Mission's current launch, whatever the run did. */
+export type MissionCalendarResult = { outcome: "launched" | "waiting" | "idle"; missionID?: string; status?: string
+  coordinatorSessionID?: string; history: Array<z.infer<typeof launchSchema>> }
 /** What a run needs of Missions: `MissionControl` itself, or its registered RPC. */
-export type MissionCalendarControl = Pick<MissionControl, "create" | "lifecycle" | "mission">
+export type MissionCalendarControl = Pick<MissionControl, "create" | "lifecycle" | "mission" | "delete">
 type Storage = { get(key: string): Promise<MissionJsonValue | undefined>; set(key: string, value: MissionJsonValue): Promise<void> }
+type Occurrence = { automationID: string; run: number }
+type Launch = Omit<MissionCreateInput, "requestID" | "prepared">
 
-/** One occurrence: an ordinary one-time Mission, created and started, unless the
- * calendar's previous Mission is still active or its events (`news`) brought nothing
- * new since the calendar's last launch. An active Mission leaves the events unread, so their news waits for it.
- * Repeating a run changes nothing, and the runs of one calendar follow one another. */
-export function runMissionCalendar(control: MissionCalendarControl, storage: Storage,
-  key: string, occurrence: { automationID: string; run: number },
-  mission: Omit<MissionCreateInput, "requestID" | "prepared">, news?: MissionCalendarNews): Promise<MissionCalendarResult> {
-  return runMissionExclusive(`calendar:${key}`, () => runOccurrence(control, storage, key, occurrence, mission, news))
+/** One occurrence of a programmed Mission. To its user it is one Mission launched again:
+ * each launch is a new one-time Mission that replaces the previous one, in the same
+ * coordinator conversation. Nothing launches while the previous launch is still active,
+ * or when the events (`news`) brought nothing new since the last launch; an active
+ * launch leaves the events unread, so their news waits for it. Repeating a run changes
+ * nothing, and the runs of one programmed Mission follow one another. */
+export function runMissionCalendar(control: MissionCalendarControl, storage: Storage, key: string, occurrence: Occurrence,
+  mission: Launch, news?: MissionCalendarNews, now: () => number = Date.now): Promise<MissionCalendarResult> {
+  return runMissionExclusive(`calendar:${key}`, () => runOccurrence(control, storage, key, occurrence, mission, news, now))
 }
 
-async function runOccurrence(control: MissionCalendarControl, storage: Storage,
-  key: string, occurrence: { automationID: string; run: number },
-  mission: Omit<MissionCreateInput, "requestID" | "prepared">, news?: MissionCalendarNews): Promise<MissionCalendarResult> {
+async function runOccurrence(control: MissionCalendarControl, storage: Storage, key: string, occurrence: Occurrence,
+  mission: Launch, news: MissionCalendarNews | undefined, now: () => number): Promise<MissionCalendarResult> {
   // A Mission created by a run that never started it is started by whichever run finds it.
   const start = async (map: MissionPanelMap | MissionMap) => {
     const pending = map.control?.pending.length ? map.control : undefined
@@ -86,22 +97,52 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage,
   }
   const slot = slotSchema.safeParse(await storage.get(key)).data
   const repeated = slot?.launched?.automationID === occurrence.automationID && slot.launched.run === occurrence.run
-  let launched = slot?.launched, checkpoints = slot?.checkpoints
-  if (launched && !repeated && !launched.ended) {
+  let launched = slot?.launched, checkpoints = slot?.checkpoints, history = slot?.history ?? [], retiring = slot?.retiring ?? []
+  let coordinatorSessionID = slot?.coordinatorSessionID
+  const save = () => storage.set(key, JSON.parse(JSON.stringify({ version: 1, launched, coordinatorSessionID, checkpoints,
+    ...(history.length ? { history } : {}), ...(retiring.length ? { retiring } : {}) })) as MissionJsonValue)
+  const answer = (outcome: MissionCalendarResult["outcome"], status = launched?.outcome): MissionCalendarResult => ({ outcome,
+    ...(launched ? { missionID: launched.missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history })
+  if (launched && !repeated && !launched.outcome) {
     const previous = (await control.mission(launched.missionID)).mission
-    if (previous?.status === "active") return { waiting: (await start(previous)).id }
-    launched = { ...launched, ended: true }
+    if (previous?.status === "active") return answer("waiting", (await start(previous)).status)
+    launched = { ...launched, outcome: previous?.status ?? "removed" }
   }
   if (news && !repeated) {
     const read = await news(checkpoints ?? [])
     checkpoints = read.checkpoints
-    if (!read.changed) {
-      await storage.set(key, { version: 1, ...(launched ? { launched } : {}), checkpoints } as MissionJsonValue)
-      return { idle: true }
-    }
+    if (!read.changed) { await save(); return answer("idle") }
   }
-  const created = (await control.create({ ...mission, prepared: true, requestID: `calendar_${occurrence.automationID}_${occurrence.run}` })).mission
-  await storage.set(key, { version: 1, launched: { ...occurrence, missionID: created.id }, ...(checkpoints ? { checkpoints } : {}) } as MissionJsonValue)
-  const started = await start(created)
-  return { missionID: started.id, status: started.status }
+  if (launched && !repeated) {
+    // Asked again at the moment of replacing: a person may have resumed a launch seen ended.
+    const previous = (await control.mission(launched.missionID)).mission
+    if (previous?.status === "active") {
+      const { outcome: _outcome, ...current } = launched
+      launched = current
+      await save()
+      return answer("waiting", (await start(previous)).status)
+    }
+    // The new launch replaces the previous one: its date and outcome stay, its Mission goes.
+    history = [...history, { at: launched.at, outcome: previous?.status ?? launched.outcome ?? "removed" }].slice(-MISSION_CALENDAR_HISTORY)
+    retiring = [...retiring, launched.missionID].slice(-8)
+    launched = undefined
+    await save()
+  }
+  for (const missionID of [...retiring]) {
+    const retired = (await control.mission(missionID)).mission
+    // A removal that fails is tried again by the next launch; it never holds this one.
+    if (retired?.status === "active") continue
+    if (retired) await control.delete({ missionID, expectedRevision: retired.revision, requestID: `calendar_replace_${occurrence.automationID}_${occurrence.run}`,
+      deleteManagedSessions: false }).then(() => { retiring = retiring.filter(id => id !== missionID) }, () => undefined)
+    else retiring = retiring.filter(id => id !== missionID)
+  }
+  const requestID = `calendar_${occurrence.automationID}_${occurrence.run}`
+  const create = (session?: string) => control.create({ ...mission, ...(session ? { coordinatorSessionID: session } : {}), prepared: true, requestID })
+  // A conversation the criteria name is required; the remembered one is replaced when it can no longer coordinate.
+  const created = (mission.coordinatorSessionID || !coordinatorSessionID ? await create(mission.coordinatorSessionID)
+    : await create(coordinatorSessionID).catch(() => create())).mission
+  coordinatorSessionID = created.coordinatorSessionId
+  launched = { ...occurrence, missionID: created.id, at: repeated && slot?.launched ? slot.launched.at : now() }
+  await save()
+  return answer("launched", (await start(created)).status)
 }

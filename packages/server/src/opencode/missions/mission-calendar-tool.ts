@@ -22,7 +22,7 @@ async function ownMissions(directory: string): Promise<MissionCalendarControl> {
   const rpc = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(CODENOMAD_MISSIONS_RPC), options = { location: { directory } }
   // JSON drops the absent fields the RPC schema refuses as `undefined`.
   return { create: input => rpc.create(JSON.parse(JSON.stringify(input)), options), lifecycle: input => rpc.lifecycle(input, options),
-    mission: missionID => rpc.mission({ missionID }, options) } as MissionCalendarControl
+    mission: missionID => rpc.mission({ missionID }, options), delete: input => rpc.delete(input, options) } as MissionCalendarControl
 }
 
 /** The tool every Mission calendar's Automation calls. Visible to Code Mode, it accepts
@@ -50,7 +50,7 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
         let own: Promise<MissionCalendarControl> | undefined
         const step = <K extends keyof MissionCalendarControl>(name: K) => ((input: never) => registered(async () =>
           (await (own ??= ownMissions(ctx.location.directory)))[name](input))) as MissionCalendarControl[K]
-        return { content: JSON.stringify(await runMissionCalendar({ create: step("create"), lifecycle: step("lifecycle"), mission: step("mission") },
+        return { content: JSON.stringify(await runMissionCalendar({ create: step("create"), lifecycle: step("lifecycle"), mission: step("mission"), delete: step("delete") },
           ctx.storage, key, occurrence, mission, news)) }
       } catch (error) {
         // Fixed codes only: native errors and credentials stay out of the automation's output.
