@@ -647,7 +647,6 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
             let mut value = String::new();
             let mut pending_ws = String::new();
             let mut quoted = false;
-            let mut started = false;
             while let Some(c) = chars.next() {
                 if !quoted && matches!(c, '#' | ';') {
                     for rest in chars.by_ref() {
@@ -671,7 +670,6 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                     break;
                 }
                 if c == '"' {
-                    started = true;
                     if !pending_ws.is_empty() {
                         value.push_str(&pending_ws);
                         pending_ws.clear();
@@ -687,7 +685,6 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                             continue;
                         }
                         Some(esc) => {
-                            started = true;
                             if !pending_ws.is_empty() {
                                 value.push_str(&pending_ws);
                                 pending_ws.clear();
@@ -709,11 +706,10 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                     continue;
                 }
                 if !quoted && matches!(c, ' ' | '\t' | '\r') {
-                    if started {
+                    if !value.is_empty() {
                         pending_ws.push(c);
                     }
                 } else {
-                    started = true;
                     if !pending_ws.is_empty() {
                         value.push_str(&pending_ws);
                         pending_ws.clear();

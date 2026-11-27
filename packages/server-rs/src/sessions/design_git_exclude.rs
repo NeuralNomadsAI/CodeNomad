@@ -248,8 +248,16 @@ fn open_verified_exclude(
     Ok(file)
 }
 
-fn validate_exclude_target(common_path: &Path, exclude_path: &Path) -> Option<PathBuf> {
-    let common_canon = dunce::canonicalize(common_path).ok()?;
+fn validate_exclude_target(scope: &Path, common_path: &Path, exclude_path: &Path) -> Option<PathBuf> {
+    let common_canon = if !scope.as_os_str().is_empty() {
+        let raw = common_path.to_str()?;
+        crate::worktrees::ownership::resolve_media_path_checked(scope, raw)
+            .ok()
+            .flatten()
+            .and_then(|(p, a)| (p == a).then_some(p))?
+    } else {
+        dunce::canonicalize(common_path).ok()?
+    };
     let rel = exclude_path.strip_prefix(common_path).or_else(|_| exclude_path.strip_prefix(&common_canon)).ok()?;
     let mut comps = rel.components();
     let (Some(Component::Normal(info_comp)), Some(Component::Normal(file_comp)), None) =
@@ -263,13 +271,27 @@ fn validate_exclude_target(common_path: &Path, exclude_path: &Path) -> Option<Pa
     Some(common_canon)
 }
 
+fn dir_live_in_scope(scope: &Path, path: &Path) -> bool {
+    if !scope.as_os_str().is_empty() {
+        path.to_str().is_some_and(|s| {
+            crate::worktrees::ownership::resolve_media_path_checked(scope, s)
+                .ok()
+                .flatten()
+                .is_some_and(|(p, a)| p == a && p == path)
+        })
+    } else {
+        std::fs::metadata(path).is_ok_and(|m| m.is_dir())
+    }
+}
+
 fn append_verified(
     dir: &Path,
+    scope: &Path,
     common_canon: &Path,
     rule: &str,
     aborted: &(dyn Fn() -> bool + Send + Sync),
 ) -> GitExclusion {
-    if aborted() || !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
+    if aborted() || !dir_live_in_scope(scope, dir) || !dir_live_in_scope(scope, common_canon) {
         return GitExclusion::Unavailable;
     }
     let info_comp = OsStr::new("info");
@@ -368,11 +390,12 @@ fn append_verified(
 
 #[cfg(test)]
 pub(super) async fn exclude_design_folder(dir: &Path, remaining: Duration) -> GitExclusion {
-    exclude_design_folder_cancellable(dir, Instant::now() + remaining, Arc::new(|| true)).await
+    exclude_design_folder_cancellable(dir, Path::new(""), Instant::now() + remaining, Arc::new(|| true)).await
 }
 
 pub(super) async fn exclude_design_folder_cancellable(
     dir: &Path,
+    scope: &Path,
     deadline: Instant,
     still_valid: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> GitExclusion {
@@ -382,10 +405,23 @@ pub(super) async fn exclude_design_folder_cancellable(
     if budget.is_zero() || !still_valid() {
         return GitExclusion::Unavailable;
     }
+    if !scope.as_os_str().is_empty() {
+        let dir_check = dir.to_path_buf();
+        let scope_check = scope.to_path_buf();
+        let layout_ok = tokio::task::spawn_blocking(move || {
+            crate::worktrees::precheck_git_layout_in_scope(&scope_check, &dir_check)
+        })
+        .await
+        .unwrap_or(false);
+        if !layout_ok {
+            return GitExclusion::Unavailable;
+        }
+    }
     let git_out = tokio::time::timeout(
         budget,
-        git::run(
+        git::run_in_scope(
             dir,
+            scope,
             &["rev-parse", "--show-prefix", "--path-format=absolute", "--git-common-dir", "--git-path", "info/exclude"],
             64 * 1024,
         ),
@@ -408,8 +444,12 @@ pub(super) async fn exclude_design_folder_cancellable(
     let Some((prefix, common_path, exclude_path)) = parse_rev_parse(&output.bytes) else {
         return GitExclusion::Unavailable;
     };
+    let scope_validate = scope.to_path_buf();
     let Some(common_canon) =
-        tokio::task::spawn_blocking(move || validate_exclude_target(&common_path, &exclude_path)).await.ok().flatten()
+        tokio::task::spawn_blocking(move || validate_exclude_target(&scope_validate, &common_path, &exclude_path))
+            .await
+            .ok()
+            .flatten()
     else {
         return GitExclusion::Unavailable;
     };
@@ -429,12 +469,13 @@ pub(super) async fn exclude_design_folder_cancellable(
 
     let rule = design_exclude_rule(&prefix);
     let dir_owned = dir.to_path_buf();
+    let scope_owned = scope.to_path_buf();
     let dropped_worker = Arc::clone(&dropped);
     let valid_worker = Arc::clone(&still_valid);
     tokio::task::spawn_blocking(move || {
         let _guard = file_guard;
         let aborted = || dropped_worker.load(Ordering::Acquire) || !valid_worker() || Instant::now() >= deadline;
-        append_verified(&dir_owned, &common_canon, &rule, &aborted)
+        append_verified(&dir_owned, &scope_owned, &common_canon, &rule, &aborted)
     })
     .await
     .unwrap_or(GitExclusion::Unavailable)

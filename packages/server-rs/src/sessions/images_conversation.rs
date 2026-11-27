@@ -898,7 +898,7 @@ async fn admitted(
                 && displays_c.iter().all(|d| d.load(Relaxed))
         })
     };
-    let git_exclusion = exclude_design_folder_cancellable(&target.path, deadline, valid_for_exclude).await;
+    let git_exclusion = exclude_design_folder_cancellable(&target.path, &app.scope, deadline, valid_for_exclude).await;
     if revalidate_target(app, workspace, endpoint, &target, is_current).await.is_err() {
         return unavailable();
     }

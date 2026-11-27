@@ -707,6 +707,7 @@ async fn design_git_exclude_formats_rules_and_updates_real_git_repos_safely() {
     assert_eq!(
         exclude_design_folder_cancellable(
             &cancel_sub,
+            &repo,
             tokio::time::Instant::now() + Duration::from_secs(10),
             Arc::new(|| false),
         )
