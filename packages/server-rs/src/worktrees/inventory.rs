@@ -572,6 +572,9 @@ impl Tree {
             workspace_path.strip_prefix(root_registered).ok().map(Path::to_path_buf)
         }
     }
+    pub(super) fn projected_target_root(&self) -> Option<&Path> {
+        self.projected_link.as_ref().map(|link| link.2.root.as_path())
+    }
     pub(super) fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
             && !self.nested_missing

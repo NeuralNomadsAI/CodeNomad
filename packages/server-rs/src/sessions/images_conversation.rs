@@ -278,7 +278,7 @@ enum LocalRepo {
 }
 
 enum Precheck {
-    Owned(PathBuf),
+    Owned(Vec<PathBuf>),
     Denied,
     Unavailable,
 }
@@ -377,8 +377,13 @@ async fn local_listed_worktrees(repo_root: &Path, scope: &Path, timeout: Duratio
     tokio::task::spawn_blocking(move || {
         raw_paths
             .into_iter()
-            .filter_map(|entry| dunce::canonicalize(entry).ok())
-            .filter(|root| root.starts_with(&scope))
+            .filter_map(|entry| {
+                ownership::resolve_media_path_checked(&scope, &entry)
+                    .ok()
+                    .flatten()
+                    .filter(|(p, a)| p == a)
+                    .map(|(p, _)| p)
+            })
             .collect()
     })
     .await
@@ -407,7 +412,7 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
     }
     let rem = || deadline.saturating_duration_since(Instant::now());
     if path == workspace.path {
-        return Precheck::Owned(local_repo_root(&workspace.path, rem()).await);
+        return Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]);
     }
     let external = !ownership::within(&workspace.path, &path);
     let root_repo = match local_common_dir(&workspace.path, rem()).await {
@@ -449,7 +454,7 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         }
         if tail.as_os_str().is_empty() {
             return if toplevel != root_toplevel && ownership::within(&toplevel, &path) {
-                Precheck::Owned(toplevel)
+                Precheck::Owned(vec![toplevel])
             } else {
                 Precheck::Denied
             };
@@ -458,28 +463,57 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         let scope_owned = app.scope.clone();
         let path_owned = path.clone();
         let root_top_owned = root_toplevel.clone();
-        let matched = tokio::task::spawn_blocking(move || {
-            listed
-                .iter()
-                .filter(|wt| **wt != root_top_owned)
-                .filter_map(|wt| {
-                    let projected = wt.join(&tail_owned);
-                    let real = dunce::canonicalize(&projected).ok()?;
-                    if !real.is_dir() || !real.starts_with(&scope_owned) {
-                        return None;
-                    }
-                    let within_repo = real == projected || listed.iter().any(|r| real.starts_with(r));
-                    (within_repo && ownership::within(&real, &path_owned)).then(|| (real.as_os_str().len(), wt.clone()))
-                })
-                .max_by_key(|(len, _)| *len)
-                .map(|(_, wt)| wt)
+        let matched = tokio::task::spawn_blocking(move || -> Result<Option<Vec<PathBuf>>, ()> {
+            let mut best: Option<(usize, Vec<PathBuf>)> = None;
+            for wt in listed.iter().filter(|wt| **wt != root_top_owned) {
+                let projected = wt.join(&tail_owned);
+                let Some(projected_str) = projected.to_str() else {
+                    continue;
+                };
+                // Resolve hop-by-hop within `scope` before canonicalizing so a projected symlink
+                // to a network share or out-of-scope path never triggers out-of-scope I/O, while
+                // preserving missing (`ENOENT`) projected subfolders like `Tree::contains_media`.
+                let Some((resolved_projected, proj_anchor)) =
+                    ownership::resolve_media_path_checked(&scope_owned, projected_str)?
+                else {
+                    continue;
+                };
+                let candidate = if resolved_projected == projected {
+                    let missing = proj_anchor != projected;
+                    let missing_ok = !missing
+                        || std::fs::symlink_metadata(&projected)
+                            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+                    (missing_ok && path_owned.starts_with(&projected) && path_owned.starts_with(wt))
+                        .then(|| (projected.as_os_str().len(), vec![wt.clone()]))
+                } else if resolved_projected == proj_anchor {
+                    listed
+                        .iter()
+                        .filter(|r| resolved_projected.starts_with(r))
+                        .max_by_key(|r| r.as_os_str().len())
+                        .filter(|_| path_owned.starts_with(&resolved_projected))
+                        .map(|target_wt| {
+                            let mut roots = vec![wt.clone()];
+                            if target_wt != wt {
+                                roots.push(target_wt.clone());
+                            }
+                            (resolved_projected.as_os_str().len(), roots)
+                        })
+                } else {
+                    None
+                };
+                if let Some((len, roots)) = candidate
+                    && best.as_ref().is_none_or(|(best_len, _)| len > *best_len)
+                {
+                    best = Some((len, roots));
+                }
+            }
+            Ok(best.map(|(_, roots)| roots))
         })
-        .await
-        .ok()
-        .flatten();
+        .await;
         return match matched {
-            Some(wt) => Precheck::Owned(wt),
-            None => Precheck::Denied,
+            Ok(Ok(Some(roots))) => Precheck::Owned(roots),
+            Ok(Ok(None)) => Precheck::Denied,
+            _ => Precheck::Unavailable,
         };
     }
     match root_repo {
@@ -489,22 +523,22 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
             let live = tokio::task::spawn_blocking(move || dunce::canonicalize(&root).ok().as_ref() == Some(&root))
                 .await
                 .unwrap_or(false);
-            if live { Precheck::Owned(workspace.path.clone()) } else { Precheck::Unavailable }
+            if live { Precheck::Owned(vec![workspace.path.clone()]) } else { Precheck::Unavailable }
         }
         LocalRepo::Git(root_common) => match local_common_dir(&anchor, rem()).await {
             Ok(LocalRepo::Git(target_common)) => match local_worktree_toplevel(&anchor, rem()).await {
                 Ok(Some(tl)) if target_common == root_common => {
                     if tl.starts_with(&app.scope) {
-                        Precheck::Owned(tl)
+                        Precheck::Owned(vec![tl])
                     } else {
                         Precheck::Denied
                     }
                 }
-                Ok(Some(_)) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+                Ok(Some(_)) => Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]),
                 Ok(None) => Precheck::Denied,
                 Err(()) => Precheck::Unavailable,
             },
-            Ok(LocalRepo::NonGit) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+            Ok(LocalRepo::NonGit) => Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]),
             Ok(LocalRepo::MissingGit) => Precheck::Denied,
             Err(()) => Precheck::Unavailable,
         },
@@ -543,32 +577,42 @@ pub async fn handle(
             displays.push(fence::capture_display(&ws_identity));
         }
 
-        let checkout = match local_precheck(&app, &workspace, &parsed.directory, deadline).await {
-            Precheck::Owned(checkout) => checkout,
+        let checkouts = match local_precheck(&app, &workspace, &parsed.directory, deadline).await {
+            Precheck::Owned(checkouts) => checkouts,
             Precheck::Denied => return denied(),
             Precheck::Unavailable => return unavailable(),
         };
         let scope_clone = app.scope.clone();
-        let Ok(checkout_path) =
-            tokio::task::spawn_blocking(move || fence::checkout_root(&scope_clone, &checkout)).await
+        let Ok(identities) = tokio::task::spawn_blocking(move || {
+            let mut ids = Vec::with_capacity(checkouts.len());
+            for checkout in checkouts {
+                let root = fence::checkout_root(&scope_clone, &checkout);
+                let id = fence::identity(&root);
+                if !ids.iter().any(|existing: &String| fence::normalize(existing) == fence::normalize(&id)) {
+                    ids.push(id);
+                }
+            }
+            ids
+        })
+        .await
         else {
             return unavailable();
         };
-        let identity = fence::identity(&checkout_path);
-        let Some(_entered) = fence::enter(&[identity.clone(), parsed.directory.clone()]) else {
+        let mut enter_keys = identities.clone();
+        enter_keys.push(parsed.directory.clone());
+        let Some(_entered) = fence::enter(&enter_keys) else {
             return deleting();
         };
-        displays.push(fence::capture_display(&identity));
+        for id in &identities {
+            displays.push(fence::capture_display(id));
+        }
 
         // `_entered` lives inside this future so cancellation, disconnect, retirement,
         // workspace closure, or timeout releases the deletion fence immediately.
         let Ok(endpoint) = app.native.acquire(deadline).await else {
             return unavailable();
         };
-        let work = async {
-            let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)).await;
-            admitted(&app, &principal, &workspace, &endpoint, &parsed, &displays, deadline).await
-        };
+        let work = admitted(&app, &principal, &workspace, &endpoint, &parsed, &mut displays, &identities, deadline);
         let result = tokio::select! {
             biased;
             _ = app.native.wait_retired(&endpoint) => unavailable(),
@@ -588,16 +632,18 @@ pub async fn handle(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn admitted(
     app: &Shared,
     principal: &Principal,
     workspace: &Workspace,
     endpoint: &Arc<Endpoint>,
     parsed: &ParsedRequest,
-    displays: &[Arc<AtomicBool>],
+    displays: &mut Vec<Arc<AtomicBool>>,
+    fenced_identities: &[String],
     deadline: Instant,
 ) -> Response {
-    let is_current = || {
+    let check_current = |displays: &[Arc<AtomicBool>]| {
         !principal.0.is_cancelled()
             && Instant::now() < deadline
             && app.native.current(endpoint)
@@ -606,14 +652,51 @@ async fn admitted(
     };
     let remaining = || deadline.saturating_duration_since(Instant::now());
 
-    if !is_current() {
+    if !check_current(displays) {
         return unavailable();
     }
     let target = match prove_ownership(app, workspace, endpoint, &parsed.directory).await {
         Ok(Some(target)) => target,
-        Ok(None) => return if !is_current() { unavailable() } else { denied() },
+        Ok(None) => return if !check_current(displays) { unavailable() } else { denied() },
         Err(()) => return unavailable(),
     };
+    if !check_current(displays) {
+        return unavailable();
+    }
+
+    // Fence any additional checkout root proven by OpenCode's inventory (such as the
+    // physical target checkout of a projected subfolder symlink) before reading the Location.
+    let extra_roots = target.checkout.fence_roots(&target.path);
+    let scope_clone = app.scope.clone();
+    let already: Vec<String> = fenced_identities.iter().map(|s| fence::normalize(s)).collect();
+    let Ok(extra_identities) = tokio::task::spawn_blocking(move || {
+        let mut extra = Vec::new();
+        for root in extra_roots {
+            let resolved = fence::checkout_root(&scope_clone, &root);
+            let id = fence::identity(&resolved);
+            let norm = fence::normalize(&id);
+            if !already.iter().any(|a| *a == norm) && !extra.iter().any(|e: &String| fence::normalize(e) == norm) {
+                extra.push(id);
+            }
+        }
+        extra
+    })
+    .await
+    else {
+        return unavailable();
+    };
+    let _extra_entered = if extra_identities.is_empty() {
+        None
+    } else {
+        let Some(guard) = fence::enter(&extra_identities) else {
+            return deleting();
+        };
+        for id in &extra_identities {
+            displays.push(fence::capture_display(id));
+        }
+        Some(guard)
+    };
+    let is_current = || check_current(displays);
     if !is_current() {
         return unavailable();
     }
@@ -639,6 +722,7 @@ async fn admitted(
         return unavailable();
     }
 
+    let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, endpoint)).await;
     if prepare_pruning(app, endpoint, &target.directory, deadline, is_current).await.is_err() {
         return unavailable();
     }

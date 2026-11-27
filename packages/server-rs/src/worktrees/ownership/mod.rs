@@ -51,6 +51,25 @@ impl DirectoryProof {
         }
     }
 
+    /// Checkout roots that must be fenced during worktree-scoped mutations, covering
+    /// both the link-carrying checkout and any physical target checkout of a projection.
+    pub(crate) fn fence_roots(&self, fallback: &Path) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(tree) = &self.tree {
+            roots.push(tree.registered().to_path_buf());
+            if let Some(target_root) = tree.projected_target_root()
+                && target_root != tree.registered()
+            {
+                roots.push(target_root.to_path_buf());
+            }
+        } else if let Some((root, _)) = &self.root {
+            roots.push(root.clone());
+        } else {
+            roots.push(fallback.to_path_buf());
+        }
+        roots
+    }
+
     pub(crate) fn live(&self, physical: &Path) -> bool {
         self.live_at(physical, None, false)
     }
