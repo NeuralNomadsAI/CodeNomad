@@ -14,9 +14,9 @@ mod strip;
 mod temporary;
 pub(crate) use temporary::{
     StashedTemporary, TemporaryTabInfo, active_temporary_workspace, clear_temporary_mark,
-    detach_dead_temporary, detach_stopped_temporary, finish_discarded, has_temporary_tabs,
-    reconcile_temporary_folders, restore_stashed, stash_for_discard, stashed_has_in_memory_state,
-    temporary_tab_info,
+    close_after_keep, detach_dead_temporary, detach_stopped_temporary, finish_discarded,
+    has_temporary_tabs, reconcile_temporary_folders, restore_stashed, stash_for_discard,
+    stashed_has_in_memory_state, temporary_tab_info,
 };
 
 pub use drafts::{

@@ -523,6 +523,34 @@ pub(crate) fn reconcile_temporary_folders(s: &mut State, folders: &[String]) -> 
     changed
 }
 
+pub(crate) fn close_after_keep(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
+    capture(s);
+    if busy(s) {
+        return false;
+    }
+    let blocked = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.iter().position(|item| item.key == tab_key))
+        .is_none_or(|index| {
+            let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
+            let active_device_state =
+                active && (s.composer.device.busy() || s.composer.draft.inline_usage().0 != 0);
+            active_device_state
+                || close_blocked(s, index)
+                || s.workspace.as_ref().is_some_and(|ui| {
+                    ui.entries
+                        .get(index)
+                        .is_some_and(super::Entry::has_in_memory_only_drafts)
+                })
+        });
+    if blocked {
+        return false;
+    }
+    tabs::close_ordinary(s, tab_key, tx);
+    true
+}
+
 pub(crate) fn detach_dead_temporary(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
     capture(s);
     let blocked = s

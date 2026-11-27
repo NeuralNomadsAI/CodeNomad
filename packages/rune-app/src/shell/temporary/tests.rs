@@ -1095,13 +1095,21 @@ fn palette_toggle_focus_stashed_reconcile_device_attachment_404_and_auth_abandon
 }
 
 #[test]
-fn keep_then_close_aborts_detach_when_oversized_draft_arrives_in_flight() {
-    let server = MockServer::start(vec![MockReply {
-        status: "200 OK",
-        body: r#"{"ok":true}"#.into(),
-    }]);
+fn keep_then_close_aborts_detach_when_in_memory_draft_arrives_in_flight() {
+    let server = MockServer::start(vec![
+        MockReply {
+            status: "200 OK",
+            body: r#"{"ok":true}"#.into(),
+        },
+        MockReply {
+            status: "200 OK",
+            body: r#"{"ok":true}"#.into(),
+        },
+    ]);
     let mut rt = connected_runtime(server.backend.clone());
     open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
+
+    // 1. Oversized (> 32,768 UTF-16) draft typed while POST /keep is in flight
     rt.update(workspace::new_tab);
     open_fixture_tab(
         &mut rt,
@@ -1134,7 +1142,6 @@ fn keep_then_close_aborts_detach_when_oversized_draft_arrives_in_flight() {
             choose_keep(s, tx);
         });
         assert!(s.temporary.keeping.is_some());
-        // Simulate typing an oversized draft while POST /keep is still in flight.
         s.draft.text = oversized.clone();
     });
     wait_until(&mut rt, |s| !s.temporary.in_flight());
@@ -1151,5 +1158,64 @@ fn keep_then_close_aborts_detach_when_oversized_draft_arrives_in_flight() {
         rt.state.draft.text.len(),
         32_769,
         "in-flight oversized draft must be preserved intact"
+    );
+
+    // 2. Local device attachment added while POST /keep is in flight
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-keep-att",
+        "/tmp/cn-keep-att",
+        true,
+        vec![Session {
+            id: "s-keep-att".into(),
+            title: "Keep Att".into(),
+        }],
+    );
+    let att_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, tx| {
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-keep-att".into();
+                b.session = "s-keep-att".into();
+                b
+            })
+            .unwrap();
+        let _ = workspace::bound(s, &bound_backend);
+        s.draft.text = "short draft".into();
+        workspace::capture(s);
+        strings::with_locale("en", || {
+            open_dialog(s, &att_key, Some(format!("t-{att_key}")), tx);
+            choose_keep(s, tx);
+        });
+        assert!(s.temporary.keeping.is_some());
+        assert!(
+            s.composer
+                .draft
+                .attach(crate::composer::draft::Attachment::Device {
+                    name: "local.bin".into(),
+                    mime: "application/octet-stream".into(),
+                    bytes: std::sync::Arc::from(&b"keep-device-bytes"[..]),
+                    token: None,
+                })
+        );
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        att_key,
+        "tab must stay open when a local device attachment arrives during keep"
+    );
+    assert!(
+        !workspace::active_workspace(&rt.state).unwrap().1.temporary,
+        "temporary marker must still be cleared after keep succeeds"
+    );
+    assert_eq!(
+        rt.state.composer.draft.inline_usage().0,
+        1,
+        "in-flight local device attachment bytes must be preserved intact"
     );
 }
