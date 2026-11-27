@@ -85,7 +85,21 @@ pub fn view(
                     screen::action_tx(&scope, super::actions::send_button),
                 )
             }
-            .key("send"),
+            .key("send")
+            .help(crate::settings::with_shortcut_label(
+                s,
+                t(
+                    if !s.composer.shell_mode
+                        && s.phase.running()
+                        && crate::settings::queues_follow_ups(s)
+                    {
+                        "promptInput.send.queueAriaLabel"
+                    } else {
+                        "promptInput.send.ariaLabel"
+                    },
+                ),
+                super::shortcuts::Action::Send.id(),
+            )),
         );
     if stop {
         actions = actions.child(
@@ -474,12 +488,20 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
+    if s.draft.is_composing() {
+        return false;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
         return true;
     }
-    if event.key == Key::Enter && s.composer.device.busy() {
+    if s.composer.device.busy()
+        && (event.key == Key::Enter
+            || Action::Send.matches(s, event, tx)
+            || Action::Alternate.matches(s, event, tx)
+            || Action::Newline.matches(s, event, tx))
+    {
         return true;
     }
     if tx.key_repeat()
@@ -492,7 +514,6 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if !s.composer.shell_mode
         && !s.composer.editing_locked()
         && !s.composer.device.busy()
-        && !s.draft.is_composing()
         && s.draft.text.is_empty()
         && s.draft.range() == (0, 0)
         && !event.mods.ctrl
@@ -534,10 +555,16 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             }
             return true;
         }
+        if Action::Send.matches(s, event, tx)
+            || Action::Alternate.matches(s, event, tx)
+            || Action::Newline.matches(s, event, tx)
+        {
+            return true;
+        }
     }
     if s.composer.shell_mode {
         if Action::ExitShell.matches(s, event, tx) {
-            if !tx.key_repeat() {
+            if !tx.key_repeat() && !s.composer.editing_locked() {
                 s.composer.exit_shell_mode();
                 s.composer.picker.reset();
             }
@@ -566,14 +593,18 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
     }
     if Action::Clear.matches(s, event, tx) {
-        super::menu::clear(s, tx);
+        if !tx.key_repeat() {
+            super::menu::clear(s, tx);
+        }
         true
     } else if s.composer.shell_mode {
-        if crate::settings::matches_shortcut(s, "prompt-newline", event, tx) {
-            s.draft.insert("\n");
-            changed(s, tx);
+        if Action::Newline.matches(s, event, tx) {
+            if !s.composer.editing_locked() {
+                s.draft.insert("\n");
+                changed(s, tx);
+            }
             true
-        } else if crate::settings::matches_shortcut(s, "prompt-send", event, tx) {
+        } else if Action::Send.matches(s, event, tx) {
             if !tx.key_repeat() {
                 send(s, tx, false);
             }
@@ -588,12 +619,22 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             send(s, tx, true);
         }
         true
-    } else if event.key == Key::Enter && event.mods == rune::Mods::default() {
+    } else if Action::Newline.matches(s, event, tx) {
+        if !s.composer.editing_locked() {
+            s.draft.insert("\n");
+            changed(s, tx);
+        }
+        true
+    } else if Action::Send.matches(s, event, tx) {
         if !tx.key_repeat() {
             send(s, tx, false);
         }
         true
-    } else {
+    } else if event.key == Key::Enter {
+        true
+    } else if !s.composer.picker.open() {
         super::menu::jump_key(s, event, tx)
+    } else {
+        false
     }
 }
