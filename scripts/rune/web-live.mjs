@@ -207,7 +207,7 @@ export function assertSse503Backoff(probes){
 }
 
 async function verifySseAuthenticated503Recovery({
-  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,tap,attestedGet,
 }){
   const again=new URL(await command('pair'))
   assert.equal(again.origin,url.origin)
@@ -223,7 +223,8 @@ async function verifySseAuthenticated503Recovery({
   let retryDelay2Ms=0
   let forbiddenError=null
   await runWithPairTab(context, again, {fromLink, waitUntil:'commit'}, async pairFlow=>{
-      await page.bringToFront()
+      const setupDeadline=now()+30_000
+      await withBudget(setupDeadline,'focusing original tab before SSE 503 recovery',()=>page.bringToFront())
       let injectTransient503=false
       let observeStatusEpisode=false
       let sseScenarioActive=true
@@ -245,8 +246,8 @@ async function verifySseAuthenticated503Recovery({
       const pendingSseFulfills=new Set()
       const pendingHeldRoutes=new Set()
       let teardownFulfillError=null
-      const first503Served=Promise.withResolvers()
-      const releaseRecovered=Promise.withResolvers()
+      const secondProbeArrived=Promise.withResolvers()
+      const releaseSecond503=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
       const recoveredCaptured=Promise.withResolvers()
       const forbiddenRejected=Promise.withResolvers()
@@ -254,16 +255,18 @@ async function verifySseAuthenticated503Recovery({
       const routeFailed=Promise.withResolvers()
       const routeFailedDone=routeFailed.promise.catch(()=>{})
       const sseStop=Promise.race([forbiddenDone,routeFailedDone])
-      void first503Served.promise.catch(()=>{})
+      void secondProbeArrived.promise.catch(()=>{})
       void recoveredCaptured.promise.catch(()=>{})
       const failForbidden=err=>{
         forbiddenError??=err
+        releaseSecond503.resolve(false)
         forbiddenRejected.reject(err)
       }
       const failRoute=err=>{
         routeError??=err
-        first503Served.reject(err)
+        secondProbeArrived.reject(err)
         recoveredCaptured.reject(err)
+        releaseSecond503.resolve(false)
         routeFailed.reject(err)
       }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise,routeFailed.promise])
@@ -275,6 +278,14 @@ async function verifySseAuthenticated503Recovery({
       const abortSseRoute=async(route,code)=>{
         const err=await abortRouteOrClose(route,'SSE+503 route abort',2_000,code)
         if(err)onSseFulfillError(err)
+      }
+      const continueSseRoute=async route=>{
+        try {
+          await route.continue()
+        } catch (err) {
+          if(sseTeardown&&/Route is already handled/i.test(String(err?.message??err)))return
+          onSseFulfillError(err)
+        }
       }
       const checkRoute=async route=>{
         try {
@@ -291,7 +302,7 @@ async function verifySseAuthenticated503Recovery({
       const holdRoute=async route=>{
         const run=releaseHeldSse.promise
           .then(async pass=>{
-            if(pass)return route.fallback()
+            if(pass)return continueSseRoute(route)
             const err=await abortRouteOrClose(route,'held SSE route abort')
             if(err)throw err
           })
@@ -324,29 +335,28 @@ async function verifySseAuthenticated503Recovery({
       const routeMeta=route=>trackPending(pendingSseRoutes,(async()=>{
         const entryGate=metaGate
         if(entryGate==='abort')return abortSseRoute(route)
-        if(!sseScenarioActive||entryGate==='pass')return route.fallback()
         if(!await checkRoute(route))return
         if(metaGate==='abort')return abortSseRoute(route)
-        if(!sseScenarioActive||metaGate==='pass')return route.fallback()
+        if(!sseScenarioActive||entryGate==='pass'||metaGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
           metaGate='block'
-          return route.fallback()
+          return continueSseRoute(route)
         }
+        if(entryGate==='hold'||metaGate==='hold')return holdRoute(route)
         await fulfillOrAbort(pendingSseFulfills,route,
           {status:503,contentType:'application/json',body:'{}'},onSseFulfillError)
       })())
       const routeEvents=route=>trackPending(pendingSseRoutes,(async()=>{
         const entryGate=sseGate
         if(entryGate==='abort')return abortSseRoute(route)
-        if(!sseScenarioActive||entryGate==='pass')return route.fallback()
         if(!await checkRoute(route))return
         if(sseGate==='abort')return abortSseRoute(route)
-        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
+        if(!sseScenarioActive||entryGate==='pass'||sseGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
           sseGate='hold'
           metaGate='block'
           admittedSseRequest=route.request()
-          return route.fallback()
+          return continueSseRoute(route)
         }
         if(entryGate!=='block'&&sseGate==='hold')return holdRoute(route)
         await fulfillOrAbort(pendingSseFulfills,route,
@@ -355,7 +365,11 @@ async function verifySseAuthenticated503Recovery({
       const routeStatus=route=>trackPending(pendingStatusRoutes,(async()=>{
         const receivedAt=performance.now()
         if(sseGate==='abort')return abortSseRoute(route)
-        if(!sseScenarioActive||route.request().method()!=='GET')return route.fallback()
+        if(!sseScenarioActive||route.request().method()!=='GET'){
+          if(!await checkRoute(route))return
+          if(sseGate==='abort')return abortSseRoute(route)
+          return continueSseRoute(route)
+        }
         const duringEpisode=injectTransient503
         let probe=null
         if(duringEpisode){
@@ -365,17 +379,30 @@ async function verifySseAuthenticated503Recovery({
         const attempt=duringEpisode?statusProbes.length:0
         if(!await checkRoute(route))return
         if(sseGate==='abort')return abortSseRoute(route)
-        if(!duringEpisode)return route.fallback()
+        if(!duringEpisode)return continueSseRoute(route)
         if(!sseScenarioActive||!injectTransient503){
           await abortSseRoute(route)
           return
         }
-        if(attempt<=2){
+        if(attempt===1){
           if(!await fulfillOrAbort(pendingSseFulfills,route,
             {status:503,contentType:'application/json',body:'{}'},onSseFulfillError))return
           transient503s++
           probe.fulfilledAt=performance.now()
-          if(attempt===1)first503Served.resolve()
+          return
+        }
+        if(attempt===2){
+          secondProbeArrived.resolve()
+          const deliver=await releaseSecond503.promise
+          if(!deliver||!injectTransient503){
+            await abortSseRoute(route)
+            return
+          }
+          if(metaGate==='block')metaGate='hold'
+          if(!await fulfillOrAbort(pendingSseFulfills,route,
+            {status:503,contentType:'application/json',body:'{}'},onSseFulfillError))return
+          transient503s++
+          probe.fulfilledAt=performance.now()
           return
         }
         if(attempt!==3||recoveryReserved||recoveredStatuses>0){
@@ -386,11 +413,6 @@ async function verifySseAuthenticated503Recovery({
         recoveryReserved=true
         let fulfillError=null
         try {
-          const deliver=await releaseRecovered.promise
-          if(!deliver||!injectTransient503){
-            await abortSseRoute(route)
-            return
-          }
           const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet,sseAbort.signal)
           if(!injectTransient503){
             await abortSseRoute(route)
@@ -413,13 +435,15 @@ async function verifySseAuthenticated503Recovery({
         page.on('request',onStatusRequest)
         page.on('response',onSseResponse)
         try {
-          await page.route(metaUrl,routeMeta)
-          await page.route(eventsUrl,routeEvents)
-          await page.route(authStatusUrl,routeStatus)
-          await step(command('revoke'))
-          await step(dialog.waitFor({timeout:15_000}))
-          await step(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
-          await step(page.evaluate(targetOrigin=>{
+          await withBudget(setupDeadline,'installing SSE 503 /api/meta route',()=>page.route(metaUrl,routeMeta))
+          await withBudget(setupDeadline,'installing SSE 503 /api/events route',()=>page.route(eventsUrl,routeEvents))
+          await withBudget(setupDeadline,'installing SSE 503 /api/auth/status route',()=>page.route(authStatusUrl,routeStatus))
+          await step(withBudget(setupDeadline,'revoking session before SSE 503 recovery',()=>step(command('revoke'))))
+          await step(withBudget(setupDeadline,'pairing overlay visible after revoke',
+            ms=>dialog.waitFor({timeout:Math.max(1,Math.round(ms))})))
+          await step(withBudget(setupDeadline,'pairing guide visible after revoke',
+            ms=>page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor({timeout:Math.max(1,Math.round(ms))})))
+          await step(withBudget(setupDeadline,'installing SSE 503 browser observer',()=>page.evaluate(targetOrigin=>{
             globalThis.__runeSse503Signals=[]
             const browserProbes=[]
             const pushEntry=entry=>{
@@ -456,7 +480,7 @@ async function verifySseAuthenticated503Recovery({
               delete globalThis.__runeCleanupSse503Signals
               return {signals,browserProbes}
             }
-          },url.origin))
+          },url.origin)))
           const beforeSseAuth=eventSources()
           metaGate='block'
           sseGate='block'
@@ -465,19 +489,19 @@ async function verifySseAuthenticated503Recovery({
           // Re-pair in the prepared tab without returning focus or clicking Check, then admit one
           // /api/meta attestation and one /api/events stream so only one multiplexed subscriber
           // attaches and drives both bounded retries (1 s, 2 s) before releasing the other subscriber.
-          await step(pairFlow.complete())
+          await step(withBudget(setupDeadline,'completing re-pairing before SSE 503 recovery',()=>step(pairFlow.complete())))
           metaGate='admit-one'
           sseGate='admit-one'
           episodeDeadline=now()+30_000
           try {
-            await step(withBudget(episodeDeadline,'first transient 503 on SSE-driven /api/auth/status',
-              ()=>step(first503Served.promise)))
+            await step(withBudget(episodeDeadline,'second /api/auth/status probe after first transient 503',
+              ()=>step(secondProbeArrived.promise)))
             assert.equal(await step(withBudget(episodeDeadline,'pairing overlay visible after first 503',
-              ()=>dialog.count())),1,'Pairing overlay must stay visible after the first transient 503 status failure')
-            releaseRecovered.resolve(true)
+              ()=>dialog.count())),1,'Pairing overlay must stay visible after Rune processes the first transient 503')
+            releaseSecond503.resolve(true)
           } catch (err) {
             injectTransient503=false
-            releaseRecovered.resolve(false)
+            releaseSecond503.resolve(false)
             throw err
           }
           await step(withBudget(episodeDeadline,'bounded retry /api/auth/status 200 after transient 503s',
@@ -521,11 +545,12 @@ async function verifySseAuthenticated503Recovery({
           sseGate=recovered?'pass':'abort'
           metaGate=recovered?'pass':'abort'
           sseAbort.abort()
-          releaseRecovered.resolve(false)
+          releaseSecond503.resolve(false)
           releaseHeldSse.resolve(recovered)
+          const heldDrainErr=await drainSetsWithin([pendingHeldRoutes],'held SSE+503 routes',2_000)
           const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
           const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
-          cleanupError??=heldRouteError??teardownFulfillError??unrouteErr??drainErr
+          cleanupError??=heldRouteError??teardownFulfillError??heldDrainErr??unrouteErr??drainErr
           await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
         }
         if(cleanupError)throw cleanupError
@@ -533,10 +558,52 @@ async function verifySseAuthenticated503Recovery({
         if(routeError)throw routeError
         await withBudget(episodeDeadline,'reconnection settled after SSE 503 recovery',
           ms=>connecting.waitFor({state:'hidden',timeout:Math.max(1,Math.round(ms))}))
+        const right=messages['window.menu.rightPanel']
+        const rightDrawer=page.getByRole('region',{name:right,exact:true})
+        const rightToggle=page.getByRole('button',{name:right,exact:true})
+        const tapLocator=async(locator,label)=>{
+          const box=await withBudget(episodeDeadline,`${label} bounds`,
+            ms=>locator.boundingBox({timeout:Math.max(1,Math.round(ms))}))
+          assert(box&&box.width>0&&box.height>0,`Expected visible bounds for ${label}`)
+          await withBudget(episodeDeadline,`tapping ${label}`,()=>tap(box.x+box.width/2,box.y+box.height/2))
+        }
+        let openedRightDrawer=false
+        try {
+          const expanded=await withBudget(episodeDeadline,'right panel expanded state',
+            ms=>rightToggle.getAttribute('aria-expanded',{timeout:Math.max(1,Math.round(ms))}))
+          if(expanded!=='true'){
+            await tapLocator(rightToggle,'right panel toggle')
+            openedRightDrawer=true
+          }
+          await withBudget(episodeDeadline,'right panel visible after SSE 503 recovery',
+            ms=>rightDrawer.waitFor({timeout:Math.max(1,Math.round(ms))}))
+          const statusTab=rightDrawer.getByRole('tab',{name:messages['instanceShell.rightPanel.tabs.status'],exact:true})
+          const statusSelected=await withBudget(episodeDeadline,'status tab selected state',
+            ms=>statusTab.getAttribute('aria-selected',{timeout:Math.max(1,Math.round(ms))}))
+          if(statusSelected!=='true'){
+            await tapLocator(statusTab,'status tab')
+          }
+          await withBudget(episodeDeadline,'confirmed connected status after SSE 503 recovery',
+            ms=>rightDrawer.getByText(messages['instanceShell.connection.connected'],{exact:true}).waitFor({timeout:Math.max(1,Math.round(ms))}))
+          if(openedRightDrawer){
+            await tapLocator(rightToggle,'closing right panel toggle')
+            await withBudget(episodeDeadline,'right panel hidden after SSE 503 recovery',
+              ms=>rightDrawer.waitFor({state:'hidden',timeout:Math.max(1,Math.round(ms))}))
+            openedRightDrawer=false
+          }
+        } finally {
+          if(openedRightDrawer){
+            await settleWithin((async()=>{
+              const box=await rightToggle.boundingBox({timeout:1_000})
+              if(box&&box.width>0&&box.height>0)await tap(box.x+box.width/2,box.y+box.height/2)
+              await rightDrawer.waitFor({state:'hidden',timeout:1_500})
+            })().catch(()=>{}),sseStop,2_000)
+          }
+        }
         assert.equal(observedStatusRequests.length,3,
-          `Expected exactly 3 /api/auth/status requests through reconnection, observed ${observedStatusRequests.length}`)
+          `Expected exactly 3 /api/auth/status requests through confirmed reconnection, observed ${observedStatusRequests.length}`)
         assert.deepEqual(observedStatusCodes,[503,503,200],
-          'Browser must receive exact [503, 503, 200] statuses through reconnection')
+          'Browser must receive exact [503, 503, 200] statuses through confirmed reconnection')
       } finally {
         observeStatusEpisode=false
         page.off('request',onStatusRequest)
@@ -910,7 +977,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     evidence.repairedWithDraft=true
     evidence.crossOriginRePairLink=fromLink
     evidence.sseAuthenticated503Recovery=await verifySseAuthenticated503Recovery({
-      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,tap,attestedGet,
     })
   }
   assert.equal(forbiddenRequests.length,forbiddenBefore,
