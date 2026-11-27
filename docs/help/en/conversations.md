@@ -117,6 +117,14 @@ Closing cancels the pending side request without interrupting the main session. 
 
 A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
 
+## Track session automations with /automation {#automations}
+
+1. Create or manage scheduled or event-driven automations in a conversation with `/automation` (or through the agent's automation tools).
+2. While the conversation has automations, **Status** lists them above **Tokens** (below **Goal** when one is set): each row shows its state (**Active**, **Paused** or **Done**), name, next run or schedule, and run count. Completed automations stay folded under **Done (N)** until expanded.
+3. Hover or focus a row to read its trigger, schedule and last output, or click it to open its details window. Use **Pause automation**, **Resume automation**, or **Delete automation** on a row to control it directly.
+
+Only automations belonging to the active conversation are shown. Deleting an automation cannot be undone and does not revert work already performed. Without automations, or with an OpenCode service that does not expose the automation API, the block does not appear.
+
 ## Fork, undo and recover a failed run {#fork-errors}
 
 1. On a message, choose **Fork after this message** to create a conversation after that point without replacing the original.

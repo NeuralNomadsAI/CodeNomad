@@ -117,6 +117,8 @@ for (const ingress of [false, true]) {
       ...["git-status", "git-diff", "git-history", "git-history/sha"].map(path => ["GET", `/api/workspaces/w/worktrees/main/${path}`] as [string, string]),
       ...["git-stage", "git-unstage", "git-commit"].map(path => ["POST", `/api/workspaces/w/worktrees/main/${path}`] as [string, string]),
       ["POST", "/api/workspaces/w/sessions/s/worktree"], ["GET", "/api/workspaces/w/sessions/s/goal"],
+      ["GET", "/api/workspaces/w/sessions/s/automations"], ["POST", "/api/workspaces/w/sessions/s/automations/aut_1/pause"],
+      ["POST", "/api/workspaces/w/sessions/s/automations/aut_1/resume"], ["DELETE", "/api/workspaces/w/sessions/s/automations/aut_1"],
       ["GET", "/api/workspaces/w/sessions/s/permission-receipts"], ["GET", "/api/workspaces/w/session-media/s/m/p/0/digest"],
       ...["window", "outline", "outlinePreview", "query", "ranked", "prune"].map(path => ["POST", `/api/workspaces/w/session-history/${path}`] as [string, string]),
       ["POST", "/api/workspaces/w/session-pruning/prune"], ["GET", "/api/missions/playbooks"],

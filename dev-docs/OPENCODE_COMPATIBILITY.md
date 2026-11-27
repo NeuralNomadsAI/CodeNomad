@@ -123,6 +123,29 @@ demand, on reconnect and after its own commands ([refresh rules](CACHE_REFRESH_C
 `scripts/test-session-goal-native.mjs` (private daemon, local provider whose plain
 reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI matrix.
 
+### Session automations (`/automation`)
+
+The Status tab's automations block reads and controls a Session's native automations
+through `GET /api/workspaces/:id/sessions/:sessionId/automations`,
+`POST .../automations/:automationId/{pause,resume}` and
+`DELETE .../automations/:automationId` (`server/routes/session-automations.ts`,
+`opencode/automation-contract.ts`). The route resolves the Session, maps only native
+`SessionNotFoundError` to 404 (other lookup failures answer `unavailable`/503), checks
+workspace ownership of the Session's Location and refuses Mission schedule/watchdog
+carriers (`assertOrdinaryMissionScheduleSession`). Reads call OpenCode's
+`GET /api/experimental/automation?sessionID=...` with a 4 MiB response budget,
+validate each row's `sessionID`, `projectID` and independent workspace ownership of its
+saved `directory` (preserving automations created before moving the Session across
+owned worktrees of the same project), skip unreadable or unrecognized rows safely,
+project only bounded display fields and revalidate session/workspace authority after the
+last async check before answering. `404`/`405`/`501` answer `unsupported`; transport
+errors or malformed envelopes answer `unavailable`; the UI hides the block for both.
+Mutations inspect the target automation first, verify Session, project and directory
+ownership, revalidate the Session and dispatch `POST .../pause`, `POST .../resume` or
+`DELETE ...` in the automation's verified directory, fencing publication with a final
+authority check and flagging genuine upstream error messages (`upstream: true`) so
+fixed route errors localize on the client.
+
 ### Contract notes
 
 Agent memory qualifies the optional session instruction entry GET/PUT/DELETE

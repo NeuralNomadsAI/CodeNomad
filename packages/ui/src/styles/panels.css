@@ -15,6 +15,7 @@
 @import "./panels/right-panel-customization.css";
 @import "./panels/status-tokens.css";
 @import "./panels/status-goal.css";
+@import "./panels/status-automations.css";
 @import "./panels/mission-control.css";
 @import "./panels/mission-source-select.css";
 @import "./panels/mission-create.css";

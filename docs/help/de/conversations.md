@@ -117,6 +117,14 @@ Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbr
 
 Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
 
+## Sitzungsautomationen mit /automation verfolgen {#automations}
+
+1. Erstellen oder verwalten Sie zeit- oder ereignisgesteuerte Automationen in einer Unterhaltung mit `/automation` (oder über die Automationswerkzeuge des Agenten).
+2. Solange die Unterhaltung Automationen hat, zeigt **Status** sie über **Tokens** (unter **Ziel**, falls eines gesetzt ist): Jede Zeile zeigt ihren Zustand (**Aktiv**, **Pausiert** oder **Erledigt**), den Namen, die nächste Ausführung oder den Auslöser sowie die Anzahl der Ausführungen. Abgeschlossene Automationen bleiben unter **Erledigt (N)** eingeklappt.
+3. Zeigen Sie auf eine Zeile oder fokussieren Sie sie, um Auslöser, Zeitplan und letzte Ausgabe zu lesen, oder klicken Sie darauf, um das Detailfenster zu öffnen. Verwenden Sie **Automation pausieren**, **Automation fortsetzen** oder **Automation löschen** in einer Zeile zur direkten Steuerung.
+
+Es werden nur Automationen der aktiven Unterhaltung angezeigt. Das Löschen kann nicht rückgängig gemacht werden und macht bereits erledigte Arbeit nicht rückgängig. Ohne Automationen oder mit einem OpenCode-Dienst ohne Automations-API erscheint der Block nicht.
+
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 
 1. Wählen Sie an einer Nachricht **Nach dieser Nachricht abzweigen (Fork)**, um nach diesem Punkt eine Unterhaltung anzulegen, ohne das Original zu ersetzen.
