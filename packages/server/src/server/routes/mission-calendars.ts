@@ -19,7 +19,7 @@ const body = z.object({ configuration, directory }).strict()
 
 /** Programmed Missions ("calendars") are native Automations: these routes translate the
  * form's launch criteria, prepare the Mission the first launch starts, and list, pause,
- * resume or delete what OpenCode holds. */
+ * resume or delete what OpenCode holds. `PUT` creates the programming its caller names, or replaces it. */
 export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
   const serve = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, saves = false) => app.route({ method, url, handler: async (request, reply) => {
     const selected = params.safeParse(request.params), input = saves ? body.safeParse(request.body) : undefined
@@ -38,11 +38,11 @@ export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
           const parsed = missionConfigurationSchema.safeParse({ ...input.data.configuration, profileID: scope?.key ?? null,
             executionHost: distro ? `wsl:${distro}` : "local", roots: [{ mode: "directory-only", directory: owned.location.directory }] })
           if (!parsed.success) return reply.code(400).send({ error: "Invalid Mission calendar configuration", code: "calendar-input-invalid" })
-          const id = calendar ?? `cal_${randomUUID().replaceAll("-", "")}`, config = parsed.data
+          const id = calendar!, config = parsed.data
           const unsupported = missionCalendarAutomations(config, id)
           if (!Array.isArray(unsupported)) return reply.code(422).send({ error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: unsupported.unsupported })
-          const existing = calendar ? (await lifetime.wait(calendars.list())).find(item => item.id === calendar) : undefined
-          if (calendar && !existing) throw new MissionCalendarMissing()
+          // The form names the programming, so saving it twice is saving the same one.
+          const existing = (await lifetime.wait(calendars.list())).find(item => item.id === id)
           // Until its first launch the programmed Mission is an ordinary prepared one: it has its line and can be played by hand.
           const current = existing?.missionID ? (await lifetime.wait(rpc.mission({ missionID: existing.missionID }, call)) as MissionRead).mission : undefined
           const pristine = current?.status === "active" && current.runState === "prepared"
@@ -59,7 +59,8 @@ export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
             prepared = (await creation.execute()).mission.id
           }
           await owned.refresh()
-          const automations = missionCalendarAutomations(config, id, prepared)
+          // After its first launch an edited programming keeps naming the Mission of its current launch.
+          const automations = missionCalendarAutomations(config, id, prepared ?? current?.id)
           await lifetime.wait(calendars.save(id, Array.isArray(automations) ? automations : []))
         } else if (method === "POST") await lifetime.wait(calendars[selected.data.action!](calendar!))
         else if (method === "DELETE") await lifetime.wait(calendars.delete(calendar!))
@@ -72,7 +73,6 @@ export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
     } finally { lifetime.dispose() }
   } })
   serve("GET", "/api/workspaces/:id/missions/calendars")
-  serve("POST", "/api/workspaces/:id/missions/calendars", true)
   serve("PUT", "/api/workspaces/:id/missions/calendars/:calendar", true)
   serve("POST", "/api/workspaces/:id/missions/calendars/:calendar/:action")
   serve("DELETE", "/api/workspaces/:id/missions/calendars/:calendar")
