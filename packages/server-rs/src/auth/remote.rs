@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     [
     ("GET",r"^/api/(?:meta|events|auth/status|filesystem|storage/(?:state/ui|config/(?:ui|server))|panel-extensions|workspaces)$"),
-    ("GET",r"^/api/workspaces/[^/]+(?:/(?:worktrees|pending-requests|sessions/[^/]+/permission-receipts))?$"),
+    ("GET",r"^/api/workspaces/[^/]+(?:/(?:worktrees|pending-requests|sessions/[^/]+/(?:permission-receipts|goal)))?$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/sessions/[^/]+/permission-mode$"),
     ("GET",r"^/api/workspaces/[^/]+/(?:files(?:/preview|/search)?|worktrees/[^/]+/(?:git-status|git-diff|git-history(?:/[a-f0-9]+)?))$"),
     ("PUT",r"^/api/workspaces/[^/]+/files/content$"),
@@ -47,7 +47,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
     ("GET POST",r"^/api/workspaces/temporary$"),
     ("POST",r"^/api/workspaces/temporary/abandon$"),
-    ("POST",r"^/api/workspaces/[^/]+/(?:keep|discard)$"),
+    ("POST",r"^/api/workspaces/[^/]+/(?:keep|discard|images-conversation)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window|query|ranked|prune)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-pruning/(?:preview|prune)$"),
     ("GET",r"^/api/workspaces/[^/]+/session-attachment/[^/]+/[^/]+/[0-9]+/[a-f0-9]{64}$"),

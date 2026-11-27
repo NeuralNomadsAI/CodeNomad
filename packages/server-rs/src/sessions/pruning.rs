@@ -113,12 +113,12 @@ async fn handle(app: Shared, principal: Principal, id: String, action: Action, r
     }
 }
 
-struct OwnedTarget {
-    directory: String,
-    path: PathBuf,
-    anchor: PathBuf,
-    anchor_id: String,
-    checkout: ownership::DirectoryProof,
+pub(super) struct OwnedTarget {
+    pub(super) directory: String,
+    pub(super) path: PathBuf,
+    pub(super) anchor: PathBuf,
+    pub(super) anchor_id: String,
+    pub(super) checkout: ownership::DirectoryProof,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,14 +322,14 @@ fn parse_rpc_output(body: &[u8], node_limit: usize) -> Option<Value> {
     envelope.as_object_mut()?.remove("output")
 }
 
-fn is_json_content_type(headers: &reqwest::header::HeaderMap) -> bool {
+pub(super) fn is_json_content_type(headers: &reqwest::header::HeaderMap) -> bool {
     headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| {
         let essence = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
         essence == "application/json" || essence.ends_with("+json")
     })
 }
 
-async fn prepare_pruning(
+pub(super) async fn prepare_pruning(
     app: &Shared,
     endpoint: &Arc<Endpoint>,
     directory: &str,
@@ -384,7 +384,7 @@ async fn prepare_pruning(
 ///   `workspaceID` -> `None`/blocked), then `ownsLocation` (valid `workspaceID` -> `403`).
 /// - `pruneBatch` (`session-history.ts:138-140`): `ownsLocation` first (any present `workspaceID`,
 ///   including `null`/blank/NUL -> `403`), then `readLocationRef`.
-fn valid_location_str(v: &Value) -> Option<&str> {
+pub(super) fn valid_location_str(v: &Value) -> Option<&str> {
     v.as_str().filter(|s| !s.trim().is_empty() && !s.contains('\0'))
 }
 
@@ -409,7 +409,7 @@ fn read_session_directory(session: &Value, action: Action) -> Result<String, Opt
     }
 }
 
-async fn prove_ownership(
+pub(super) async fn prove_ownership(
     app: &App,
     workspace: &Workspace,
     endpoint: &Arc<Endpoint>,
@@ -477,9 +477,19 @@ async fn revalidate(
 }
 
 async fn fetch_session(app: &App, endpoint: &Endpoint, session_id: &str, timeout: Duration) -> Result<Value, ()> {
+    fetch_session_bounded(app, endpoint, session_id, 256, timeout).await
+}
+
+pub(super) async fn fetch_session_bounded(
+    app: &App,
+    endpoint: &Endpoint,
+    session_id: &str,
+    max_id_len: usize,
+    timeout: Duration,
+) -> Result<Value, ()> {
     if timeout.is_zero()
         || session_id.is_empty()
-        || session_id.encode_utf16().nth(256).is_some()
+        || session_id.encode_utf16().nth(max_id_len).is_some()
         || matches!(session_id, "." | "..")
         || session_id.bytes().any(|b| b.is_ascii_control())
     {
@@ -508,7 +518,7 @@ async fn fetch_session(app: &App, endpoint: &Endpoint, session_id: &str, timeout
     Ok(data.clone())
 }
 
-fn is_exact_application_json(headers: &reqwest::header::HeaderMap) -> bool {
+pub(super) fn is_exact_application_json(headers: &reqwest::header::HeaderMap) -> bool {
     headers
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())

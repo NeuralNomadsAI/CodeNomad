@@ -69,6 +69,9 @@ impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
+    pub(crate) fn stderr(&self) -> &[u8] {
+        &self.err
+    }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
     }

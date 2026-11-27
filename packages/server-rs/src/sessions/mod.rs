@@ -1,9 +1,14 @@
 //! Session-scoped reads beside the relay: pending requests, permission receipts,
 //! favorites and history navigation, each checked against the workspace's locations.
 pub mod contracts;
+mod design_git_exclude;
 pub mod favorites;
+pub mod goal;
+#[cfg(test)]
+mod goal_images_tests;
 pub mod history;
 mod history_search;
+pub mod images_conversation;
 pub(crate) mod media;
 pub(crate) mod media_stream;
 pub mod pending;
@@ -14,6 +19,7 @@ pub(crate) mod user_files;
 
 use axum::{
     Extension, Json, Router,
+    extract::DefaultBodyLimit,
     http::StatusCode as Status,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -33,9 +39,14 @@ pub fn routes(shutdown: CancellationToken) -> Router<Shared> {
         .route("/api/workspaces/{id}/session-favorites", get(favorites::list))
         .route("/api/workspaces/{id}/session-favorites/{session}", put(favorites::update))
         .route("/api/workspaces/{id}/sessions/{session}/permission-receipts", get(receipts::list))
+        .route("/api/workspaces/{id}/sessions/{session}/goal", get(goal::read))
         .route(
             "/api/workspaces/{id}/sessions/{session}/permission-mode",
             get(permission_mode::routes::handle).put(permission_mode::routes::handle),
+        )
+        .route(
+            "/api/workspaces/{id}/images-conversation",
+            post(images_conversation::handle).layer(DefaultBodyLimit::disable()).fallback(api_not_found),
         )
         .route("/api/workspaces/{id}/session-history/{action}", post(history::handle).fallback(api_not_found))
         .route("/api/workspaces/{id}/session-pruning/preview", post(pruning::preview).fallback(api_not_found))
