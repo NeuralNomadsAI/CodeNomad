@@ -410,7 +410,6 @@ const upstream=createServer(async(req,res)=>{
         for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
         return json({data:record})
       }
-      if(compare&&action==='inbox')return json({data:[]})
       if(compare&&['agent','model'].includes(action)&&req.method==='POST'){res.statusCode=204;res.end();return}
       if(action==='prompt'){
         if(webMoreActions){

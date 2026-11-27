@@ -72,6 +72,12 @@ function settleWithin(promise, abort, ms=2_000){
   ]).finally(()=>clearTimeout(timer))
 }
 
+function trackFulfill(pending, promise, onError){
+  const run=promise.catch(err=>{ onError(err) }).finally(()=>pending.delete(run))
+  pending.add(run)
+  return run
+}
+
 async function fetchOwnedStatus(route, origin, context, attestedGet){
   assert(typeof attestedGet==='function','Attested status fetcher required')
   const requested=new URL(route.request().url())
@@ -212,6 +218,7 @@ async function verifySseAuthenticated503Recovery({
       await page.bringToFront()
       let injectTransient503=false
       let sseScenarioActive=true
+      let sseTeardown=false
       let handoverFrozen=false
       let recoveryReserved=false
       let sseGate='pass'
@@ -219,6 +226,7 @@ async function verifySseAuthenticated503Recovery({
       let recovered=false
       let routeError=null
       const statusProbes=[]
+      const pendingSseFulfills=new Set()
       const handover={sseOpenedAt:null,sseResponseAt:null,conversationSyncTimes:[],launcherMetaTimes:[]}
       const admittedMetaRequests=new WeakSet()
       let notifyHandoverSync=null
@@ -327,11 +335,9 @@ async function verifySseAuthenticated503Recovery({
           const pass=await releaseHeldSse.promise
           return (pass?route.fallback():route.abort()).catch(()=>{})
         }
-        try {
-          await route.fulfill({status:503,contentType:'application/json',body:'{}'})
-        } catch (err) {
-          if(sseScenarioActive&&injectTransient503)failRoute(err)
-        }
+        await trackFulfill(pendingSseFulfills,
+          route.fulfill({status:503,contentType:'application/json',body:'{}'}),
+          err=>{ if(!sseTeardown)failRoute(err) })
       }
       const routeStatus=async route=>{
         const receivedAt=performance.now()
@@ -356,14 +362,16 @@ async function verifySseAuthenticated503Recovery({
         }
         const serve503=async()=>{
           transient503s++
-          try {
-            await route.fulfill({status:503,contentType:'application/json',body:'{}'})
-            probe.fulfilledAt=performance.now()
-            if(attempt===1)first503Served.resolve()
-          } catch (err) {
-            if(injectTransient503)failRoute(err)
+          let failed=false
+          await trackFulfill(pendingSseFulfills,
+            route.fulfill({status:503,contentType:'application/json',body:'{}'}),
+            err=>{ failed=true; if(!sseTeardown)failRoute(err) })
+          if(failed){
             await route.abort().catch(()=>{})
+            return
           }
+          probe.fulfilledAt=performance.now()
+          if(attempt===1)first503Served.resolve()
         }
         if(shouldServeSse503(probePrefix,handover)){
           await serve503()
@@ -458,12 +466,17 @@ async function verifySseAuthenticated503Recovery({
         ;({retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes}=assertSse503Backoff(statusProbes,handover))
         assert.equal(transient503s,statusProbes.length-1,'Every pre-recovery /api/auth/status probe must receive 503')
         assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
+        await step(withBudget(now()+5_000,'in-flight SSE+503 route fulfills',
+          ()=>Promise.allSettled([...pendingSseFulfills])))
+        if(forbiddenError)throw forbiddenError
+        if(routeError)throw routeError
         recovered=true
       } catch (err) {
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
         throw err
       } finally {
+        sseTeardown=true
         sseScenarioActive=false
         injectTransient503=false
         sseGate=recovered?'pass':'abort'
@@ -595,10 +608,12 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         let staleDone=false
         let blockEvents=false
         let focusActive=true
+        let focusTeardown=false
         let postStaleStatus=0
         let staleError=null
         let focusForbiddenError=null
         let focusRouteError=null
+        const pendingFocusFulfills=new Set()
         const onAuthFailed=req=>{
           if(staleRequest&&req===staleRequest){
             staleAborted=req.failure()?.errorText||'aborted'
@@ -650,16 +665,16 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           if(!focusActive||!blockEvents)return route.fallback()
           if(!await checkFocusRoute(route))return
           if(!focusActive||!blockEvents)return route.fallback()
-          try {
-            await route.fulfill({status:503,contentType:'application/json',body:'{}'})
-          } catch (err) {
-            if(focusActive&&blockEvents){
-              staleError??=err
-              staleCaptured.reject(err)
-              followUpCaptured.reject(err)
-              failFocusRoute(err)
-            }
-          }
+          await trackFulfill(pendingFocusFulfills,
+            route.fulfill({status:503,contentType:'application/json',body:'{}'}),
+            err=>{
+              if(!focusTeardown){
+                staleError??=err
+                staleCaptured.reject(err)
+                followUpCaptured.reject(err)
+                failFocusRoute(err)
+              }
+            })
         }
         const holdStaleStatus=async route=>{
           if(!focusActive||route.request().method()!=='GET')return route.fallback()
@@ -799,15 +814,19 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
           await focusStep(dialog.waitFor({state:'detached',timeout:10_000}))
+          assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
+          blockEvents=false
+          await focusStep(withBudget(now()+5_000,'in-flight focus recovery route fulfills',
+            ()=>Promise.allSettled([...pendingFocusFulfills])))
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
-          assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
           assert(postStaleStatus>=1,'Focus return during the first status probe must trigger a follow-up /api/auth/status check')
         } catch (err) {
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
           throw err
         } finally {
+          focusTeardown=true
           focusActive=false
           blockEvents=false
           staleReleased=true
