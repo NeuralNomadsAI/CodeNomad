@@ -841,7 +841,9 @@ fn drain_chat(
                             })
                             .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
-                        Ok(content::TextFit::Applied) => applied = true,
+                        Ok(content::TextFit::Applied | content::TextFit::Settlement) => {
+                            applied = true
+                        }
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }

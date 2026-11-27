@@ -84,7 +84,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
     let mut body = col().full_width().separate(Space::Sm);
     let wrap = !s.transcript_display.toggled(&format!("{key}-wrap"));
     if let Some(code) = code {
-        body = body.child(markdown::tool_pane(
+        let pane = markdown::tool_pane(
             window(
                 s,
                 format!("{key}-execute-script"),
@@ -101,7 +101,12 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
                 },
             ),
             false,
-        ));
+        );
+        body = body.child(if wrap {
+            pane
+        } else {
+            pane.data(crate::chat::reading::HorizontalScrollRegion)
+        });
     }
     if count == 0 {
         return Some(body);
@@ -162,7 +167,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
         );
         if expanded && input.is_object() {
             row = row.child(if let Some(input) = rendered_input {
-                markdown::tool_pane(
+                let pane = markdown::tool_pane(
                     window(
                         s,
                         format!("{call}-input"),
@@ -179,7 +184,12 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
                         },
                     ),
                     false,
-                )
+                );
+                if wrap {
+                    pane
+                } else {
+                    pane.data(crate::chat::reading::HorizontalScrollRegion)
+                }
             } else {
                 text(t("toolCall.output.tooLarge"))
             });

@@ -701,34 +701,41 @@ fn render_body(
                                         .child(wrap_control(s, &wrap_key, wrap))
                                         .child(text(lang).text_role(TextRole::Label))
                                 }))
-                                .child(markdown::tool_pane(
-                                    window(
-                                        s,
-                                        output_key.clone(),
-                                        &parts,
-                                        document::search_limit_for(s, key, query),
-                                        |shown, units| {
-                                            if !probe
-                                                && tool.status == "running"
-                                                && shell::matches(tool)
-                                            {
-                                                s.transcript_display
-                                                    .live_ansi(key, shown, wrap, query)
-                                            } else if terminal {
-                                                ansi::search_code(shown, wrap, query)
-                                            } else {
-                                                markdown::search_code(
-                                                    shown,
-                                                    lang,
-                                                    highlight && units <= HIGHLIGHT_LIMIT,
-                                                    wrap,
-                                                    query,
-                                                )
-                                            }
-                                        },
-                                    ),
-                                    matches!(tool.name.as_str(), "edit" | "write"),
-                                ))
+                                .child({
+                                    let pane = markdown::tool_pane(
+                                        window(
+                                            s,
+                                            output_key.clone(),
+                                            &parts,
+                                            document::search_limit_for(s, key, query),
+                                            |shown, units| {
+                                                if !probe
+                                                    && tool.status == "running"
+                                                    && shell::matches(tool)
+                                                {
+                                                    s.transcript_display
+                                                        .live_ansi(key, shown, wrap, query)
+                                                } else if terminal {
+                                                    ansi::search_code(shown, wrap, query)
+                                                } else {
+                                                    markdown::search_code(
+                                                        shown,
+                                                        lang,
+                                                        highlight && units <= HIGHLIGHT_LIMIT,
+                                                        wrap,
+                                                        query,
+                                                    )
+                                                }
+                                            },
+                                        ),
+                                        matches!(tool.name.as_str(), "edit" | "write"),
+                                    );
+                                    if wrap {
+                                        pane
+                                    } else {
+                                        pane.data(crate::chat::reading::HorizontalScrollRegion)
+                                    }
+                                })
                         };
                         block = block.child(if let Some(results) = result_list {
                             results

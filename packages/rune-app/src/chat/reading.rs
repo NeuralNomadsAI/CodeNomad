@@ -110,6 +110,9 @@ fn replay_deltas_checked(start: f32, max: f32, deltas: &[f32]) -> (f32, bool) {
     (dest, clamped)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct HorizontalScrollRegion;
+
 #[derive(Clone, Debug, PartialEq)]
 struct FrameRestore {
     epoch: u64,
@@ -126,7 +129,7 @@ struct FrameRestore {
     defer_for_input_clock: Option<f64>,
     superseded_by_key: bool,
     had_press_defer: bool,
-    diagonal_fallback_deltas: Vec<f32>,
+    diagonal_fallback_deltas: Vec<(f32, bool)>,
     diagonal_fallback_base_offset: Option<f32>,
     handled: bool,
     post_probe: Option<PostProbe>,
@@ -1357,8 +1360,11 @@ pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx:
         return;
     }
     let focused_in_history = history_focused || tx.focus_within("history");
-    let focused_blocks_history =
-        tx.focused().is_some() && !focused_in_history && !tx.focus_within("composer");
+    let composer_pageable =
+        tx.focus_within("composer") && s.tool_diff_preferences.composer_scroll.get().1 > 0.5;
+    let focused_blocks_history = tx.focused().is_some()
+        && !focused_in_history
+        && (!tx.focus_within("composer") || composer_pageable);
     let targets_history = focused_in_history
         || (!focused_blocks_history && s.transcript_display.reading().history_hovered);
     let clock = tx.clock();
@@ -1467,7 +1473,9 @@ fn handle_reading_wheel(
     if !vertical_locked && dx.abs() > dy.abs() {
         if active_frame_restore {
             let cur_offset = s.transcript_display.reading().scroll_state.get().offset;
-            if let Some(fr) = s.transcript_display.reading_mut().frame_restore.as_mut()
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let pick_info = if let Some(fr) =
+                s.transcript_display.reading_mut().frame_restore.as_mut()
                 && !fr.handled
                 && fr.probe_live
                 && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
@@ -1475,9 +1483,43 @@ fn handle_reading_wheel(
                 if fr.diagonal_fallback_base_offset.is_none() {
                     fr.diagonal_fallback_base_offset = Some(cur_offset);
                 }
-                fr.diagonal_fallback_deltas.push(dy);
+                let idx = fr.diagonal_fallback_deltas.len();
+                fr.diagonal_fallback_deltas.push((dy, false));
                 fr.defer_for_input_clock = Some(clock);
                 tx.wake_after(std::time::Duration::ZERO);
+                Some((fr.epoch, idx))
+            } else {
+                None
+            };
+            if let Some((epoch, idx)) = pick_info
+                && history_bounds[2] > 0.0
+                && history_bounds[3] > 0.0
+            {
+                let scope = wheel_scope.clone();
+                tx.element_at_in(
+                    "history",
+                    history_bounds[0] + ev.x,
+                    history_bounds[1] + ev.y,
+                    move |s: &mut State, picked, tx| {
+                        let over_inner_scroller = picked.as_ref().is_some_and(|p| {
+                            p.data::<HorizontalScrollRegion>().is_some()
+                                || p.path().split('/').any(|seg| seg == "scroll")
+                        });
+                        if !over_inner_scroller
+                            && !s.screen.is_launcher()
+                            && s.transcript_display.reading().same_scope(&scope)
+                            && let Some(fr) =
+                                s.transcript_display.reading_mut().frame_restore.as_mut()
+                            && fr.epoch == epoch
+                            && !fr.handled
+                            && fr.probe_live
+                            && let Some(slot) = fr.diagonal_fallback_deltas.get_mut(idx)
+                        {
+                            slot.1 = true;
+                        }
+                        tx.live_only();
+                    },
+                );
             }
         }
         return false;
@@ -2166,7 +2208,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
     if s.screen.is_launcher() {
         return false;
     }
-    let (target, superseded, fallback_base) = {
+    let (target, superseded, fallback_base, confirmed_diagonal) = {
         let reading = s.transcript_display.reading_mut();
         let cur = reading.scroll_state.get();
         let Some(fr) = reading.frame_restore.as_mut() else {
@@ -2188,8 +2230,10 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 fr.defer_for_input_clock = None;
                 if cur.last_direct_seq == fr.direct_seq {
                     fr.had_press_defer = false;
-                    fr.diagonal_fallback_deltas.clear();
-                    fr.diagonal_fallback_base_offset = None;
+                    fr.diagonal_fallback_deltas.retain(|&(_, ok)| ok);
+                    if fr.diagonal_fallback_deltas.is_empty() {
+                        fr.diagonal_fallback_base_offset = None;
+                    }
                 }
             }
             if cur.last_direct_seq == fr.direct_seq
@@ -2209,7 +2253,12 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             && !fr.diagonal_fallback_deltas.is_empty()
         {
             fr.diagonal_fallback_base_offset.filter(|&base| {
-                let expected = replay_deltas_checked(base, cur.max, &fr.diagonal_fallback_deltas).0;
+                let raw_deltas: Vec<f32> = fr
+                    .diagonal_fallback_deltas
+                    .iter()
+                    .map(|&(dy, _)| dy)
+                    .collect();
+                let expected = replay_deltas_checked(base, cur.max, &raw_deltas).0;
                 let moved = cur.offset - base;
                 let want = expected - base;
                 (cur.offset - expected).abs() <= 1.0
@@ -2221,9 +2270,14 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         } else {
             None
         };
+        let confirmed_diagonal = is_replay
+            && !direct_moved
+            && !fr.superseded_by_key
+            && !fr.had_press_defer
+            && fr.diagonal_fallback_deltas.iter().any(|&(_, ok)| ok);
         let superseded =
             is_replay && (fr.superseded_by_key || (direct_moved && fallback_base.is_none()));
-        (target, superseded, fallback_base)
+        (target, superseded, fallback_base, confirmed_diagonal)
     };
     let reading = s.transcript_display.reading_mut();
     let fr = reading.frame_restore.take().unwrap();
@@ -2289,7 +2343,13 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             ..
         } => {
             if fallback_base.is_some() {
-                deltas.extend(fr.diagonal_fallback_deltas);
+                deltas.extend(fr.diagonal_fallback_deltas.into_iter().map(|(dy, _)| dy));
+            } else if confirmed_diagonal {
+                deltas.extend(
+                    fr.diagonal_fallback_deltas
+                        .into_iter()
+                        .filter_map(|(dy, ok)| ok.then_some(dy)),
+                );
             }
             let queue_layout_seq = s.transcript_display.reading().queue_layout_seq;
             let content_layout_seq = s.transcript_display.reading().content_layout_seq;

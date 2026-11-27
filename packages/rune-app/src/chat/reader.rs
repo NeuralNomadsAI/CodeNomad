@@ -8906,4 +8906,335 @@ mod resume_tests {
             "diagonal wheel fallback over plain text on replay frame must preserve both 40 px + 20 px: anchor={offset_at_anchor}, final={final_offset}"
         );
     }
+
+    #[test]
+    fn page_down_in_overflowing_composer_preserves_pending_transcript_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rcmpg-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.draft = rune::TextEdit::new(
+            &(0..40)
+                .map(|i| format!("draft line {i:02} with enough text to overflow the composer"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        rt.on_key = Some(crate::shell::keys);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rcmpg-16", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rcmpg")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        // Focus the overflowing composer while hovering over the transcript.
+        rt.update(|_, tx| tx.focus("input", false));
+        rt.frame(0.016);
+        assert!(
+            rt.state.tool_diff_preferences.composer_scroll.get().1 > 0.5,
+            "composer draft must overflow vertically for this test"
+        );
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (hx, hy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt.pointer_move(hx, hy);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(hx, hy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // Press PageDown while the overflowing composer is focused (pointer still over history).
+        rt.key(rune::KeyEvent {
+            key: rune::Key::PageDown,
+            mods: rune::Mods::default(),
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            ((final_offset - offset_at_anchor) - 40.0).abs() <= 3.0,
+            "PageDown in overflowing composer must preserve the pending 40 px transcript wheel replay: anchor={offset_at_anchor}, final={final_offset}"
+        );
+    }
+
+    #[test]
+    fn diagonal_reversal_at_bottom_edge_over_plain_text_is_preserved_in_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rdedge-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rdedge")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+
+        // Frame A: at Latest (bottom), wheel up +80 px to arm an upward ReplayDeltas.
+        rt.pointer_move(px, py);
+        rt.wheel_event(rune::WheelEvent::new(0.0, 80.0).at(px, py));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Frame B: unphased diagonal (60, -30) downward over plain text while old viewport is at bottom.
+        rt.wheel_event(rune::WheelEvent::new(60.0, -30.0).at(px, py));
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        let from_bottom = final_max - final_offset;
+        assert!(
+            (from_bottom - 50.0).abs() <= 3.0,
+            "diagonal reversal (60, -30) at bottom edge over plain text must land 50 px above bottom (80 - 30): from_bottom={from_bottom}, offset={final_offset}, max={final_max}"
+        );
+    }
+
+    #[test]
+    fn first_live_text_settlement_delta_after_resume_replays_full_downward_wheel() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            let end = range.end;
+            range
+                .map(|i| {
+                    let last = i + 1 == end;
+                    let body = if last {
+                        (0..28)
+                            .map(|line| format!("{prefix} final line {line:02}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        format!("{prefix} {i:02} line one\nline two\nline three")
+                    };
+                    let parts = if last {
+                        vec![crate::content::Part::Text(crate::content::Text {
+                            part_index: Some(0),
+                            text: body.clone(),
+                            provenance: crate::content::TextProvenance::Partial,
+                        })]
+                    } else {
+                        vec![]
+                    };
+                    crate::Message {
+                        usage: None,
+                        id: format!("rsetl-{i:02}"),
+                        role: "assistant".into(),
+                        completed: !last,
+                        body,
+                        parts,
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Streaming;
+        s.messages = make_rows("Full25", 0..25);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 40.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_25", 15..25),
+                        older: Some(serde_json::json!("older-rsetl")),
+                        newer: None,
+                        running: true,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -100.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, start_offset, start_max) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // First live text delta on a Persisted streaming message returns TextFit::Settlement.
+        let extra: String = (0..12)
+            .map(|n| format!("\nsettled live line {n:02}"))
+            .collect();
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::Text(
+                    "rsetl-24".into(),
+                    crate::content::TextEvent::Delta {
+                        ordinal: Some(0),
+                        text: extra,
+                    },
+                ),
+            ))
+            .unwrap();
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_max > start_max + 80.0,
+            "settlement delta must extend transcript extent: start_max={start_max}, final_max={final_max}"
+        );
+        assert!(
+            ((final_offset - start_offset) - 100.0).abs() <= 4.0,
+            "first live TextFit::Settlement delta must preserve full 100 px downward wheel past old bottom: start={start_offset}, final={final_offset}, old_max={start_max}, new_max={final_max}"
+        );
+    }
 }
