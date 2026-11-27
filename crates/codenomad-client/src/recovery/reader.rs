@@ -1105,6 +1105,7 @@ mod diagnostic_tests {
             part_index: None,
             text: String::new(),
             provenance: TextProvenance::Live,
+            bounded: false,
         }));
         assert!(super::can_restart(&row));
         row.completed = true;
@@ -1114,6 +1115,7 @@ mod diagnostic_tests {
             part_index: None,
             text: "already painted".into(),
             provenance: TextProvenance::Live,
+            bounded: false,
         });
         assert!(!super::can_restart(&row));
         let tool = history::decode_message(&json!({"id":"assistant","type":"assistant","content":[

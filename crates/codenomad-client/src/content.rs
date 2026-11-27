@@ -118,11 +118,14 @@ pub enum TextProvenance {
     Partial,
     Closed,
 }
+pub(crate) const LIVE_TEXT_BUDGET: usize = 256 * 1024;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
     pub part_index: Option<usize>,
     pub text: String,
     pub provenance: TextProvenance,
+    pub(crate) bounded: bool,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextEvent {
@@ -198,16 +201,23 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
         if row.parts.len() >= 1000 {
             return Err("message part bound reached".into());
         }
-        if row.body.len() + usize::from(count > 0) > 256 * 1024 {
-            return Err("live text budget reached".into());
-        }
+        let exhausted = row.body.len().saturating_add(usize::from(count > 0)) > LIVE_TEXT_BUDGET;
         row.parts.push(Part::Text(Text {
             part_index: None,
             text: String::new(),
-            provenance: TextProvenance::Live,
+            provenance: if exhausted {
+                TextProvenance::Partial
+            } else {
+                TextProvenance::Live
+            },
+            bounded: false,
         }));
         row.body = text_body(&row.parts);
-        return Ok(TextFit::Applied);
+        return Ok(if exhausted {
+            TextFit::Settlement
+        } else {
+            TextFit::Applied
+        });
     }
     let Some(&index) = ordinal
         .and_then(|o| indices.get(o))
@@ -218,8 +228,19 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
     let Part::Text(prior) = &row.parts[index] else {
         unreachable!()
     };
+    let other_bytes: usize = row
+        .parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| match p {
+            Part::Text(t) if i != index => Some(t.text.len()),
+            _ => None,
+        })
+        .sum();
+    let fragment_budget =
+        LIVE_TEXT_BUDGET.saturating_sub(other_bytes.saturating_add(count.saturating_sub(1)));
     let mut fit = TextFit::Applied;
-    let (text, provenance) = match event {
+    let (text, provenance, bounded) = match event {
         TextEvent::Delta { text, .. } => {
             if ordinal.is_some() {
                 if prior.provenance == TextProvenance::Closed {
@@ -229,37 +250,48 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
                     fit = TextFit::Settlement;
                 }
             }
-            if prior.text.len() + text.len() > 256 * 1024 {
-                return Err("live text budget reached".into());
+            if prior.bounded {
+                return Ok(TextFit::Drop);
             }
-            (format!("{}{text}", prior.text), TextProvenance::Live)
+            let room = fragment_budget.saturating_sub(prior.text.len());
+            if text.len() > room {
+                let cut = text.floor_char_boundary(room);
+                fit = TextFit::Settlement;
+                (
+                    format!("{}{}", prior.text, &text[..cut]),
+                    TextProvenance::Partial,
+                    true,
+                )
+            } else if text.is_empty() && prior.provenance == TextProvenance::Partial {
+                (prior.text.clone(), TextProvenance::Partial, false)
+            } else {
+                (format!("{}{text}", prior.text), TextProvenance::Live, false)
+            }
         }
         TextEvent::End { text, .. } => {
-            if text.len() > 256 * 1024 {
-                return Err("live text budget reached".into());
+            if text.len() > fragment_budget {
+                let cut = text.floor_char_boundary(fragment_budget);
+                if prior.provenance == TextProvenance::Closed && prior.text == *text {
+                    (prior.text.clone(), TextProvenance::Closed, false)
+                } else if prior.text.len() > cut && text.starts_with(&prior.text) {
+                    fit = TextFit::Settlement;
+                    (prior.text.clone(), TextProvenance::Partial, true)
+                } else {
+                    fit = TextFit::Settlement;
+                    (text[..cut].to_owned(), TextProvenance::Partial, true)
+                }
+            } else {
+                (text.clone(), TextProvenance::Closed, false)
             }
-            (text.clone(), TextProvenance::Closed)
         }
         TextEvent::Start { .. } => unreachable!(),
     };
-    let bytes = row
-        .parts
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| match p {
-            Part::Text(t) => Some(if i == index { text.len() } else { t.text.len() }),
-            _ => None,
-        })
-        .sum::<usize>()
-        + count.saturating_sub(1);
-    if bytes > 256 * 1024 {
-        return Err("live text budget reached".into());
-    }
     let part_index = prior.part_index;
     row.parts[index] = Part::Text(Text {
         part_index,
         text,
         provenance,
+        bounded,
     });
     row.body = text_body(&row.parts);
     Ok(fit)
@@ -313,7 +345,7 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
             if let Some(live) = texts.get(ordinal) {
                 if fetched.provenance != TextProvenance::Closed
                     && live.text.starts_with(&fetched.text)
-                    && live.text != fetched.text
+                    && (live.text != fetched.text || live.bounded)
                 {
                     let index = fetched.part_index;
                     *fetched = (*live).clone();
@@ -558,6 +590,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     } else {
                         TextProvenance::Partial
                     },
+                    bounded: false,
                 }));
             }
         } else if part["type"] == "reasoning" {
@@ -686,6 +719,7 @@ pub(crate) fn decode_bounded(v: &Value, budget: usize) -> Result<Vec<Part>> {
                     } else {
                         TextProvenance::Partial
                     },
+                    bounded: false,
                 }));
             }
         } else if part["type"] == "reasoning" {

@@ -2489,3 +2489,274 @@ fn host_open_emits_agent_hint_without_upstream_ready_until_upstream_recovers() {
         .expect("host open vs upstream ready test must complete");
     });
 }
+
+#[test]
+fn live_text_over_256k_stays_bounded_partial_without_disconnecting_sse() {
+    use crate::{
+        backend::Backend,
+        bounded,
+        content::{self, Part, TextProvenance},
+        transport::{Command, Event},
+    };
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+    };
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let sse_connections = Arc::new(AtomicUsize::new(0));
+            let sse_count = sse_connections.clone();
+            let settled = Arc::new(AtomicBool::new(false));
+            let settled_flag = settled.clone();
+            let oversized_end = Arc::new(format!("{}é🦀tail", "b".repeat(256 * 1024 - 3)));
+            let server_end = oversized_end.clone();
+            let (sse_tx, sse_rx) = bounded(2);
+            let server = tokio::spawn(async move {
+                while let Ok((accepted, _)) = listener.accept().await {
+                    let sse_count = sse_count.clone();
+                    let sse_tx = sse_tx.clone();
+                    let settled_flag = settled_flag.clone();
+                    let server_end = server_end.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(accepted);
+                        let mut request_line = String::new();
+                        if reader.read_line(&mut request_line).await.unwrap_or(0) == 0 {
+                            return;
+                        }
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).await.unwrap_or(0) == 0
+                                || line == "\r\n"
+                            {
+                                break;
+                            }
+                        }
+                        let mut socket = reader.into_inner();
+                        if request_line.contains("/api/events") {
+                            sse_count.fetch_add(1, Ordering::SeqCst);
+                            if socket
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+                                )
+                                .await
+                                .is_ok()
+                            {
+                                let _ = sse_tx.send(socket).await;
+                            }
+                        } else if request_line.contains("/session-history/window") {
+                            let body = if settled_flag.load(Ordering::SeqCst) {
+                                json!({
+                                    "status": "window",
+                                    "latest": true,
+                                    "running": false,
+                                    "older": null,
+                                    "newer": null,
+                                    "messages": [
+                                        {
+                                            "id": "reply_1",
+                                            "type": "assistant",
+                                            "time": {"created": 1, "completed": 2},
+                                            "content": [{"type": "text", "text": server_end.as_str()}]
+                                        },
+                                        {
+                                            "id": "reply_2",
+                                            "type": "assistant",
+                                            "time": {"created": 3, "completed": 4},
+                                            "content": [{"type": "text", "text": "still alive"}]
+                                        }
+                                    ]
+                                })
+                                .to_string()
+                            } else {
+                                json!({
+                                    "status": "window",
+                                    "latest": true,
+                                    "running": true,
+                                    "older": null,
+                                    "newer": null,
+                                    "messages": [{
+                                        "id": "reply_1",
+                                        "type": "assistant",
+                                        "time": {"created": 1},
+                                        "content": []
+                                    }]
+                                })
+                                .to_string()
+                            };
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = socket.write_all(response.as_bytes()).await;
+                        } else {
+                            let body = json!({}).to_string();
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = socket.write_all(response.as_bytes()).await;
+                        }
+                    });
+                }
+            });
+
+            let mut backend =
+                Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(64);
+            let (cmd_tx, cmd_rx) = bounded(4);
+            let wake: crate::Wake = Arc::new(|| {});
+            let task = tokio::spawn(async move {
+                crate::recovery::run_with_reading(backend, out, cmd_rx, wake, None).await
+            });
+
+            let mut sse = sse_rx.recv().await.unwrap();
+            // Wait for initial history load containing reply_1.
+            let mut messages: Vec<crate::Message> = loop {
+                match events.recv().await.unwrap() {
+                    Event::Sync(page) => {
+                        break page.rows.iter().map(|r| (**r).clone()).collect();
+                    }
+                    Event::ConnectionLost => panic!("unexpected ConnectionLost before streaming"),
+                    _ => continue,
+                }
+            };
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, "reply_1");
+
+            let sse_frame = |kind: &str, data: serde_json::Value| -> Vec<u8> {
+                format!(
+                    "data: {}\n\n",
+                    json!({
+                        "instanceId": "workspace",
+                        "type": "instance.event",
+                        "event": { "type": kind, "data": data }
+                    })
+                )
+                .into_bytes()
+            };
+
+            let prefix_a = "a".repeat(256 * 1024 - 2);
+            let emoji_overflow = "🦀".repeat(512);
+            for frame in [
+                sse_frame(
+                    "session.text.started",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_1", "ordinal": 0}),
+                ),
+                sse_frame(
+                    "session.text.delta",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_1", "ordinal": 0, "delta": prefix_a}),
+                ),
+                sse_frame(
+                    "session.text.delta",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_1", "ordinal": 0, "delta": emoji_overflow}),
+                ),
+                sse_frame(
+                    "session.text.delta",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_1", "ordinal": 0, "delta": "!"}),
+                ),
+                sse_frame(
+                    "session.text.ended",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_1", "ordinal": 0, "text": oversized_end.as_str()}),
+                ),
+                sse_frame(
+                    "session.step.started",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_2"}),
+                ),
+                sse_frame(
+                    "session.text.started",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_2", "ordinal": 0}),
+                ),
+                sse_frame(
+                    "session.text.delta",
+                    json!({"sessionID": "session", "assistantMessageID": "reply_2", "ordinal": 0, "delta": "still alive"}),
+                ),
+            ] {
+                sse.write_all(&frame).await.unwrap();
+            }
+            sse.flush().await.unwrap();
+
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::ConnectionLost => {
+                        panic!("oversized live text must not disconnect the SSE transport")
+                    }
+                    Event::Message(msg) => {
+                        if !messages.iter().any(|m| m.id == msg.id) {
+                            messages.push(msg);
+                        }
+                    }
+                    Event::Text(id, ev) => {
+                        if let Some(m) = messages.iter_mut().find(|m| m.id == id) {
+                            content::apply_text(m, &ev).unwrap();
+                        }
+                        if messages
+                            .iter()
+                            .any(|m| m.id == "reply_2" && m.body == "still alive")
+                        {
+                            break;
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+
+            assert_eq!(
+                sse_connections.load(Ordering::SeqCst),
+                1,
+                "SSE stream must remain on the same connection without reconnect"
+            );
+            let reply_1 = messages.iter().find(|m| m.id == "reply_1").unwrap();
+            assert_eq!(reply_1.body.len(), 256 * 1024 - 1);
+            assert!(reply_1.body.ends_with('é'));
+            assert!(
+                matches!(&reply_1.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial)
+            );
+
+            // End the turn and serve the completed >256 KiB history page: owed settles cleanly.
+            settled.store(true, Ordering::SeqCst);
+            sse.write_all(&sse_frame(
+                "session.execution.succeeded",
+                json!({"sessionID": "session", "created": 4}),
+            ))
+            .await
+            .unwrap();
+            sse.flush().await.unwrap();
+
+            let settled_rows = loop {
+                match events.recv().await.unwrap() {
+                    Event::ConnectionLost | Event::Failed => {
+                        panic!("settling oversized live text must not disconnect or fail transport")
+                    }
+                    Event::Sync(page) if !page.running && page.rows.len() == 2 => break page.rows,
+                    _ => continue,
+                }
+            };
+            let settled_reply_1 = settled_rows.iter().find(|m| m.id == "reply_1").unwrap();
+            assert_eq!(settled_reply_1.body, *oversized_end);
+            assert!(
+                matches!(&settled_reply_1.parts[0], Part::Text(t) if t.provenance == TextProvenance::Closed)
+            );
+            assert_eq!(sse_connections.load(Ordering::SeqCst), 1);
+
+            cmd_tx.send(Command::Close).await.unwrap();
+            drop(sse);
+            task.await.unwrap().unwrap();
+            server.abort();
+            let _ = server.await;
+        })
+        .await
+        .expect("oversized live text SSE test must complete");
+    });
+}
