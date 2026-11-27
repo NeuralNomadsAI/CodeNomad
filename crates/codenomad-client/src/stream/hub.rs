@@ -46,7 +46,7 @@ struct SubQueue {
     items: VecDeque<(HubItem, u64)>,
     bytes: usize,
     closed: bool,
-    pending_session_moved: Option<(Arc<(String, String)>, u64)>,
+    pending_terminal: Option<(Arc<(String, String)>, u64)>,
 }
 
 impl SubQueue {
@@ -251,14 +251,19 @@ impl Subscriber {
 
     /// Returns `false` if this subscriber exceeded its local queue budget.
     /// Caller revokes guard and quota before calling `close_overflow()`.
-    fn try_push_frame(&self, frame: Arc<(String, String)>, session_moved: bool, mark: u64) -> bool {
+    fn try_push_frame(
+        &self,
+        frame: Arc<(String, String)>,
+        terminal_scope_change: bool,
+        mark: u64,
+    ) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
         }
-        if session_moved {
-            queue.pending_session_moved = Some((frame.clone(), mark));
+        if terminal_scope_change {
+            queue.pending_terminal = Some((frame.clone(), mark));
         }
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
@@ -281,8 +286,8 @@ impl Subscriber {
         queue.closed = true;
         queue.items.clear();
         queue.bytes = 0;
-        if let Some((moved, mark)) = queue.pending_session_moved.take() {
-            queue.items.push_back((HubItem::Frame(moved), mark));
+        if let Some((terminal, mark)) = queue.pending_terminal.take() {
+            queue.items.push_back((HubItem::Frame(terminal), mark));
         }
         queue.items.push_back((
             HubItem::Closed {
@@ -328,11 +333,11 @@ impl Subscriber {
             let size = frame.0.len().saturating_add(frame.1.len());
             queue.bytes = queue.bytes.saturating_sub(size);
             if queue
-                .pending_session_moved
+                .pending_terminal
                 .as_ref()
-                .is_some_and(|(moved, _)| Arc::ptr_eq(moved, frame))
+                .is_some_and(|(terminal, _)| Arc::ptr_eq(terminal, frame))
             {
-                queue.pending_session_moved = None;
+                queue.pending_terminal = None;
             }
         }
         Some((item, mark))
@@ -519,14 +524,15 @@ impl SharedStream {
                     FrameClass::SessionDeleted { workspace, session }
                         if sub.matches_conversation(workspace, session)
                 );
-                if session_moved || session_deleted {
+                let terminal_scope_change = session_moved || session_deleted;
+                if terminal_scope_change {
                     sub.signal_placement();
                 }
                 if session_deleted && let Some(hook) = sub.take_session_deleted_hook() {
                     deleted_hooks.push(hook);
                 }
                 let mark = sub.note_inbox_frame(&frame.0, &frame.1);
-                let kept = sub.try_push_frame(frame.clone(), session_moved, mark);
+                let kept = sub.try_push_frame(frame.clone(), terminal_scope_change, mark);
                 if !kept {
                     if let Some(hook) = &sub.guard_hook {
                         hook.revoke(true);

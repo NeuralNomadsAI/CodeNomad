@@ -156,21 +156,23 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
             if closing_tab.is_none() || event_closing_tab.is_some() {
                 deferred |= outcome.deferred;
             }
-        } else if let Some(ui) = &mut s.workspace
-            && ui
+        } else if let Some(ui) = &mut s.workspace {
+            ui.forget_closed_unconfirmed_for_scope(&scope, &id);
+            if ui
                 .closed
                 .iter()
                 .any(|w| scope.matches(w) && workspace_has_draft_content(w, &id))
-            && !ui
-                .closed_pending_deleted
-                .iter()
-                .any(|(existing_scope, existing_id)| {
-                    existing_scope.same_scope(&scope) && existing_id == &id
-                })
-        {
-            ui.closed_pending_deleted.push((scope, id));
-            ui.changed();
-            ui.stage();
+                && !ui
+                    .closed_pending_deleted
+                    .iter()
+                    .any(|(existing_scope, existing_id)| {
+                        existing_scope.same_scope(&scope) && existing_id == &id
+                    })
+            {
+                ui.closed_pending_deleted.push((scope, id));
+                ui.changed();
+                ui.stage();
+            }
         }
     }
     RecoveryOutcome {
@@ -839,7 +841,7 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
     let Some(ui) = &mut s.workspace else {
         return String::new();
     };
-    deliver_draft(ui, &backend.session);
+    let delivered = deliver_draft(ui, &backend.session);
     if let Some(Tab::Workspace(saved)) = ui.entries.get(ui.active).map(|e| &e.saved) {
         let scope = super::ProjectScope::from_workspace(saved);
         let session = backend.session.clone();
@@ -872,7 +874,19 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
         if let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
             s.composer.restore_unconfirmed(unconfirmed.clone());
         } else if let Some(unconfirmed) = closed_unconfirmed {
-            s.composer.restore_unconfirmed(unconfirmed);
+            // Preserve the erasable unconfirmed payload ONLY when this tab actually received the
+            // closed tab that owned that attempt; otherwise restore an anti-replay lock only so
+            // late confirmation cannot erase an independent draft with identical text.
+            let owns_draft = matches!(
+                &delivered,
+                DeliveredClosed::OwnedAttempt(attempt) if attempt == unconfirmed.id()
+            );
+            let restored = if owns_draft {
+                unconfirmed
+            } else {
+                crate::composer::UnconfirmedPrompt::locked(unconfirmed.id().to_owned())
+            };
+            s.composer.restore_unconfirmed(restored);
         }
     }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
@@ -892,13 +906,19 @@ pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool)
     ui.changed();
     draft
 }
-fn deliver_draft(ui: &mut Ui, id: &str) {
+enum DeliveredClosed {
+    None,
+    OwnedAttempt(String),
+    Independent,
+}
+
+fn deliver_draft(ui: &mut Ui, id: &str) -> DeliveredClosed {
     let item = &ui.entries[ui.active];
     let Tab::Workspace(scope) = &item.saved else {
-        return;
+        return DeliveredClosed::None;
     };
     if !item.pending_drafts.contains(id) {
-        return;
+        return DeliveredClosed::None;
     }
     let scope = scope.clone();
     let project_scope = super::ProjectScope::from_workspace(&scope);
@@ -963,6 +983,18 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
             }
         }
     }
+    let delivered_outcome = match delivered_closed_idx {
+        None => DeliveredClosed::None,
+        Some(idx) => match ui
+            .closed_unconfirmed_attempts
+            .get(idx)
+            .and_then(|attempts| attempts.get(id))
+            .cloned()
+        {
+            Some(attempt_id) => DeliveredClosed::OwnedAttempt(attempt_id),
+            None => DeliveredClosed::Independent,
+        },
+    };
     let last_tombstone_idx = ui.closed.iter().enumerate().rev().find_map(|(idx, w)| {
         (same_project(&scope, w)
             && w.drafts.get(id).is_some_and(String::is_empty)
@@ -1020,6 +1052,7 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         }
         sync_pending_closed_projections(ui, &project_scope, id);
     }
+    delivered_outcome
 }
 
 /// Projects each remaining admissible closed-tab draft 1-to-1 onto available open tabs that
@@ -3044,10 +3077,18 @@ mod tests {
             Tab::Blank => panic!("expected workspace tab C"),
         };
 
-        // Late confirmation arrives: must erase Tab A's closed copy, keep Tab B's independent closed
-        // copy intact, and bump revision.
+        // Late confirmation arrives: must erase ONLY Tab A's closed copy (index 1), keep Tab B's
+        // independent closed copy (index 0) intact, and bump revision.
         let rev_before = rt.state.workspace.as_ref().unwrap().revision;
         let mut ui = rt.state.workspace.take().unwrap();
+        assert_eq!(ui.closed.len(), 2);
+        assert!(ui.closed_unconfirmed_attempts[0].is_empty());
+        assert_eq!(
+            ui.closed_unconfirmed_attempts[1]
+                .get("ses-shared")
+                .map(String::as_str),
+            Some(attempt_id.as_str())
+        );
         confirm_unconfirmed_for(
             &mut rt.state,
             &mut ui,
@@ -3059,17 +3100,99 @@ mod tests {
             ui.revision > rev_before,
             "clearing a closed unconfirmed draft must mark workspace dirty"
         );
-        let remaining_closed: Vec<&str> = ui
-            .closed
-            .iter()
-            .filter_map(|w| w.drafts.get("ses-shared").map(String::as_str))
-            .collect();
         assert_eq!(
-            remaining_closed,
-            vec!["same text"],
-            "independent closed Tab B draft must survive Tab A's late confirmation"
+            ui.closed[0].drafts.get("ses-shared").map(String::as_str),
+            Some("same text"),
+            "independent closed Tab B draft (index 0) must survive Tab A's late confirmation"
+        );
+        assert_eq!(
+            ui.closed[1].drafts.get("ses-shared"),
+            None,
+            "owning closed Tab A draft (index 1) must be cleared by Tab A's late confirmation"
         );
         rt.state.workspace = Some(ui);
+
+        // Reverse close order (Blocker #1): Tab A closes FIRST with unconfirmed "same text",
+        // then Tab B closes SECOND with independent "same text". Tab C opens and binds ses-shared
+        // (receiving Tab B's newer draft). Late confirmation of Tab A must release Tab C's lock
+        // WITHOUT erasing Tab B's draft in Tab C, while erasing Tab A's closed copy.
+        let mut s_rev = crate::init();
+        crate::gallery::shell::fixture(&mut s_rev);
+        let mut ui_rev = Ui::new();
+        ui_rev.fixture_ready();
+        s_rev.workspace = Some(ui_rev);
+        let mut rt_rev = rune::Runtime::new(
+            s_rev,
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt_rev.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt_rev.state, &project);
+        let _ = bound(&mut rt_rev.state, &backend);
+        rt_rev.state.phase = crate::Phase::Ready;
+        rt_rev.state.commands = Some(sender.clone());
+        rt_rev.state.draft = rune::edit::TextEdit::new("same text");
+        rt_rev.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt_rev) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_rev = prompt_rev.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt_rev.state, &attempt_rev, PromptOutcome::Unconfirmed);
+        capture(&mut rt_rev.state);
+        let tab_a_rev = rt_rev
+            .state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active_key()
+            .to_owned();
+
+        // Tab B opens while Tab A is open, binds ses-shared independently, and authors "same text".
+        rt_rev.update(crate::workspace::new_tab);
+        rt_rev.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt_rev.state, &project);
+        let _ = bound(&mut rt_rev.state, &backend);
+        rt_rev.state.draft = rune::edit::TextEdit::new("same text");
+        capture(&mut rt_rev.state);
+        let tab_b_rev = rt_rev
+            .state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active_key()
+            .to_owned();
+
+        // Close Tab A FIRST (ui.closed[0]), then Tab B SECOND (ui.closed[1]).
+        rt_rev.update(|s, tx| crate::workspace::close(s, &tab_a_rev, tx));
+        rt_rev.update(crate::workspace::new_tab);
+        rt_rev.update(|s, tx| crate::workspace::close(s, &tab_b_rev, tx));
+
+        // Tab C opens and binds ses-shared -> receives Tab B's independent draft + anti-replay lock.
+        rt_rev.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt_rev.state, &project);
+        let delivered_text = bound(&mut rt_rev.state, &backend);
+        assert_eq!(delivered_text, "same text");
+        rt_rev.state.draft = rune::edit::TextEdit::new(delivered_text);
+        assert_eq!(
+            rt_rev.state.composer.unconfirmed_id(),
+            Some(attempt_rev.as_str()),
+            "Tab C must still carry the anti-replay lock until Tab A's attempt settles"
+        );
+        // Tab A's attempt confirms: Tab C's lock clears, Tab B's draft survives in Tab C,
+        // and Tab A's closed copy in ui.closed[0] is cleared.
+        confirm_unconfirmed(&mut rt_rev.state, &attempt_rev);
+        assert_eq!(rt_rev.state.composer.unconfirmed_id(), None);
+        assert_eq!(
+            rt_rev.state.draft.text, "same text",
+            "late confirmation of Tab A must not erase Tab B's delivered independent draft"
+        );
+        let ui_rev = rt_rev.state.workspace.as_ref().unwrap();
+        assert_eq!(
+            ui_rev.closed[0].drafts.get("ses-shared"),
+            None,
+            "Tab A's closed copy must still be cleared on confirmation"
+        );
 
         // Now test when ONLY Tab A was in ui.closed (no independent Tab B): clearing the closed
         // copy must also clear Tab C's pending closed projection so restart cannot resurrect it.
@@ -3190,6 +3313,29 @@ mod tests {
             !unconfirmed_drafts_full(&s),
             "recovering a deleted session must free its orphaned closed_unconfirmed lock"
         );
+
+        // Medium #3: when NO tab of the project is open and there is NO closed draft left,
+        // draining a deleted-session hook must STILL release its closed_unconfirmed lock.
+        let hook_no_tab = session_deleted_hook(&s, "ses-dead-1").expect("hook");
+        {
+            let ui = s.workspace.as_mut().unwrap();
+            ui.entries.clear();
+            ui.entries
+                .push(super::super::entry("tab-blank".into(), Tab::Blank));
+            ui.active = 0;
+            ui.closed.clear();
+            ui.closed_restored.clear();
+            ui.closed_derived_from.clear();
+            ui.closed_unconfirmed_attempts.clear();
+        }
+        hook_no_tab();
+        let before_count = s.workspace.as_ref().unwrap().closed_unconfirmed_count();
+        let _ = drain_window_deleted_sessions(&mut s);
+        assert_eq!(
+            s.workspace.as_ref().unwrap().closed_unconfirmed_count(),
+            before_count - 1,
+            "deleted session arriving with no open project tabs must still release its closed_unconfirmed lock"
+        );
     }
 
     #[test]
@@ -3218,7 +3364,7 @@ mod tests {
         crate::workspace::opened(&mut rt.state, &project);
         let _ = bound(&mut rt.state, &backend);
         rt.state.phase = crate::Phase::Ready;
-        rt.state.commands = Some(cmd_tx);
+        rt.state.commands = Some(cmd_tx.clone());
         rt.state.incoming = Some(ev_rx);
         rt.state.draft = rune::edit::TextEdit::new("already sent");
         rt.update(|s, tx| crate::composer::send(s, tx, false));
@@ -3254,6 +3400,59 @@ mod tests {
         assert!(
             !any_resurrected,
             "queued confirmation on active tab must clear prompt before session.deleted recovery"
+        );
+
+        // Medium #4: same scenario when closing an INACTIVE cached tab with queued confirmation
+        // and session.deleted already buffered.
+        let (ev_tx2, ev_rx2) = codenomad_client::bounded(8);
+        backend.session = "ses-confirm-close-inactive".into();
+        rt.update(crate::workspace::new_tab);
+        rt.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt.state, &project);
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx);
+        rt.state.incoming = Some(ev_rx2);
+        rt.state.draft = rune::edit::TextEdit::new("already sent inactive");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt2) = cmd_rx.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id2 = prompt2.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id2, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+        let inactive_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        let hook2 = session_deleted_hook(&rt.state, &backend.session).expect("hook");
+        // Switch away so the tab becomes an inactive cached tab.
+        rt.update(crate::workspace::new_tab);
+        // Queue late confirmation + SessionDeleted into the inactive tab's incoming channel and
+        // fire the ingress hook before closing that inactive tab.
+        ev_tx2
+            .try_send(Event::InboxDelta(
+                codenomad_client::inbox::InboxDelta::Removed(attempt_id2),
+            ))
+            .unwrap();
+        ev_tx2.try_send(Event::SessionDeleted).unwrap();
+        hook2();
+        rt.update(|s, tx| crate::workspace::close(s, &inactive_key, tx));
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let any_inactive_resurrected = ui
+            .entries
+            .iter()
+            .filter_map(|e| match &e.saved {
+                Tab::Workspace(w) => Some(w),
+                Tab::Blank => None,
+            })
+            .chain(ui.closed.iter())
+            .any(|w| {
+                w.drafts
+                    .values()
+                    .any(|text| text == "already sent inactive")
+            });
+        assert!(
+            !any_inactive_resurrected,
+            "queued confirmation on inactive cached tab must clear prompt before session.deleted recovery"
         );
     }
 }

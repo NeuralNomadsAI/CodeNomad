@@ -353,6 +353,17 @@ impl Ui {
         self.closed_unconfirmed
             .retain(|item| !item.matches(workspace, session_id));
     }
+    pub(super) fn forget_closed_unconfirmed_for_scope(
+        &mut self,
+        scope: &ProjectScope,
+        session_id: &str,
+    ) {
+        self.closed_unconfirmed.retain(|item| {
+            !(item.session_id == session_id
+                && item.backend_id == scope.backend_id
+                && (item.backend_id.is_none() || item.server_id == scope.server_id))
+        });
+    }
     pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
         &self.entries
     }

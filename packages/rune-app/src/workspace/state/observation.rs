@@ -118,6 +118,93 @@ pub(super) fn poll_cached(
     (changed, deleted_by_tab)
 }
 
+/// Drains queued conversation events (including prompt confirmations and `Event::SessionDeleted`)
+/// on an inactive tab before tab closure recovers or archives drafts.
+pub(super) fn drain_inactive_for_close(s: &mut State, index: usize) -> bool {
+    let Some(mut ui) = s.workspace.take() else {
+        return false;
+    };
+    if index == ui.active || index >= ui.entries.len() {
+        s.workspace = Some(ui);
+        return false;
+    }
+    let active = Cache::take(s);
+    let other_healthy_stream = active.has_healthy_conversation_stream()
+        || ui.entries.iter().enumerate().any(|(other_index, other)| {
+            other_index != index
+                && other
+                    .cache
+                    .as_ref()
+                    .is_some_and(Cache::has_healthy_conversation_stream)
+        });
+    let mut session_deleted = false;
+    let mut drafts_changed = false;
+    let mut projection_sync: Vec<(super::ProjectScope, String)> = Vec::new();
+    let mut unconfirmed_update = None;
+    {
+        let item = &mut ui.entries[index];
+        if let Some(cache) = item.cache.take() {
+            cache.apply(s);
+            let prev_unconfirmed = s.composer.unconfirmed_id().map(str::to_owned);
+            let (_, deleted) = crate::chat::events::poll_hidden_chat(s, 1024, other_healthy_stream);
+            session_deleted = deleted;
+            let next_unconfirmed = s.composer.unconfirmed_id().map(str::to_owned);
+            if prev_unconfirmed != next_unconfirmed
+                && let Tab::Workspace(saved) = &item.saved
+                && let Some(session_id) = saved.active_session_id.as_deref()
+                && item
+                    .binding
+                    .as_ref()
+                    .is_some_and(|b| b.session == session_id)
+            {
+                unconfirmed_update = Some((
+                    saved.clone(),
+                    session_id.to_owned(),
+                    prev_unconfirmed,
+                    next_unconfirmed,
+                ));
+            }
+            let before = match &item.saved {
+                super::Tab::Workspace(w) => w.active_session_id.as_ref().map(|id| {
+                    (
+                        super::ProjectScope::from_workspace(w),
+                        id.clone(),
+                        item.clear_authority.get(id).cloned(),
+                    )
+                }),
+                super::Tab::Blank => None,
+            };
+            let captured = drafts::capture_draft(item, s);
+            let auth_changed = before
+                .as_ref()
+                .is_some_and(|(_, id, prev)| item.clear_authority.get(id) != prev.as_ref());
+            if captured || auth_changed {
+                drafts_changed = true;
+                if let Some((scope, id, _)) = before {
+                    projection_sync.push((scope, id));
+                }
+            }
+            item.cache = Some(Cache::take(s));
+        }
+    }
+    active.apply(s);
+    for (scope, id) in projection_sync {
+        drafts::sync_pending_closed_projections(&mut ui, &scope, &id);
+    }
+    if let Some((saved, session_id, prev, next)) = unconfirmed_update {
+        if let Some(attempt_id) = next {
+            drafts::note_unconfirmed_for(s, &mut ui, &saved, &session_id, &attempt_id);
+        } else if let Some(attempt_id) = prev {
+            drafts::confirm_unconfirmed_for(s, &mut ui, &saved, &session_id, &attempt_id);
+        }
+    }
+    if drafts_changed {
+        ui.changed();
+    }
+    s.workspace = Some(ui);
+    session_deleted
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn poll_cached_notifications(s: &mut State, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {

@@ -279,9 +279,14 @@ pub(super) fn close_with_uuid(
         return;
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
-    // Drain queued confirmations on the active conversation before capturing or recovering drafts
-    // from an ingress session.deleted hook so an already-confirmed prompt is never resurrected.
-    let active_incoming_deleted = active && crate::chat::events::drain_active_incoming_deleted(s);
+    // Drain queued confirmations on the closing tab (active or cached inactive) before capturing
+    // or recovering drafts from an ingress session.deleted hook so an already-confirmed prompt is
+    // never resurrected.
+    let closing_incoming_deleted = if active {
+        crate::chat::events::drain_active_incoming_deleted(s)
+    } else {
+        super::observation::drain_inactive_for_close(s, index)
+    };
     capture(s);
     let _ = super::drafts::drain_window_deleted_sessions_closing_with_uuid(
         s,
@@ -315,12 +320,7 @@ pub(super) fn close_with_uuid(
             }
             if let Some(entry) = ui.entries.get_mut(index) {
                 ids.extend(entry.visits.poll_checks().deleted);
-                if (active_incoming_deleted
-                    || (!active
-                        && entry
-                            .cache
-                            .as_mut()
-                            .is_some_and(super::Cache::drain_session_deleted)))
+                if closing_incoming_deleted
                     && let Tab::Workspace(saved) = &entry.saved
                     && let Some(active_id) = saved.active_session_id.as_deref()
                 {

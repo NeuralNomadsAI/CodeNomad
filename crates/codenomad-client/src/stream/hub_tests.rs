@@ -1563,5 +1563,23 @@ fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
         !state_other.placement_closed(),
         "non-matching subscriber placement must remain open"
     );
+    match sub_match.pop_marked() {
+        Some((HubItem::Frame(frame), _)) => {
+            assert_eq!(
+                frame.1, deleted,
+                "overflow must preserve session.deleted frame"
+            );
+        }
+        _ => panic!("expected preserved session.deleted frame before Closed"),
+    }
+    assert!(matches!(
+        sub_match.pop_marked(),
+        Some((
+            HubItem::Closed {
+                auth_expired: false
+            },
+            _
+        ))
+    ));
     shared.finish(&hub, false);
 }
