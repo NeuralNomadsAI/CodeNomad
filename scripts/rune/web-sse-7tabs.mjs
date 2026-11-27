@@ -106,15 +106,18 @@ export function evaluateConcurrentBatch(results, {expectedCount, wallMs, maxWall
 export function parseCdpSseFrame(event) {
   let parsed
   try { parsed = JSON.parse(event.data) } catch {}
-  const nativeEvent = parsed?.event ?? (parsed?.type === 'session.text.delta' ? parsed : null)
+  const eventName = typeof event?.eventName === 'string' && event.eventName.length > 0 ? event.eventName : null
+  const isNamedDelta = eventName === 'session.text.delta'
+  const nativeEvent = parsed?.event ?? (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
   return {
     requestId: event.requestId,
+    eventName,
     type: parsed?.type ?? null,
     instanceId: parsed?.instanceId ?? null,
-    nativeType: nativeEvent?.type ?? null,
-    sessionID: nativeEvent?.data?.sessionID ?? null,
-    assistantMessageID: nativeEvent?.data?.assistantMessageID ?? null,
-    delta: nativeEvent?.data?.delta ?? null,
+    nativeType: nativeEvent?.type ?? (isNamedDelta ? 'session.text.delta' : null),
+    sessionID: nativeEvent?.data?.sessionID ?? parsed?.sessionID ?? null,
+    assistantMessageID: nativeEvent?.data?.assistantMessageID ?? parsed?.assistantMessageID ?? null,
+    delta: nativeEvent?.data?.delta ?? parsed?.delta ?? null,
   }
 }
 
@@ -122,9 +125,14 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
   assert(Array.isArray(expectedEntries) && expectedEntries.length > 0, 'Expected non-empty injected SSE entries')
   const injectedIds = new Set(expectedEntries.map(entry => entry.assistantMessageID))
   assert(injectedIds.size > 0 && ![...injectedIds].some(id => typeof id !== 'string' || !id.length), 'Expected non-empty assistantMessageIDs')
-  const actualFrames = frames.filter(f => f.nativeType === 'session.text.delta' || f.type === 'session.text.delta')
+  const actualFrames = frames.filter(f =>
+    f.nativeType === 'session.text.delta'
+    || f.type === 'session.text.delta'
+    || f.eventName === 'session.text.delta',
+  )
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
+    assert(frame.eventName == null || frame.eventName === 'message', `Injected SSE frame for ${frame.assistantMessageID} arrived with SSE eventName ${frame.eventName}, expected default message`)
     assert.equal(frame.type, 'instance.event', `Injected SSE frame for ${frame.assistantMessageID} had envelope type ${frame.type}, expected instance.event`)
     assert.equal(typeof frame.assistantMessageID, 'string', 'Injected SSE frame assistantMessageID must be a string')
     assert.equal(typeof frame.instanceId, 'string', 'Injected SSE frame instanceId must be a string')
@@ -750,6 +758,7 @@ async function runBench() {
       while (Date.now() < deadline) {
         const matchedEntries = initialExpectedEntries.filter(entry => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
+          && (f.eventName == null || f.eventName === 'message')
           && f.type === 'instance.event'
           && f.nativeType === 'session.text.delta'
           && f.assistantMessageID === entry.assistantMessageID
@@ -778,6 +787,7 @@ async function runBench() {
       while (Date.now() < deadline) {
         const hit = cdpSseFrames.find(f =>
           f.requestId === sseRequestId
+          && (f.eventName == null || f.eventName === 'message')
           && f.type === 'instance.event'
           && f.nativeType === 'session.text.delta'
           && f.assistantMessageID === assistantMessageID

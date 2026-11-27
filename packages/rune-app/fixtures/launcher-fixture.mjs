@@ -97,9 +97,15 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
         delete process.env.CODENOMAD_POSIX_WORKER_GRACE_MS
         const child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
         child.stdin?.on('error',()=>{})
+        let childError=null
+        let childSpawned=Boolean(child.pid)
+        child.once('spawn',()=>{childSpawned=true})
         const closed=new Promise(resolve=>{
           child.once('close',(code,signal)=>resolve({code,signal}))
-          child.once('error',error=>resolve({code:null,signal:null,error}))
+          child.on('error',error=>{
+            childError??=error
+            if(!childSpawned&&!child.pid)resolve({code:null,signal:null,error})
+          })
         })
         let stopping,stopError,stopSettled,escalated=false
         const stopDone=new Promise(resolve=>{stopSettled=resolve})
@@ -139,6 +145,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
           try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
           finally{clearTimeout(timer)}
         }
+        if(childError&&!exit?.error)stopError??=childError
         const report={
           escalated,
           exitCode:exit?.code??null,
@@ -188,9 +195,15 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     worker.stdio[3].on('data',chunk=>{bridgeReportRaw+=chunk})
     worker.stdio[3].on('error',()=>{})
   }
+  let workerError=null
+  let workerSpawned=Boolean(worker.pid)
+  worker.once('spawn',()=>{workerSpawned=true})
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
-    worker.once('error',error=>resolve({code:null,signal:null,error}))
+    worker.on('error',error=>{
+      workerError??=error
+      if(!workerSpawned&&!worker.pid)resolve({code:null,signal:null,error})
+    })
   })
   const outerGraceMs=process.platform==='win32'?graceMs:graceMs+15000
   let stopping,stopError,stopSettled,escalatedStop=false,unconfirmedStop=false
@@ -238,6 +251,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   process.off('SIGINT',dispatchOuterSignal)
   process.off('SIGTERM',dispatchOuterSignal)
   startAck.close()
+  if(workerError&&!exit?.error)stopError??=workerError
   let supervisorExit=process.platform==='win32'?exit:null
   let bridgeExit=process.platform==='win32'?null:exit
   if(process.platform!=='win32'){

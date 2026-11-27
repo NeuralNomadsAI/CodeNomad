@@ -212,6 +212,30 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
     ...exactFrames,
     {...exactFrames[0], type: 'session.text.delta', nativeType: null},
   ], 'sse-1', expected), /expected instance\.event/)
+  const namedEventDelta = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'session.text.delta',
+    data: JSON.stringify({
+      data: {sessionID: 'ses_tab_1', assistantMessageID: 'sse-live-1', delta: 'Tab 1'},
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    namedEventDelta,
+  ], 'sse-1', expected), /expected default message/)
+  const namedEventWithEnvelope = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'session.text.delta',
+    data: JSON.stringify({
+      type: 'instance.event',
+      instanceId: 'ws-1',
+      event: {type: 'session.text.delta', data: {sessionID: 'ses_tab_1', assistantMessageID: 'sse-live-1', delta: 'Tab 1'}},
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    namedEventWithEnvelope,
+  ], 'sse-1', expected), /expected default message/)
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
     {...exactFrames[0], assistantMessageID: ['sse-live-1']},
