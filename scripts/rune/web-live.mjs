@@ -349,8 +349,9 @@ export async function revokedLauncher({context,url,messages}){
       assert.equal(await page.getByText(password,{exact:true}).count(),0)
       assert.equal(await page.getByLabel(password,{exact:true}).count(),0)
       const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
-        const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
-        return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
+        const rect=field.getBoundingClientRect(),style=getComputedStyle(field),parent=field.parentElement
+        const hostForm=parent instanceof HTMLFormElement&&parent.parentElement===document.body&&parent.noValidate&&getComputedStyle(parent).pointerEvents==='none'
+        return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&hostForm&&
           field.inert&&field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
           tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
           opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
