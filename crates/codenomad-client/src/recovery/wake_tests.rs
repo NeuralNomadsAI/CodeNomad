@@ -514,3 +514,272 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
         .expect("recovery transport wake test timed out");
     });
 }
+
+async fn read_request_with_body(stream: &mut BufReader<tokio::net::TcpStream>) -> (String, String) {
+    let mut first = String::new();
+    assert!(stream.read_line(&mut first).await.unwrap() > 0);
+    let mut content_len = 0usize;
+    loop {
+        let mut line = String::new();
+        assert!(stream.read_line(&mut line).await.unwrap() > 0);
+        if line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            content_len = value.trim().parse().unwrap_or(0);
+        }
+    }
+    let body = if content_len > 0 {
+        let mut raw = vec![0u8; content_len];
+        stream.read_exact(&mut raw).await.unwrap();
+        String::from_utf8(raw).unwrap()
+    } else {
+        String::new()
+    };
+    (first, body)
+}
+
+async fn write_json(stream: &mut BufReader<tokio::net::TcpStream>, body: &str) {
+    stream
+        .get_mut()
+        .write_all(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+}
+
+async fn accept_window(
+    listener: &tokio::net::TcpListener,
+) -> (BufReader<tokio::net::TcpStream>, String, String) {
+    loop {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut stream = BufReader::new(socket);
+        let (req, body) = read_request_with_body(&mut stream).await;
+        if req.starts_with("GET /workspaces/workspace/instance/api/session/session/inbox") {
+            write_json(&mut stream, r#"{"data":[]}"#).await;
+            continue;
+        }
+        return (stream, req, body);
+    }
+}
+
+#[test]
+fn resuming_historical_around_admits_once_across_concurrent_permission_and_fences_revert() {
+    use crate::transport::WorkspaceEvent;
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::unauthenticated(&format!("http://{}", listener.local_addr().unwrap()))
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+
+            let (out, events) = bounded(32);
+            let (commands, input) = bounded(4);
+            let (demand_tx, observer) = demand::open();
+            let (content, snapshots) = bounded(8);
+            demand_tx.publish(None);
+
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                    on_session_deleted: None,
+                    revoked: Default::default(),
+                },
+            ));
+
+            // 1. Open SSE while suspended.
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut sse = BufReader::new(socket);
+            let (req, _) = read_request_with_body(&mut sse).await;
+            assert!(req.contains("connectionId=hub-1"), "got {req}");
+            sse.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+
+            // 2. Resume on a historical anchor and hold the HTTP window response while a
+            // permission.asked event and a redundant connected status replay arrive on SSE.
+            demand_tx.publish(Some(demand::Target::Around("message-00413".into())));
+            let (mut around_req, req, body) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window"),
+                "unexpected request: {req}"
+            );
+            assert!(
+                body.contains("\"kind\":\"around\"") && body.contains("\"message-00413\""),
+                "expected around request for message-00413, got {body}"
+            );
+
+            let sse_burst = concat!(
+                "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"workspace\",\"status\":\"connected\"}\n\n",
+                "data: {\"type\":\"instance.event\",\"instanceId\":\"workspace\",\"event\":{\"id\":\"evt_perm\",\"type\":\"permission.asked\",\"data\":{\"sessionID\":\"session\",\"permissionID\":\"permission-after-reopens\",\"action\":\"read\"}}}\n\n",
+            );
+            sse.get_mut().write_all(sse_burst.as_bytes()).await.unwrap();
+            sse.get_mut().flush().await.unwrap();
+            // Sleep past two 25 ms fence polling ticks to prove Fence::History keeps the read alive.
+            tokio::time::sleep(Duration::from_millis(75)).await;
+
+            let historical_page = r#"{"status":"window","latest":false,"older":{"kind":"before","messageID":"message-00413"},"newer":{"kind":"after","messageID":"message-00413"},"messages":[{"id":"message-00413","type":"user","text":"anchored row"}]}"#;
+            write_json(&mut around_req, historical_page).await;
+
+            let (mut status, req, _) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("GET /workspaces/workspace/instance/api/session/session"),
+                "unexpected status request: {req}"
+            );
+            write_json(&mut status, r#"{"id":"session","time":{}}"#).await;
+
+            let (_, _, ev) = snapshots.recv().await.unwrap();
+            match ev {
+                Event::ReaderSync { page, .. } => {
+                    assert_eq!(page.rows.len(), 1);
+                    assert_eq!(page.rows[0].id, "message-00413");
+                    assert!(page.newer.is_some());
+                }
+                other => panic!("expected historical ReaderSync, got {other:?}"),
+            }
+
+            let mut saw_permission = false;
+            let mut saw_upstream_ready = false;
+            while !(saw_permission && saw_upstream_ready) {
+                match events.recv().await.unwrap() {
+                    Event::Workspace(WorkspaceEvent::SessionRequest { form: false, id })
+                        if id == "permission-after-reopens" =>
+                    {
+                        saw_permission = true;
+                    }
+                    Event::UpstreamReady => saw_upstream_ready = true,
+                    _ => {}
+                }
+            }
+
+            // Drain any inbox sync for 300 ms (past the 200 ms retry delay) and verify no second
+            // around window request is issued.
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+            while let Ok(Ok((socket, _))) = tokio::time::timeout_at(deadline, listener.accept()).await
+            {
+                let mut extra = BufReader::new(socket);
+                let (req, body) = read_request_with_body(&mut extra).await;
+                if req.starts_with("GET /workspaces/workspace/instance/api/session/session/inbox") {
+                    write_json(&mut extra, r#"{"data":[]}"#).await;
+                } else {
+                    panic!(
+                        "unexpected duplicate history request after historical around resume: {req} {body}"
+                    );
+                }
+            }
+
+            // 3. An Around target landing on the live tail (newer: null) must still reject a
+            // snapshot invalidated by a concurrent live delta and re-read cleanly.
+            while snapshots.try_recv().is_ok() {}
+            demand_tx.publish(None);
+            demand_tx.publish(Some(demand::Target::Around("message-00599".into())));
+            let (mut tail_req, req, body) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window")
+                    && body.contains("\"kind\":\"around\"")
+                    && body.contains("\"message-00599\""),
+                "unexpected tail around request: {req} {body}"
+            );
+            let live_delta = "data: {\"type\":\"instance.event\",\"instanceId\":\"workspace\",\"event\":{\"id\":\"evt_live\",\"type\":\"session.step.started\",\"data\":{\"sessionID\":\"session\",\"assistantMessageID\":\"message-00600\"}}}\n\n";
+            sse.get_mut().write_all(live_delta.as_bytes()).await.unwrap();
+            sse.get_mut().flush().await.unwrap();
+            // Let the SSE task receive the live event and bump wire.version before answering HTTP.
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let stale_tail = r#"{"status":"window","latest":true,"older":{"kind":"before","messageID":"message-00599"},"newer":null,"messages":[{"id":"message-00599","type":"user","text":"tail row"}]}"#;
+            write_json(&mut tail_req, stale_tail).await;
+            let (mut status, req, _) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("GET /workspaces/workspace/instance/api/session/session"),
+                "unexpected status request: {req}"
+            );
+            write_json(&mut status, r#"{"id":"session","time":{}}"#).await;
+            // Must NOT admit stale tail snapshot; retries around after the 200 ms quiet delay.
+            let (mut retry_tail, req, body) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window")
+                    && body.contains("\"kind\":\"around\"")
+                    && body.contains("\"message-00599\""),
+                "expected retry around request for invalidated live tail, got {req} {body}"
+            );
+            while let Ok((_, _, ev)) = snapshots.try_recv() {
+                assert!(
+                    !matches!(ev, Event::ReaderSync { .. }),
+                    "stale live-tail snapshot must not have been admitted: {ev:?}"
+                );
+            }
+            let fresh_tail = r#"{"status":"window","latest":true,"older":{"kind":"before","messageID":"message-00599"},"newer":null,"messages":[{"id":"message-00599","type":"user","text":"tail row"},{"id":"message-00600","type":"assistant","content":[{"type":"text","text":"live reply"}]}]}"#;
+            write_json(&mut retry_tail, fresh_tail).await;
+            let (mut status, req, _) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("GET /workspaces/workspace/instance/api/session/session"),
+                "unexpected status request: {req}"
+            );
+            write_json(&mut status, r#"{"id":"session","time":{}}"#).await;
+            loop {
+                if let Event::ReaderSync { page, .. } = snapshots.recv().await.unwrap().2 {
+                    assert_eq!(page.rows.len(), 2);
+                    assert_eq!(page.rows[1].id, "message-00600");
+                    break;
+                }
+            }
+
+            // 4. A real history boundary (session.revert.committed) arriving during an in-flight
+            // Target::Around read must still abort the read immediately and switch to Latest.
+            demand_tx.publish(None);
+            demand_tx.publish(Some(demand::Target::Around("message-00413".into())));
+            let (mut fenced_around, req, body) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window")
+                    && body.contains("\"kind\":\"around\""),
+                "unexpected request: {req} {body}"
+            );
+
+            let revert = "data: {\"type\":\"instance.event\",\"instanceId\":\"workspace\",\"event\":{\"id\":\"evt_rev\",\"type\":\"session.revert.committed\",\"data\":{\"sessionID\":\"session\",\"to\":\"message-00400\"}}}\n\n";
+            sse.get_mut().write_all(revert.as_bytes()).await.unwrap();
+            sse.get_mut().flush().await.unwrap();
+
+            let mut probe = [0u8; 1];
+            let read = tokio::time::timeout(Duration::from_secs(2), fenced_around.read(&mut probe))
+                .await
+                .expect("revert boundary must abort in-flight historical around read")
+                .unwrap();
+            assert_eq!(read, 0, "aborted around request should reach EOF");
+            while !matches!(events.recv().await.unwrap(), Event::HistoryInvalidated) {}
+
+            // Next window read after revert must be Latest, not the stale Around target.
+            let (latest_req, req, body) = accept_window(&listener).await;
+            assert!(
+                req.starts_with("POST /api/workspaces/workspace/session-history/window")
+                    && body.contains("\"kind\":\"latest\""),
+                "expected latest read after revert, got {req} {body}"
+            );
+
+            drop(demand_tx);
+            drop(latest_req);
+            drop(fenced_around);
+            commands.send(Command::Close).await.unwrap();
+            task.await.unwrap().unwrap();
+            drop(sse);
+        })
+        .await
+        .expect("historical around resume test timed out");
+    });
+}
