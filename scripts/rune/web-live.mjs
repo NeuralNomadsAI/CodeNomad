@@ -235,6 +235,7 @@ async function verifySseAuthenticated503Recovery({
       let sseGate='pass'
       let metaGate='pass'
       let admittedMetaRequest=null
+      let metaRearmTimer=null
       let admittedSseRequest=null
       let sseResponseAt=null
       let recovered=false
@@ -331,14 +332,19 @@ async function verifySseAuthenticated503Recovery({
         if(!observeStatusEpisode||req.method()!=='GET')return
         if(isAuthStatusUrl(req.url()))observedStatusRequests.push(performance.now())
       }
+      const clearMetaRearm=()=>{
+        if(metaRearmTimer!==null){ clearTimeout(metaRearmTimer); metaRearmTimer=null }
+      }
       const releaseMetaAdmission=req=>{
         if(sseScenarioActive&&sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
+          clearMetaRearm()
           admittedMetaRequest=null
           if(metaGate==='block'&&sseGate==='admit-one')metaGate='admit-one'
         }
       }
       const releaseSseAdmission=req=>{
         if(sseScenarioActive&&sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
+          clearMetaRearm()
           admittedSseRequest=null
           if(sseGate==='hold')sseGate='admit-one'
           if(metaGate==='block')metaGate='admit-one'
@@ -354,6 +360,7 @@ async function verifySseAuthenticated503Recovery({
         const req=res.request()
         if(sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
           if(res.status()===200){
+            clearMetaRearm()
             sseResponseAt=performance.now()
             if(metaGate==='admit-one')metaGate='block'
             if(sseGate==='admit-one')sseGate='hold'
@@ -363,7 +370,16 @@ async function verifySseAuthenticated503Recovery({
           return
         }
         if(sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
-          if(res.status()!==200)releaseMetaAdmission(req)
+          if(res.status()!==200){
+            releaseMetaAdmission(req)
+          } else {
+            clearMetaRearm()
+            metaRearmTimer=setTimeout(()=>{
+              metaRearmTimer=null
+              releaseMetaAdmission(req)
+            },3_000)
+            metaRearmTimer.unref?.()
+          }
           return
         }
         if(req.method()!=='GET')return
@@ -377,6 +393,7 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||metaGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
           const req=route.request()
+          clearMetaRearm()
           admittedMetaRequest=req
           metaGate='block'
           if(!await continueSseRoute(route))releaseMetaAdmission(req)
@@ -394,6 +411,7 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||sseGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
           const req=route.request()
+          clearMetaRearm()
           sseGate='hold'
           metaGate='block'
           admittedSseRequest=req
@@ -597,15 +615,17 @@ async function verifySseAuthenticated503Recovery({
           sseTeardown=true
           sseScenarioActive=false
           injectTransient503=false
+          clearMetaRearm()
           sseGate=recovered?'pass':'abort'
           metaGate=recovered?'pass':'abort'
           sseAbort.abort()
           releaseSecond503.resolve(false)
           releaseThird200.resolve(false)
           releaseHeldSse.resolve(recovered)
-          const heldDrainErr=await drainSetsWithin([pendingHeldRoutes],'held SSE+503 routes',2_000)
-          const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
-          const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
+          const cleanupBudgetMs=()=>recovered?Math.max(1,Math.round(episodeDeadline-now())):2_000
+          const heldDrainErr=await drainSetsWithin([pendingHeldRoutes],'held SSE+503 routes',cleanupBudgetMs())
+          const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',cleanupBudgetMs())
+          const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',cleanupBudgetMs())
           cleanupError??=heldRouteError??teardownFulfillError??heldDrainErr??unrouteErr??drainErr
           await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
         }
