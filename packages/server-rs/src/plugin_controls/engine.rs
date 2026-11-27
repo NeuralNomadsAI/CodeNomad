@@ -749,6 +749,7 @@ pub(crate) async fn read_bound(
     if !pin_still_live(&ctx.workspace, &ctx.location.directory, &ctx.location_pin).await {
         return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
     }
+    check_cancelled(cancel)?;
     assert_current(app, &ctx.endpoint, &ctx.workspace, principal)?;
     Ok((snapshot, ctx.workspace, ctx.endpoint, ctx.location_pin))
 }
