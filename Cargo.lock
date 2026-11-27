@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "accesskit_atspi_common"
 version = "0.21.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -49,7 +49,7 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.27.2"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "accesskit_windows"
 version = "0.35.2"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -2090,7 +2090,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "30.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -2708,7 +2708,7 @@ checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
 [[package]]
 name = "parley_engine"
 version = "0.12.0"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "fontique",
  "harfrust",
@@ -3333,7 +3333,7 @@ dependencies = [
 [[package]]
 name = "rune"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "accesskit",
  "accesskit_android",
@@ -3407,7 +3407,7 @@ dependencies = [
 [[package]]
 name = "rune-core"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "js-sys",
  "libc",
@@ -3426,7 +3426,7 @@ dependencies = [
 [[package]]
 name = "rune-edit"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "js-sys",
  "parley",
@@ -3440,7 +3440,7 @@ dependencies = [
 [[package]]
 name = "rune-gpu"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "bytemuck",
  "objc2 0.6.5",
@@ -3458,7 +3458,7 @@ dependencies = [
 [[package]]
 name = "rune-highlights"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "unicode-ident",
  "wasmparser",
@@ -3467,7 +3467,7 @@ dependencies = [
 [[package]]
 name = "rune-image"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "avif-decode",
  "blake3",
@@ -3486,7 +3486,7 @@ dependencies = [
 [[package]]
 name = "rune-kit"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "icu_normalizer",
  "pulldown-cmark",
@@ -3500,7 +3500,7 @@ dependencies = [
 [[package]]
 name = "rune-media"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "ash",
  "blake3",
@@ -3529,7 +3529,7 @@ dependencies = [
 [[package]]
 name = "rune-mermaid"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "rune",
 ]
@@ -3537,12 +3537,12 @@ dependencies = [
 [[package]]
 name = "rune-motion"
 version = "0.1.0"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 
 [[package]]
 name = "rune-spell"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -3555,7 +3555,7 @@ dependencies = [
 [[package]]
 name = "rune-staging"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "wgpu",
  "windows",
@@ -3573,7 +3573,7 @@ dependencies = [
 [[package]]
 name = "rune-taffy"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "stacker",
  "taffy",
@@ -3582,7 +3582,7 @@ dependencies = [
 [[package]]
 name = "rune-text"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "bytemuck",
  "fontique",
@@ -3621,7 +3621,7 @@ dependencies = [
 [[package]]
 name = "rune-tiny-skia-path"
 version = "0.11.4"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -3752,7 +3752,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sctk-adwaita"
 version = "0.10.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "log",
  "smithay-client-toolkit",
@@ -4921,7 +4921,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -5289,7 +5289,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#03f8c0ff188a9fd58643a102b026fad3598132c0"
+source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
 dependencies = [
  "ahash",
  "android-activity",

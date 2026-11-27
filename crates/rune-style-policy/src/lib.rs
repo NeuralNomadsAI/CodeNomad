@@ -344,7 +344,9 @@ impl<'ast> Visit<'ast> for Policy {
             .map(|s| s.ident.to_string())
             .collect();
         let pin = path == ["std", "pin", "pin"] || path == ["core", "pin", "pin"];
-        if !allowed.contains(&name.as_str()) && !pin {
+        // The Android entry point: it exports a function that calls the named one.
+        let entry = path == ["rune", "android_main"];
+        if !allowed.contains(&name.as_str()) && !pin && !entry {
             self.reject(
                 node.path.segments[0].ident.span(),
                 &format!("unreviewed macro {name}"),
@@ -485,6 +487,18 @@ mod tests {
             "fn f(){ other::pin::pin!(future); }",
             "fn f(){ std::pin::pin!(element.padding(8.)); }",
             "fn f(){ core::pin::pin!(rune::El::fill(element, colour)); }",
+        ] {
+            assert!(!check(source).unwrap().is_empty(), "accepted {source}");
+        }
+    }
+    #[test]
+    fn the_android_entry_is_admitted_by_its_exact_path_only() {
+        let admitted = "rune::android_main!(main); fn main() {}";
+        assert!(check(admitted).unwrap().is_empty(), "{admitted}");
+        for source in [
+            "android_main!(main); fn main() {}",
+            "other::android_main!(main); fn main() {}",
+            "rune::android_main!(element.padding(8.)); fn main() {}",
         ] {
             assert!(!check(source).unwrap().is_empty(), "accepted {source}");
         }
