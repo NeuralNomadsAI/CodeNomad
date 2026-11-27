@@ -672,9 +672,33 @@ impl Draft {
             self.dirty = true;
         }
     }
+    pub fn multiselect_checked(&self, allow_custom: bool, value: &str) -> bool {
+        self.selected.contains(value)
+            || (allow_custom
+                && !self.custom.text.is_empty()
+                && parse_custom_entries(&self.custom.text)
+                    .iter()
+                    .any(|entry| entry.value == value))
+    }
     pub fn toggle(&mut self, value: &str) {
         self.oversized_multiselect_default = false;
-        if self.selected.remove(value) {
+        let in_selected = self.selected.contains(value);
+        let in_custom = !self.custom.text.is_empty()
+            && parse_custom_entries(&self.custom.text)
+                .iter()
+                .any(|entry| entry.value == value);
+        if in_selected || in_custom {
+            self.selected.remove(value);
+            if in_custom {
+                let was_custom_edited = self.is_custom_edited();
+                if remove_promoted_lines(&mut self.custom, |decoded| decoded == value) {
+                    self.custom_baseline = self.custom.text.clone();
+                    if was_custom_edited {
+                        self.custom_dirty.set(true);
+                    }
+                    self.text_dirty.set(true);
+                }
+            }
             if let Some(order) = &mut self.multiselect_order {
                 order.retain(|item| item != value);
             }
@@ -1348,11 +1372,20 @@ pub fn validate_budgeted(
             }
             let hidden_present =
                 field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
-            let has_constraints = min_len.is_some_and(|m| m > 0)
-                || field["format"].is_string()
-                || field["pattern"].as_str().is_some_and(|p| !p.is_empty());
-            let empty_present =
-                text.is_empty() && (d.has_string_value || (d.is_dirty() && !has_constraints));
+            let empty_present = if text.is_empty() && !hidden_present {
+                if d.is_dirty() {
+                    field["required"] != true
+                        && min_len.is_none_or(|m| m == 0)
+                        && string_constraints::matches_string_constraints_budgeted(
+                            field, "", budget,
+                        )
+                        .map_err(|()| ValidationError::Unsupported)?
+                } else {
+                    d.has_string_value
+                }
+            } else {
+                false
+            };
             let effective_raw = if hidden_present {
                 d.hidden_value.as_deref().unwrap_or("")
             } else {

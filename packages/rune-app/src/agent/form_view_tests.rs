@@ -229,7 +229,10 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             assert_eq!(env_group["description"], "Pick deployment target");
             assert_eq!(opt_staging["role"], "radio-button");
             assert_eq!(opt_staging["name"], "Staging");
-            assert_eq!(opt_staging["description"], "Pre-production · Environment");
+            assert_eq!(
+                opt_staging["description"],
+                "Pre-production · Environment · Pick deployment target"
+            );
             assert!(has_state(opt_staging, "unchecked"), "{opt_staging}");
             assert!(has_state(opt_prod, "unchecked"), "{opt_prod}");
 
@@ -1167,29 +1170,8 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             d.custom_editor().text.push_str("\nnew");
         });
         mrt.frame(2.0);
-        // Typing declared option "prod" alongside custom text into custom-targets submits both
-        // entries cleanly, matching Solid and OpenCode.
-        {
-            let a = mrt.state.agent.as_ref().unwrap();
-            let ans_with_declared = agent_forms::answer(&a.forms[0], &a.drafts)
-                .expect("declared value entered via custom multiselect input must submit");
-            assert_eq!(
-                ans_with_declared["targets"],
-                json!(["prod", "extra-custom"])
-            );
-        }
-        // Replacing custom-targets with "extra-custom" submits only the custom value.
-        mrt.update(|s, _| {
-            let d = s
-                .agent
-                .as_mut()
-                .unwrap()
-                .drafts
-                .get_mut(&("form-multi-edges".into(), "targets".into()))
-                .unwrap();
-            d.custom_editor().text = "extra-custom".into();
-        });
-        mrt.frame(3.0);
+        // Unchecking Production after typing "prod\nextra-custom" removes "prod" from both the
+        // checkbox selection and the custom input, submitting only `["extra-custom"]`.
         let a = mrt.state.agent.as_ref().unwrap();
         let mans = agent_forms::answer(&a.forms[0], &a.drafts).expect("valid multiselect answer");
         assert_eq!(mans["targets"], json!(["extra-custom"]));
@@ -4898,10 +4880,13 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         for i in 0..64 {
             let opt_key = agent_forms::string_option_key("choice", &format!("v{i}"));
             let opt_node = find_node(&dtree, &opt_key).unwrap();
-            assert_eq!(
-                opt_node["description"].as_str(),
-                Some("Choice"),
-                "radio option {i} must carry only the short field caption, never the 1 MiB field description"
+            let opt_desc = opt_node["description"]
+                .as_str()
+                .expect("radio option carries bounded caption + prompt");
+            assert!(
+                opt_desc.starts_with("Choice · ") && opt_desc.len() < 300,
+                "radio option {i} must keep a bounded description (< 300 bytes), never 1 MiB (got {} bytes)",
+                opt_desc.len()
             );
         }
     });
@@ -5098,5 +5083,183 @@ fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared
         );
         sd.editor().text = "bad".into();
         assert!(agent_forms::value(&secret_field, &sd).is_err());
+    });
+}
+
+#[test]
+fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_offset_and_bounded_pattern_cache()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Multiselect checkbox state and reply stay unified with custom input: typing "prod"
+        // checks Production, toggling off removes "prod" from both checkbox and custom text, and
+        // toggling back on produces `["prod"]` without duplicates.
+        let unified_ms_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r20-unified-ms".into(),
+            title: "Targets".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(unified_ms_form);
+        let mut urt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        urt.frame(0.0);
+        urt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r20-unified-ms".into(), "targets".into()))
+                .unwrap()
+                .custom_editor()
+                .text = "prod".into();
+        });
+        urt.frame(1.0 / 60.0);
+        let prod_box = agent_forms::multi_option_key("targets", "prod");
+        let utree1 = urt.accessibility_json();
+        assert!(
+            has_state(find_node(&utree1, &prod_box).unwrap(), "checked"),
+            "typing declared value in custom input must check its checkbox"
+        );
+        // Toggle off -> unchecked and omitted/empty (no stale "prod" submitted).
+        tap(&mut urt, &prod_box);
+        let utree2 = urt.accessibility_json();
+        assert!(has_state(
+            find_node(&utree2, &prod_box).unwrap(),
+            "unchecked"
+        ));
+        let uans_off = agent_forms::answer(
+            &urt.state.agent.as_ref().unwrap().forms[0],
+            &urt.state.agent.as_ref().unwrap().drafts,
+        )
+        .unwrap();
+        assert_eq!(uans_off["targets"], json!([]));
+        // Toggle on -> checked and submits `["prod"]` with no duplicate.
+        tap(&mut urt, &prod_box);
+        let utree3 = urt.accessibility_json();
+        assert!(has_state(find_node(&utree3, &prod_box).unwrap(), "checked"));
+        let uans_on = agent_forms::answer(
+            &urt.state.agent.as_ref().unwrap().forms[0],
+            &urt.state.agent.as_ref().unwrap().drafts,
+        )
+        .unwrap();
+        assert_eq!(uans_on["targets"], json!(["prod"]));
+
+        // 2. Focused radio's web active-descendant proxy carries both title ("Database") and
+        // bounded field description ("Which database should we remove?").
+        let db_prompt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r20-proxy-desc".into(),
+            title: "Cleanup".into(),
+            fields: vec![json!({
+                "key": "db",
+                "title": "Database",
+                "description": "Which database should we remove?",
+                "type": "string",
+                "options": [
+                    {"value": "primary", "label": "Primary"},
+                    {"value": "replica", "label": "Replica"}
+                ]
+            })],
+        };
+        let (state, _rx) = state_with_form(db_prompt_form);
+        let mut prt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        prt.frame(0.0);
+        press_key(&mut prt, Key::Tab);
+        let focused = focused_key(&mut prt).expect("focused radio");
+        let pitems: Vec<serde_json::Value> = serde_json::from_str(&prt.a11y_json()).unwrap();
+        let active_proxy = pitems
+            .iter()
+            .find(|item| {
+                item["p"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(&format!("/{focused}")))
+            })
+            .expect("active radio proxy in web mirror");
+        assert!(
+            active_proxy["d"].as_str().is_some_and(|d| {
+                d.contains("Database") && d.contains("Which database should we remove?")
+            }),
+            "focused radio proxy must include both title and field prompt: {active_proxy}"
+        );
+
+        // 3. Clearing a defaulted optional constrained field (email defaulted to `dev@example.com`)
+        // omits the key and keeps Answer enabled instead of blocking with InvalidFormat.
+        let opt_email_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r20-opt-email".into(),
+            title: "Contact".into(),
+            fields: vec![json!({
+                "key": "email",
+                "title": "Email",
+                "type": "string",
+                "format": "email",
+                "default": "dev@example.com"
+            })],
+        };
+        let mut edrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&opt_email_form), &mut edrafts);
+        edrafts
+            .get_mut(&("form-r20-opt-email".into(), "email".into()))
+            .unwrap()
+            .editor()
+            .text
+            .clear();
+        let eans = agent_forms::answer(&opt_email_form, &edrafts)
+            .expect("clearing a defaulted optional email field must omit the key and pass");
+        assert_eq!(eans, json!({}));
+
+        // 4. Desktop accepts OpenCode/JS `date-time` defaults with `GMT+0000` (and parenthesized
+        // zone names) in required hidden fields and submits verbatim.
+        let gmt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r20-gmt".into(),
+            title: "GMT offset".into(),
+            fields: vec![json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "2026-11-26 14:30:00 GMT+0000"
+            })],
+        };
+        let mut gdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&gmt_form), &mut gdrafts);
+        let gans = agent_forms::answer(&gmt_form, &gdrafts)
+            .expect("GMT+0000 date-time default must pass on desktop");
+        assert_eq!(gans["when"], json!("2026-11-26 14:30:00 GMT+0000"));
+
+        // 5. Oversized patterns (> 2 KiB) bypass PATTERN_CACHE completely so sequential large
+        // plugin forms never bloat retained pattern cache bytes.
+        let before_bytes = crate::agent::string_constraints::pattern_cache_bytes();
+        for i in 0..8 {
+            let huge_pat = format!("^{}{}$", "a".repeat(32_768), i);
+            let field = json!({
+                "key": "big",
+                "type": "string",
+                "pattern": huge_pat
+            });
+            assert!(crate::agent::string_constraints::valid_string_constraints(
+                &field
+            ));
+        }
+        let after_bytes = crate::agent::string_constraints::pattern_cache_bytes();
+        assert_eq!(
+            after_bytes, before_bytes,
+            "oversized deferred patterns must never be retained in PATTERN_CACHE"
+        );
+        assert!(
+            after_bytes <= 64 * 1024,
+            "PATTERN_CACHE retained bytes must stay bounded <= 64 KiB"
+        );
     });
 }

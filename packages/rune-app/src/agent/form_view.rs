@@ -93,10 +93,9 @@ fn join_notes(parts: &[Option<&str>]) -> Option<String> {
     (!joined.is_empty()).then(|| joined.join(" · "))
 }
 
-fn short_field_caption(name: &str) -> String {
-    const MAX_CHARS: usize = 160;
-    let mut chars = name.chars();
-    let prefix: String = chars.by_ref().take(MAX_CHARS).collect();
+fn bounded_note(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let prefix: String = chars.by_ref().take(max_chars).collect();
     if chars.next().is_some() {
         format!("{prefix}…")
     } else {
@@ -231,7 +230,8 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
             .and_then(|err| agent_forms::visible_validation_error_for(err, d));
         let error_text = validation_error.as_ref().map(validation_message);
         let is_invalid = error_text.is_some();
-        let short_caption = short_field_caption(&field_name);
+        let short_caption = bounded_note(&field_name, 160);
+        let short_desc = field_desc.map(|desc| bounded_note(desc, 240));
         match field["type"].as_str() {
             Some("boolean") => {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
@@ -239,6 +239,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
                 let option_note = join_notes(&[
                     Some(short_caption.as_str()),
+                    short_desc.as_deref(),
                     req_note,
                     error_text.as_deref(),
                 ]);
@@ -297,6 +298,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let radio_invalid = !valid.is_empty() && is_invalid && !custom_active;
                 let radio_note = join_notes(&[
                     Some(short_caption.as_str()),
+                    short_desc.as_deref(),
                     req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -439,6 +441,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
                 let choice_note = join_notes(&[
                     Some(short_caption.as_str()),
+                    short_desc.as_deref(),
                     req_note,
                     checkbox_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -453,7 +456,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     .enumerate()
                     .map(|(index, option)| {
                         let label = option_label(option, index);
-                        let checked = d.selected.contains(option.value);
+                        let checked = d.multiselect_checked(allow_custom, option.value);
                         let value = option.value.to_string();
                         let id = identity.clone();
                         form_controls::checkbox_option(

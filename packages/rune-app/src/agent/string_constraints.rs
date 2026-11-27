@@ -18,6 +18,7 @@ const MAX_COMPILE_WORK: usize = 4096;
 const MAX_MATCH_STEPS: usize = 200_000;
 const MAX_SINGLE_MATCH_STEPS: usize = 50_000;
 const MAX_CACHE_ENTRIES: usize = 64;
+const MAX_PATTERN_CACHE_BYTES: usize = 64 * 1024;
 const MAX_MATCH_CACHE_ENTRIES: usize = 256;
 
 /// Shared work budget across regex evaluations in a single form render/validation pass.
@@ -56,8 +57,12 @@ enum CompileError {
     DeferToServer,
 }
 
-static PATTERN_CACHE: OnceLock<Mutex<HashMap<String, Result<Arc<Pattern>, CompileError>>>> =
-    OnceLock::new();
+struct PatternCacheState {
+    entries: HashMap<String, Result<Arc<Pattern>, CompileError>>,
+    bytes: usize,
+}
+
+static PATTERN_CACHE: OnceLock<Mutex<PatternCacheState>> = OnceLock::new();
 static MATCH_CACHE_SEEDS: OnceLock<(RandomState, RandomState)> = OnceLock::new();
 static MATCH_CACHE: OnceLock<Mutex<HashMap<(u64, u64), bool>>> = OnceLock::new();
 
@@ -75,20 +80,42 @@ fn match_cache_digest(src: &str, value: &str) -> (u64, u64) {
 }
 
 fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
-    let cache = PATTERN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(map) = cache.lock()
-        && let Some(entry) = map.get(src)
+    if src.len() > MAX_PATTERN_BYTES {
+        return Err(CompileError::DeferToServer);
+    }
+    let cache = PATTERN_CACHE.get_or_init(|| {
+        Mutex::new(PatternCacheState {
+            entries: HashMap::new(),
+            bytes: 0,
+        })
+    });
+    if let Ok(state) = cache.lock()
+        && let Some(entry) = state.entries.get(src)
     {
         return entry.clone();
     }
     let compiled = Pattern::compile(src).map(Arc::new);
-    if let Ok(mut map) = cache.lock() {
-        if map.len() >= MAX_CACHE_ENTRIES {
-            map.clear();
+    if let Ok(mut state) = cache.lock() {
+        if !state.entries.contains_key(src) {
+            if state.entries.len() >= MAX_CACHE_ENTRIES
+                || state.bytes.saturating_add(src.len()) > MAX_PATTERN_CACHE_BYTES
+            {
+                state.entries.clear();
+                state.bytes = 0;
+            }
+            state.bytes += src.len();
+            state.entries.insert(src.to_string(), compiled.clone());
         }
-        map.insert(src.to_string(), compiled.clone());
     }
     compiled
+}
+
+#[cfg(test)]
+pub(crate) fn pattern_cache_bytes() -> usize {
+    PATTERN_CACHE
+        .get()
+        .and_then(|c| c.lock().ok())
+        .map_or(0, |s| s.bytes)
 }
 
 fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget) -> bool {
@@ -702,27 +729,57 @@ fn is_valid_date_time(value: &str) -> bool {
         }
         let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
             + i64::from(millis);
-        let tz = rest.trim_start();
+        // Strip optional trailing parenthesized zone name (e.g. `GMT+0000 (Coordinated Universal Time)`).
+        let tz_raw = rest.trim_start();
+        let tz = if let Some(paren_idx) = tz_raw.find('(')
+            && tz_raw.ends_with(')')
+        {
+            tz_raw[..paren_idx].trim_end()
+        } else {
+            tz_raw
+        };
         if tz.is_empty()
             || tz.eq_ignore_ascii_case("Z")
             || tz.eq_ignore_ascii_case("GMT")
             || tz.eq_ignore_ascii_case("UTC")
+            || tz.eq_ignore_ascii_case("UT")
+            || matches!(
+                tz.to_ascii_uppercase().as_str(),
+                "EST" | "EDT" | "CST" | "CDT" | "MST" | "MDT" | "PST" | "PDT"
+            )
         {
             return within_js_date_range(year, month, day, sod_ms, 0);
         }
-        let rb = tz.as_bytes();
+        let tz_offset_part = if tz.len() > 3
+            && (tz[..3].eq_ignore_ascii_case("GMT") || tz[..3].eq_ignore_ascii_case("UTC"))
+        {
+            &tz[3..]
+        } else {
+            tz
+        };
+        let rb = tz_offset_part.as_bytes();
         let (sign, tz_h_str, tz_m_str) =
             if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
                 (
                     if rb[0] == b'-' { -1i64 } else { 1i64 },
-                    &tz[1..3],
-                    &tz[4..6],
+                    &tz_offset_part[1..3],
+                    &tz_offset_part[4..6],
                 )
             } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
                 (
                     if rb[0] == b'-' { -1i64 } else { 1i64 },
-                    &tz[1..3],
-                    &tz[3..5],
+                    &tz_offset_part[1..3],
+                    &tz_offset_part[3..5],
+                )
+            } else if (rb.len() == 2 || rb.len() == 3)
+                && matches!(rb[0], b'+' | b'-')
+                && tz_offset_part.len() < tz.len()
+            {
+                // `GMT+0`, `GMT-5`, `UTC+02`
+                (
+                    if rb[0] == b'-' { -1i64 } else { 1i64 },
+                    &tz_offset_part[1..],
+                    "00",
                 )
             } else {
                 return false;
