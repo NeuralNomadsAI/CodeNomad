@@ -707,7 +707,8 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             "directory" | "location[directory]" => {
                 if !message_list
                     && !account_route
-                    && (seen_directory || (!inbox_or_background && prompt_query.is_none() && value != directory))
+                    && !inbox_or_background
+                    && (seen_directory || (prompt_query.is_none() && value != directory))
                 {
                     return Err(foreign());
                 }

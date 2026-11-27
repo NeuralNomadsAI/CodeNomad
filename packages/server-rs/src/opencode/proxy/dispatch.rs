@@ -128,8 +128,9 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     return Err(upstream_error());
                 }
                 if unauthorized {
-                    self_invalidated_dispatch.store(true, std::sync::atomic::Ordering::Release);
-                    app.native.invalidate(&endpoint);
+                    app.native.invalidate_if_current_with(&endpoint, || {
+                        self_invalidated_dispatch.store(true, std::sync::atomic::Ordering::Release);
+                    });
                 }
                 return Ok((
                     status,
@@ -372,8 +373,10 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             }
             impl Drop for InvalidateOnDrop {
                 fn drop(&mut self) {
-                    self.self_invalidated.store(true, std::sync::atomic::Ordering::Release);
-                    self.app.native.invalidate(&self.endpoint);
+                    let flag = &self.self_invalidated;
+                    self.app.native.invalidate_if_current_with(&self.endpoint, || {
+                        flag.store(true, std::sync::atomic::Ordering::Release);
+                    });
                 }
             }
             let invalidate = unauthorized.then(|| InvalidateOnDrop {

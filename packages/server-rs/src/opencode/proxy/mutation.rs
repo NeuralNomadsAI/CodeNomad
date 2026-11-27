@@ -109,6 +109,16 @@ pub(super) struct MutationContext<'a> {
     pub target: &'a mut reqwest::Url,
 }
 
+async fn wait_workspace_closed(app: &Shared, workspace: &Workspace) {
+    loop {
+        let notified = app.workspace_closed.notified();
+        if !app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == workspace.id && w.path == workspace.path) {
+            return;
+        }
+        notified.await;
+    }
+}
+
 pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<MutationOutcome, Error> {
     let MutationContext {
         recheck,
@@ -157,12 +167,17 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         let data: Value = if let Some(data) = prompt_input.take() {
             data
         } else {
-            let contents = crate::opencode::proxy_body::read(
-                pending_body.take().ok_or_else(upstream_error)?,
-                body_limit,
-                declared,
-            )
-            .await?;
+            let contents = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(endpoint) => return Err(upstream_error()),
+                _ = wait_workspace_closed(app, workspace) => return Err(not_found()),
+                res = crate::opencode::proxy_body::read(
+                    pending_body.take().ok_or_else(upstream_error)?,
+                    body_limit,
+                    declared,
+                ) => res?,
+            };
             if contents.is_empty() {
                 body_empty = true;
                 json!({})
@@ -551,22 +566,6 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && !send_input
         && let Some(session) = session
     {
-        let ws_closed = async {
-            loop {
-                let notified = app.workspace_closed.notified();
-                if !app
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .workspaces
-                    .iter()
-                    .any(|w| w.id == workspace.id && w.path == workspace.path)
-                {
-                    return;
-                }
-                notified.await;
-            }
-        };
         let verify_under_fence = async {
             let fresh = crate::opencode::session_record_at(app, endpoint, session)
                 .await
@@ -582,19 +581,28 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 if !crate::worktrees::ownership::capture_directory(app, workspace, physical)
                     .await
                     .is_some_and(|current| admitted.same_checkout(&current))
-                    || !recheck.location_live()
                 {
                     return Err(foreign());
                 }
             } else if !crate::worktrees::owns(app, workspace, fresh_dir).await {
                 return Err(foreign());
             }
+            for (_raw, physical, _initial_id, proof) in extra_mutation_dirs {
+                if !crate::worktrees::ownership::capture_directory(app, workspace, physical)
+                    .await
+                    .is_some_and(|current| proof.same_checkout(&current))
+                {
+                    return Err(foreign());
+                }
+            }
+            // Final synchronous physical-identity and liveness checks after all `.await`s
+            // so no alias or checkout can retarget while probing another location.
+            if recheck.initial_identity.is_some() && recheck.input_checkout.is_some() && !recheck.location_live() {
+                return Err(foreign());
+            }
             for (raw, physical, initial_id, proof) in extra_mutation_dirs {
                 let current_id = directory_identity(&app.scope, Some(raw.as_str()), false);
                 if !current_id.as_ref().is_some_and(|(r, p, id)| r == physical && p == physical && id == initial_id)
-                    || !crate::worktrees::ownership::capture_directory(app, workspace, physical)
-                        .await
-                        .is_some_and(|current| proof.same_checkout(&current))
                     || !proof.live(physical)
                 {
                     return Err(foreign());
@@ -606,7 +614,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(endpoint) => return Err(upstream_error()),
-            _ = ws_closed => return Err(not_found()),
+            _ = wait_workspace_closed(app, workspace) => return Err(not_found()),
             res = verify_under_fence => res?,
         }
         principal.live()?;

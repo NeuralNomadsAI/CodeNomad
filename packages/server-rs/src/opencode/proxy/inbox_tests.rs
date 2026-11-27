@@ -476,6 +476,26 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
     .unwrap();
     assert_eq!(cross_patch.status(), Status::NO_CONTENT);
 
+    // Sending both `directory` and `location[directory]` for owned workspace locations is admitted like TS.
+    let root_enc =
+        percent_encoding::utf8_percent_encode(h.root.to_string_lossy().as_ref(), percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+    let dual_q = format!("directory={root_enc}&location[directory]={root_enc}");
+    let dual_get = proxy::relay(
+        State(h.app.clone()),
+        h.req(
+            Method::GET,
+            &format!("/api/session/ses_inb_linked/inbox?{dual_q}"),
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(dual_get.status(), Status::OK);
+
     for (method, route, ctx) in [
         (Method::GET, "/api/session/ses_inb_sub/inbox", Some(h.native.root_sub.as_path())),
         (Method::PATCH, "/api/session/ses_inb_sub/inbox/inb_1", Some(h.native.root_sub.as_path())),
@@ -737,6 +757,33 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     assert_eq!(err.0, Status::UNAUTHORIZED, "revocation during under-fence session.get must abort with 401");
     release.notify_waiters();
     *h.native.stall_session_get_nth.lock().unwrap() = None;
+
+    // 7b. Principal revocation while reading an incomplete PATCH body aborts immediately with 401.
+    let (body_started, body_waiting) = tokio::sync::oneshot::channel::<()>();
+    let stalled_body = Body::from_stream(async_stream::stream! {
+        let _ = body_started.send(());
+        std::future::pending::<()>().await;
+        yield Ok::<axum::body::Bytes, std::io::Error>(axum::body::Bytes::new());
+    });
+    let cancel = CancellationToken::new();
+    let mut body_req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/workspaces/{}/instance/api/session/ses_inb_owned/inbox/inb_1", h.ws_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(stalled_body)
+        .unwrap();
+    body_req.extensions_mut().insert(Principal(cancel.clone()));
+    let app = h.app.clone();
+    let mut task = tokio::spawn(async move { proxy::relay(State(app), body_req).await });
+    tokio::select! {
+        res = &mut task => panic!("relay exited before stalled PATCH body read: {res:?}"),
+        waited = tokio::time::timeout(Duration::from_secs(15), body_waiting) => {
+            waited.expect("timed out waiting for stalled PATCH body read").unwrap();
+        }
+    }
+    cancel.cancel();
+    let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(err.0, Status::UNAUTHORIZED, "revocation during incomplete PATCH body read must abort with 401");
 
     // 8. Replacing the session checkout at the same path before under-fence recheck fails closed with 403.
     let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));

@@ -1,5 +1,5 @@
 //! A dispatched session mutation owns its worktree admission through the native response.
-use std::{future::Future, pin::Pin, time::Duration};
+use std::{future::Future, pin::Pin};
 
 use axum::{body::Body, response::Response};
 use futures_util::StreamExt;
@@ -32,31 +32,22 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
     let (head, response) = oneshot::channel();
     tokio::spawn(async move {
         let (_permit, _rules) = (permit, rules);
-        let task = async {
-            let (parts, body) = match request(detached.clone()).await {
-                Ok(response) => response.into_parts(),
-                Err(error) => {
-                    let _ = head.send(Err(error));
-                    return;
-                }
-            };
-            let (send, receive) = mpsc::channel(2);
-            let _ = head.send(Ok((parts, receive)));
-            let mut stream = body.into_data_stream();
-            while let Some(chunk) = stream.next().await {
-                let failed = chunk.is_err();
-                // Once the downstream goes away, discard rather than buffer native bytes.
-                let _ = send.send(chunk).await;
-                if failed {
-                    break;
-                }
+        let (parts, body) = match request(detached.clone()).await {
+            Ok(response) => response.into_parts(),
+            Err(error) => {
+                let _ = head.send(Err(error));
+                return;
             }
         };
-        tokio::pin!(task);
-        tokio::select! {
-            _ = &mut task => {},
-            _ = detached.cancelled() => {
-                let _ = tokio::time::timeout(Duration::from_secs(60), task).await;
+        let (send, receive) = mpsc::channel(2);
+        let _ = head.send(Ok((parts, receive)));
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            let failed = chunk.is_err();
+            // Once the downstream goes away, discard rather than buffer native bytes.
+            let _ = send.send(chunk).await;
+            if failed {
+                break;
             }
         }
     });
@@ -106,6 +97,8 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[tokio::test]
@@ -176,15 +169,24 @@ mod tests {
         use crate::worktrees::fence;
         use axum::http::StatusCode as Status;
 
-        // 1. Pre-cancelled principal beats an immediately ready native response (biased select).
+        // 1. Cancelled principal beats an already-ready native response (true race on biased select).
         let dirs = ["/proxy-write-test/biased-cancel".to_string()];
-        let cancelled = CancellationToken::new();
-        cancelled.cancel();
-        let err = forward(fence::enter(&dirs).unwrap(), None, ObserverGuards::principal_only(cancelled), |_| async {
-            Ok(Response::new(Body::from("too-late")))
-        })
-        .await
-        .unwrap_err();
+        let cancel = CancellationToken::new();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mut fut = Box::pin(forward(
+            fence::enter(&dirs).unwrap(),
+            None,
+            ObserverGuards::principal_only(cancel.clone()),
+            |_| async move {
+                ready_tx.send(()).unwrap();
+                Ok(Response::new(Body::from("too-late")))
+            },
+        ));
+        assert!(futures_util::poll!(&mut fut).is_pending());
+        ready_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        let err = fut.await.unwrap_err();
         assert_eq!(err.0, Status::UNAUTHORIZED);
 
         // 2. Workspace close stops observing with 404 while keeping the deletion fence until native completes.
