@@ -51,7 +51,7 @@ test('admitLiveRoute enforces GET, origin, and cookie without a policy and repor
 
 test('SSE 503 backoff requires independent handover proof for 4-5 probes and rejects unproved extra retries', () => {
   const probe = (receivedAt, fulfilledAt = receivedAt) => ({receivedAt, fulfilledAt})
-  const handover = (sseOpenedAt, ...conversationSyncTimes) => ({sseOpenedAt, conversationSyncTimes})
+  const handover = (sseOpenedAt, ...subscriberSyncTimes) => ({sseOpenedAt, subscriberSyncTimes})
 
   const single = [probe(0, 5), probe(1020, 1025), probe(3040, 3045)]
   assert.equal(shouldServeSse503(single.slice(0, 1)), true)
@@ -78,12 +78,15 @@ test('SSE 503 backoff requires independent handover proof for 4-5 probes and rej
   assert.equal(shouldServeSse503(muxAfterRetry1, lateHandover), false)
   assert.deepEqual(assertSse503Backoff(muxAfterRetry1, lateHandover), {retryDelay1Ms: 1010, retryDelay2Ms: 2020, coalescedSlotProbes: 2})
 
-  // Unproved extra retries (1 s, 1 s, 2 s) must be rejected even when SSE opened.
+  // Unproved extra retries (1 s, 1 s, 2 s) and stale sync signals must be rejected even when SSE opened.
   const threeRetries = [probe(0, 5), probe(1010, 1015), probe(2020, 2025), probe(4030, 4035)]
   assert.equal(shouldServeSse503(threeRetries.slice(0, 3), fastHandover), false)
   assert.throws(() => assertSse503Backoff(threeRetries, fastHandover), /4-probe SSE 503 recovery requires independent proof/)
   assert.throws(() => assertSse503Backoff(muxFast), /4-probe SSE 503 recovery requires independent proof/)
+  assert.throws(() => assertSse503Backoff(muxFast, handover(10, 3)), /4-probe SSE 503 recovery requires independent proof/)
   assert.throws(() => assertSse503Backoff(muxAfterRetry1, fastHandover), /5-probe SSE 503 recovery requires independent proof/)
+  assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), handover(0, 100)), false)
+  assert.throws(() => assertSse503Backoff(muxAfterRetry1, handover(0, 100)), /5-probe SSE 503 recovery requires independent proof/)
   assert.throws(() => assertSse503Backoff(muxAfterRetry1, handover(0, 1700)), /5-probe SSE 503 recovery requires independent proof/)
 
   assert.equal(shouldServeSse503([probe(0, 5), probe(10, 15), probe(20, 25), probe(30, 35)], fastHandover), false)

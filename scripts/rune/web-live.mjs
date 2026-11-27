@@ -110,7 +110,7 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   if(!handover||handover.sseOpenedAt==null)return false
   const targetAt=probes[targetIndex].receivedAt
   if(handover.sseOpenedAt>targetAt)return false
-  const syncs=handover.conversationSyncTimes||[]
+  const syncs=(handover.subscriberSyncTimes||[]).filter(at=>at>=handover.sseOpenedAt)
   const nextAt=probes[targetIndex+1]?.receivedAt??Infinity
   const latestAt=Math.min(targetAt+HANDOVER_SAME_FRAME_MS,nextAt)
   if(targetIndex===1){
@@ -120,7 +120,7 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   }
   if(targetIndex===2){
     return probeDelayMs(probes,2)<SSE_RETRY2_MIN_MS&&
-      syncs.some(at=>at>probes[0].fulfilledAt&&at<=latestAt)
+      syncs.some(at=>at>=probes[1].receivedAt&&at<=latestAt)
   }
   return false
 }
@@ -167,7 +167,7 @@ export function assertSse503Backoff(probes, handover){
 }
 
 async function verifySseAuthenticated503Recovery({
-  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+  page,context,url,messages,eventSources,workspaces,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
 }){
   const again=new URL(await command('pair'))
   assert.equal(again.origin,url.origin)
@@ -189,12 +189,12 @@ async function verifySseAuthenticated503Recovery({
       await page.bringToFront()
       let injectTransient503=false
       let sseGate='pass'
-      let sseAdmitted=false
+      let sseAdmittedAt=null
       let recovered=false
       let routeError=null
       let sseBeforeFirstProbe=0
       const statusProbes=[]
-      const handover={sseOpenedAt:null,conversationSyncTimes:[]}
+      const handover={sseOpenedAt:null,subscriberSyncTimes:[]}
       let notifyHandoverSync=null
       const waitForSameFrameHandover=async(probes)=>{
         if(probes.length!==3||shouldServeSse503(probes,handover))return
@@ -229,24 +229,41 @@ async function verifySseAuthenticated503Recovery({
       const step=promise=>Promise.race([promise,forbiddenRejected.promise])
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
       const onSseResponse=res=>{
-        if(!injectTransient503||handover.sseOpenedAt!==null)return
+        if(!injectTransient503)return
         const req=res.request()
-        if(req.resourceType()==='eventsource'&&res.status()===200){
-          const target=new URL(res.url())
-          if(target.origin===url.origin&&target.pathname==='/api/events'){
-            handover.sseOpenedAt=performance.now()
-            notifyHandoverSync?.()
-          }
+        const target=new URL(res.url())
+        if(target.origin!==url.origin||res.status()!==200)return
+        if(handover.sseOpenedAt===null&&req.resourceType()==='eventsource'&&target.pathname==='/api/events'){
+          handover.sseOpenedAt=sseAdmittedAt??performance.now()
+          notifyHandoverSync?.()
+          return
+        }
+        if(sseAdmittedAt!==null&&req.method()==='GET'&&target.pathname==='/api/meta'){
+          handover.subscriberSyncTimes.push(performance.now())
+          notifyHandoverSync?.()
         }
       }
+      const activeWorkspace=id=>!workspaces?.size||workspaces.has(id)
       const onConversationRequest=req=>{
-        if(!injectTransient503||!sseAdmitted)return
+        if(!injectTransient503||sseAdmittedAt===null)return
         const target=new URL(req.url())
         if(target.origin!==url.origin)return
-        if((req.method()==='GET'&&(/^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+$/.test(target.pathname)||
-            /^\/api\/workspaces\/[^/]+\/worktrees$/.test(target.pathname)))||
-          (req.method()==='POST'&&/^\/api\/workspaces\/[^/]+\/session-history\/window$/.test(target.pathname))){
-          handover.conversationSyncTimes.push(performance.now())
+        let matched=false
+        if(req.method()==='GET'){
+          const sessionMatch=target.pathname.match(/^\/workspaces\/([^/]+)\/instance\/api\/session\/ses_existing$/)
+          const worktreeMatch=target.pathname.match(/^\/api\/workspaces\/([^/]+)\/worktrees$/)
+          matched=Boolean((sessionMatch&&activeWorkspace(sessionMatch[1]))||
+            (worktreeMatch&&activeWorkspace(worktreeMatch[1])))
+        } else if(req.method()==='POST'){
+          const historyMatch=target.pathname.match(/^\/api\/workspaces\/([^/]+)\/session-history\/window$/)
+          let sessionID=null
+          if(historyMatch&&activeWorkspace(historyMatch[1])){
+            try { sessionID=req.postDataJSON()?.sessionID??null } catch {}
+          }
+          matched=sessionID==='ses_existing'
+        }
+        if(matched){
+          handover.subscriberSyncTimes.push(performance.now())
           notifyHandoverSync?.()
         }
       }
@@ -258,7 +275,7 @@ async function verifySseAuthenticated503Recovery({
         if(sseGate==='abort')return route.abort().catch(()=>{})
         if(sseGate==='admit-one'){
           sseGate='hold'
-          sseAdmitted=true
+          sseAdmittedAt=performance.now()
           return route.fallback()
         }
         if(sseGate==='hold'){
@@ -510,9 +527,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         let staleReleased=false
         let staleDone=false
         let blockEvents=false
+        let focusActive=true
         let postStaleStatus=0
         let staleError=null
         let focusForbiddenError=null
+        let focusRouteError=null
         const onAuthFailed=req=>{
           if(staleRequest&&req===staleRequest){
             staleAborted=req.failure()?.errorText||'aborted'
@@ -529,36 +548,45 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         void staleReceivedByBrowser.promise.catch(()=>{})
         const focusForbiddenRejected=Promise.withResolvers()
         const focusForbiddenDone=focusForbiddenRejected.promise.catch(()=>{})
+        const focusRouteFailed=Promise.withResolvers()
+        const focusRouteDone=focusRouteFailed.promise.catch(()=>{})
         const failFocusForbidden=err=>{
           focusForbiddenError??=err
           focusForbiddenRejected.reject(err)
         }
-        const focusStep=promise=>Promise.race([promise,focusForbiddenRejected.promise])
+        const failFocusRoute=err=>{
+          focusRouteError??=err
+          focusRouteFailed.reject(err)
+        }
+        const focusStop=Promise.race([focusForbiddenDone,focusRouteDone])
+        const focusStep=promise=>Promise.race([promise,focusForbiddenRejected.promise,focusRouteFailed.promise])
         let followUpCleaned=false
         const settleFollowUp=async()=>{
-          if(!followUpCleaned&&!focusForbiddenError&&heldFollowUp){
+          if(!followUpCleaned&&!focusForbiddenError&&!focusRouteError&&heldFollowUp){
             followUpCleaned=true
-            await settleWithin(followUpSettled.promise,focusForbiddenDone)
+            await settleWithin(followUpSettled.promise,focusStop)
           }
         }
         const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
         const holdEvents=async route=>{
-          if(!blockEvents)return route.fallback()
+          if(!focusActive||!blockEvents)return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
-          if(!blockEvents)return route.fallback()
+          if(!focusActive||!blockEvents)return route.fallback()
           try {
             await route.fulfill({status:503,contentType:'application/json',body:'{}'})
           } catch (err) {
-            if(blockEvents){
+            if(focusActive&&blockEvents){
               staleError??=err
               staleCaptured.reject(err)
               followUpCaptured.reject(err)
+              failFocusRoute(err)
             }
           }
         }
         const holdStaleStatus=async route=>{
-          if(route.request().method()!=='GET')return route.fallback()
+          if(!focusActive||route.request().method()!=='GET')return route.fallback()
           if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          if(!focusActive)return route.fallback()
           authStatusRequests++
           if(heldStale){
             if(staleReleased&&!heldFollowUp){
@@ -566,13 +594,22 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               postStaleStatus++
               try {
                 const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet)
+                if(!focusActive){
+                  await route.abort().catch(()=>{})
+                  return
+                }
                 assert.equal(body.authenticated,true)
                 assert(!body.pairingRequired)
                 followUpCaptured.resolve()
                 await releaseFollowUp.promise
+                if(!focusActive){
+                  await route.abort().catch(()=>{})
+                  return
+                }
                 await route.fulfill({status,headers,body:text})
               } catch (err) {
                 followUpCaptured.reject(err)
+                if(focusActive)failFocusRoute(err)
                 await route.abort().catch(()=>{})
               } finally {
                 followUpSettled.resolve()
@@ -587,14 +624,23 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           staleRequest=route.request()
           try {
             const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet)
+            if(!focusActive){
+              await route.abort().catch(()=>{})
+              return
+            }
             assert.equal(body.authenticated,false)
             assert.equal(body.pairingRequired,true)
             staleCaptured.resolve()
             await releaseStale.promise
+            if(!focusActive){
+              await route.abort().catch(()=>{})
+              return
+            }
             await route.fulfill({status,headers,body:text})
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)
+            if(focusActive)failFocusRoute(err)
             await route.abort().catch(()=>{})
           } finally {
             staleDone=true
@@ -648,10 +694,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           } finally {
             staleReleased=true
             releaseStale.resolve()
-            await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusForbiddenDone)
-            if(!focusForbiddenError&&heldStale)await settleWithin(staleSettled.promise,focusForbiddenDone)
+            await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusStop)
+            if(!focusForbiddenError&&!focusRouteError&&heldStale)await settleWithin(staleSettled.promise,focusStop)
           }
           if(focusForbiddenError)throw focusForbiddenError
+          if(focusRouteError)throw focusRouteError
           if(staleError)throw staleError
           assert.equal(staleAborted,null,'Held first status probe must not abort before browser delivery')
           const staleBrowserResponse=await focusStep(withBudget(now()+5_000,'browser receipt of held first auth status',
@@ -672,14 +719,18 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             await settleFollowUp()
           }
           if(focusForbiddenError)throw focusForbiddenError
+          if(focusRouteError)throw focusRouteError
           await focusStep(dialog.waitFor({state:'detached',timeout:10_000}))
           if(focusForbiddenError)throw focusForbiddenError
+          if(focusRouteError)throw focusRouteError
           assert.equal(eventSources(),beforeRevoke,'SSE stayed blocked until the pairing overlay dismissed')
           assert(postStaleStatus>=1,'Focus return during the first status probe must trigger a follow-up /api/auth/status check')
         } catch (err) {
           if(focusForbiddenError)throw focusForbiddenError
+          if(focusRouteError)throw focusRouteError
           throw err
         } finally {
+          focusActive=false
           blockEvents=false
           staleReleased=true
           releaseStale.resolve()
@@ -699,7 +750,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     evidence.repairedWithDraft=true
     evidence.crossOriginRePairLink=fromLink
     evidence.sseAuthenticated503Recovery=await verifySseAuthenticated503Recovery({
-      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+      page,context,url,messages,eventSources,workspaces,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
     })
   }
   assert.equal(forbiddenRequests.length,forbiddenBefore,
