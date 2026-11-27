@@ -50,7 +50,7 @@ impl Launcher {
         includes_linked: bool,
         reset_cursor: bool,
     ) {
-        if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
+        if includes_linked && self.creation_uncertain_linked.is_some() {
             self.creation_uncertain = false;
             self.creation_uncertain_linked = None;
             if self.error == Some("rune.create_error") {

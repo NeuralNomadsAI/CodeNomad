@@ -204,7 +204,13 @@ impl Window {
     fn can_open_section(&self, prefs: &Preferences, section: Section) -> bool {
         match section {
             Section::Stats => super::stats::supported(prefs),
-            Section::ConfigFiles => self.host_support.config_files(prefs),
+            Section::ConfigFiles => {
+                self.host_support.config_files(prefs)
+                    || self.config_files.dirty()
+                    || (self.section == Section::ConfigFiles
+                        && prefs.backend.is_some()
+                        && !self.host_support.config_files_unsupported(prefs))
+            }
             _ => true,
         }
     }
@@ -229,6 +235,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.providers.suspend();
         self.integrations.suspend();
         if self.config_files.dirty() {
             self.confirm_close = Some(CloseConfirm::ConfigFiles);
@@ -305,6 +312,7 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.providers.suspend();
         self.integrations.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
@@ -413,7 +421,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ]
             .into_iter()
             .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs))
-            .chain(s.host_support.config_files(&prefs).then_some((
+            .chain(s.can_open_section(&prefs, Section::ConfigFiles).then_some((
                 "settings-config-files",
                 config_label,
                 s.section == Section::ConfigFiles,
@@ -421,7 +429,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             .chain([("settings-info", info_label, s.section == Section::Info)]),
             |s: &mut Window, key| {
                 if key == "settings-config-files"
-                    && !s.host_support.config_files(&s.shared.borrow())
+                    && !s.can_open_section(&s.shared.borrow(), Section::ConfigFiles)
                 {
                     return;
                 }
@@ -500,22 +508,49 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     },
                 ),
             ),
-            Section::OpenCode => (
-                "opencode",
-                col()
-                    .full_width()
-                    .child(opencode::view(
-                        &s.opencode,
-                        &prefs,
-                        Window::start_opencode_install,
-                        |s: &mut Window| s.check_opencode(Some(true)),
-                        |s| &mut s.opencode,
-                    ))
-                    .child(
-                        s.logging
-                            .view(&s.shared, &mut layers, |s: &mut Window| &mut s.logging),
-                    ),
-            ),
+            Section::OpenCode => {
+                let wake = prefs.window_wake.clone();
+                let logs_action = opencode::logs_action_view(
+                    &s.opencode,
+                    &prefs,
+                    &s.shared,
+                    wake.clone(),
+                    &mut layers,
+                    |s: &mut Window| &mut s.opencode,
+                );
+                (
+                    "opencode",
+                    col()
+                        .full_width()
+                        .child(opencode::view(
+                            &s.opencode,
+                            &prefs,
+                            Window::start_opencode_install,
+                            |s: &mut Window| s.check_opencode(Some(true)),
+                            |s| &mut s.opencode,
+                        ))
+                        .child(opencode::executable_view(
+                            &s.opencode,
+                            &prefs,
+                            &s.shared,
+                            wake.clone(),
+                            |s: &mut Window| &mut s.opencode,
+                        ))
+                        .child(opencode::login_start_view(
+                            &s.opencode,
+                            &prefs,
+                            &s.shared,
+                            wake,
+                            |s: &mut Window| &mut s.opencode,
+                        ))
+                        .child(s.logging.view(
+                            &s.shared,
+                            &mut layers,
+                            logs_action,
+                            |s: &mut Window| &mut s.logging,
+                        )),
+                )
+            }
             Section::Conversation => {
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
@@ -556,6 +591,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .provider_target
                             .as_ref()
                             .is_some_and(providers::Target::online),
+                    &mut layers,
                 ),
             ),
             Section::Integrations => (
@@ -588,6 +624,43 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.host_support.config_files(&prefs) {
                     s.config_files
                         .view(&mut layers, &s.shared, |s: &mut Window| &mut s.config_files)
+                } else if prefs.transport_lost()
+                    || !prefs.can_retry()
+                    || prefs
+                        .backend
+                        .as_ref()
+                        .is_some_and(|b| !super::ServerOwner::backend_verified(b))
+                {
+                    col()
+                        .full_width()
+                        .child(
+                            layout::action_row()
+                                .child(text(t("rune.connect_error")).role("alert").wrap())
+                                .child(layout::button(
+                                    t("sessionList.loadError.retry"),
+                                    !prefs.can_retry(),
+                                    |s: &mut Window| {
+                                        s.shared.borrow_mut().retry_general();
+                                        s.host_support.retry();
+                                    },
+                                )),
+                        )
+                        .children(s.config_files.has_editor().then(|| {
+                            s.config_files
+                                .view(&mut layers, &s.shared, |s: &mut Window| &mut s.config_files)
+                        }))
+                } else if s.host_support.config_files_failed(&prefs) {
+                    layout::action_row()
+                        .child(text(t("rune.connect_error")).role("alert").wrap())
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            false,
+                            |s: &mut Window| s.host_support.retry(),
+                        ))
+                } else if s.host_support.config_files_unsupported(&prefs) {
+                    text(t("settings.configFiles.errors.loadList"))
+                        .role("alert")
+                        .wrap()
                 } else {
                     text(t("rune.loading")).role("status")
                 },

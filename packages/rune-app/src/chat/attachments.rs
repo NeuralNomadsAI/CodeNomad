@@ -276,6 +276,14 @@ pub fn skill_chip(skill: &crate::content::Skill) -> rune::El {
 }
 
 pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
+    file_chip_inner(s, file, true)
+}
+
+pub fn file_chip_static(s: &State, file: &crate::content::File) -> rune::El {
+    file_chip_inner(s, file, false)
+}
+
+fn file_chip_inner(s: &State, file: &crate::content::File, downloadable: bool) -> rune::El {
     use rune_theme_codenomad::{Space, attachment, layout::Layout, workspace_tree::icons};
     let icon = if file.mime.starts_with("image/") {
         &icons::IMAGE
@@ -287,7 +295,7 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
         .as_deref()
         .unwrap_or_else(|| t("messageItem.attachment.defaultName"));
     let button = download_source(file)
-        .filter(|_| platform::attachment_export_available())
+        .filter(|_| downloadable && platform::attachment_export_available())
         .map(|source| {
             let label = download_label(name);
             let name = name.to_owned();
@@ -302,7 +310,15 @@ pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
             )
         });
     let chip = attachment::chip(name, Some(icon), button);
-    if let Some(picture) = &file.picture {
+    if let Some(picture) = &file.picture
+        && (downloadable
+            || (file.reference.is_none()
+                && !matches!(
+                    picture,
+                    crate::content::PictureSource::Attachment(_)
+                        | crate::content::PictureSource::Deferred(_)
+                )))
+    {
         rune::col()
             .full_width()
             .separate(Space::Sm)

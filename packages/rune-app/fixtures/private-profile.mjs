@@ -6,8 +6,8 @@ export function fixtureSystemEnvironment(source=process.env) {
 export async function privateEnvironment(profile) {
   const env=fixtureSystemEnvironment()
   for(const [name,relative] of Object.entries({HOME:'home',USERPROFILE:'home',APPDATA:'home/AppData/Roaming',LOCALAPPDATA:'home/AppData/Local',
-    XDG_CONFIG_HOME:'xdg/config',XDG_DATA_HOME:'xdg/data',XDG_STATE_HOME:'xdg/state',XDG_CACHE_HOME:'xdg/cache',TEMP:'tmp',TMP:'tmp',CLI_CONFIG:'config'})) {
+    XDG_CONFIG_HOME:'xdg/config',XDG_DATA_HOME:'xdg/data',XDG_STATE_HOME:'xdg/state',XDG_CACHE_HOME:'xdg/cache',TEMP:'tmp',TMP:'tmp',TMPDIR:'tmp',CLI_CONFIG:'config'})) {
     env[name]=path.join(profile,relative);await mkdir(env[name],{recursive:true})
   }
-  return {...env,GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled',CODENOMAD_PROFILE:'trial-rune-fixture',RUST_BACKTRACE:'1'}
+  return {...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig'),GIT_TEMPLATE_DIR:'',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled',CODENOMAD_PROFILE:'trial-rune-fixture',RUST_BACKTRACE:'1'}
 }

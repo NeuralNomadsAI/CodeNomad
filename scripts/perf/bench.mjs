@@ -11,6 +11,7 @@ import { MARKER, p95, sleep, sseReader } from "./lib.mjs"
 import { seed, waitIdle, withSampleSessions } from "./seed.mjs"
 import { withTui } from "./tui.mjs"
 import { withRune } from "./rune.mjs"
+import { isLocalAbsolutePath } from "../native-fixture-http.mjs"
 
 const { values, positionals: [binary] } = parseArgs({
   allowPositionals: true, options: {
@@ -28,11 +29,11 @@ const trees = values["rune-only"] ? [] : values.tree?.map(tree => path.resolve(t
 assert(!values["rune-only"] || values.rune && mode === "latency", "--rune-only requires --rune and --mode latency")
 assert(Boolean(values.rune) === Boolean(values["rune-server"]), "Pass both --rune and --rune-server")
 assert(!values.rune || mode !== "counters", "Rune adapter requires a latency scenario")
-if(values.rune) for(const key of ["rune","rune-server"]) assert(path.isAbsolute(values[key]), `${key} must be absolute`)
+if(values.rune) for(const key of ["rune","rune-server"]) assert(isLocalAbsolutePath(values[key]), `${key} must be an absolute local path`)
 assert(Number.isInteger(rounds) && rounds > 0 && rounds * (trees.length + 1 + Number(Boolean(values.rune))) * (levels?.length ?? 3) < 100)
 assert(Number.isInteger(chunks) && chunks >= 8 && chunks <= 9999 && Number.isInteger(turns) && turns > 0)
 assert(levels === undefined || (new Set(levels).size === levels.length && levels.every(n => Number.isInteger(n) && n >= 1 && n <= 32)))
-assert(path.isAbsolute(binary ?? ""), "Usage: node scripts/perf/bench.mjs /absolute/path/to/opencode")
+assert(isLocalAbsolutePath(binary ?? ""), "Usage: node scripts/perf/bench.mjs /absolute/local/path/to/opencode")
 const root = await mkdtemp(path.join(await mkdir(privatePath(runDirectory), { recursive: true }).then(() => privatePath(runDirectory)), "perf-"))
 const results = path.join(root, "results")
 await mkdir(results)
@@ -50,7 +51,7 @@ async function measure(daemon, ids, driver, countWork) {
   const markerFor = (key, code) => key.replace("MKAA", `MK${code}`)
   const daemonEvents = new Set()
   let failure
-  const stop = await sseReader(`${daemon.url}/api/event`, daemon.authorization, (frame, at) => {
+  const stop = await sseReader(daemon.send, (frame, at) => {
     const event = JSON.parse(frame)
     if (event.type === "server.connected" || event.type === "server.heartbeat") return
     if (typeof event.id === "string") daemonEvents.add(event.id)
