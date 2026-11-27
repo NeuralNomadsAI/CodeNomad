@@ -4037,5 +4037,209 @@ mod tests {
             !resurrected_open && !resurrected_closed,
             "closing active tab must settle queued ReaderSync confirmation before SessionDeleted recovery"
         );
+
+        // Repeat with a ReaderSync already parked in deferred_sync, discarded by suspend() before
+        // SessionDeleted arrives on close.
+        let (cmd_tx2, cmd_rx2) = codenomad_client::bounded(8);
+        let (ev_tx2, ev_rx2) = codenomad_client::bounded(8);
+        let (mut reader2, lane2) = crate::chat::reader::Reader::fixture_open();
+        reader2.install(false);
+
+        backend.session = "ses-close-deferred-sync".into();
+        rt.state.screen.launcher_mut().unwrap().project = Some(project);
+        crate::workspace::opened(
+            &mut rt.state,
+            &crate::catalog::Project {
+                id: "ws-close-sync".into(),
+                path: "/repo/close-sync".into(),
+                temporary: false,
+            },
+        );
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx2);
+        rt.state.incoming = Some(ev_rx2);
+        rt.state.reader = Some(reader2);
+        rt.state.draft = rune::edit::TextEdit::new("confirmed via deferred reader sync");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt2) = cmd_rx2.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id2 = prompt2.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id2, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+        crate::chat::reader::invalidate(&mut rt.state);
+        let gen2 = rt.state.reader.as_ref().unwrap().generation();
+
+        lane2
+            .events
+            .try_send((
+                gen2,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: vec![
+                            crate::Message {
+                                usage: None,
+                                id: attempt_id2,
+                                role: "user".into(),
+                                completed: true,
+                                body: "confirmed via deferred reader sync".into(),
+                                parts: vec![],
+                            }
+                            .into(),
+                        ],
+                        older: None,
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        // Park the ReaderSync inside deferred_sync via the real deferred poll path.
+        let _ = crate::chat::events::poll_chat_for_window(&mut rt.state, 8, true, 1.0);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        // Suspend drops deferred_sync; then SessionDeleted arrives and active tab closes.
+        crate::chat::reader::suspend(&mut rt.state);
+        ev_tx2.try_send(Event::SessionDeleted).unwrap();
+        let active_key2 = {
+            let ui = rt.state.workspace.as_ref().unwrap();
+            ui.entries[ui.active].key.clone()
+        };
+        rt.update(|s, tx| crate::workspace::close(s, &active_key2, tx));
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let resurrected_deferred_open = ui.entries.iter().any(|e| {
+            matches!(&e.saved, Tab::Workspace(w) if w.drafts.values().any(|t| t == "confirmed via deferred reader sync"))
+        });
+        let resurrected_deferred_closed = ui.closed.iter().any(|w| {
+            w.drafts
+                .values()
+                .any(|t| t == "confirmed via deferred reader sync")
+        });
+        assert!(
+            !resurrected_deferred_open && !resurrected_deferred_closed,
+            "closing active tab must settle confirmations from deferred_sync discarded during suspend"
+        );
+    }
+
+    #[test]
+    fn stashed_resync_updates_restored_provenance_against_derived_edit() {
+        let make_ws =
+            |folder: &str, active: Option<&str>, drafts: &[(&str, &str)]| super::super::Workspace {
+                backend_id: None,
+                server_id: None,
+                folder: folder.into(),
+                project_name: None,
+                temporary: true,
+                occurrence: 1,
+                workspace_id: None,
+                active_session_id: active.map(str::to_owned),
+                drafts: drafts
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                attachment_drafts: Default::default(),
+                attachment_parts: Default::default(),
+                view: Default::default(),
+            };
+
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let closed_a = make_ws(
+            "/tmp/prov-proj",
+            Some("ses-del"),
+            &[("ses-del", "restored A")],
+        );
+        let closed_b = make_ws(
+            "/tmp/prov-proj",
+            Some("ses-del"),
+            &[("ses-del", "restored B")],
+        );
+        let closed_c = make_ws(
+            "/tmp/prov-proj",
+            Some("ses-del"),
+            &[("ses-del", "restored C")],
+        );
+        let scope = super::super::ProjectScope::from_workspace(&closed_a);
+        // Push C, B, A so newest-first order is [A, B, C], all marked as restored archives.
+        for ws in [&closed_c, &closed_b, &closed_a] {
+            ui.closed.push(ws.clone());
+            ui.closed_restored
+                .push(std::collections::HashSet::from(["ses-del".into()]));
+            ui.closed_derived_from.push(Default::default());
+            ui.closed_unconfirmed_attempts.push(Default::default());
+        }
+        ui.closed_pending_deleted.push((scope, "ses-del".into()));
+
+        let copy_a = DraftCopy::from_workspace(&closed_a, "ses-del").unwrap();
+        let copy_b = DraftCopy::from_workspace(&closed_b, "ses-del").unwrap();
+
+        // Tab 0 (stashed) projected A; Tabs 1 & 2 resynced to A & B while Tab 0 was stashed,
+        // so Tab 2 currently carries restored provenance B; Tab 3 has an independent edit derived from B.
+        let mut stashed_entry =
+            super::super::entry("tab-stashed".into(), Tab::Workspace(closed_a.clone()));
+        stashed_entry.pending_drafts.insert("ses-del".into());
+        stashed_entry
+            .restored_drafts
+            .insert("ses-del".into(), copy_a.clone());
+
+        let mut open_1 = super::super::entry("tab-1".into(), Tab::Workspace(closed_a.clone()));
+        open_1.pending_drafts.insert("ses-del".into());
+        open_1.restored_drafts.insert("ses-del".into(), copy_a);
+
+        let mut open_2 = super::super::entry("tab-2".into(), Tab::Workspace(closed_b.clone()));
+        open_2.pending_drafts.insert("ses-del".into());
+        open_2
+            .restored_drafts
+            .insert("ses-del".into(), copy_b.clone());
+
+        let edited_b = make_ws(
+            "/tmp/prov-proj",
+            Some("ses-del"),
+            &[("ses-del", "edited B")],
+        );
+        let mut open_3 = super::super::entry("tab-3".into(), Tab::Workspace(edited_b));
+        open_3.restored_drafts.remove("ses-del");
+        open_3.derived_from.insert("ses-del".into(), copy_b);
+
+        ui.entries = vec![open_1, open_2, open_3];
+        ui.active = 0;
+
+        let stashed = super::super::StashedTemporary {
+            tab_key: "tab-stashed".into(),
+            original_index: 0,
+            was_active: false,
+            created_blank_key: None,
+            project: crate::catalog::Project {
+                id: "ws-prov".into(),
+                path: "/tmp/prov-proj".into(),
+                temporary: true,
+            },
+            backend: Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            folder: "/tmp/prov-proj".into(),
+            backend_id: None,
+            server_id: None,
+            entry: stashed_entry,
+            return_focus: None,
+        };
+
+        let snap = ui.snapshot_with_stashed(Some(&stashed));
+        let mut persisted: Vec<&str> = snap
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                Tab::Workspace(w) => w.drafts.get("ses-del").map(String::as_str),
+                Tab::Blank => None,
+            })
+            .collect();
+        persisted.sort_unstable();
+        assert_eq!(
+            persisted,
+            vec!["edited B", "restored A", "restored C"],
+            "snapshot_with_stashed must move restored provenance with redistributed bundles so derived-from-B suppresses B and preserves C"
+        );
     }
 }

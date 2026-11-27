@@ -511,7 +511,7 @@ impl Reader {
         self.activity = None;
         self.settling = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         if !self.hidden && (self.resume_pending || paging) {
             if self.resume_pending {
@@ -1016,7 +1016,7 @@ pub(crate) fn suspend(s: &mut State) {
     crate::timeline::suspend(s);
     crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
-        reader.deferred_sync = None;
+        reader.discard_deferred_sync();
         let reading = s.transcript_display.reading();
         if !reader.defers_scroll()
             || (!reader.hidden && reader.user_scrolled_while_resuming(reading))
@@ -1127,7 +1127,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         reader.bookmark_width = 0.0;
         reader.width_grew_while_deferred = false;
         reader.resume_manual_seq = None;
-        reader.deferred_sync = None;
+        reader.discard_deferred_sync();
         reader.sync_undo = None;
         reader.awaiting_manual_probe = ManualProbeWait::Idle;
     } else {
@@ -1137,7 +1137,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
             reader.bookmark_width = 0.0;
             reader.width_grew_while_deferred = false;
             reader.resume_manual_seq = None;
-            reader.deferred_sync = None;
+            reader.discard_deferred_sync();
             reader.sync_undo = None;
             reader.awaiting_manual_probe = ManualProbeWait::Idle;
         }

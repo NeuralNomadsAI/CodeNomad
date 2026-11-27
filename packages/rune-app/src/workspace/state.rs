@@ -562,9 +562,19 @@ impl Ui {
         };
         let mut tabs: Vec<Tab> = refs.iter().map(|e| e.saved.clone()).collect();
         // Resync pending closed-draft projections across all matching tabs (open + stashed,
-        // in refs order) for any session projected on the stashed temporary tab, so stale
-        // projections are dropped and distinct sibling archives are assigned 1-to-1 without
-        // duplicating one archive or dropping another.
+        // in refs order) for any session projected on the stashed temporary tab, updating both
+        // snapshot drafts and snapshot-local provenance 1-to-1 so stale projections are dropped,
+        // distinct sibling archives are never duplicated or lost, and derived/clear filtering uses
+        // each redistributed bundle's true provenance.
+        struct SnapshotProvenance {
+            restored_drafts: std::collections::BTreeMap<String, drafts::DraftCopy>,
+            derived_from: std::collections::BTreeMap<String, drafts::DraftCopy>,
+            superseded_on_delete: HashSet<String>,
+            cleared: HashSet<String>,
+            clear_authority: std::collections::BTreeMap<String, drafts::ClearAuthority>,
+        }
+        let mut provenance_overrides: Vec<Option<SnapshotProvenance>> =
+            (0..refs.len()).map(|_| None).collect();
         let mut resynced_projected: Vec<(ProjectScope, String, usize)> = Vec::new();
         if let Some(si) = stashed_idx
             && let Tab::Workspace(stashed_w) = &refs[si].saved
@@ -587,42 +597,111 @@ impl Ui {
                         snap_w.attachment_drafts.remove(id);
                         snap_w.attachment_parts.remove(id);
                     }
+                    let prov =
+                        provenance_overrides[idx].get_or_insert_with(|| SnapshotProvenance {
+                            restored_drafts: refs[idx].restored_drafts.clone(),
+                            derived_from: refs[idx].derived_from.clone(),
+                            superseded_on_delete: refs[idx].superseded_on_delete.clone(),
+                            cleared: refs[idx].cleared.clone(),
+                            clear_authority: refs[idx].clear_authority.clone(),
+                        });
+                    prov.cleared.remove(id);
+                    prov.clear_authority.remove(id);
+                    prov.restored_drafts.remove(id);
+                    prov.derived_from.remove(id);
+                    prov.superseded_on_delete.remove(id);
                 }
-                let clear_authorities =
-                    drafts::collect_open_clear_authorities_for(refs.iter().copied(), &scope, id);
-                let (bundles, _) = drafts::collect_closed_bundles_for_recovery(
+                let clear_authorities = drafts::collect_open_clear_authorities_for(
+                    refs.iter()
+                        .enumerate()
+                        .filter(|(idx, _)| !pending_tabs.contains(idx))
+                        .map(|(_, entry)| *entry),
+                    &scope,
+                    id,
+                );
+                let (bundles, explicitly_cleared) = drafts::collect_closed_bundles_for_recovery(
                     self,
                     &scope,
                     id,
                     &clear_authorities,
                 );
                 let mut placed = 0usize;
-                for (idx, bundle) in pending_tabs.into_iter().zip(bundles) {
-                    let Tab::Workspace(snap_w) = &mut tabs[idx] else {
-                        continue;
-                    };
-                    if let Some(text) = bundle.text.as_ref()
-                        && !text.is_empty()
-                    {
-                        snap_w.drafts.insert(id.clone(), text.clone());
+                if bundles.is_empty() {
+                    if explicitly_cleared {
+                        for &idx in &pending_tabs {
+                            if let Some(prov) = provenance_overrides[idx].as_mut() {
+                                prov.cleared.insert(id.clone());
+                                prov.clear_authority
+                                    .insert(id.clone(), drafts::ClearAuthority::Persisted);
+                            }
+                        }
                     }
-                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                        snap_w.attachment_drafts.insert(id.clone());
+                } else {
+                    for (idx, bundle) in pending_tabs.into_iter().zip(bundles) {
+                        let Tab::Workspace(snap_w) = &mut tabs[idx] else {
+                            continue;
+                        };
+                        if let Some(text) = bundle.text.as_ref()
+                            && !text.is_empty()
+                        {
+                            snap_w.drafts.insert(id.clone(), text.clone());
+                        }
+                        if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                            snap_w.attachment_drafts.insert(id.clone());
+                        }
+                        if let Some(parts) = bundle.attachment_parts.as_ref() {
+                            snap_w.attachment_parts.insert(id.clone(), parts.clone());
+                        }
+                        if let Some(prov) = provenance_overrides[idx].as_mut() {
+                            if let Some(origin) = bundle.derived_from.as_ref() {
+                                prov.derived_from.insert(id.clone(), origin.clone());
+                            }
+                            if bundle.from_restored
+                                && let Some(copy) = drafts::DraftCopy::from_workspace(snap_w, id)
+                            {
+                                prov.restored_drafts.insert(id.clone(), copy.clone());
+                                prov.derived_from.entry(id.clone()).or_insert(copy);
+                            }
+                        }
+                        placed += 1;
                     }
-                    if let Some(parts) = bundle.attachment_parts.as_ref() {
-                        snap_w.attachment_parts.insert(id.clone(), parts.clone());
-                    }
-                    placed += 1;
                 }
                 resynced_projected.push((scope.clone(), id.clone(), placed));
             }
         }
+        let restored_of = |idx: usize| -> &std::collections::BTreeMap<String, drafts::DraftCopy> {
+            provenance_overrides[idx]
+                .as_ref()
+                .map_or(&refs[idx].restored_drafts, |p| &p.restored_drafts)
+        };
+        let derived_of = |idx: usize| -> &std::collections::BTreeMap<String, drafts::DraftCopy> {
+            provenance_overrides[idx]
+                .as_ref()
+                .map_or(&refs[idx].derived_from, |p| &p.derived_from)
+        };
+        let superseded_of = |idx: usize| -> &HashSet<String> {
+            provenance_overrides[idx]
+                .as_ref()
+                .map_or(&refs[idx].superseded_on_delete, |p| &p.superseded_on_delete)
+        };
+        let cleared_of = |idx: usize| -> &HashSet<String> {
+            provenance_overrides[idx]
+                .as_ref()
+                .map_or(&refs[idx].cleared, |p| &p.cleared)
+        };
+        let clear_authority_of =
+            |idx: usize| -> &std::collections::BTreeMap<String, drafts::ClearAuthority> {
+                provenance_overrides[idx]
+                    .as_ref()
+                    .map_or(&refs[idx].clear_authority, |p| &p.clear_authority)
+            };
         // Exclude restored copies already superseded by a closed sibling's clear authority
         // without changing the v1 snapshot schema.
-        for (idx, e) in refs.iter().enumerate() {
-            if let Tab::Workspace(snap_w) = &mut tabs[idx] {
-                for id in &e.superseded_on_delete {
-                    if e.restored_drafts.contains_key(id) {
+        for (idx, tab) in tabs.iter_mut().enumerate().take(refs.len()) {
+            if let Tab::Workspace(snap_w) = tab {
+                let restored = restored_of(idx);
+                for id in superseded_of(idx) {
+                    if restored.contains_key(id) {
                         snap_w.drafts.remove(id);
                         snap_w.attachment_drafts.remove(id);
                         snap_w.attachment_parts.remove(id);
@@ -632,33 +711,36 @@ impl Ui {
         }
         // Exclude untouched restored sibling copies already superseded by a derived non-restored
         // draft (edited or projected from an edit) in the same project without changing v1 JSON.
-        for (idx, e) in refs.iter().enumerate() {
-            let Tab::Workspace(w) = &e.saved else {
+        for idx in 0..refs.len() {
+            let Tab::Workspace(w) = &refs[idx].saved else {
                 continue;
             };
-            for (id, origin) in &e.derived_from {
-                if e.restored_drafts.contains_key(id) {
+            let restored = restored_of(idx);
+            for (id, origin) in derived_of(idx) {
+                if restored.contains_key(id) {
                     continue;
                 }
-                let has_saved_content = w.drafts.get(id).is_some_and(|text| !text.is_empty())
-                    || w.attachment_drafts.contains(id)
-                    || w.attachment_parts.contains_key(id);
+                let has_saved_content = matches!(
+                    &tabs[idx],
+                    Tab::Workspace(cur)
+                        if cur.drafts.get(id).is_some_and(|text| !text.is_empty())
+                            || cur.attachment_drafts.contains(id)
+                            || cur.attachment_parts.contains_key(id)
+                );
                 if !has_saved_content {
                     continue;
                 }
-                for (other_idx, other) in refs.iter().enumerate() {
+                for (other_idx, other_tab) in tabs.iter_mut().enumerate().take(refs.len()) {
                     if other_idx == idx {
                         continue;
                     }
-                    let Tab::Workspace(old) = &tabs[other_idx] else {
+                    let Tab::Workspace(stale) = other_tab else {
                         continue;
                     };
-                    if !same_project(w, old) {
+                    if !same_project(w, stale) {
                         continue;
                     }
-                    if other.restored_drafts.get(id) == Some(origin)
-                        && let Tab::Workspace(stale) = &mut tabs[other_idx]
-                    {
+                    if restored_of(other_idx).get(id) == Some(origin) {
                         stale.drafts.remove(id);
                         stale.attachment_drafts.remove(id);
                         stale.attachment_parts.remove(id);
@@ -667,37 +749,41 @@ impl Ui {
             }
         }
         let mut emitted_tombstones: Vec<(usize, String, Vec<usize>)> = Vec::new();
-        for (idx, e) in refs.iter().enumerate() {
-            let Tab::Workspace(w) = &e.saved else {
+        for idx in 0..refs.len() {
+            let Tab::Workspace(w) = &refs[idx].saved else {
                 continue;
             };
-            for (id, auth) in &e.clear_authority {
-                if !e.cleared.contains(id)
-                    || w.drafts.get(id).is_some_and(|text| !text.is_empty())
-                    || w.attachment_drafts.contains(id)
-                    || w.attachment_parts.contains_key(id)
-                {
+            let cleared = cleared_of(idx);
+            for (id, auth) in clear_authority_of(idx) {
+                let has_saved_content = matches!(
+                    &tabs[idx],
+                    Tab::Workspace(cur)
+                        if cur.drafts.get(id).is_some_and(|text| !text.is_empty())
+                            || cur.attachment_drafts.contains(id)
+                            || cur.attachment_parts.contains_key(id)
+                );
+                if !cleared.contains(id) || has_saved_content {
                     continue;
                 }
                 let mut targeted = Vec::new();
                 let mut has_independent = false;
-                for (other_idx, other) in refs.iter().enumerate() {
+                for (other_idx, other_tab) in tabs.iter().enumerate().take(refs.len()) {
                     if other_idx == idx {
                         continue;
                     }
-                    let Tab::Workspace(old) = &tabs[other_idx] else {
+                    let Tab::Workspace(old) = other_tab else {
                         continue;
                     };
                     if !same_project(w, old) {
                         continue;
                     }
-                    let has_saved_content = old.drafts.get(id).is_some_and(|text| !text.is_empty())
+                    let other_has_content = old.drafts.get(id).is_some_and(|text| !text.is_empty())
                         || old.attachment_drafts.contains(id)
                         || old.attachment_parts.contains_key(id);
-                    if !has_saved_content {
+                    if !other_has_content {
                         continue;
                     }
-                    if auth.matches_restored(other.restored_drafts.get(id)) {
+                    if auth.matches_restored(restored_of(other_idx).get(id)) {
                         targeted.push(other_idx);
                     } else {
                         has_independent = true;
