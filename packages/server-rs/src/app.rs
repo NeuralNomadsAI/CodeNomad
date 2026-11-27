@@ -68,6 +68,7 @@ pub struct App {
     pub provider_usage: Arc<crate::provider_usage::State>,
     pub previews: crate::previews::Previews,
     pub integration_catalog: crate::plugin_controls::catalog::CatalogSource,
+    pub integration_attachments: crate::integrations::attachments::SessionQueue,
     pub temporary_workspaces: Option<crate::temporary_workspaces::TemporaryFolderRegistry>,
 }
 
@@ -136,6 +137,7 @@ impl App {
             provider_usage: Default::default(),
             previews: Default::default(),
             integration_catalog,
+            integration_attachments: Default::default(),
             temporary_workspaces,
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
             human_answer: Default::default(),
