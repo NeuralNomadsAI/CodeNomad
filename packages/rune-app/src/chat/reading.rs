@@ -213,6 +213,8 @@ impl Reading {
 
     fn begin_wheel_gesture(&mut self) {
         self.phased_wheel_active = true;
+        self.sync_undo_gesture_clock = None;
+        self.sync_undo_gesture_moved = false;
     }
 
     fn end_wheel_gesture(&mut self) {
@@ -1065,22 +1067,19 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
             false
         });
     history.on_wheel(move |s: &mut State, ev, tx| {
-        if !s.screen.is_launcher() && s.transcript_display.reading().same_scope(&wheel_scope) {
-            match ev.phase {
-                rune_theme_codenomad::timeline::GesturePhase::Began => {
-                    s.transcript_display.reading_mut().begin_wheel_gesture();
-                }
-                rune_theme_codenomad::timeline::GesturePhase::Ended => {
-                    s.transcript_display.reading_mut().end_wheel_gesture();
-                }
-                rune_theme_codenomad::timeline::GesturePhase::Moved => {}
-            }
+        let same_scope =
+            !s.screen.is_launcher() && s.transcript_display.reading().same_scope(&wheel_scope);
+        if same_scope && ev.phase == rune_theme_codenomad::timeline::GesturePhase::Began {
+            s.transcript_display.reading_mut().begin_wheel_gesture();
         }
         let handled = if watch_wheel {
             handle_reading_wheel(s, &wheel_scope, &ev, tx)
         } else {
             false
         };
+        if same_scope && ev.phase == rune_theme_codenomad::timeline::GesturePhase::Ended {
+            s.transcript_display.reading_mut().end_wheel_gesture();
+        }
         crate::timeline::observe_history_wheel(s, &wheel_input_scope, &ev, tx, !handled);
         handled
     })
@@ -1094,14 +1093,27 @@ fn handle_reading_wheel(
 ) -> bool {
     if s.screen.is_launcher()
         || !s.transcript_display.reading().same_scope(&wheel_scope)
-        || ev.phase == rune_theme_codenomad::timeline::GesturePhase::Ended
         || !ev.dy.is_finite()
         || !ev.dx.is_finite()
-        || ev.dy.abs() <= 0.001
     {
         return false;
     }
+    let ended = ev.phase == rune_theme_codenomad::timeline::GesturePhase::Ended;
     let vertical_locked = s.transcript_display.reading().sync_undo_gesture_active();
+    if ev.dy.abs() <= 0.001 {
+        if !ended
+            && vertical_locked
+            && s.reader
+                .as_ref()
+                .is_some_and(crate::chat::reader::Reader::has_sync_undo)
+        {
+            s.transcript_display
+                .reading_mut()
+                .arm_sync_undo_gesture(tx.clock(), false);
+            return true;
+        }
+        return false;
+    }
     if !vertical_locked && (ev.mods.shift || ev.dx.abs() > ev.dy.abs()) {
         return false;
     }
@@ -1619,9 +1631,25 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         reading.at_bottom = at_bottom;
                         reading.following = at_bottom;
                         s.revision += 1;
-                        s.transcript_display
-                            .reading_mut()
-                            .advance_row_guard(s.revision);
+                        let has_sync_undo = s
+                            .reader
+                            .as_ref()
+                            .is_some_and(crate::chat::reader::Reader::has_sync_undo);
+                        let reading = s.transcript_display.reading_mut();
+                        reading.advance_row_guard(s.revision);
+                        if !has_sync_undo {
+                            reading.frame_restore_epoch += 1;
+                            reading.frame_restore = Some(FrameRestore {
+                                epoch: reading.frame_restore_epoch,
+                                obs_offset: dest,
+                                obs_max: cur.max,
+                                obs_seq: cur.seq,
+                                target: FrameRestoreTarget::Offset,
+                                probe_live: false,
+                                handled: true,
+                                checked: Cell::new(Some(None)),
+                            });
+                        }
                         if let Some(reader) = &mut s.reader {
                             reader.defer_sync_until(cur.seq + 1);
                         }

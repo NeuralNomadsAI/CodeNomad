@@ -4396,6 +4396,88 @@ mod resume_tests {
         let (double_idx, double_target) = run_deferred_trimmed_wheel(&[240.0, 240.0]);
         let (top_idx, _) = run_deferred_trimmed_wheel(&[10_000.0]);
         let (rebound_idx, rebound_target) = run_deferred_trimmed_wheel(&[10_000.0, -240.0]);
+        // Also verify queuing the rebound delta on the probe-delivery frame (after the first
+        // frame restores the cached anchor and queues wheel_restore_probe).
+        let (probe_rebound_idx, probe_rebound_target) = {
+            let mut s3 = init();
+            s3.phase = Phase::Ready;
+            s3.messages = make_rows("Full40", 0..40);
+            let (reader3, lane3) = Reader::open();
+            s3.reader = Some(reader3);
+            let mut rt3 = Runtime::new(s3, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+            rt3.poll = Some(crate::poll);
+            for _ in 0..20 {
+                rt3.frame(0.02);
+            }
+            rt3.update(|_, tx| {
+                tx.instant();
+                tx.scroll_key_to("defer-20", 0.0);
+            });
+            for _ in 0..20 {
+                rt3.frame(0.02);
+            }
+            rt3.update(|s, tx| {
+                suspend(s);
+                resume(s, tx);
+            });
+            let g3 = rt3.state.reader.as_ref().unwrap().generation;
+            for _ in 0..10 {
+                rt3.frame(0.02);
+            }
+            lane3
+                .events
+                .try_send((
+                    g3,
+                    0,
+                    Event::ReaderSync {
+                        page: crate::history::Page {
+                            rows: make_rows("Trim20", 20..21),
+                            older: Some(serde_json::json!("older-defer")),
+                            newer: Some(serde_json::json!("newer-defer")),
+                            running: false,
+                            user_file_references: false,
+                        },
+                        version: 1,
+                    },
+                ))
+                .unwrap();
+            rt3.set_viewport((844.0, 390.0), 1.0);
+            rt3.frame(0.02);
+            rt3.frame(0.02);
+            let h_rect = rt3
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+            rt3.wheel_event(rune::WheelEvent::new(0.0, 10_000.0).at(wx, wy));
+            // Render one frame to restore cached anchor and queue wheel_restore_probe.
+            rt3.frame(0.016);
+            // Queue rebound delta on the probe-delivery frame.
+            rt3.wheel_event(rune::WheelEvent::new(0.0, -240.0).at(wx, wy));
+            for _ in 0..30 {
+                rt3.frame(0.02);
+            }
+            let hist = rt3
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let dest = rt3
+                .elements()
+                .into_iter()
+                .filter_map(|e| {
+                    let k = e.key?;
+                    k.starts_with("defer-").then_some((k, e.rect))
+                })
+                .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+                .map(|(k, _)| k)
+                .expect("visible row after probe-frame rebound");
+            let dest_idx: usize = dest.strip_prefix("defer-").unwrap().parse().unwrap();
+            (dest_idx, lane3.demand.current().target)
+        };
         assert!(
             single_idx < 20 && single_idx > 0,
             "single upward wheel after zero-overflow trimmed layout must roll back in pre-sync bookmark coordinates: got defer-{single_idx:02}"
@@ -4412,6 +4494,10 @@ mod resume_tests {
             rebound_idx > top_idx && rebound_idx < 20,
             "downward reversal after hitting cached top must move back without repaying discarded overshoot: top=defer-{top_idx:02}, rebound=defer-{rebound_idx:02}"
         );
+        assert!(
+            probe_rebound_idx > top_idx && probe_rebound_idx < 20,
+            "downward reversal on the probe-delivery frame must not be overwritten by the queued top jump: top=defer-{top_idx:02}, probe_rebound=defer-{probe_rebound_idx:02}"
+        );
         assert_eq!(
             single_target,
             Some(Target::Around(format!("defer-{single_idx:02}"))),
@@ -4426,6 +4512,11 @@ mod resume_tests {
             rebound_target,
             Some(Target::Around(format!("defer-{rebound_idx:02}"))),
             "rebound after overshoot must re-request Target::Around(dest)"
+        );
+        assert_eq!(
+            probe_rebound_target,
+            Some(Target::Around(format!("defer-{probe_rebound_idx:02}"))),
+            "probe-frame rebound must re-request Target::Around(dest)"
         );
     }
 
@@ -4754,14 +4845,20 @@ mod resume_tests {
             rt.state.reader.as_ref().unwrap().has_sync_undo(),
             "SyncUndo must survive across rendered frames of an active phased vertical gesture"
         );
-        // Now reverse upward in the SAME gesture on the following frame.
+        // A horizontal-only sample (dx=10, dy=0) on its own frame must keep handler ownership.
         rt.wheel_event(
-            rune::WheelEvent::new(0.0, 640.0)
+            rune::WheelEvent::new(10.0, 0.0)
                 .at(wx, wy)
                 .phase(rune_theme_codenomad::timeline::GesturePhase::Moved),
         );
+        rt.frame(0.016);
+        assert!(
+            rt.state.reader.as_ref().unwrap().has_sync_undo(),
+            "horizontal-only sample inside claimed vertical gesture must keep SyncUndo armed"
+        );
+        // Now reverse upward with a nonzero Ended(0, 640) delta in the SAME gesture.
         rt.wheel_event(
-            rune::WheelEvent::new(0.0, 0.0)
+            rune::WheelEvent::new(0.0, 640.0)
                 .at(wx, wy)
                 .phase(rune_theme_codenomad::timeline::GesturePhase::Ended),
         );
@@ -4979,13 +5076,21 @@ mod resume_tests {
             assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
             assert_eq!(rt.state.messages.len(), 4);
 
-            let h_rect = rt
+            let target_rect = rt
                 .elements()
                 .into_iter()
-                .find(|e| e.key.as_deref() == Some("history"))
+                .find(|e| e.key.as_deref() == Some("hpan-20"))
+                .or_else(|| {
+                    rt.elements()
+                        .into_iter()
+                        .find(|e| e.key.as_deref() == Some("history"))
+                })
                 .unwrap()
                 .rect;
-            let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+            let (wx, wy) = (
+                target_rect[0] + target_rect[2] / 2.0,
+                target_rect[1] + target_rect[3] / 2.0,
+            );
             rt.wheel_event(rune::WheelEvent::new(dx, dy).at(wx, wy));
             for _ in 0..30 {
                 rt.frame(0.02);
@@ -5014,8 +5119,8 @@ mod resume_tests {
             )
         };
 
-        // Horizontal-dominant pan (dx=120, dy=5) must NOT undo the trimmed sync.
-        let (h_len, h_idx, h_target) = run_wheel(120.0, 5.0);
+        // Horizontal-dominant pan (dx=-120, dy=5) must NOT undo the trimmed sync.
+        let (h_len, h_idx, h_target) = run_wheel(-120.0, 5.0);
         assert_eq!(
             h_len, 4,
             "horizontal-dominant pan must not roll back trimmed rows"
@@ -5044,6 +5149,93 @@ mod resume_tests {
             v_target,
             Some(Target::Around(format!("hpan-{v_idx:02}"))),
             "vertical upward wheel rollback must re-request Target::Around(dest)"
+        );
+
+        // Fresh horizontal Began(120, 5) after an unended downward Began (e.g. focus loss before
+        // Ended within 1s) must reset the vertical lock and NOT roll back the trimmed sync.
+        let mut s2 = init();
+        s2.phase = Phase::Ready;
+        s2.messages = make_rows("Full40", 0..40);
+        let (reader2, lane2) = Reader::open();
+        s2.reader = Some(reader2);
+        let mut rt2 = Runtime::new(s2, crate::view, (844.0, 390.0), Env::new(false, 1.0));
+        rt2.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt2.frame(0.02);
+        }
+        rt2.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("hpan-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt2.frame(0.02);
+        }
+        rt2.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g2 = rt2.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt2.frame(0.02);
+        }
+        lane2
+            .events
+            .try_send((
+                g2,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim18_40", 18..40),
+                        older: Some(serde_json::json!("older-focus")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt2.frame(0.016);
+        assert!(rt2.state.reader.as_ref().unwrap().has_deferred_sync());
+        let h_rect = rt2
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Arm vertical gesture lock with downward Began(-80) on older-only trim, no Ended.
+        rt2.wheel_event(
+            rune::WheelEvent::new(0.0, -80.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt2.frame(0.016);
+        assert!(rt2.state.reader.as_ref().unwrap().has_sync_undo());
+        assert_eq!(rt2.state.messages.len(), 22);
+        // Simulate a fresh horizontal gesture beginning within < 1s without prior Ended.
+        rt2.wheel_event(
+            rune::WheelEvent::new(120.0, 5.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt2.wheel_event(
+            rune::WheelEvent::new(0.0, 0.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Ended),
+        );
+        for _ in 0..20 {
+            rt2.frame(0.02);
+        }
+        assert_eq!(
+            rt2.state.messages.len(),
+            22,
+            "fresh horizontal Began after interrupted vertical gesture must not roll back SyncUndo"
+        );
+        assert_eq!(
+            lane2.demand.current().target,
+            Some(Target::Around("hpan-20".into())),
+            "fresh horizontal Began must not re-request an older target"
         );
     }
 }
