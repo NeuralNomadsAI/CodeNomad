@@ -333,11 +333,15 @@ fn drain_chat(
                     s.status_permissions.synchronized();
                     s.status_services.synchronized();
                 }
-                if chat::reader::reconcile_bookmark(s, &page) {
-                    s.revision += 1;
-                    changed = true;
-                    continue;
-                }
+                let fallback_bookmark = match chat::reader::reconcile_bookmark_for_sync(s, &page) {
+                    chat::reader::Reconcile::Refetch => {
+                        s.revision += 1;
+                        changed = true;
+                        continue;
+                    }
+                    chat::reader::Reconcile::Keep => None,
+                    chat::reader::Reconcile::FallbackBookmark(bookmark) => Some(bookmark),
+                };
                 let sync_undo = if let Some(version) = reader_version
                     && !s.messages.is_empty()
                     && s.reader
@@ -391,6 +395,7 @@ fn drain_chat(
                             prev_phase,
                             trimmed_older,
                             trimmed_newer,
+                            fallback_bookmark,
                             saved_scroll,
                             clock,
                         );
