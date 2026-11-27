@@ -463,7 +463,7 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         let scope_owned = app.scope.clone();
         let path_owned = path.clone();
         let root_top_owned = root_toplevel.clone();
-        let matched = tokio::task::spawn_blocking(move || -> Result<Option<Vec<PathBuf>>, ()> {
+        let matched = tokio::task::spawn_blocking(move || -> Option<Vec<PathBuf>> {
             let mut best: Option<(usize, Vec<PathBuf>)> = None;
             for wt in listed.iter().filter(|wt| **wt != root_top_owned) {
                 let projected = wt.join(&tail_owned);
@@ -473,8 +473,10 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
                 // Resolve hop-by-hop within `scope` before canonicalizing so a projected symlink
                 // to a network share or out-of-scope path never triggers out-of-scope I/O, while
                 // preserving missing (`ENOENT`) projected subfolders like `Tree::contains_media`.
-                let Some((resolved_projected, proj_anchor)) =
-                    ownership::resolve_media_path_checked(&scope_owned, projected_str)?
+                // Ignore unrelated sibling errors (such as ENOTDIR when another checkout has a
+                // file where `tail` expects a directory) so matching siblings remain reachable.
+                let Ok(Some((resolved_projected, proj_anchor))) =
+                    ownership::resolve_media_path_checked(&scope_owned, projected_str)
                 else {
                     continue;
                 };
@@ -507,13 +509,13 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
                     best = Some((len, roots));
                 }
             }
-            Ok(best.map(|(_, roots)| roots))
+            best.map(|(_, roots)| roots)
         })
         .await;
         return match matched {
-            Ok(Ok(Some(roots))) => Precheck::Owned(roots),
-            Ok(Ok(None)) => Precheck::Denied,
-            _ => Precheck::Unavailable,
+            Ok(Some(roots)) => Precheck::Owned(roots),
+            Ok(None) => Precheck::Denied,
+            Err(_) => Precheck::Unavailable,
         };
     }
     match root_repo {
@@ -698,6 +700,9 @@ async fn admitted(
     };
     let is_current = || check_current(displays);
     if !is_current() {
+        return unavailable();
+    }
+    if revalidate_target(app, workspace, endpoint, &target, is_current).await.is_err() {
         return unavailable();
     }
 
