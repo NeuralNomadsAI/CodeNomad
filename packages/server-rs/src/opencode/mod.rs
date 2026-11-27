@@ -364,19 +364,30 @@ impl Native {
     /// The event stream of `endpoint` ended or failed: the next acquisition discovers again
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
+        let _ = self.invalidate_if_current_with(endpoint, || {});
+    }
+
+    /// Invalidates `endpoint` only if it is still live and validated, invoking `on_retire`
+    /// while holding the validation lock and before waking `wait_retired`. Returns `true`
+    /// only for the single caller that transitioned `endpoint` to retired.
+    pub(crate) fn invalidate_if_current_with(&self, endpoint: &Arc<Endpoint>, on_retire: impl FnOnce()) -> bool {
         let has_lifecycle = self.inner.lifecycle.read().unwrap().is_some();
         if !has_lifecycle {
-            return;
+            return false;
         }
         let live = self.inner.endpoint.read().unwrap();
         if live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
             let mut validated = self.inner.validated.lock().unwrap();
             self.inner.generation.fetch_add(1, Ordering::SeqCst);
-            *validated = None;
-            drop(validated);
-            drop(live);
-            self.inner.retired.notify_waiters();
+            if validated.take().is_some() {
+                on_retire();
+                drop(validated);
+                drop(live);
+                self.inner.retired.notify_waiters();
+                return true;
+            }
         }
+        false
     }
 
     pub fn request(&self, method: Method, url: Url) -> RequestBuilder {
