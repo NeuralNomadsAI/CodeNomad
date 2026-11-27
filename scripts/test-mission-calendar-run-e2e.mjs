@@ -6,8 +6,9 @@
 // 3. While that Mission is active, later runs launch nothing.
 // 4. The coordinator delegates an independent task: the plugin creates the root,
 //    prompts it and delivers its report by its own session API; the Mission completes.
-// 5. The next run launches a second Mission; OpenCode restarts in the middle of it and
-//    Missions registers again by itself, so the coordinator can finish.
+// 5. The next run launches again: the new Mission replaces the first one, in the same
+//    conversation. OpenCode restarts in the middle of it and Missions registers again
+//    by itself, so the coordinator can finish.
 // 6. A calendar waiting for commits on a local branch launches nothing until one lands,
 //    then coordinates in the conversation it names.
 // Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
@@ -80,7 +81,8 @@ const provider = createServer(async (req, res) => {
     if (!tools.length) return say("Fixture title")
     if (body.messages?.at(-1)?.role === "tool") return say("Noted.")
     const report = tools.find(name => /mission[_.]report$/.test(name ?? "")), delegate = tools.find(name => /mission[_.]delegate$/.test(name ?? ""))
-    const mission = text.match(/msn_[A-Za-z0-9]+/)?.[0] ?? "unknown"
+    // Every launch shares one conversation: the latest start names the current Mission.
+    const mission = [...text.matchAll(/Start or resume existing mission (msn_[A-Za-z0-9]+)/g)].at(-1)?.[1] ?? "unknown"
     if (text.includes("Start or resume existing mission")) {
       seen.coordinatorTurns++
       if (!report || !delegate) return say("Mission tools missing.")
@@ -91,7 +93,11 @@ const provider = createServer(async (req, res) => {
         if (service === script.service) seen.finals++
         return call(report, { outcome: "completed", summary: "Held Mission finished.", final: true })
       }
-      if (text.includes(DONE)) { seen.finals++; return call(report, { outcome: "completed", summary: "Delegated work returned.", final: true }) }
+      if (text.includes(DONE)) {
+        // The next launch arrives in this same conversation as soon as this one completes: script it now.
+        seen.finals++; script.mode = "held"; script.holdMs = 25_000
+        return call(report, { outcome: "completed", summary: "Delegated work returned.", final: true })
+      }
       if (!seen.delegated.has(mission)) {
         seen.delegated.add(mission)
         return call(delegate, { taskKey: "probe", title: "Probe", brief: BRIEF, role: "specialist", delivery: "queue",
@@ -183,26 +189,28 @@ try {
   const later = await until("a later run", row, info => info.runCount >= launchedAt + 1, 45_000)
   assert.notEqual(later.lastOutcome, "failed", later.lastOutput)
   const listed = (await calendars().list())[0]
-  assert.deepEqual([listed.id, listed.title, listed.paused, listed.last?.waiting], ["cal_e2e", "Calendar E2E", false, first.id], "the list tells what the calendar last did")
+  assert.deepEqual([listed.id, listed.title, listed.paused, listed.last?.outcome, listed.last?.missionID, listed.last?.coordinatorSessionID],
+    ["cal_e2e", "Calendar E2E", false, "waiting", first.id, first.coordinatorSessionId], "the list tells what the programmed Mission last did")
   assert.deepEqual((await missions(daemon)).map(mission => [mission.id, mission.status]), [[first.id, "active"]], "a run launches nothing while the previous Mission is active")
   console.log("PASS 3 (later runs wait for the active Mission)")
 
-  // The next run launches the following Mission as soon as this one completes: script it first.
-  const done = (await until("first Mission completes", () => missions(daemon), list => {
-    const finished = list.find(mission => mission.id === first.id)?.status === "completed"
-    if (finished) { script.mode = "held"; script.holdMs = 25_000 }
-    return finished
-    // The plugin admits the report at once; under `/goal` OpenCode took 20 to 60 seconds to hand it to the coordinator.
-  }, 180_000)).find(mission => mission.id === first.id)
-  assert.equal(done.tasks[0]?.key, "probe")
-  assert.ok(seen.rootReports >= 1 && seen.finals >= 1)
-  const actor = done.actors.find(actor => actor.kind !== "coordinator")
+  // Read while the launch is active: the next one removes its Mission.
+  const working = (await until("independent task", () => missions(daemon), list => list.find(mission => mission.id === first.id)?.actors.some(actor => actor.kind !== "coordinator"), 60_000))
+    .find(mission => mission.id === first.id)
+  assert.equal(working.tasks[0]?.key, "probe")
+  const actor = working.actors.find(actor => actor.kind !== "coordinator")
   assert.ok(actor?.managed, "the independent root is a managed actor")
   assert.equal((await daemon.client.session.get({ sessionID: actor.sessionId })).parentID, undefined)
+  // The plugin admits the report at once; under `/goal` OpenCode took 20 to 60 seconds to hand it to the coordinator.
+  await until("the final report", async () => seen.finals, count => count >= 1, 180_000)
+  assert.ok(seen.rootReports >= 1)
   console.log("PASS 4 (independent task: root created, prompted and reported without CodeNomad)")
 
-  const second = (await until("second Mission", () => missions(daemon), list => list.length === 2, 60_000)).find(mission => mission.id !== first.id)
-  await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 20_000)
+  const replaced = await until("the next launch", () => missions(daemon), list => list.some(mission => mission.id !== first.id), 90_000)
+  const second = replaced.find(mission => mission.id !== first.id)
+  assert.deepEqual([replaced.length, second.coordinatorSessionId], [1, first.coordinatorSessionId], "the new launch replaces the first Mission, in the same conversation")
+  assert.deepEqual((await calendars().list())[0].last?.history.map(item => item.outcome), ["completed"])
+  await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 120_000)
   await calendars().pause("cal_e2e")
   await daemon.stop()
   script.holdMs = 0; script.service++
