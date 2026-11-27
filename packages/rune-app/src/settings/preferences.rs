@@ -608,13 +608,14 @@ impl Preferences {
                     codenomad_client::http::REQUEST_TIMEOUT * 3 + Duration::from_millis(100);
                 let total_budget =
                     codenomad_client::http::REQUEST_TIMEOUT * 6 + Duration::from_millis(100);
+                let max_ops = 16u32.saturating_add(self.missions.pending_ops().saturating_mul(4));
                 platform::block_on(async {
                     let mut last_progress = Instant::now();
                     let mut settled_ops = 0u32;
                     while self.documents_draining()
                         && started.elapsed() < total_budget
                         && last_progress.elapsed() < stall_budget
-                        && settled_ops < 16
+                        && settled_ops < max_ops
                     {
                         let transport_or_watch =
                             self.observe_transport_drops() | self.take_invalidations();

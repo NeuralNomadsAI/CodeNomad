@@ -216,6 +216,7 @@ impl State {
         inherited: Option<&MissionProfiles>,
         task_mode: MissionTaskMode,
         disabled: bool,
+        reset_disabled: bool,
         open_picker: Option<Picker>,
         layers: &mut Vec<El>,
         set_picker: impl Fn(&mut S, Option<Picker>) + Copy + 'static,
@@ -356,7 +357,7 @@ impl State {
             layout::action_row().child(
                 layout::button(
                     t("missions.preferences.reset"),
-                    disabled || !has_any,
+                    reset_disabled || !has_any,
                     reset_profiles,
                 )
                 .key("mission-reset-profiles")

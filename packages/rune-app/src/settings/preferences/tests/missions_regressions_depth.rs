@@ -203,6 +203,14 @@ fn reopening_web_settings_on_same_session_preserves_queued_depth_write() {
             false,
         )
         .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
 
         // Start PUT 4 and hold it open while queueing 5.
         click(&mut rt, "mission-subagent-depth-trigger");
@@ -527,6 +535,14 @@ fn agent_updated_refreshes_missions_catalog_and_discarded_depth_does_not_repeat_
             false,
         )
         .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
 
         // 1. Discarding a queued depth choice on follow-up GET must NOT repeat the depth GET.
         click(&mut rt, "mission-subagent-depth-trigger");
@@ -642,5 +658,470 @@ fn delete_sessions_lost_ack_clears_error_after_authoritative_get_confirms_value(
             !shared.borrow().missions.has_unconfirmed(),
             "authoritative GET confirming missionDeleteSessions=true must clear delete_failed"
         );
+    });
+}
+
+#[test]
+fn depth_get_mismatched_directory_is_rejected_and_never_authorizes_foreign_put() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_b = "9".repeat(64);
+        let mut got_catalog = 0usize;
+        let mut got_depth = false;
+        while !(got_catalog == 3 && got_depth) {
+            let req = next_request(&listener, &mut rt).await;
+            let url = req.first.split_whitespace().nth(1).unwrap();
+            if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
+                got_depth = true;
+                // Reply with a valid snapshot for a DIFFERENT checkout (/repo/wt-b).
+                req.reply(200, depth_snapshot_json("/repo/wt-b", Some(2), &exp_b))
+                    .await;
+            } else {
+                got_catalog += 1;
+                if url.contains("/agents") {
+                    req.reply(200, json!({"data":[]})).await;
+                } else {
+                    req.reply(200, json!({"data":{"all":[],"default":{},"connected":[]}}))
+                        .await;
+                }
+            }
+        }
+        for _ in 0..4 {
+            tick(&mut rt);
+        }
+        assert!(
+            shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a")),
+            "depth GET returning foreign checkout directory must be rejected"
+        );
+        shared
+            .borrow_mut()
+            .missions
+            .choose_depth("4".into(), true, true, Some("/repo/wt-a"));
+        tick(&mut rt);
+        assert!(
+            timeout(Duration::from_millis(120), listener.accept())
+                .await
+                .is_err(),
+            "mismatched depth GET must never authorize a PUT to the foreign checkout"
+        );
+    });
+}
+
+#[test]
+fn upstream_error_status_and_worktree_updated_bump_location_and_retry_failed_lookup() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_client = backend.client.clone();
+
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = loop {
+            let req = request(&listener).await;
+            if req.first == "GET /api/meta HTTP/1.1" {
+                req.reply(200, json!({"capabilities":[]})).await;
+                continue;
+            }
+            assert!(req.first.starts_with("GET /api/events?"));
+            let mut req = req;
+            req.socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            break req;
+        };
+        let _ = timeout(Duration::from_secs(2), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
+
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            // Open without a pinned directory so session lookup runs and fails first.
+            prefs.missions.capture_opener(None, Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // Fail initial session lookup (503) so location_failed is recorded.
+        let first_lookup = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            first_lookup.first,
+            "GET /workspaces/captured/instance/api/session/session HTTP/1.1"
+        );
+        first_lookup.reply(503, json!({"error":"down"})).await;
+        for _ in 0..4 {
+            tick(&mut rt);
+        }
+        assert_eq!(shared.borrow().missions.pinned_directory(), None);
+
+        // 1. instance.eventStatus:error, :connecting, and native worktree.updated must all bump Hub::location_revision.
+        for frame in [
+            b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"error\",\"reason\":\"upstream closed\"}\n\n".as_slice(),
+            b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"connecting\"}\n\n".as_slice(),
+            b"data: {\"type\":\"instance.event\",\"instanceId\":\"captured\",\"event\":{\"type\":\"worktree.updated\",\"data\":{}}}\n\n".as_slice(),
+        ] {
+            let before = backend_client.location_revision("captured", Some("session"));
+            sse_stream.socket.write_all(frame).await.unwrap();
+            wait_until(|| backend_client.location_revision("captured", Some("session")) > before)
+                .await;
+        }
+
+        // 2. Advancing location_revision must clear location_failed so lookup retries automatically.
+        let exp_b = "8".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-b",
+            "%2Frepo%2Fwt-b",
+            Some(3),
+            &exp_b,
+            true,
+        )
+        .await;
+        assert_eq!(
+            shared.borrow().missions.pinned_directory(),
+            Some("/repo/wt-b")
+        );
+    });
+}
+
+#[test]
+fn transport_loss_during_queued_reread_marks_depth_uncertain_so_flush_warns() {
+    let (shared, _rt) = platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "7".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_1,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Trigger a depth reread and hold GET open while queueing depth 4.
+        shared
+            .borrow_mut()
+            .provider_target
+            .as_mut()
+            .unwrap()
+            .hint("captured");
+        let mut held_depth = None;
+        for _ in 0..4 {
+            let req = next_request(&listener, &mut rt).await;
+            let url = req.first.split_whitespace().nth(1).unwrap();
+            if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
+                held_depth = Some(req);
+                break;
+            } else if url.contains("/agents") {
+                req.reply(200, json!({"data":[]})).await;
+            } else {
+                req.reply(200, json!({"data":{"all":[],"default":{},"connected":[]}}))
+                    .await;
+            }
+        }
+        let _held_depth = held_depth.expect("expected held depth reread");
+        shared
+            .borrow_mut()
+            .missions
+            .choose_depth("4".into(), true, true, Some("/repo/wt-a"));
+        tick(&mut rt);
+
+        // Lose transport before the reread completes: depth must become Uncertain (not Ready).
+        shared.borrow_mut().missions.on_transport_lost();
+        assert!(
+            shared.borrow().missions.has_unconfirmed(),
+            "dropping a queued depth choice on transport loss must report unconfirmed"
+        );
+        (shared, rt)
+    });
+
+    assert!(
+        !shared.borrow_mut().flush(),
+        "flush() must return false after transport loss dropped a queued depth choice"
+    );
+}
+
+#[test]
+fn native_flush_drains_more_than_eight_queued_missions_defaults_edits() {
+    let (listener, shared, first_patch, _rt) = platform::block_on(async {
+        let (listener, prefs) = fixture().await;
+        let (shared, mut rt) = make_window(prefs);
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // Start 1st TaskMode edit and hold its PATCH open, then queue 9 more toggles (10 total = 20 ops).
+        click(&mut rt, "mission-task-mode-trigger");
+        click_option(&mut rt, "mission-task-mode", "Independent sessions");
+        let first_patch = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            first_patch.first,
+            "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+        );
+        for i in 0..9 {
+            click(&mut rt, "mission-task-mode-trigger");
+            let label = if i % 2 == 0 {
+                "Native subagents"
+            } else {
+                "Independent sessions"
+            };
+            click_option(&mut rt, "mission-task-mode", label);
+            tick(&mut rt);
+        }
+        (listener, shared, first_patch, rt)
+    });
+
+    let server = std::thread::spawn(move || {
+        platform::block_on(async move {
+            let mut latest =
+                first_patch.body["patch"]["settings"]["missionProfileDefaults"].clone();
+            assert!(!latest.is_null());
+            first_patch
+                .reply(
+                    200,
+                    json!({"settings":{"locale":"en","missionProfileDefaults":latest}}),
+                )
+                .await;
+            let mut patches = 1usize;
+            while patches < 10 {
+                let req = request(&listener).await;
+                if req.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
+                    req.reply(
+                        200,
+                        json!({"settings":{"locale":"en","missionProfileDefaults":latest}}),
+                    )
+                    .await;
+                } else {
+                    assert_eq!(
+                        req.first,
+                        "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+                    );
+                    latest = req.body["patch"]["settings"]["missionProfileDefaults"].clone();
+                    assert!(!latest.is_null());
+                    patches += 1;
+                    req.reply(
+                        200,
+                        json!({"settings":{"locale":"en","missionProfileDefaults":latest}}),
+                    )
+                    .await;
+                }
+            }
+            let final_get = request(&listener).await;
+            assert_eq!(
+                final_get.first,
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+            );
+            final_get
+                .reply(
+                    200,
+                    json!({"settings":{"locale":"en","missionProfileDefaults":latest}}),
+                )
+                .await;
+            patches
+        })
+    });
+
+    let flushed = shared.borrow_mut().flush();
+    let count = server.join().unwrap();
+    assert_eq!(count, 10, "all 10 queued defaults PATCHes must be sent");
+    assert!(
+        flushed,
+        "native flush() must drain all 10 queued Missions defaults edits cleanly"
+    );
+}
+
+#[test]
+fn reset_profiles_works_without_project_and_succeeds_after_inflight_task_mode_patch() {
+    platform::block_on(async {
+        let initial_defaults = json!([{
+            "template": "all",
+            "taskMode": "native",
+            "profiles": {
+                "coordinator": {
+                    "agent": "build",
+                    "model": { "providerID": "anthropic", "id": "claude" }
+                }
+            }
+        }]);
+        let (listener, mut prefs) = fixture().await;
+        prefs.config.snapshot = Some(json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": initial_defaults
+            }
+        }));
+        let (shared, mut rt) = make_window(prefs);
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // No project open (provider_target == None): expand profiles disclosure and start TaskMode PATCH.
+        assert!(shared.borrow().provider_target.is_none());
+        click(&mut rt, "mission-task-mode-trigger");
+        click_option(&mut rt, "mission-task-mode", "Independent sessions");
+        let mode_patch = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            mode_patch.first,
+            "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+        );
+        let after_mode = mode_patch.body["patch"]["settings"]["missionProfileDefaults"].clone();
+        assert!(!after_mode.is_null());
+
+        // While TaskMode PATCH is still in flight (and without a project!), click Reset profiles & confirm.
+        click(&mut rt, "trigger");
+        tick(&mut rt);
+        click(&mut rt, "mission-reset-profiles");
+        tick(&mut rt);
+        click(&mut rt, "file-decision-confirm");
+        tick(&mut rt);
+
+        // Complete TaskMode PATCH + authoritative GET.
+        mode_patch
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","missionProfileDefaults":after_mode}}),
+            )
+            .await;
+        let mode_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            mode_get.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        mode_get
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","missionProfileDefaults":after_mode}}),
+            )
+            .await;
+
+        // Confirmed ResetProfiles must now send its PATCH preserving taskMode="independent" and clearing profiles.
+        let reset_patch = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            reset_patch.first,
+            "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+        );
+        let after_reset = reset_patch.body["patch"]["settings"]["missionProfileDefaults"].clone();
+        assert_eq!(
+            after_reset,
+            json!([{"template":"all","profiles":{},"taskMode":"independent"}]),
+            "ResetProfiles must clear profiles while preserving the same-client TaskMode update"
+        );
+        reset_patch
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","missionProfileDefaults":after_reset}}),
+            )
+            .await;
+        let reset_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            reset_get.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        reset_get
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","missionProfileDefaults":after_reset}}),
+            )
+            .await;
+
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().missions.has_unconfirmed()
+        })
+        .await;
     });
 }

@@ -190,7 +190,7 @@ pub(in crate::settings) struct Shared {
     location_authority: Option<(String, u64)>,
     location_token: Arc<AtomicU64>,
     location_flight: Option<LocationFlight>,
-    location_failed: Option<(u64, String, u64, u64)>,
+    location_failed: Option<(u64, String, u64, u64, u64)>,
     location_retry_epoch: u64,
     #[cfg(test)]
     pre_patch_gate: Option<Receiver<()>>,
@@ -411,16 +411,28 @@ impl Shared {
                         self.location_failed = None;
                     }
                     None => {
-                        self.location_failed =
-                            Some((self.open_epoch, workspace.to_owned(), authority, revision));
+                        self.location_failed = Some((
+                            self.open_epoch,
+                            workspace.to_owned(),
+                            authority,
+                            revision,
+                            current_loc_rev,
+                        ));
                     }
                 }
             }
             changed = true;
         }
-        let failed = self.location_failed.as_ref().is_some_and(|(e, w, a, r)| {
-            *e == self.open_epoch && w == workspace && *a == authority && *r == revision
-        });
+        let failed = self
+            .location_failed
+            .as_ref()
+            .is_some_and(|(e, w, a, r, loc_rev)| {
+                *e == self.open_epoch
+                    && w == workspace
+                    && *a == authority
+                    && *r == revision
+                    && *loc_rev == current_loc_rev
+            });
         if self.pinned_directory.is_none() && self.location_flight.is_none() && !failed {
             let (cancel, cancelled) = bounded(1);
             let (out, inbox) = bounded(1);
@@ -486,6 +498,14 @@ impl Shared {
     #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::settings) fn needs_config_revalidation(&self) -> bool {
         self.library.needs_config_revalidation() || self.defaults.needs_config_revalidation()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::settings) fn pending_ops(&self) -> u32 {
+        self.defaults
+            .pending_ops()
+            .saturating_add(self.library.pending_ops())
+            .saturating_add(u32::from(self.depth.saving()))
     }
 
     #[cfg(not(target_arch = "wasm32"))]

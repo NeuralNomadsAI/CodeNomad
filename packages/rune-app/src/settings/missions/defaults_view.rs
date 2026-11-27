@@ -266,6 +266,7 @@ impl Missions {
             inherited_profiles.as_ref(),
             effective_mode,
             disabled || !has_target,
+            disabled,
             self.open_picker,
             layers,
             set_picker,
@@ -289,10 +290,10 @@ impl Missions {
                     m.confirm = Some(Confirm::ResetProfiles {
                         scope,
                         owner: backend.client_id.clone(),
-                        expected: MissionPreferenceExpectation::from_ui_config(
-                            prefs.saved(Owner::Config),
-                            "missionProfileDefaults",
-                        ),
+                        expected: prefs
+                            .missions
+                            .defaults
+                            .expected_after_pending(prefs.saved(Owner::Config)),
                     });
                 }
             },

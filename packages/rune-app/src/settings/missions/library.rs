@@ -121,6 +121,11 @@ impl State {
             || self.reconciliation_pending
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn pending_ops(&self) -> u32 {
+        u32::from(self.pending_op.is_some()) + u32::from(self.flight.is_some())
+    }
+
     pub(super) fn select(&mut self, id: String) {
         self.selected_id = id;
     }

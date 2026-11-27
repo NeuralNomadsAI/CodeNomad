@@ -221,6 +221,30 @@ impl State {
             || self.needs_reload
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn pending_ops(&self) -> u32 {
+        let count = self.queued.len()
+            + usize::from(self.in_flight_edit.is_some())
+            + usize::from(self.pending_delete.is_some())
+            + usize::from(self.delete_flight.is_some());
+        u32::try_from(count).unwrap_or(u32::MAX)
+    }
+
+    pub(super) fn expected_after_pending(
+        &self,
+        snapshot: Option<&Value>,
+    ) -> MissionPreferenceExpectation {
+        if self.in_flight_edit.is_none() && self.queued.is_empty() {
+            MissionPreferenceExpectation::from_ui_config(snapshot, "missionProfileDefaults")
+        } else {
+            MissionPreferenceExpectation {
+                key: "missionProfileDefaults",
+                present: true,
+                value: Some(encode_mission_defaults(&self.shown(snapshot))),
+            }
+        }
+    }
+
     pub(super) fn busy_delete(&self) -> bool {
         self.delete_flight.is_some()
             || self.pending_delete.is_some()

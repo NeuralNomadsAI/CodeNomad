@@ -104,7 +104,11 @@ pub async fn read_subagent_depth(
     let value = read_json(response)
         .await
         .map_err(|_| SubagentDepthError::Failed)?;
-    parse_subagent_depth(&value).ok_or(SubagentDepthError::Failed)
+    let snapshot = parse_subagent_depth(&value).ok_or(SubagentDepthError::Failed)?;
+    if !crate::same_server_path(&snapshot.directory, directory) {
+        return Err(SubagentDepthError::Failed);
+    }
+    Ok(snapshot)
 }
 
 pub async fn set_subagent_depth(

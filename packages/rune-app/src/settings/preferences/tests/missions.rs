@@ -853,12 +853,13 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
         let mut catalog_reqs = 0;
         while catalog_reqs < 3 {
             let req = request(&listener).await;
+            let url = req.first.split_whitespace().nth(1).unwrap_or("");
             assert!(
-                !req.first.contains("/api/workspaces"),
+                !url.starts_with("/workspaces/captured/instance/api/session/")
+                    && url != "/api/workspaces/captured",
                 "refresh must reuse pinned opener Location instead of re-resolving: {}",
                 req.first
             );
-            let url = req.first.split_whitespace().nth(1).unwrap_or("");
             if url.starts_with("/workspaces/captured/instance/api/") {
                 catalog_reqs += 1;
             }

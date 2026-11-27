@@ -130,6 +130,7 @@ impl State {
     }
 
     pub(super) fn invalidate_location(&mut self) -> bool {
+        let had_pending_choice = self.pending_save || self.queued.is_some() || self.background_read;
         let mut changed = self.resolved_authority.take().is_some()
             | self.read_location_revision.take().is_some()
             | self.read_started_location_revision.take().is_some()
@@ -143,7 +144,7 @@ impl State {
             | self.read_flight.take().is_some()
             | self.read_started_revision.take().is_some()
             | self.seen_revision.take().is_some();
-        if self.phase == Phase::Saving || self.save_flight.is_some() {
+        if self.phase == Phase::Saving || self.save_flight.is_some() || had_pending_choice {
             self.save_flight = None;
             self.phase = Phase::Uncertain;
             changed = true;
@@ -519,7 +520,8 @@ impl State {
                 .location_revision(&target.workspace, target.session.as_deref());
             match result {
                 Ok(snapshot)
-                    if started_loc_rev == Some(current_loc_rev)
+                    if same_server_path(&snapshot.directory, &target.directory)
+                        && started_loc_rev == Some(current_loc_rev)
                         && target.location_revision == Some(current_loc_rev)
                         && location_token.load(Ordering::SeqCst)
                             == target.expected_location_token
@@ -892,7 +894,7 @@ impl State {
                 self.seen_revision = None;
             } else {
                 match result {
-                    Ok(snapshot) => {
+                    Ok(snapshot) if same_server_path(&snapshot.directory, directory) => {
                         let fresh = confirmed_depth_value(Some(&snapshot));
                         let display = snapshot_display_value(Some(&snapshot));
                         let queued = self.queued.take().filter(|queued| {
@@ -919,6 +921,11 @@ impl State {
                             self.save_target = self.ready_target.clone();
                             self.pending_save = true;
                         }
+                    }
+                    Ok(_) => {
+                        self.queued = None;
+                        self.error = true;
+                        self.phase = Phase::Ready;
                     }
                     Err(SubagentDepthError::Unsupported) => {
                         self.queued = None;
