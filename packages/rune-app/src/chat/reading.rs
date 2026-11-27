@@ -107,6 +107,7 @@ struct FrameRestore {
     obs_offset: f32,
     obs_max: f32,
     obs_seq: u64,
+    content_layout_seq: u64,
     target: FrameRestoreTarget,
     probe_live: bool,
     handled: bool,
@@ -123,6 +124,7 @@ pub(crate) struct Reading {
     top: Option<(String, f32, f32)>,
     top_manual_seq: u64,
     min_record_revision: u64,
+    content_layout_seq: u64,
     resize_anchor: Option<ResizeAnchor>,
     frame_restore_epoch: u64,
     frame_restore: Option<FrameRestore>,
@@ -160,6 +162,7 @@ impl Default for Reading {
             top: None,
             top_manual_seq: 0,
             min_record_revision: 0,
+            content_layout_seq: 0,
             resize_anchor: None,
             frame_restore_epoch: 0,
             frame_restore: None,
@@ -205,6 +208,10 @@ impl Reading {
 
     pub(super) fn pending_scroll_commit(&self) -> bool {
         self.scroll_state.get().pending_scroll_commit
+    }
+
+    pub(crate) fn note_content_layout_change(&mut self) {
+        self.content_layout_seq = self.content_layout_seq.wrapping_add(1);
     }
 
     #[cfg(test)]
@@ -394,6 +401,7 @@ impl Reading {
                     obs_offset: cur.offset,
                     obs_max: cur.max,
                     obs_seq: cur.seq,
+                    content_layout_seq: self.content_layout_seq,
                     target: FrameRestoreTarget::ReplayDeltas {
                         anchor: bookmark.clone(),
                         deltas: Vec::new(),
@@ -426,6 +434,7 @@ impl Reading {
                 obs_offset: cur.offset,
                 obs_max: cur.max,
                 obs_seq: cur.seq,
+                content_layout_seq: self.content_layout_seq,
                 target,
                 probe_live,
                 handled: false,
@@ -1083,9 +1092,10 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     let history = history
         .on_scroll_offset(move |at| {
             let prev = scroll_state.get();
-            let resized = prev.seq > 0
+            let layout_changed = prev.seq > 0
                 && ((at.viewport[0] - prev.viewport_w).abs() > 0.5
-                    || (at.viewport[1] - prev.viewport_h).abs() > 0.5);
+                    || (at.viewport[1] - prev.viewport_h).abs() > 0.5
+                    || (at.max[1] - prev.max).abs() > 0.5);
             let next_seq = prev.seq + 1;
             let mut next = ScrollObserved {
                 offset: at.offset[1],
@@ -1094,7 +1104,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                 viewport_w: at.viewport[0],
                 viewport_h: at.viewport[1],
                 seq: next_seq,
-                last_resize_seq: if resized {
+                last_resize_seq: if layout_changed {
                     next_seq
                 } else {
                     prev.last_resize_seq
@@ -1380,6 +1390,7 @@ fn handle_reading_wheel(
                 reading.frame_restore_epoch += 1;
                 fr.epoch = reading.frame_restore_epoch;
                 fr.obs_seq = cur_seq;
+                fr.content_layout_seq = reading.content_layout_seq;
             }
             fr.post_probe = None;
             fr.probe_live = true;
@@ -1569,6 +1580,7 @@ fn handle_reading_wheel(
                 obs_offset: target,
                 obs_max: cur.max,
                 obs_seq: cur.seq,
+                content_layout_seq: reading.content_layout_seq,
                 target: fr_target,
                 probe_live: from_bottom,
                 handled: !from_bottom,
@@ -1645,6 +1657,7 @@ fn handle_reading_wheel(
                 obs_offset: 0.0,
                 obs_max: 0.0,
                 obs_seq: cur.seq,
+                content_layout_seq: reading.content_layout_seq,
                 target: FrameRestoreTarget::ReplayDeltas {
                     anchor,
                     deltas: Vec::new(),
@@ -1666,6 +1679,7 @@ fn handle_reading_wheel(
             obs_offset: 0.0,
             obs_max: 0.0,
             obs_seq: cur.seq,
+            content_layout_seq: reading.content_layout_seq,
             target: FrameRestoreTarget::ReplayDeltas {
                 anchor: anchor.clone(),
                 deltas: vec![ev.dy],
@@ -1697,7 +1711,7 @@ fn handle_reading_wheel(
     false
 }
 
-fn live_history_offset(cx: &rune::Cx<State>) -> Option<f32> {
+fn live_history_metrics(cx: &rune::Cx<State>) -> Option<(f32, f32)> {
     // Query all four layout subscriptions unconditionally so Rune registers them in one frame.
     let rows_unscrolled = rune_theme_codenomad::layout::layout_rect(cx, "rows");
     let rows_scrolled = rune_theme_codenomad::layout::window_layout(cx, "rows");
@@ -1713,7 +1727,14 @@ fn live_history_offset(cx: &rune::Cx<State>) -> Option<f32> {
     };
     let live_offset =
         (rows_unscrolled[1] - rows_scrolled[1]) - (hist_unscrolled[1] - hist_scrolled[1]);
-    live_offset.is_finite().then_some(live_offset)
+    let live_max = ((rows_unscrolled[1] + rows_unscrolled[3])
+        - (hist_unscrolled[1] + hist_unscrolled[3]))
+        .max(0.0);
+    (live_offset.is_finite() && live_max.is_finite()).then_some((live_offset, live_max))
+}
+
+fn live_history_offset(cx: &rune::Cx<State>) -> Option<f32> {
+    live_history_metrics(cx).map(|(offset, _)| offset)
 }
 
 pub(crate) fn probe_resuming_scroll(s: &State, cx: &rune::Cx<State>) {
@@ -1734,9 +1755,13 @@ pub(crate) fn probe_resuming_scroll(s: &State, cx: &rune::Cx<State>) {
     {
         return;
     }
-    let Some(live_offset) = live_history_offset(cx) else {
+    let Some((live_offset, live_max)) = live_history_metrics(cx) else {
         return;
     };
+    let live_at_bottom = live_max <= 0.5 || live_offset >= live_max - 0.5;
+    if live_at_bottom && (cur.at_bottom() || cur.offset > live_max + 0.5) {
+        return;
+    }
     if (live_offset - cur.offset).abs() > 0.5 {
         reading.last_touch_probe_seq.set(cur.seq);
         reading.note_pending_manual_scroll();
@@ -1833,6 +1858,47 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         tx.scroll_key_to(id, anchor_offset + delta);
                     }
                     FrameRestoreTarget::ReplayDeltas { anchor, deltas, .. } => {
+                        let content_layout_seq = reading.content_layout_seq;
+                        if fr.content_layout_seq != content_layout_seq
+                            || !replay_anchor_present(s, &anchor)
+                        {
+                            if replay_anchor_present(s, &anchor) {
+                                let reading = s.transcript_display.reading_mut();
+                                reading.frame_restore_epoch += 1;
+                                reading.frame_restore = Some(FrameRestore {
+                                    epoch: reading.frame_restore_epoch,
+                                    obs_offset: 0.0,
+                                    obs_max: 0.0,
+                                    obs_seq: cur.seq,
+                                    content_layout_seq,
+                                    target: FrameRestoreTarget::ReplayDeltas {
+                                        anchor: anchor.clone(),
+                                        deltas,
+                                        restored_anchor: true,
+                                    },
+                                    probe_live: true,
+                                    handled: false,
+                                    post_probe: None,
+                                    checked: Cell::new(Some(Some(0.0))),
+                                });
+                                let at_bottom = cur.at_bottom();
+                                reading.at_bottom = at_bottom;
+                                reading.following = at_bottom;
+                                s.revision += 1;
+                                let rev = s.revision;
+                                let reading = s.transcript_display.reading_mut();
+                                reading.advance_row_guard(rev);
+                                reading.note_programmatic_scroll();
+                                if let Some(reader) = &mut s.reader {
+                                    reader.defer_sync_until(cur.seq + 2);
+                                }
+                                Reading::restore(&anchor, tx);
+                            } else {
+                                tx.live_only();
+                            }
+                            return;
+                        }
+                        let reading = s.transcript_display.reading_mut();
                         let start = match &anchor {
                             Bookmark::Latest => cur.max,
                             Bookmark::Message { .. } => cur.offset,
@@ -1852,6 +1918,7 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                                 obs_offset: dest,
                                 obs_max: cur.max,
                                 obs_seq: cur.seq,
+                                content_layout_seq,
                                 target: FrameRestoreTarget::ReplayDeltas {
                                     anchor,
                                     deltas,
@@ -1887,6 +1954,7 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                             obs_offset: dest,
                             obs_max: cur.max,
                             obs_seq: cur.seq,
+                            content_layout_seq,
                             target: FrameRestoreTarget::ReplayDeltas {
                                 anchor,
                                 deltas,
@@ -1951,6 +2019,69 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
     )
 }
 
+pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool {
+    if s.messages.is_empty()
+        || s.reader
+            .as_ref()
+            .is_some_and(crate::chat::reader::Reader::is_hidden)
+        || !s.transcript_display.reading().pending_resize_wheel_replay()
+    {
+        return false;
+    }
+    let cur = s.transcript_display.reading().scroll_state.get();
+    let anchor_present = s
+        .transcript_display
+        .reading()
+        .frame_restore
+        .as_ref()
+        .is_some_and(|fr| match &fr.target {
+            FrameRestoreTarget::ReplayDeltas { anchor, .. } => replay_anchor_present(s, anchor),
+            _ => false,
+        });
+    if !anchor_present {
+        s.transcript_display.reading_mut().frame_restore = None;
+        return false;
+    }
+    let anchor = {
+        let reading = s.transcript_display.reading_mut();
+        let Some(fr) = reading.frame_restore.as_mut() else {
+            return false;
+        };
+        let FrameRestoreTarget::ReplayDeltas {
+            anchor,
+            restored_anchor,
+            ..
+        } = &mut fr.target
+        else {
+            return false;
+        };
+        *restored_anchor = true;
+        reading.frame_restore_epoch += 1;
+        fr.epoch = reading.frame_restore_epoch;
+        fr.obs_seq = cur.seq;
+        fr.content_layout_seq = reading.content_layout_seq;
+        fr.probe_live = true;
+        fr.handled = false;
+        fr.post_probe = None;
+        fr.checked.set(Some(Some(0.0)));
+        reading.resize_anchor = None;
+        let at_bottom = cur.at_bottom();
+        reading.at_bottom = at_bottom;
+        reading.following = at_bottom;
+        anchor.clone()
+    };
+    s.revision += 1;
+    let rev = s.revision;
+    let reading = s.transcript_display.reading_mut();
+    reading.advance_row_guard(rev);
+    reading.note_programmatic_scroll();
+    if let Some(reader) = &mut s.reader {
+        reader.defer_sync_until(cur.seq + 2);
+    }
+    Reading::restore(&anchor, tx);
+    true
+}
+
 pub(crate) fn preserve_on_resize(
     s: &mut State,
     tx: &mut Tx,
@@ -1964,57 +2095,8 @@ pub(crate) fn preserve_on_resize(
     {
         return;
     }
-    if s.transcript_display.reading().pending_resize_wheel_replay() {
-        let cur = s.transcript_display.reading().scroll_state.get();
-        let anchor_present = s
-            .transcript_display
-            .reading()
-            .frame_restore
-            .as_ref()
-            .is_some_and(|fr| match &fr.target {
-                FrameRestoreTarget::ReplayDeltas { anchor, .. } => replay_anchor_present(s, anchor),
-                _ => false,
-            });
-        if anchor_present {
-            let anchor = {
-                let reading = s.transcript_display.reading_mut();
-                let Some(fr) = reading.frame_restore.as_mut() else {
-                    return;
-                };
-                let FrameRestoreTarget::ReplayDeltas {
-                    anchor,
-                    restored_anchor,
-                    ..
-                } = &mut fr.target
-                else {
-                    return;
-                };
-                *restored_anchor = true;
-                reading.frame_restore_epoch += 1;
-                fr.epoch = reading.frame_restore_epoch;
-                fr.obs_seq = cur.seq;
-                fr.probe_live = true;
-                fr.handled = false;
-                fr.post_probe = None;
-                fr.checked.set(Some(Some(0.0)));
-                reading.resize_anchor = None;
-                let at_bottom = cur.at_bottom();
-                reading.at_bottom = at_bottom;
-                reading.following = at_bottom;
-                anchor.clone()
-            };
-            s.revision += 1;
-            let rev = s.revision;
-            let reading = s.transcript_display.reading_mut();
-            reading.advance_row_guard(rev);
-            reading.note_programmatic_scroll();
-            if let Some(reader) = &mut s.reader {
-                reader.defer_sync_until(cur.seq + 2);
-            }
-            Reading::restore(&anchor, tx);
-            return;
-        }
-        s.transcript_display.reading_mut().frame_restore = None;
+    if rearm_replay_on_layout_change(s, tx) {
+        return;
     }
     if s.transcript_display.reading().awaiting_wheel_replay() {
         return;

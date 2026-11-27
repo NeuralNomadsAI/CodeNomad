@@ -647,7 +647,7 @@ impl Reader {
     pub(super) fn renderer_ready(
         &mut self,
         reading: &mut Reading,
-        messages: &[crate::history::Row],
+        (messages, live_in_queue): (&[crate::history::Row], bool),
         revision: &mut u64,
         current_width: f32,
         history_bounds: [f32; 4],
@@ -671,7 +671,9 @@ impl Reader {
                 if let Some(live) = reading.live_bookmark_fresh(history_bounds, self.gap) {
                     let live_valid = match &live {
                         Bookmark::Latest => !self.gap,
-                        Bookmark::Message { id, .. } => messages.iter().any(|row| &row.id == id),
+                        Bookmark::Message { id, .. } => {
+                            messages.iter().any(|row| &row.id == id) || live_in_queue
+                        }
                     };
                     if live_valid {
                         self.bookmark = live;
@@ -714,9 +716,24 @@ pub(crate) fn renderer_ready(s: &mut State, tx: &mut Tx) -> bool {
     let Some(reader) = &mut s.reader else {
         return false;
     };
+    let live_in_queue = reader.pending_scroll
+        && reader.user_scrolled_while_resuming(s.transcript_display.reading())
+        && !reader.gap
+        && s.transcript_display
+            .reading()
+            .live_bookmark_fresh(history_bounds, reader.gap)
+            .is_some_and(|live| match live {
+                Bookmark::Message { id, .. } => s
+                    .transcript_display
+                    .queue
+                    .items()
+                    .iter()
+                    .any(|item| item.id == id),
+                Bookmark::Latest => false,
+            });
     reader.renderer_ready(
         s.transcript_display.reading_mut(),
-        &s.messages,
+        (&s.messages, live_in_queue),
         &mut s.revision,
         current_width,
         history_bounds,
@@ -894,7 +911,15 @@ pub(crate) fn reconcile_bookmark_for_sync(s: &mut State, page: &crate::history::
         if let Some(live) = reading.live_bookmark_fresh(history_bounds, cached_gap) {
             let live_valid = match &live {
                 Bookmark::Latest => page.newer.is_none(),
-                Bookmark::Message { id, .. } => rows.iter().any(|row| &row.id == id),
+                Bookmark::Message { id, .. } => {
+                    rows.iter().any(|row| &row.id == id)
+                        || (page.newer.is_none()
+                            && s.transcript_display
+                                .queue
+                                .items()
+                                .iter()
+                                .any(|item| &item.id == id))
+                }
             };
             if live_valid {
                 if let Some(reader) = &mut s.reader {
@@ -6971,6 +6996,307 @@ mod resume_tests {
             ),
             "switching away after queued-prompt replay must keep queued prompt bookmark, got {:?}",
             rt.state.reader.as_ref().unwrap().bookmark
+        );
+    }
+
+    #[test]
+    fn inbox_removal_on_replay_delivery_frame_replays_against_updated_layout() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rq2-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let queued_a = codenomad_client::inbox::QueuedPrompt {
+            id: "rq2-a".into(),
+            delivery: codenomad_client::prompt::Delivery::Queue,
+            text: (0..18)
+                .map(|i| format!("Queued prompt A line {i:02} above anchor B"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            parts: vec![],
+            created: Some(1),
+            editable: true,
+        };
+        let queued_b = codenomad_client::inbox::QueuedPrompt {
+            id: "rq2-b".into(),
+            delivery: codenomad_client::prompt::Delivery::Queue,
+            text: (0..32)
+                .map(|i| format!("Queued prompt B line {i:02} holding saved reading anchor"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            parts: vec![],
+            created: Some(2),
+            editable: true,
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full20", 0..20);
+        s.transcript_display
+            .queue
+            .fixture_set(None, vec![queued_a, queued_b]);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(old_max > 300.0);
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 100.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        let saved_offset = match &rt.state.reader.as_ref().unwrap().bookmark {
+            Bookmark::Message { id, offset } if id == "rq2-b" => *offset,
+            other => panic!("expected queued prompt B bookmark before resume, got {other:?}"),
+        };
+
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_20", 10..20),
+                        older: Some(serde_json::json!("older-rq2")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: 40 px downward wheel arms ReplayDeltas from queued prompt B (100 px above bottom).
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B: remove tall queued prompt A above B without changing viewport size.
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed("rq2-a".into())),
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.state.transcript_display.queue.items().len(),
+            1,
+            "queued prompt A must be removed"
+        );
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        let distance_from_bottom = final_max - final_offset;
+        assert!(
+            (distance_from_bottom - 60.0).abs() <= 3.0,
+            "removing queued prompt A on replay frame must replay 40 px down from B (60 px above bottom), got {distance_from_bottom} (offset={final_offset}, max={final_max})"
+        );
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let row_b = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rq2-b"))
+            .expect("queued prompt B must remain visible at saved_offset - 40");
+        let rel_y = row_b.rect[1] - hist[1];
+        assert!(
+            (rel_y - (saved_offset - 40.0)).abs() <= 3.0,
+            "queued prompt B must land at saved_offset - 40 ({}), got {rel_y}",
+            saved_offset - 40.0
+        );
+    }
+
+    #[test]
+    fn pointer_leave_clears_vertical_wheel_lock_for_unphased_shift_wheel() {
+        let wide_code = format!(
+            "```text\n{}\n```",
+            "leave_horizontal_segment_0123456789 ".repeat(14)
+        );
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    let body = if i == 20 {
+                        format!("{prefix} {i:02}\n{wide_code}")
+                    } else {
+                        format!("{prefix} {i:02} line one\nline two")
+                    };
+                    crate::Message {
+                        usage: None,
+                        id: format!("rpl-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body,
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            crate::transcript_state::Display::toggle_code(s, "body-rpl-20", 0);
+            tx.instant();
+            tx.scroll_key_to("rpl-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim18_30", 18..30),
+                        older: Some(serde_json::json!("older-rpl")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert_eq!(rt.state.messages.len(), 12);
+
+        let find_code_el = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|e| {
+                    e.text
+                        .as_deref()
+                        .is_some_and(|t| t.contains("leave_horizontal_segment_"))
+                        && e.visible[2] > 0.0
+                        && e.visible[3] > 0.0
+                })
+                .expect("visible horizontally overflowing code block in rpl-20")
+        };
+        let code_before = find_code_el(&rt);
+        assert!(
+            code_before.rect[2] > code_before.visible[2] + 20.0,
+            "unwrapped code block must overflow horizontally: rect={:?} visible={:?}",
+            code_before.rect,
+            code_before.visible
+        );
+        let (cx, cy) = (
+            code_before.visible[0] + code_before.visible[2] / 2.0,
+            code_before.visible[1] + code_before.visible[3] / 2.0,
+        );
+
+        // Enter the window, start a phased vertical gesture while SyncUndo is armed, then leave
+        // the focused window and return WITHOUT blurring or sending Ended.
+        rt.pointer_move(cx, cy);
+        rt.frame(0.016);
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, -20.0)
+                .at(cx, cy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt.frame(0.016);
+        rt.pointer_leave();
+        rt.frame(0.02);
+
+        let code_before_shift = find_code_el(&rt);
+        let (sx, sy) = (
+            code_before_shift.visible[0] + code_before_shift.visible[2] / 2.0,
+            code_before_shift.visible[1] + code_before_shift.visible[3] / 2.0,
+        );
+        rt.pointer_move(sx, sy);
+        rt.frame(0.02);
+
+        // Within 1 second, send an unphased (Moved) Shift+wheel over the overflowing code block.
+        let mut ev = rune::WheelEvent::new(0.0, -240.0)
+            .at(sx, sy)
+            .phase(rune_theme_codenomad::timeline::GesturePhase::Moved);
+        ev.mods.shift = true;
+        ev.precise = false;
+        rt.wheel_event(ev);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.state.messages.len(),
+            12,
+            "Shift+wheel after pointer leave must stay horizontal and not roll back trimmed rows"
+        );
+        let code_after = find_code_el(&rt);
+        assert!(
+            (code_after.rect[0] - code_before_shift.rect[0]).abs() > 10.0,
+            "unphased Shift+wheel after pointer leave must horizontally scroll the code block: before_x={}, after_x={}",
+            code_before_shift.rect[0],
+            code_after.rect[0]
         );
     }
 }

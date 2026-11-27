@@ -307,8 +307,11 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if wait_rail_layout {
         tx.wake_after(std::time::Duration::ZERO);
     }
+    let rearmed_replay =
+        conversation_visible && chat::reading::rearm_replay_on_layout_change(s, tx);
     let restored = !wait_manual_probe
         && !wait_rail_layout
+        && !rearmed_replay
         && conversation_visible
         && (!s
             .reader
@@ -316,7 +319,11 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             .is_some_and(chat::reader::Reader::awaits_history_width)
             || history_width > 0.0)
         && chat::reader::renderer_ready(s, tx);
-    let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
+    let mut changed = gesture
+        | chat
+        | rearmed_replay
+        | restored
+        | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
     #[cfg(target_arch = "wasm32")]
@@ -330,7 +337,13 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
-    changed |= chat::queue::poll(s, tx);
+    let queue_changed = chat::queue::poll(s, tx);
+    if queue_changed {
+        s.transcript_display
+            .reading_mut()
+            .note_content_layout_change();
+    }
+    changed |= queue_changed;
     changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);

@@ -630,6 +630,9 @@ fn drain_chat(
                     reader.clear_sync_undo();
                 }
                 s.messages = messages;
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
                 s.phase = Phase::Ready;
                 s.stream_offline = false;
@@ -644,6 +647,9 @@ fn drain_chat(
                 } else {
                     s.messages.push(m.into());
                 }
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
             }
             Event::Inbox {
@@ -654,6 +660,9 @@ fn drain_chat(
                 if !authoritative || !chat::queue::receive_authoritative(s, items, fence) {
                     continue;
                 }
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
             }
             Event::InboxDelta(delta) => {
                 let mut local_changed = false;
@@ -665,6 +674,9 @@ fn drain_chat(
                             if let Some(index) = s.messages.iter().position(|row| row.id == item.id)
                             {
                                 s.messages.remove(index);
+                                s.transcript_display
+                                    .reading_mut()
+                                    .note_content_layout_change();
                                 s.revision += 1;
                                 local_changed = true;
                             }
@@ -682,6 +694,9 @@ fn drain_chat(
                             s.composer.clear_optimistic(Some(id));
                             if let Some(index) = s.messages.iter().position(|row| row.id == *id) {
                                 s.messages.remove(index);
+                                s.transcript_display
+                                    .reading_mut()
+                                    .note_content_layout_change();
                                 s.revision += 1;
                                 local_changed = true;
                             }
@@ -698,6 +713,9 @@ fn drain_chat(
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
                 s.transcript_display.queue.apply_preview(next);
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
             }
             Event::InboxFailed => {
@@ -730,15 +748,24 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
-                if s.messages.iter().any(|m| m.id == id)
-                    && let Some(reader) = &mut s.reader
-                {
-                    reader.clear_sync_undo();
+                let touched = s.messages.iter().any(|m| m.id == id);
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
@@ -756,8 +783,13 @@ fn drain_chat(
                     touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Tool(id, tool) => {
@@ -785,8 +817,13 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,

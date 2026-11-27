@@ -34,6 +34,10 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         body
     })
     .on_window_focus(shell::notifications::focus_changed)
+    .on_hover_change(|s: &mut State, _inside, tx| {
+        s.transcript_display.reading_mut().end_wheel_gesture();
+        tx.live_only();
+    })
     .on_layout_tx(|s, bounds @ [_, _, w, h], tx| {
         let changed = chat::ToolDiffPreferences::layout(s, w)
             | crate::timeline::preview_window_layout(s, [w, h])
