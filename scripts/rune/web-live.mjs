@@ -398,21 +398,37 @@ async function verifySseAuthenticated503Recovery({
         await step(command('revoke'))
         await step(dialog.waitFor({timeout:15_000}))
         await step(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
-        await step(page.evaluate(()=>{
+        await step(page.evaluate(statusUrl=>{
           globalThis.__runeSse503Signals=[]
+          const browserProbes=[]
+          const pushEntry=entry=>{
+            if(entry.name!==statusUrl)return
+            const responseAt=entry.responseStart>0?entry.responseStart:entry.responseEnd
+            browserProbes.push({
+              receivedAt:entry.startTime,
+              fulfilledAt:responseAt,
+              status:entry.responseStatus??0,
+            })
+          }
           const onFocus=()=>globalThis.__runeSse503Signals.push('focus')
           const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeSse503Signals.push('visibility') }
+          const observer=new PerformanceObserver(list=>{
+            for(const entry of list.getEntries())pushEntry(entry)
+          })
+          observer.observe({type:'resource',buffered:false})
           window.addEventListener('focus',onFocus)
           document.addEventListener('visibilitychange',onVis)
           globalThis.__runeCleanupSse503Signals=()=>{
+            for(const entry of observer.takeRecords())pushEntry(entry)
+            observer.disconnect()
             window.removeEventListener('focus',onFocus)
             document.removeEventListener('visibilitychange',onVis)
             const signals=globalThis.__runeSse503Signals
             delete globalThis.__runeSse503Signals
             delete globalThis.__runeCleanupSse503Signals
-            return signals
+            return {signals,browserProbes}
           }
-        }))
+        },authStatusUrl))
         const beforeSseAuth=eventSources()
         metaGate='block'
         sseGate='block'
@@ -423,8 +439,9 @@ async function verifySseAuthenticated503Recovery({
         await step(pairFlow.complete())
         metaGate='admit-one'
         sseGate='admit-one'
+        const episodeDeadline=now()+30_000
         try {
-          await step(withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',
+          await step(withBudget(episodeDeadline,'first transient 503 on SSE-driven /api/auth/status',
             ()=>step(first503Served.promise)))
           assert.equal(await step(dialog.count()),1,'Pairing overlay must stay visible after the first transient 503 status failure')
           releaseRecovered.resolve(true)
@@ -433,23 +450,28 @@ async function verifySseAuthenticated503Recovery({
           releaseRecovered.resolve(false)
           throw err
         }
-        await step(withBudget(now()+30_000,'bounded retry /api/auth/status 200 after transient 503s',
+        await step(withBudget(episodeDeadline,'bounded retry /api/auth/status 200 after transient 503s',
           ()=>step(recoveredCaptured.promise)))
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
         await step(dialog.waitFor({state:'detached',timeout:10_000}))
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
-        const accidentalSignals=await step(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[]))
+        const {signals:accidentalSignals,browserProbes}=await step(page.evaluate(
+          ()=>globalThis.__runeCleanupSse503Signals?.()??{signals:[],browserProbes:[]}))
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
         assert(eventSources()>beforeSseAuth,'Authenticated SSE 200 on the original page must be observed')
         const preDrainErr=await step(drainSetsWithin([pendingStatusRoutes,pendingSseFulfills],'in-flight SSE+503 route handlers',5_000))
         if(preDrainErr)throw preDrainErr
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
+        assert.equal(statusProbes.length,3,
+          `Expected exactly 3 intercepted /api/auth/status probes, observed ${statusProbes.length}`)
         assert(sseResponseAt!==null&&sseResponseAt<=statusProbes[0].receivedAt,
           'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
-        ;({retryDelay1Ms,retryDelay2Ms}=assertSse503Backoff(statusProbes))
+        assert(browserProbes.every(p=>p.receivedAt>0&&p.fulfilledAt>=p.receivedAt),
+          'Browser resource timings for /api/auth/status probes must be monotonic')
+        ;({retryDelay1Ms,retryDelay2Ms}=assertSse503Backoff(browserProbes))
         assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
         assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
         recovered=true
@@ -829,7 +851,6 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           releaseFollowUp.resolve()
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
-          await settleFollowUp()
           const unrouteErr=await unrouteBounded(page,[[eventsUrl,holdEvents],[authStatusUrl,holdStaleStatus]],'focus recovery routes',2_000)
           const drainErr=await drainSetsWithin([pendingFocusRoutes,pendingFocusFulfills],'focus recovery routes',2_000)
           focusCleanupError??=focusTeardownFulfillError??unrouteErr??drainErr
