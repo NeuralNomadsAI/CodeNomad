@@ -108,26 +108,24 @@ export function parseCdpSseFrame(event) {
   try { parsed = JSON.parse(event.data) } catch {}
   const eventName = typeof event?.eventName === 'string' && event.eventName.length > 0 ? event.eventName : null
   const isNamedDelta = eventName === 'session.text.delta'
-  const hasEnvelopeEvent = parsed?.event != null && typeof parsed.event === 'object' && !Array.isArray(parsed.event)
-  const nativeEvent = hasEnvelopeEvent ? parsed.event : (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
-  const envelopeData = hasEnvelopeEvent && nativeEvent.data != null && typeof nativeEvent.data === 'object' && !Array.isArray(nativeEvent.data)
-    ? nativeEvent.data
-    : null
-  const rootData = !hasEnvelopeEvent && parsed?.data != null && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
-    ? parsed.data
-    : null
-  const pick = key => hasEnvelopeEvent
-    ? (envelopeData?.[key] ?? null)
-    : (rootData?.[key] ?? parsed?.[key] ?? null)
+  const isObject = value => value != null && typeof value === 'object' && !Array.isArray(value)
+  const eventObj = isObject(parsed?.event) ? parsed.event : null
+  const eventData = isObject(eventObj?.data) ? eventObj.data : null
+  const rootData = isObject(parsed?.data) ? parsed.data : null
+  const nativeType = eventObj?.type ?? (parsed?.type === 'session.text.delta' || isNamedDelta ? 'session.text.delta' : null)
+  const hasStrayDelta = rootData?.delta != null || parsed?.delta != null || eventObj?.delta != null
+  const strayAssistantMessageID = rootData?.assistantMessageID ?? parsed?.assistantMessageID ?? eventObj?.assistantMessageID ?? null
   return {
     requestId: event.requestId,
     eventName,
     type: parsed?.type ?? null,
     instanceId: parsed?.instanceId ?? null,
-    nativeType: nativeEvent?.type ?? (isNamedDelta ? 'session.text.delta' : null),
-    sessionID: pick('sessionID'),
-    assistantMessageID: pick('assistantMessageID'),
-    delta: pick('delta'),
+    nativeType,
+    sessionID: eventData?.sessionID ?? null,
+    assistantMessageID: eventData?.assistantMessageID ?? null,
+    delta: eventData?.delta ?? null,
+    hasStrayDelta,
+    strayAssistantMessageID,
   }
 }
 
@@ -140,7 +138,11 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     || f.type === 'session.text.delta'
     || f.eventName === 'session.text.delta'
     || f.delta != null
-    || (f.type !== 'instance.event' && typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID)),
+    || Boolean(f.hasStrayDelta)
+    || (f.type !== 'instance.event' && (
+      (typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID))
+      || (typeof f.strayAssistantMessageID === 'string' && injectedIds.has(f.strayAssistantMessageID))
+    )),
   )
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)

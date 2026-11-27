@@ -290,6 +290,21 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
     ...exactFrames,
     rawEmptyDataWithRootDuplicate,
   ], 'sse-1', expected), /expected instance\.event/)
+  const rawEmptyEventAndDataWithRootDuplicate = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      event: {},
+      data: {},
+      assistantMessageID: 'sse-live-1',
+      sessionID: 'ses_tab_1',
+      delta: 'Tab 1',
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    rawEmptyEventAndDataWithRootDuplicate,
+  ], 'sse-1', expected), /expected instance\.event/)
   const instanceEventWithoutEvent = parseCdpSseFrame({
     requestId: 'sse-1',
     eventName: 'message',
