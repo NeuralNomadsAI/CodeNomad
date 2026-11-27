@@ -571,29 +571,35 @@ impl Ui {
                 }
                 chosen
             }
-            // Exact min-cost bipartite slot assignment (Hungarian algorithm, k <= m <= MAX_TABS = 32):
-            // minimizes (deferred_count [when prefer_surviving], exact JSON bytes, slot index).
-            fn assign_slots(
+            // Exact min-cost bipartite slot assignment with an exact surviving-tab quota
+            // (Hungarian algorithm on an m x m matrix, m <= MAX_TABS = 32):
+            // places `chosen` into `target_surv` surviving slots and `k - target_surv` deferred
+            // slots while minimizing (exact JSON bytes, slot index).
+            fn assign_slots_exact_surv(
                 chosen: &[usize],
                 slots: &[(usize, bool, TabContainers)],
                 costs: &[BundleCost],
                 ses_json: usize,
-                prefer_surviving: bool,
-            ) -> Option<(Vec<(usize, usize)>, usize, usize)> {
+                target_surv: usize,
+            ) -> Option<(Vec<(usize, usize)>, usize)> {
                 let k = chosen.len();
                 let m = slots.len();
-                if k == 0 {
-                    return Some((Vec::new(), 0, 0));
-                }
-                if k > m {
+                let surv_slots = slots.iter().filter(|s| !s.1).count();
+                let def_slots = m - surv_slots;
+                let target_def = k.checked_sub(target_surv)?;
+                if target_surv > surv_slots || target_def > def_slots {
                     return None;
                 }
-                const DEFERRED_PENALTY: i64 = 1i64 << 42;
-                let mut u = vec![0i64; k + 1];
+                if k == 0 {
+                    return Some((Vec::new(), 0));
+                }
+                let extra_surv = surv_slots - target_surv;
+                const FORBIDDEN: i64 = 1i64 << 42;
+                let mut u = vec![0i64; m + 1];
                 let mut v = vec![0i64; m + 1];
                 let mut p = vec![0usize; m + 1];
                 let mut way = vec![0usize; m + 1];
-                for i in 1..=k {
+                for i in 1..=m {
                     p[0] = i;
                     let mut j0 = 0usize;
                     let mut minv = vec![i64::MAX; m + 1];
@@ -606,13 +612,16 @@ impl Ui {
                         for j in 1..=m {
                             if !used[j] {
                                 let (_, is_def, c) = slots[j - 1];
-                                let b_cost = costs[chosen[i0 - 1]].bytes(ses_json, c) as i64;
-                                let w = if prefer_surviving && is_def {
-                                    DEFERRED_PENALTY
-                                } else {
+                                let w = if i0 <= k {
+                                    let b_cost = costs[chosen[i0 - 1]].bytes(ses_json, c) as i64;
+                                    b_cost * 64 + (j - 1) as i64
+                                } else if i0 <= k + extra_surv {
+                                    if is_def { FORBIDDEN } else { 0 }
+                                } else if is_def {
                                     0
-                                } + b_cost * 64
-                                    + (j - 1) as i64;
+                                } else {
+                                    FORBIDDEN
+                                };
                                 let cur = w - u[i0] - v[j];
                                 if cur < minv[j] {
                                     minv[j] = cur;
@@ -648,20 +657,16 @@ impl Ui {
                 }
                 let mut assigns = Vec::with_capacity(k);
                 let mut total_bytes = 0usize;
-                let mut surviving = 0usize;
                 for j in 1..=m {
-                    if p[j] != 0 {
+                    if p[j] != 0 && p[j] <= k {
                         let bundle_idx = chosen[p[j] - 1];
-                        let (tab_idx, is_def, c) = slots[j - 1];
+                        let (tab_idx, _, c) = slots[j - 1];
                         total_bytes =
                             total_bytes.saturating_add(costs[bundle_idx].bytes(ses_json, c));
-                        if !is_def {
-                            surviving += 1;
-                        }
                         assigns.push((tab_idx, bundle_idx));
                     }
                 }
-                Some((assigns, total_bytes, surviving))
+                Some((assigns, total_bytes))
             }
             type BundleSig = (usize, bool, bool, bool, usize, usize);
             struct Exact2dCtx<'a> {
@@ -673,7 +678,7 @@ impl Ui {
                 ses_json: usize,
                 rem_u: usize,
                 rem_b: usize,
-                prefer_surviving: bool,
+                target_surv: usize,
                 min_u: &'a [Vec<usize>],
                 min_b: &'a [Vec<usize>],
                 lb_failed: Vec<Vec<Vec<(usize, usize)>>>,
@@ -692,15 +697,18 @@ impl Ui {
                     bool,
                 ) {
                     if need == 0 {
-                        if let Some((assigns, total_b, surv)) = assign_slots(
+                        if let Some((assigns, total_b)) = assign_slots_exact_surv(
                             chosen,
                             self.slots,
                             self.costs,
                             self.ses_json,
-                            self.prefer_surviving,
+                            self.target_surv,
                         ) && total_b <= self.rem_b
                         {
-                            return (Some((chosen.clone(), assigns, cur_u, surv)), true);
+                            return (
+                                Some((chosen.clone(), assigns, cur_u, self.target_surv)),
+                                true,
+                            );
                         }
                         return (None, true);
                     }
@@ -948,15 +956,20 @@ impl Ui {
                         .collect();
                     let (chosen_ses, ses_assigns, ses_u, ses_surviving) = {
                         let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
-                        if let Some((assigns, total_b, surv)) =
-                            assign_slots(&cand_u, &slots, &costs, ses_json, true)
-                            && total_b <= rem_b
+                        let cand_max_surv = cand_u.len().min(surviving_slots);
+                        if let Some((assigns, total_b)) = assign_slots_exact_surv(
+                            &cand_u,
+                            &slots,
+                            &costs,
+                            ses_json,
+                            cand_max_surv,
+                        ) && total_b <= rem_b
                         {
                             let u_sum: usize = cand_u
                                 .iter()
                                 .filter_map(|&b| ses_units[b])
                                 .fold(0usize, usize::saturating_add);
-                            (cand_u, assigns, u_sum, surv)
+                            (cand_u, assigns, u_sum, cand_max_surv)
                         } else if pool.is_empty() || slots.is_empty() {
                             (Vec::new(), Vec::new(), 0, 0)
                         } else {
@@ -1003,15 +1016,12 @@ impl Ui {
                                     min_b[pos][need] = acc_b;
                                 }
                             }
-                            let has_deferred = surviving_slots < slots.len();
+                            let def_slots = slots.len() - surviving_slots;
                             let mut found_exact = None;
                             for target_k in (1..=k_upper).rev() {
-                                let modes: &[bool] = if has_deferred {
-                                    &[true, false]
-                                } else {
-                                    &[true]
-                                };
-                                for &prefer_surviving in modes {
+                                let max_surv = target_k.min(surviving_slots);
+                                let min_surv = target_k.saturating_sub(def_slots);
+                                for target_surv in (min_surv..=max_surv).rev() {
                                     let mut ctx = Exact2dCtx {
                                         pool: &pool,
                                         ses_units: &ses_units,
@@ -1021,7 +1031,7 @@ impl Ui {
                                         ses_json,
                                         rem_u,
                                         rem_b,
-                                        prefer_surviving,
+                                        target_surv,
                                         min_u: &min_u,
                                         min_b: &min_b,
                                         lb_failed: vec![vec![Vec::new(); target_k + 1]; n + 1],

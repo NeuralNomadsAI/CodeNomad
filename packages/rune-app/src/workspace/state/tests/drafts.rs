@@ -5078,9 +5078,23 @@ fn fallback_packing_and_restored_probe_fencing_regressions() {
             vec!["k0_enter", "listed_k1", "k0_releasing", "k1_enter"],
             "causal order must be strictly k0_enter -> listed_k1 -> k0_releasing -> k1_enter"
         );
-        let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+        let ui_after = s.workspace.as_ref().unwrap();
+        let Tab::Workspace(after) = &ui_after.entries[0].saved else {
             panic!("expected workspace");
         };
+        let scope_ser = crate::workspace::state::ProjectScope::from_workspace(after);
+        assert!(
+            ui_after.restored_draft_checked.iter().any(|(sc, id, out)| {
+                sc.same_scope(&scope_ser)
+                    && id == "ses_ser_0"
+                    && *out == crate::workspace::state::drafts::RestoredProbeOutcome::Resolved
+            }),
+            "ses_ser_0 must settle as Resolved (HTTP 200 decoded), not a transient timeout"
+        );
+        assert_eq!(
+            after.drafts.get("ses_ser_0").map(String::as_str),
+            Some("keep ser 0")
+        );
         assert!(
             after
                 .drafts
@@ -5359,32 +5373,25 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
         assert!(wb.attachment_drafts.contains("ses_s"));
     }
 
-    // 41. R19 Moyen 2 + R20 Moyen + R21 Moyen 2 + R22 Moyen: Real HTTP catalogue::poll + real
-    // restored-draft probes verifying post-permit epoch assignment in both directions:
-    //   (a) Catalogue refresh spawns FIRST and blocks in `native_project` while the 404 probe
-    //       starts; then `native_project` returns and `backend.sessions` acquires its permit and
-    //       stamps `read_epoch > started_epoch`. Both settle before one `workspace::poll` -> the
-    //       fresher sessions read fences the late 404.
-    //   (b) Catalogue refresh finishes its `backend.sessions` read BEFORE the probe starts, sitting
-    //       un-polled in its channel; then the probe starts (`started_epoch > read_epoch`) and gets
-    //       404. Both drain in one `workspace::poll` -> the older page does NOT fence the valid 404.
+    // 41. R19 Moyen 2 + R20 Moyen + R21 Moyen 2 + R22 Moyen + R23 Moyen 1/2: Real HTTP
+    // catalogue::poll + real restored-draft probes verifying post-permit epoch assignment and
+    // exact same-tick drainage in both directions.
     {
         use std::{
             io::{Read, Write},
             net::TcpListener,
             sync::{Arc, Mutex, mpsc},
-            time::{Duration, Instant},
+            time::Duration,
         };
 
-        // (a) Catalogue spawned BEFORE probe, but sessions GET runs AFTER probe started -> fences 404.
+        // (a) Background permits are saturated when catalogue refresh spawns BEFORE probe starts;
+        //     probe starts while permits are held (stamping started_epoch = 1); then permits are
+        //     released so backend.sessions acquires a permit and stamps read_epoch = 2 > 1. Both
+        //     results are awaited on their client channels and drained in ONE workspace::poll.
         {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = format!("http://{}/", listener.local_addr().unwrap());
-            let (loc_entered_tx, loc_entered_rx) = tokio::sync::oneshot::channel::<()>();
-            let loc_entered_tx = Arc::new(Mutex::new(Some(loc_entered_tx)));
-            let (release_loc_tx, release_loc_rx) = mpsc::channel::<()>();
-            let release_loc_rx = Arc::new(Mutex::new(release_loc_rx));
             let (probe_entered_tx, probe_entered_rx) = tokio::sync::oneshot::channel::<()>();
             let probe_entered_tx = Arc::new(Mutex::new(Some(probe_entered_tx)));
             let (release_probe_tx, release_probe_rx) = mpsc::channel::<()>();
@@ -5399,8 +5406,6 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
                         std::thread::sleep(Duration::from_millis(2));
                         continue;
                     };
-                    let loc_entered = loc_entered_tx.clone();
-                    let release_loc = release_loc_rx.clone();
                     let probe_entered = probe_entered_tx.clone();
                     let release_probe = release_probe_rx.clone();
                     let sessions_done = sessions_done_tx.clone();
@@ -5422,16 +5427,6 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
                         let mut signal_sessions_done = false;
                         let (status, body): (u16, String) = if line.contains("/instance/api/location")
                         {
-                            if let Some(tx) = loc_entered.lock().unwrap().take() {
-                                let _ = tx.send(());
-                            }
-                            assert!(
-                                release_loc
-                                    .lock()
-                                    .unwrap()
-                                    .recv_timeout(Duration::from_secs(5))
-                                    .is_ok()
-                            );
                             (
                                 200,
                                 r#"{"data":{"directory":"/fixture","project":{"id":"global"}}}"#
@@ -5514,47 +5509,98 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
             let conn = s.screen.launcher().unwrap().connection.clone().unwrap();
             let empty = std::collections::HashSet::new();
             crate::platform::block_on(async {
-                // 1. Spawn catalogue refresh FIRST (blocks in native_project).
+                // 1. Saturate BOTH background permits BEFORE spawning the catalogue refresh so
+                //    the refresh task blocks on `reads.background()` with zero permits available.
+                let (_keep_permits, alive) = codenomad_client::bounded(1);
+                let permit_1 = s.reads.background(&alive).await.unwrap();
+                let permit_2 = s.reads.background(&alive).await.unwrap();
                 crate::workspace::schedule_catalogue_refresh(&mut s);
                 let _ = crate::workspace::poll(&mut s, 1.0, &mut tx);
-                assert!(
-                    tokio::time::timeout(Duration::from_secs(5), loc_entered_rx)
-                        .await
-                        .is_ok(),
-                    "catalogue refresh must start and enter native_project first"
+                for _ in 0..8 {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    s.workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_presence_epoch
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    0,
+                    "catalogue refresh must NOT stamp read_epoch while waiting for background permits"
                 );
-                // 2. Start probe while catalogue is still blocked in native_project.
+                // 2. Start probe while catalogue is parked on reads.background().
                 crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
                 assert!(
                     tokio::time::timeout(Duration::from_secs(5), probe_entered_rx)
                         .await
                         .is_ok(),
-                    "probe must stamp started_epoch and enter handler before sessions GET"
+                    "probe must stamp started_epoch and enter handler while permits are saturated"
                 );
-                // 3. Release native_project so backend.sessions acquires permit & stamps a HIGHER
-                //    read_epoch AFTER the probe started.
-                let _ = release_loc_tx.send(());
+                // 3. Release background permits so catalogue acquires its permit and stamps
+                //    read_epoch > started_epoch right before backend.sessions.
+                drop(permit_1);
+                drop(permit_2);
                 assert!(
                     tokio::time::timeout(Duration::from_secs(5), sessions_done_rx)
                         .await
                         .is_ok(),
                     "passive sessions GET must complete after probe started"
                 );
-                // 4. Release the blocked probe so it delivers its late 404.
+                let (cat_g, conn_g, cat_rx) = s.workspace.as_mut().unwrap().entries[0]
+                    .catalogue
+                    .request
+                    .take()
+                    .expect("catalogue request must still be pending");
+                let cat_item = tokio::time::timeout(Duration::from_secs(5), cat_rx.recv())
+                    .await
+                    .expect("catalogue client task must enqueue decoded page")
+                    .unwrap();
+                let cat_epoch = cat_item
+                    .as_ref()
+                    .expect("catalogue result must be Some")
+                    .3
+                    .iter()
+                    .find_map(|(id, ep)| (id == "ses_passive_live").then_some(*ep))
+                    .expect("ses_passive_live proof epoch");
+                let (cat_re_tx, cat_re_rx) = codenomad_client::bounded(1);
+                assert!(cat_re_tx.try_send(cat_item).is_ok());
+                s.workspace.as_mut().unwrap().entries[0].catalogue.request =
+                    Some((cat_g, conn_g, cat_re_rx));
+                // 4. Release the blocked probe, await its exact NotFound result on the client
+                //    channel, verify read_epoch > started_epoch, re-enqueue, and run ONE poll.
                 let _ = release_probe_tx.send(());
-                // Wait until both channels hold their completions, then drain both in ONE poll.
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                let finish = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < finish {
-                    let _ = crate::workspace::poll(&mut s, 2.0, &mut tx);
-                    let ui = s.workspace.as_ref().unwrap();
-                    if ui.restored_draft_in_flight.is_empty()
-                        && ui.entries[0].catalogue.request.is_none()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
+                let probe_res = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    s.workspace.as_ref().unwrap().restored_draft_checks.1.recv(),
+                )
+                .await
+                .expect("probe task must enqueue result")
+                .unwrap();
+                assert_eq!(
+                    probe_res.absence,
+                    Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+                    "probe must have produced NotFound before same-tick polling"
+                );
+                assert!(
+                    cat_epoch > probe_res.started_epoch,
+                    "post-permit sessions read_epoch must exceed pre-permit probe started_epoch"
+                );
+                assert!(
+                    s.workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_checks
+                        .0
+                        .try_send(probe_res)
+                        .is_ok()
+                );
+                let _ = crate::workspace::poll(&mut s, 2.0, &mut tx);
+                let ui_done = s.workspace.as_ref().unwrap();
+                assert!(
+                    ui_done.restored_draft_in_flight.is_empty()
+                        && ui_done.entries[0].catalogue.request.is_none(),
+                    "single workspace::poll tick must drain both queued results together"
+                );
             });
             let _ = stop.send(());
             let _ = server.join();
@@ -5693,8 +5739,8 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
             let conn_old = s_old.screen.launcher().unwrap().connection.clone().unwrap();
             let empty = std::collections::HashSet::new();
             crate::platform::block_on(async {
-                // 1. Spawn catalogue refresh and let its sessions GET finish BEFORE starting probe
-                //    (do NOT call workspace::poll yet so the page stays queued in the channel).
+                // 1. Spawn catalogue refresh and explicitly await its client channel item BEFORE
+                //    starting the probe, then re-enqueue it un-polled.
                 crate::workspace::schedule_catalogue_refresh(&mut s_old);
                 let _ = crate::workspace::poll(&mut s_old, 1.0, &mut tx);
                 assert!(
@@ -5703,7 +5749,22 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
                         .is_ok(),
                     "pre-probe passive sessions GET must finish before probe starts"
                 );
-                // 2. Start probe AFTER the passive sessions GET finished.
+                let (cat_g, conn_g, cat_rx) = s_old.workspace.as_mut().unwrap().entries[0]
+                    .catalogue
+                    .request
+                    .take()
+                    .expect("catalogue request must be pending");
+                let cat_item = tokio::time::timeout(Duration::from_secs(5), cat_rx.recv())
+                    .await
+                    .expect("pre-probe catalogue task must enqueue decoded page")
+                    .unwrap();
+                let (cat_re_tx, cat_re_rx) = codenomad_client::bounded(1);
+                assert!(cat_re_tx.try_send(cat_item).is_ok());
+                s_old.workspace.as_mut().unwrap().entries[0]
+                    .catalogue
+                    .request = Some((cat_g, conn_g, cat_re_rx));
+                // 2. Start probe AFTER the passive sessions GET finished and explicitly await its
+                //    NotFound result on the client channel before running ONE workspace::poll.
                 crate::workspace::check_restored_draft_sessions(
                     &mut s_old, &conn_old, &proj_old, &empty,
                 );
@@ -5713,18 +5774,41 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
                         .is_ok(),
                     "valid 404 probe must complete"
                 );
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                let finish = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < finish {
-                    let _ = crate::workspace::poll(&mut s_old, 2.0, &mut tx);
-                    let ui = s_old.workspace.as_ref().unwrap();
-                    if ui.restored_draft_in_flight.is_empty()
-                        && ui.entries[0].catalogue.request.is_none()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
+                let probe_res = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    s_old
+                        .workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_checks
+                        .1
+                        .recv(),
+                )
+                .await
+                .expect("probe task must enqueue result")
+                .unwrap();
+                assert_eq!(
+                    probe_res.absence,
+                    Some(Some(codenomad_client::catalog::SessionAbsence::NotFound)),
+                    "probe must have produced NotFound before same-tick polling"
+                );
+                assert!(
+                    s_old
+                        .workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_checks
+                        .0
+                        .try_send(probe_res)
+                        .is_ok()
+                );
+                let _ = crate::workspace::poll(&mut s_old, 2.0, &mut tx);
+                let ui_done = s_old.workspace.as_ref().unwrap();
+                assert!(
+                    ui_done.restored_draft_in_flight.is_empty()
+                        && ui_done.entries[0].catalogue.request.is_none(),
+                    "single workspace::poll tick must drain both queued results together"
+                );
             });
             let _ = stop.send(());
             let _ = server.join();
@@ -5751,5 +5835,400 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
                 "pre-probe passive sessions GET must NOT fence a valid newer 404 in the same tick"
             );
         }
+    }
+}
+
+#[test]
+fn fallback_mixed_surviving_quota_and_paginated_inventory_epochs() {
+    use crate::composer::draft_storage::SavedParts;
+    use crate::workspace::NO_SESSION_DRAFT_ID;
+    use serde_json::json;
+    let mut tx = rune::Tx::default();
+
+    let make_parts = |len: usize| {
+        SavedParts::decode(&json!({
+            "complete": true,
+            "parts": [{"type": "pasted", "id": "1", "text": "p".repeat(len)}]
+        }))
+        .unwrap()
+    };
+
+    // 40g. R23 Bloquant: Two surviving tabs (empty attachment_drafts -> 41 bytes per attachment
+    // bundle) + two closing_deferred tabs (non-empty attachment_drafts -> 20 bytes per bundle),
+    // two closed attachment drafts for `ses_s`, and 61 bytes remaining: 2 surviving tabs exceed
+    // budget (82 > 61), so the exact surviving-quota solver MUST pick 1 surviving + 1 deferred
+    // (61 <= 61) instead of falling back to 2 deferred (40).
+    {
+        let mut s0 = closed("ses_s", "");
+        s0.drafts.clear();
+        s0.active_session_id = None;
+        s0.drafts.insert(NO_SESSION_DRAFT_ID.into(), "occ".into());
+        let mut s1 = closed("ses_s", "");
+        s1.drafts.clear();
+        s1.occurrence = 1;
+        s1.active_session_id = None;
+        s1.drafts.insert("ses_s1_keep".into(), "x".into());
+        let mut d0 = closed("ses_s", "");
+        d0.drafts.clear();
+        d0.occurrence = 2;
+        d0.active_session_id = None;
+        d0.drafts.insert("ses_d0_keep".into(), "x".into());
+        for i in 0..4 {
+            let k = format!("ses_qpad_{i}");
+            d0.attachment_drafts.insert(k.clone());
+            d0.attachment_parts.insert(k, make_parts(250 * 1024));
+        }
+        d0.attachment_drafts.insert("ses_qpad_tail".into());
+        d0.attachment_parts
+            .insert("ses_qpad_tail".into(), make_parts(1));
+        let mut d1 = closed("ses_s", "");
+        d1.drafts.clear();
+        d1.occurrence = 3;
+        d1.active_session_id = None;
+        d1.drafts.insert("ses_d1_keep".into(), "x".into());
+        d1.attachment_drafts.insert("ses_d1_att".into());
+
+        let mut probe = Ui::new();
+        probe.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![
+                Tab::Workspace(s0.clone()),
+                Tab::Workspace(s1.clone()),
+                Tab::Workspace(d0.clone()),
+                Tab::Workspace(d1.clone()),
+            ],
+            active: Some(0),
+        });
+        let base_bytes = crate::workspace::encode(&probe.snapshot()).unwrap().len();
+        let pad_len = crate::workspace::MAX_BYTES
+            .saturating_sub(base_bytes)
+            .saturating_sub(61);
+        d0.attachment_parts
+            .insert("ses_qpad_tail".into(), make_parts(1 + pad_len));
+        let mut verify = Ui::new();
+        verify.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![
+                Tab::Workspace(s0.clone()),
+                Tab::Workspace(s1.clone()),
+                Tab::Workspace(d0.clone()),
+                Tab::Workspace(d1.clone()),
+            ],
+            active: Some(0),
+        });
+        assert_eq!(
+            crate::workspace::MAX_BYTES
+                - crate::workspace::encode(&verify.snapshot()).unwrap().len(),
+            61
+        );
+
+        let mut c0 = closed("ses_s", "a");
+        c0.attachment_drafts.insert("ses_s".into());
+        let mut c1 = closed("ses_s", "b");
+        c1.attachment_drafts.insert("ses_s".into());
+        let scope = crate::workspace::state::ProjectScope::from_workspace(&s0);
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![
+                Tab::Workspace(s0),
+                Tab::Workspace(s1),
+                Tab::Workspace(d0),
+                Tab::Workspace(d1),
+            ],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[2].closing_deferred = true;
+        ui.entries[3].closing_deferred = true;
+        ui.closed = vec![c1, c0];
+        ui.closed_restored = vec![Default::default(); 2];
+        ui.closed_derived_from = vec![Default::default(); 2];
+        ui.closed_pending_deleted.push((scope, "ses_s".into()));
+        let snap = ui.snapshot();
+        assert!(crate::workspace::encode(&snap).is_ok());
+        let surviving_hosted = (0..2)
+            .filter(|&i| {
+                matches!(&snap.tabs[i], Tab::Workspace(w) if w.drafts.contains_key("ses_s") && w.attachment_drafts.contains("ses_s"))
+            })
+            .count();
+        let deferred_hosted = (2..4)
+            .filter(|&i| {
+                matches!(&snap.tabs[i], Tab::Workspace(w) if w.drafts.contains_key("ses_s") && w.attachment_drafts.contains("ses_s"))
+            })
+            .count();
+        assert_eq!(
+            (surviving_hosted, deferred_hosted),
+            (1, 1),
+            "61-byte budget must preserve 1 draft on a surviving tab (41 B) and 1 on a deferred tab (20 B)"
+        );
+    }
+
+    // 41c. R23 Moyen 2 (paginated inventory + linked pages keep per-read epochs):
+    // Inventory page 1 returns `ses_inv_p1` (with cursor `cur_inv_2`); page 2 blocks until probes
+    // for `ses_inv_p1`, `ses_inv_p2`, and `ses_linked_p1` have started and entered the HTTP server;
+    // then page 2 returns `ses_inv_p2` and the linked page returns `ses_linked_p1`. In a single
+    // `workspace::poll`, `ses_inv_p1` (earlier page 1 epoch) recovers while `ses_inv_p2` and
+    // `ses_linked_p1` (later page 2 / linked epochs) are fenced.
+    {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::{Arc, Mutex, mpsc},
+            time::Duration,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let (p1_entered_tx, p1_entered_rx) = tokio::sync::oneshot::channel::<()>();
+        let p1_entered_tx = Arc::new(Mutex::new(Some(p1_entered_tx)));
+        let (release_p1_tx, release_p1_rx) = mpsc::channel::<()>();
+        let release_p1_rx = Arc::new(Mutex::new(release_p1_rx));
+        let (stop, stopped) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let mut handlers = Vec::new();
+            while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                let p1_entered = p1_entered_tx.clone();
+                let release_p1 = release_p1_rx.clone();
+                handlers.push(std::thread::spawn(move || {
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut bytes = Vec::new();
+                    let mut byte = [0];
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        if socket.read_exact(&mut byte).is_err() {
+                            break;
+                        }
+                        bytes.push(byte[0]);
+                    }
+                    let header = String::from_utf8_lossy(&bytes);
+                    let line = header.lines().next().unwrap_or("").to_string();
+                    let (status, body): (u16, String) = if line.contains("/instance/api/location") {
+                        (
+                            200,
+                            r#"{"data":{"directory":"/fixture","project":{"id":"proj_native"}}}"#
+                                .into(),
+                        )
+                    } else if line.contains("/worktrees") {
+                        (
+                            200,
+                            r#"{"gitAvailable":true,"isGitRepo":true,"worktrees":[{"slug":"root","directory":"/fixture"}]}"#
+                                .into(),
+                        )
+                    } else if line.contains("/instance/api/session/ses_inv_p1 ")
+                        || line.contains("/instance/api/session/ses_inv_p2 ")
+                        || line.contains("/instance/api/session/ses_linked_p1 ")
+                    {
+                        let id = if line.contains("ses_inv_p1") {
+                            "ses_inv_p1"
+                        } else if line.contains("ses_inv_p2") {
+                            "ses_inv_p2"
+                        } else {
+                            "ses_linked_p1"
+                        };
+                        (
+                            404,
+                            format!(r#"{{"_tag":"SessionNotFoundError","sessionID":"{id}"}}"#),
+                        )
+                    } else if line.contains("project=proj_native") {
+                        if let Some(tx) = p1_entered.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        assert!(
+                            release_p1
+                                .lock()
+                                .unwrap()
+                                .recv_timeout(Duration::from_secs(5))
+                                .is_ok()
+                        );
+                        (
+                            200,
+                            r#"{"data":[{"id":"ses_inv_p1","title":"inv1","location":{"directory":"/fixture"}}],"cursor":{"next":"cur_inv_2"}}"#
+                                .into(),
+                        )
+                    } else if line.contains("cursor=cur_inv_2") {
+                        (
+                            200,
+                            r#"{"data":[{"id":"ses_inv_p2","title":"inv2","location":{"directory":"/fixture"}}]}"#
+                                .into(),
+                        )
+                    } else if line.contains("fixture-linked") {
+                        (
+                            200,
+                            r#"{"data":[{"id":"ses_linked_p1","title":"linked1","location":{"directory":"/fixture-linked"}}]}"#
+                                .into(),
+                        )
+                    } else {
+                        (200, r#"{"data":[]}"#.into())
+                    };
+                    let _ = socket.write_all(
+                        format!(
+                            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = socket.flush();
+                }));
+            }
+            for h in handlers {
+                let _ = h.join();
+            }
+        });
+        let mut s = draft_state();
+        s.screen
+            .launcher_mut()
+            .unwrap()
+            .connection
+            .as_mut()
+            .unwrap()
+            .base = address;
+        let proj = Project {
+            id: "ws-inv-pages".into(),
+            path: "/fixture".into(),
+        };
+        let mut tab = closed("ses_inv_p1", "recover inv p1");
+        tab.active_session_id = None;
+        tab.drafts.insert("ses_inv_p2".into(), "keep inv p2".into());
+        tab.drafts
+            .insert("ses_linked_p1".into(), "keep linked p1".into());
+        let mut ui = Ui::new();
+        ui.hydrate(crate::workspace::Snapshot {
+            revision: 1,
+            saved_at: 1,
+            panel_widths: [None; 2],
+            file_wrap: None,
+            tabs: vec![Tab::Workspace(tab)],
+            active: Some(0),
+        });
+        ui.ready = true;
+        ui.entries[0].project = Some(proj.clone());
+        {
+            let l = s.screen.launcher_mut().unwrap();
+            l.project = Some(proj.clone());
+            l.creation_uncertain_linked = Some("/fixture-linked".into());
+        }
+        s.workspace = Some(ui);
+        let conn = s.screen.launcher().unwrap().connection.clone().unwrap();
+        let empty = std::collections::HashSet::new();
+        crate::platform::block_on(async {
+            // 1. Start catalogue refresh; inventory page 1 stamps epoch 1 after its permit and
+            //    blocks inside the HTTP server.
+            crate::workspace::schedule_catalogue_refresh(&mut s);
+            let _ = crate::workspace::poll(&mut s, 1.0, &mut tx);
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), p1_entered_rx)
+                    .await
+                    .is_ok(),
+                "inventory page 1 must stamp its read_epoch and enter the server"
+            );
+            // 2. Start probes for all 3 restored keys WHILE page 1 is blocked (so probes stamp
+            //    epochs strictly AFTER page 1 and BEFORE page 2 & linked page), and await all 3
+            //    NotFound results on the client channel.
+            crate::workspace::check_restored_draft_sessions(&mut s, &conn, &proj, &empty);
+            let mut probe_results = Vec::with_capacity(3);
+            for _ in 0..3 {
+                let res = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    s.workspace.as_ref().unwrap().restored_draft_checks.1.recv(),
+                )
+                .await
+                .expect("all 3 probes must enqueue results")
+                .unwrap();
+                assert_eq!(
+                    res.absence,
+                    Some(Some(codenomad_client::catalog::SessionAbsence::NotFound))
+                );
+                probe_results.push(res);
+            }
+            // 3. Release page 1 so page 2 and the linked page acquire their permits and stamp
+            //    HIGHER epochs after the probes, then explicitly await the decoded catalogue item.
+            let _ = release_p1_tx.send(());
+            let (cat_g, conn_g, cat_rx) = s.workspace.as_mut().unwrap().entries[0]
+                .catalogue
+                .request
+                .take()
+                .expect("catalogue request must still be pending");
+            let cat_item = tokio::time::timeout(Duration::from_secs(5), cat_rx.recv())
+                .await
+                .expect("paginated inventory + linked task must enqueue decoded result")
+                .unwrap();
+            {
+                let (_, _, _, proofs) = cat_item
+                    .as_ref()
+                    .expect("paginated inventory + linked result must be Some");
+                let ep = |target: &str| {
+                    proofs
+                        .iter()
+                        .find_map(|(id, e)| (id == target).then_some(*e))
+                        .expect("expected proof epoch")
+                };
+                assert!(
+                    ep("ses_inv_p1") < ep("ses_inv_p2") && ep("ses_inv_p2") < ep("ses_linked_p1"),
+                    "each paginated inventory and linked read must retain its own increasing epoch"
+                );
+            }
+            let (cat_re_tx, cat_re_rx) = codenomad_client::bounded(1);
+            assert!(cat_re_tx.try_send(cat_item).is_ok());
+            s.workspace.as_mut().unwrap().entries[0].catalogue.request =
+                Some((cat_g, conn_g, cat_re_rx));
+            for res in probe_results {
+                assert!(
+                    s.workspace
+                        .as_ref()
+                        .unwrap()
+                        .restored_draft_checks
+                        .0
+                        .try_send(res)
+                        .is_ok()
+                );
+            }
+            // 4. Drain both catalogue proofs and all 3 404 probes in ONE single workspace::poll.
+            let _ = crate::workspace::poll(&mut s, 2.0, &mut tx);
+            let ui_done = s.workspace.as_ref().unwrap();
+            assert!(
+                ui_done.restored_draft_in_flight.is_empty()
+                    && ui_done.entries[0].catalogue.request.is_none(),
+                "single workspace::poll tick must drain catalogue proofs and all 3 probes"
+            );
+        });
+        let _ = stop.send(());
+        let _ = server.join();
+        let Tab::Workspace(after) = &s.workspace.as_ref().unwrap().entries[0].saved else {
+            panic!("expected workspace");
+        };
+        assert!(
+            !after.drafts.contains_key("ses_inv_p1")
+                && after
+                    .drafts
+                    .iter()
+                    .any(|(k, v)| crate::workspace::is_local_draft_id(k) && v == "recover inv p1"),
+            "inventory page 1 proof predating probe must NOT fence valid 404 for ses_inv_p1"
+        );
+        assert_eq!(
+            after.drafts.get("ses_inv_p2").map(String::as_str),
+            Some("keep inv p2"),
+            "inventory page 2 proof acquired after probe must fence late 404 for ses_inv_p2"
+        );
+        assert_eq!(
+            after.drafts.get("ses_linked_p1").map(String::as_str),
+            Some("keep linked p1"),
+            "linked target page proof acquired after probe must fence late 404 for ses_linked_p1"
+        );
     }
 }
