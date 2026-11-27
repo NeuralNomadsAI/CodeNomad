@@ -46,7 +46,7 @@ function fixture() {
   return { missions, calls, run, unusable, prepare, failStarts: (value: boolean) => { failStart = value }, failDeletes: (value: boolean) => { failDelete = value },
     end: (id: string, status: Fake["status"] = "completed") => { missions.get(id)!.status = status } }
 }
-const launched = (missionID: string, history: unknown[] = [], coordinatorSessionID = "ses_1") => ({ outcome: "launched", missionID, status: "active", coordinatorSessionID, history })
+const launched = (missionID: string, history: unknown[] = [], coordinatorSessionID = "ses_1") => ({ outcome: "launched", missionID, status: "active", coordinatorSessionID, history, launches: history.length + 1 })
 
 test("an occurrence is an Automation run's message and nothing else", () => {
   assert.deepEqual(missionCalendarOccurrence("msg_aut_01ABCdef_12"), { automationID: "aut_01ABCdef", run: 12 })
@@ -65,7 +65,7 @@ test("a run creates and starts one Mission, and repeating it changes nothing", a
 test("later runs wait while the launch is active; the next launch replaces it in the same conversation", async () => {
   const f = fixture()
   await f.run(1)
-  assert.deepEqual(await f.run(2), { outcome: "waiting", missionID: "msn_calendar_aut_a_1", status: "active", coordinatorSessionID: "ses_1", history: [] })
+  assert.deepEqual(await f.run(2), { outcome: "waiting", missionID: "msn_calendar_aut_a_1", status: "active", coordinatorSessionID: "ses_1", history: [], launches: 1 })
   f.end("msn_calendar_aut_a_1")
   assert.deepEqual(await f.run(3), launched("msn_calendar_aut_a_3", [{ at: 2_000, outcome: "completed" }]))
   assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_3"], "one Mission at a time: the previous launch is gone")
@@ -94,7 +94,7 @@ test("events gate the launch, and their news waits for the active launch", async
     const old = previous[0]?.value as { oid?: string } | undefined
     return { checkpoints: [{ key: "a".repeat(64), kind: "remote-branch-commits", placementDigest: "b".repeat(64), value: { oid: head } }], changed: !!old && old.oid !== head }
   }
-  assert.deepEqual(await f.run(1, news), { outcome: "idle", history: [] })
+  assert.deepEqual(await f.run(1, news), { outcome: "idle", history: [], launches: 0 })
   assert.equal((await f.run(2, news)).outcome, "idle")
   assert.equal(f.calls.length, 0, "a run without news asks nothing of Missions")
   head = "b"
@@ -106,7 +106,7 @@ test("events gate the launch, and their news waits for the active launch", async
   assert.equal((await f.run(5, news)).missionID, "msn_calendar_aut_a_5", "the commit that landed meanwhile launches again")
   f.end("msn_calendar_aut_a_5")
   const asked = f.calls.length
-  assert.deepEqual(await f.run(6, news), { outcome: "idle", missionID: "msn_calendar_aut_a_5", status: "completed", coordinatorSessionID: "ses_1", history: [{ at: 2_000, outcome: "completed" }] })
+  assert.deepEqual(await f.run(6, news), { outcome: "idle", missionID: "msn_calendar_aut_a_5", status: "completed", coordinatorSessionID: "ses_1", history: [{ at: 2_000, outcome: "completed" }], launches: 2 })
   assert.equal((await f.run(7, news)).outcome, "idle")
   assert.equal(f.calls.length, asked, "an ended launch without news is kept and not asked about again")
   assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_5"])
@@ -173,7 +173,7 @@ test("the Mission prepared with the programming is what the first launch starts"
   let changed = false
   const news: MissionCalendarNews = async () => ({ checkpoints: [], changed })
   const run = (number: number) => f.run(number, news, "aut_a", {}, "msn_prepared")
-  assert.deepEqual(await run(1), { outcome: "idle", missionID: "msn_prepared", history: [] })
+  assert.deepEqual(await run(1), { outcome: "idle", missionID: "msn_prepared", history: [], launches: 0 })
   assert.equal(f.calls.length, 0, "waiting for news asks nothing of Missions")
   changed = true
   assert.deepEqual(await run(2), launched("msn_prepared", [], "ses_prepared"))
