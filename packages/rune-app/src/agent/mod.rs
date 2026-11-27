@@ -128,8 +128,8 @@ pub(crate) fn focused_control_key(
     if matches!(key, "pending-prev" | "pending-next") && a.ids().len() > 1 {
         return Some((key.to_string(), None));
     }
-    if matches!(key, "allow_once" | "allow_always" | "reject")
-        && a.permissions.iter().any(|p| p.id == a.selected)
+    if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected)
+        && (key == "reject" || (p.supported && matches!(key, "allow_once" | "allow_always")))
     {
         return Some((key.to_string(), None));
     }
@@ -569,7 +569,11 @@ impl Ui {
         }
     }
     pub fn reply_permission(&mut self, id: String, decision: &str) {
-        if !self.permissions.iter().any(|p| p.id == id && p.supported) {
+        if !self
+            .permissions
+            .iter()
+            .any(|p| p.id == id && (p.supported || decision == "reject"))
+        {
             return;
         }
         let message = self

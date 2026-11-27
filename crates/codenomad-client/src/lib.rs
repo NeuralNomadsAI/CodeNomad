@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_api;
+mod agent_permissions;
 pub mod attachments;
 pub mod backend;
 pub mod blank_session_cleanup;

@@ -1912,3 +1912,95 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     assert!(ui.permissions_locked());
     assert!(ui.forms_locked());
 }
+
+#[test]
+fn bounded_permission_keeps_reject_active_while_disabling_approvals() {
+    use rune::{Env, Runtime};
+
+    let (jobs_tx, _jobs_rx) = super::bounded(4);
+    let (perm_tx, perm_rx) = super::bounded(4);
+    let (forms_tx, _forms_rx) = super::bounded(4);
+    let (cat_tx, _cat_rx) = super::bounded(4);
+    let (stop_tx, _stop_rx) = super::bounded(4);
+    let (_out, results) = super::bounded(8);
+    let handle = super::Handle {
+        connection: None,
+        workspace_id: None,
+        jobs: jobs_tx,
+        permissions: perm_tx,
+        forms: forms_tx,
+        catalog: cat_tx,
+        stop: stop_tx,
+        results,
+    };
+    let mut ui = super::Ui::new(handle);
+    while perm_rx.try_recv().is_ok() {}
+    ui.permissions_lane.reading = false;
+    ui.fixture_ready();
+    ui.mark_pending_known();
+    ui.permissions = vec![
+        super::Permission {
+            id: "perm_over".into(),
+            action: "bash".into(),
+            resources: vec!["truncated".into()],
+            message: String::new(),
+            supported: false,
+            tool: None,
+        },
+        super::Permission {
+            id: "perm_ok".into(),
+            action: "read".into(),
+            resources: vec!["README.md".into()],
+            message: String::new(),
+            supported: true,
+            tool: None,
+        },
+    ];
+    ui.selected = "perm_over".into();
+    ui.reasons
+        .insert("perm_over".into(), rune::edit::TextEdit::new("not safe"));
+    ui.reasons
+        .insert("perm_ok".into(), rune::edit::TextEdit::new(""));
+
+    // Programmatic approvals on the bounded permission are ignored; reject dispatches.
+    ui.reply_permission("perm_over".into(), "once");
+    ui.reply_permission("perm_over".into(), "always");
+    assert!(perm_rx.try_recv().is_err());
+
+    let mut state = crate::init();
+    state.phase = crate::Phase::Ready;
+    state.agent = Some(ui);
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::agent::view::view(s, cx, Some(720.0))),
+        (960.0, 720.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+
+    // Clicking disabled allow_once / allow_always must not dispatch anything.
+    for key in ["allow_once", "allow_always"] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(perm_rx.try_recv().is_err());
+
+    // Clicking reject on the bounded permission must dispatch Action::Permission(..., "reject", ...).
+    let (x, y) = rt.find("reject").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    match perm_rx.try_recv() {
+        Ok(super::PendingJob::Act(super::Action::Permission(id, decision, msg), _)) => {
+            assert_eq!(id, "perm_over");
+            assert_eq!(decision, "reject");
+            assert_eq!(msg, "not safe");
+        }
+        other => panic!(
+            "expected reject dispatch for bounded permission, got {}",
+            other.is_ok()
+        ),
+    }
+}

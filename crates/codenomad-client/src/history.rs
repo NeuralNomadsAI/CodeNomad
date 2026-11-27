@@ -39,13 +39,12 @@ pub fn valid_id(id: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
 }
-pub fn decode_message(v: &Value) -> Result<Message> {
+fn decode_message_parts(v: &Value, parts: Vec<crate::content::Part>) -> Result<Message> {
     let id = v["id"]
         .as_str()
         .filter(|id| valid_id(id))
         .ok_or("invalid message id")?;
     let role = v["type"].as_str().ok_or("missing message type")?;
-    let parts = crate::content::decode(v)?;
     let body = match role {
         "user" => v["text"].as_str().ok_or("invalid native user text")?.into(),
         "system" => v["text"].as_str().unwrap_or_default().into(),
@@ -66,6 +65,20 @@ pub fn decode_message(v: &Value) -> Result<Message> {
             .flatten(),
         parts,
     })
+}
+pub fn decode_message(v: &Value) -> Result<Message> {
+    let parts = crate::content::decode(v)?;
+    decode_message_parts(v, parts)
+}
+fn decode_window_message(v: &Value) -> Result<Message> {
+    match decode_message(v) {
+        Ok(message) => Ok(message),
+        Err(error) if error.is::<ResidentLimit>() => {
+            let parts = crate::content::decode_bounded(v, MAX_BYTES)?;
+            decode_message_parts(v, parts)
+        }
+        Err(error) => Err(error),
+    }
 }
 fn cursor_fits(v: &Value) -> bool {
     struct Cap(usize);
@@ -119,18 +132,25 @@ pub(crate) fn decode_target(v: Value, target: &Value) -> Result<Page> {
         .filter(|rows| rows.len() <= 200)
         .ok_or("invalid history window")?;
     let mut window_bytes = 0;
+    let mut seen_ids = HashSet::with_capacity(native.len());
     for row in native.iter_mut() {
         let bytes = stored_size(row)?;
         window_bytes += bytes;
         if bytes > MESSAGE_BYTES || window_bytes > WINDOW_BYTES {
             return Err("native history window exceeds its bound".into());
         }
+        let id = row["id"]
+            .as_str()
+            .filter(|id| valid_id(id))
+            .ok_or("invalid message id")?;
+        if !seen_ids.insert(id.to_owned()) {
+            return Err("duplicate native row".into());
+        }
     }
     let mut rows = native
         .iter()
-        .map(|value| decode_message(value).map(Arc::new))
+        .map(|value| decode_window_message(value).map(Arc::new))
         .collect::<Result<Vec<_>>>()?;
-    check(&rows)?;
     let mut running = false;
     for row in native {
         if row["type"] == "assistant" {
@@ -156,7 +176,7 @@ pub(crate) fn decode_target(v: Value, target: &Value) -> Result<Page> {
                 _ => rows.len() - 1,
             });
         let bias_older = !matches!(target["kind"].as_str(), Some("oldest" | "after"));
-        let (start, end) = reasoning_window(&rows, anchor, bias_older, &target["kind"]);
+        let (start, end) = trim_window(&rows, anchor, bias_older, &target["kind"]);
         if end < rows.len() {
             newer = Some(serde_json::json!({"kind":"after","messageID":rows[end - 1].id}));
         }
@@ -165,7 +185,9 @@ pub(crate) fn decode_target(v: Value, target: &Value) -> Result<Page> {
         }
         rows.truncate(end);
         rows.drain(..start);
+        bound_window_rows(&mut rows);
     }
+    check(&rows)?;
     Ok(Page {
         rows,
         older,
@@ -175,24 +197,45 @@ pub(crate) fn decode_target(v: Value, target: &Value) -> Result<Page> {
     })
 }
 
-fn reasoning_window(rows: &[Row], anchor: usize, bias_older: bool, kind: &Value) -> (usize, usize) {
+fn trim_window(rows: &[Row], anchor: usize, bias_older: bool, kind: &Value) -> (usize, usize) {
     let (mut start, mut end) = (anchor, anchor + 1);
     // A continuation retains its overlap anchor and makes progress.
     start -= usize::from(kind == "before" && start > 0);
     end += usize::from(kind == "after" && end < rows.len());
-    let mut left = MAX_BYTES.saturating_sub(reasoning_bytes(&rows[start..end]));
+    let mut left_resident = MAX_BYTES.saturating_sub(resident_bytes(&rows[start..end]));
+    let mut left_reasoning = MAX_BYTES.saturating_sub(reasoning_bytes(&rows[start..end]));
+    let mut left_attachments = WINDOW_BYTES.saturating_sub(attachment_bytes(&rows[start..end]));
+    let mut left_media = WINDOW_BYTES.saturating_sub(media_bytes(&rows[start..end]));
+    let mut left_tool_text = MAX_TOOL_TEXT_BYTES.saturating_sub(tool_text_bytes(&rows[start..end]));
     loop {
         let previous = (start, end);
         for take_older in [bias_older, !bias_older] {
+            if end - start >= MAX_ROWS {
+                break;
+            }
             let index = if take_older {
                 start.checked_sub(1)
             } else {
                 (end < rows.len()).then_some(end)
             };
             if let Some(index) = index {
-                let weight = crate::content::reasoning_bytes(&rows[index].parts);
-                if weight <= left {
-                    left -= weight;
+                let row = &rows[index];
+                let resident = row_resident_bytes(row);
+                let reasoning = crate::content::reasoning_bytes(&row.parts);
+                let attachments = crate::content::attachment_bytes(&row.parts);
+                let media = crate::content::media_bytes(&row.parts);
+                let tool_text = crate::content::tool_text_bytes(&row.parts);
+                if resident <= left_resident
+                    && reasoning <= left_reasoning
+                    && attachments <= left_attachments
+                    && media <= left_media
+                    && tool_text <= left_tool_text
+                {
+                    left_resident -= resident;
+                    left_reasoning -= reasoning;
+                    left_attachments -= attachments;
+                    left_media -= media;
+                    left_tool_text -= tool_text;
                     if take_older {
                         start -= 1;
                     } else {
@@ -207,6 +250,112 @@ fn reasoning_window(rows: &[Row], anchor: usize, bias_older: bool, kind: &Value)
     }
 }
 
+fn bound_window_rows(rows: &mut [Row]) {
+    if resident_bytes(rows) <= MAX_BYTES || rows.is_empty() {
+        return;
+    }
+    // Water-fill: rows that already fit within their fair share keep their full size,
+    // so zero-cost rows (e.g. `idle`) never shrink an oversized anchor.
+    let sizes: Vec<usize> = rows.iter().map(|r| row_resident_bytes(r)).collect();
+    let mut remaining = MAX_BYTES;
+    let mut pending: Vec<usize> = (0..rows.len()).collect();
+    let mut caps = vec![0usize; rows.len()];
+    while !pending.is_empty() {
+        let share = remaining / pending.len();
+        let (small, large): (Vec<usize>, Vec<usize>) =
+            pending.into_iter().partition(|&i| sizes[i] <= share);
+        if small.is_empty() {
+            let extra = remaining % large.len();
+            for (pos, idx) in large.into_iter().enumerate() {
+                caps[idx] = share + usize::from(pos < extra);
+            }
+            break;
+        }
+        for idx in small {
+            caps[idx] = sizes[idx];
+            remaining -= sizes[idx];
+        }
+        pending = large;
+    }
+    for (i, row) in rows.iter_mut().enumerate() {
+        if sizes[i] > caps[i] {
+            *row = Arc::new(bound_message(row, caps[i]));
+        }
+    }
+}
+
+fn bound_message(row: &Message, budget: usize) -> Message {
+    if row_resident_bytes(row) <= budget {
+        return row.clone();
+    }
+    let mut out = row.clone();
+    let derives_body = !matches!(out.role.as_str(), "user" | "system" | "compaction");
+    let max_parts = budget / size_of::<crate::content::Part>();
+    if out.parts.len() > max_parts {
+        out.parts.truncate(max_parts);
+    }
+    let parts_overhead = std::mem::size_of_val(out.parts.as_slice());
+    let mut remaining = budget.saturating_sub(parts_overhead);
+    if !derives_body {
+        let end = out.body.floor_char_boundary(out.body.len().min(remaining));
+        out.body.truncate(end);
+        remaining = remaining.saturating_sub(out.body.len());
+    }
+    let mut text_parts = 0usize;
+    let mut bounded_parts = Vec::with_capacity(out.parts.len());
+    for part in out.parts {
+        match part {
+            crate::content::Part::Text(mut text) => {
+                if derives_body {
+                    let sep = usize::from(text_parts > 0);
+                    if remaining < sep {
+                        continue;
+                    }
+                    let max_text = (remaining - sep) / 2;
+                    if text.text.len() > max_text {
+                        let end = text.text.floor_char_boundary(max_text);
+                        text.text.truncate(end);
+                    }
+                    remaining -= text.text.len() * 2 + sep;
+                    text_parts += 1;
+                } else {
+                    if text.text.len() > remaining {
+                        let end = text.text.floor_char_boundary(remaining);
+                        text.text.truncate(end);
+                    }
+                    remaining -= text.text.len();
+                }
+                bounded_parts.push(crate::content::Part::Text(text));
+            }
+            crate::content::Part::Tool(tool) => {
+                if tool.resident_bytes() <= remaining {
+                    remaining -= tool.resident_bytes();
+                    bounded_parts.push(crate::content::Part::Tool(tool));
+                } else if tool.min_resident_bytes() <= remaining {
+                    let trimmed = tool.with_resident_budget(remaining);
+                    remaining = remaining.saturating_sub(trimmed.resident_bytes());
+                    bounded_parts.push(crate::content::Part::Tool(Arc::new(trimmed)));
+                }
+            }
+            other => bounded_parts.push(other),
+        }
+    }
+    out.parts = bounded_parts;
+    if derives_body {
+        out.body = crate::content::text_body(&out.parts);
+    }
+    out
+}
+
+#[derive(Debug)]
+pub(crate) struct ResidentLimit;
+impl std::fmt::Display for ResidentLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("resident history limit reached")
+    }
+}
+impl std::error::Error for ResidentLimit {}
+
 #[derive(Debug)]
 pub(crate) struct ReasoningLimit;
 impl std::fmt::Display for ReasoningLimit {
@@ -216,9 +365,39 @@ impl std::fmt::Display for ReasoningLimit {
 }
 impl std::error::Error for ReasoningLimit {}
 
+pub(crate) fn row_resident_bytes(r: &Message) -> usize {
+    r.body
+        .len()
+        .saturating_add(crate::content::bytes(&r.parts))
+        .saturating_sub(crate::content::attachment_bytes(&r.parts))
+        .saturating_sub(crate::content::reasoning_bytes(&r.parts))
+}
+
+fn resident_bytes(rows: &[Row]) -> usize {
+    rows.iter().map(|row| row_resident_bytes(row)).sum()
+}
+
 fn reasoning_bytes(rows: &[Row]) -> usize {
     rows.iter()
         .map(|row| crate::content::reasoning_bytes(&row.parts))
+        .sum()
+}
+
+fn attachment_bytes(rows: &[Row]) -> usize {
+    rows.iter()
+        .map(|row| crate::content::attachment_bytes(&row.parts))
+        .sum()
+}
+
+fn media_bytes(rows: &[Row]) -> usize {
+    rows.iter()
+        .map(|row| crate::content::media_bytes(&row.parts))
+        .sum()
+}
+
+fn tool_text_bytes(rows: &[Row]) -> usize {
+    rows.iter()
+        .map(|row| crate::content::tool_text_bytes(&row.parts))
         .sum()
 }
 fn stored_size(row: &mut Value) -> Result<usize> {
@@ -244,18 +423,8 @@ fn stored_size(row: &mut Value) -> Result<usize> {
 }
 pub fn check(rows: &[Row]) -> Result<()> {
     let mut ids = HashSet::new();
-    if rows.len() > MAX_ROWS
-        || rows
-            .iter()
-            .map(|r| {
-                r.body.len() + crate::content::bytes(&r.parts)
-                    - crate::content::attachment_bytes(&r.parts)
-                    - crate::content::reasoning_bytes(&r.parts)
-            })
-            .sum::<usize>()
-            > MAX_BYTES
-    {
-        return Err("resident history limit reached".into());
+    if rows.len() > MAX_ROWS || resident_bytes(rows) > MAX_BYTES {
+        return Err(ResidentLimit.into());
     }
     if reasoning_bytes(rows) > WINDOW_BYTES {
         return Err(ReasoningLimit.into());
