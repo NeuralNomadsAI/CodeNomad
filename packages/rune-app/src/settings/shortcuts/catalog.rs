@@ -28,6 +28,7 @@ pub(in crate::settings) fn active(id: &str) -> bool {
     matches!(
         id,
         "new-instance"
+            | "new-temporary-instance"
             | "close-instance"
             | "instance-prev"
             | "instance-next"
@@ -43,10 +44,31 @@ pub(in crate::settings) fn active(id: &str) -> bool {
             | "session-new"
             | "session-prev"
             | "session-next"
+            | "session-tab-1"
+            | "session-tab-2"
+            | "session-tab-3"
+            | "session-tab-4"
+            | "session-tab-5"
+            | "session-tab-6"
+            | "session-tab-7"
+            | "session-tab-8"
+            | "session-tab-9"
             | "session-search"
             | "close-session"
+            | "cleanup-blank-sessions"
+            | "open-command-palette"
+            | "instance-rename"
             | FILE_SAVE
-    ) || id == "browse-folder" && crate::platform::folder_picker_available()
+    ) || (id == "browse-folder" && crate::platform::folder_picker_available())
+        || (matches!(
+            id,
+            "open-workspace-folder"
+                | "open-workspace-terminal"
+                | "open-workspace-editor-vscode"
+                | "open-workspace-editor-cursor"
+                | "open-workspace-editor-zed"
+                | "open-workspace-editor-vscodium"
+        ) && crate::platform::workspace_open::AVAILABLE)
 }
 
 fn default_index(prefs: &Preferences, platform: KeyPlatform) -> usize {
@@ -219,7 +241,8 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     assert_eq!(keys.len(), 75);
     assert_eq!(
         keys.iter().filter(|id| active(id)).count(),
-        19 + usize::from(crate::platform::folder_picker_available())
+        32 + usize::from(crate::platform::folder_picker_available())
+            + 6 * usize::from(crate::platform::workspace_open::AVAILABLE)
     );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {
@@ -261,9 +284,21 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
             .active
     );
     assert!(
+        rows.iter()
+            .find(|row| row.id == "session-tab-1")
+            .unwrap()
+            .active
+    );
+    assert!(
+        rows.iter()
+            .find(|row| row.id == "cleanup-blank-sessions")
+            .unwrap()
+            .active
+    );
+    assert!(
         !rows
             .iter()
-            .find(|row| row.id == "session-tab-1")
+            .find(|row| row.id == "switch-to-info")
             .unwrap()
             .active
     );

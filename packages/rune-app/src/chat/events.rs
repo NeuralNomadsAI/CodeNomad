@@ -98,6 +98,9 @@ fn drain_chat(
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    if s.history_detached {
+                        s.stream_offline = false;
+                    }
                     let newly_connected = !s.conversation_stream_connected;
                     s.conversation_stream_connected = true;
                     #[cfg(target_arch = "wasm32")]
@@ -128,6 +131,11 @@ fn drain_chat(
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::UpstreamReady => {
+                if let Some(reader) = &mut s.reader {
+                    reader.stream_reconnected();
                 }
             }
             Event::AgentControl(lane) => {
@@ -187,9 +195,17 @@ fn drain_chat(
             }
             Event::ObservedRunning { running, version } => {
                 if let Some(reader) = &mut s.reader {
-                    reader.observed_running(running, version, s.phase == Phase::Streaming);
+                    reader.observed_running(running, version, s.phase.running());
                 }
-                if s.phase != Phase::Reconnecting
+                if let Phase::StreamDisconnected { running: prev } = &mut s.phase {
+                    if running
+                        || s.reader
+                            .as_ref()
+                            .is_none_or(chat::reader::Reader::independent_status)
+                    {
+                        *prev = running;
+                    }
+                } else if !s.phase.reconnecting()
                     && s.phase != Phase::Failed
                     && (running
                         || s.reader
@@ -277,11 +293,26 @@ fn drain_chat(
             ) => {
                 s.status_usage.refresh(directory.as_deref());
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::TemporaryChanged {
+                folders,
+            }) => {
+                s.temporary.queue_temporary_folders(folders);
+            }
             Event::Workspace(event) => {
+                if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted,
+                    temporary_retained,
+                } = &event
+                {
+                    s.temporary
+                        .queue_stopped(workspace_id.clone(), *deleted, *temporary_retained);
+                }
                 if matches!(
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
+                    s.composer.clear_optimistic(None);
                     s.status_permissions.online(false);
                     s.status_services.location_moved();
                     s.status_usage.disconnect();
@@ -292,11 +323,27 @@ fn drain_chat(
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
+                    s.phase = Phase::Reconnecting;
                     if let Some(agent) = &mut s.agent {
                         agent.attention.disconnected();
                     }
+                } else if matches!(
+                    event,
+                    codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+                ) {
+                    s.stream_offline = true;
+                    s.status_permissions.online(false);
+                    s.status_usage.disconnect();
+                    suspend_preserving_page_retry(s);
+                    s.composer.picker.set_attachments_supported(false);
+                    s.attachments.cancel();
+                    s.phase = Phase::Failed;
+                    if let Some(agent) = &mut s.agent {
+                        agent.online = false;
+                        agent.attention.disconnected();
+                    }
                 }
-                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id, .. } =
                     &event
                     && let Some(agent) = &mut s.agent
                 {
@@ -347,22 +394,27 @@ fn drain_chat(
                         .as_ref()
                         .is_some_and(chat::reader::Reader::is_resuming)
                 {
+                    let authoritative_first =
+                        s.messages.iter().find(|r| !s.composer.is_optimistic(&r.id));
+                    let authoritative_last = s
+                        .messages
+                        .iter()
+                        .rfind(|r| !s.composer.is_optimistic(&r.id));
                     let trimmed_older = page.older.is_some()
-                        && s.messages
-                            .first()
+                        && authoritative_first
                             .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
                     let trimmed_newer = page.newer.is_some()
-                        && s.messages
-                            .last()
+                        && authoritative_last
                             .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
                     (trimmed_older || trimmed_newer).then(|| {
+                        let mut prev_rows = std::mem::take(&mut s.messages);
+                        prev_rows.retain(|r| !s.composer.is_optimistic(&r.id));
                         (
                             version,
                             page.clone(),
-                            std::mem::take(&mut s.messages),
+                            prev_rows,
                             s.can_older,
                             s.history_detached,
-                            s.phase,
                             trimmed_older,
                             trimmed_newer,
                         )
@@ -379,7 +431,6 @@ fn drain_chat(
                         prev_rows,
                         prev_can_older,
                         prev_detached,
-                        prev_phase,
                         trimmed_older,
                         trimmed_newer,
                     )) = sync_undo
@@ -390,7 +441,6 @@ fn drain_chat(
                             prev_rows,
                             prev_can_older,
                             prev_detached,
-                            prev_phase,
                             trimmed_older,
                             trimmed_newer,
                             clock,
@@ -414,6 +464,7 @@ fn drain_chat(
                     s.composer.picker.refresh_commands(&s.reads, &s.wake);
                     a.refresh(false);
                 }
+                s.composer.clear_optimistic(None);
                 let previous_rows = if !had_sync_undo {
                     std::mem::take(&mut s.messages)
                 } else {
@@ -437,8 +488,20 @@ fn drain_chat(
                 // The page offer or its cancellation alone settles that gesture.
                 if s.transcript_display.timeline.paging.is_none() {
                     s.paging = false;
-                    s.history_error = false;
-                    s.transcript_display.timeline.page_retry = None;
+                    let keep_retry = matches!(
+                        s.transcript_display.timeline.page_retry,
+                        Some(
+                            crate::transport::HistoryEdge::Before
+                                | crate::transport::HistoryEdge::Oldest
+                        ) if page.older.is_some()
+                    ) || matches!(
+                        s.transcript_display.timeline.page_retry,
+                        Some(crate::transport::HistoryEdge::After) if page.newer.is_some()
+                    );
+                    if !keep_retry {
+                        s.history_error = false;
+                        s.transcript_display.timeline.page_retry = None;
+                    }
                 }
                 // A newer activity event can run ahead of a snapshot in the content lane.
                 let running = if stale_activity {
@@ -453,6 +516,7 @@ fn drain_chat(
                 } else {
                     Phase::Ready
                 };
+                s.stream_offline = false;
             }
             Event::Older(page) => chat::reader::install_page(s, page, None),
             Event::PageOffered {
@@ -465,7 +529,13 @@ fn drain_chat(
                 }
             }
             Event::Reconnecting | Event::ConnectionLost => {
-                if matches!(event, Event::ConnectionLost) {
+                let stream_lost = matches!(event, Event::ConnectionLost);
+                let keep_stream_authority = matches!(
+                    s.phase,
+                    Phase::Ready | Phase::Streaming | Phase::StreamDisconnected { .. }
+                );
+                s.stream_offline = true;
+                if stream_lost {
                     s.conversation_stream_connected = false;
                 }
                 workspace::suspend_mission_briefing(s);
@@ -474,18 +544,27 @@ fn drain_chat(
                 s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
                 s.status_services.online(false);
-                s.composer.picker.set_attachments_supported(false);
-                chat::reader::reconnecting(s);
+                if !stream_lost && !keep_stream_authority {
+                    s.composer.picker.set_attachments_supported(false);
+                }
+                chat::reader::reconnecting(s, stream_lost);
                 #[cfg(target_arch = "wasm32")]
-                if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
+                if stream_lost && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
-                if !s.history_detached {
-                    s.phase = Phase::Reconnecting;
+                if !s.history_detached && s.phase != Phase::Failed {
+                    s.phase = match &s.phase {
+                        Phase::Ready => Phase::StreamDisconnected { running: false },
+                        Phase::Streaming => Phase::StreamDisconnected { running: true },
+                        Phase::StreamDisconnected { running } => {
+                            Phase::StreamDisconnected { running: *running }
+                        }
+                        _ => Phase::Reconnecting,
+                    };
                 }
                 s.attachments.offline();
                 if let Some(a) = s.agent.as_mut() {
@@ -521,6 +600,7 @@ fn drain_chat(
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
+                s.composer.clear_optimistic(None);
                 s.transcript_display.queue.clear();
                 s.messages.clear();
                 s.history_detached = false;
@@ -529,6 +609,7 @@ fn drain_chat(
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.stream_offline = true;
                 s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
@@ -552,21 +633,28 @@ fn drain_chat(
                 }
             }
             Event::History(messages) => {
+                s.composer.clear_optimistic(None);
                 s.transcript_display.tool_clock.resume();
                 s.conversation_stream_connected = true;
                 if let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                 }
                 s.messages = messages;
+                composer::reconcile(s);
                 s.phase = Phase::Ready;
+                s.stream_offline = false;
             }
             Event::Message(m) => {
-                if !s.messages.iter().any(|existing| existing.id == m.id) {
-                    if let Some(reader) = &mut s.reader {
-                        reader.clear_sync_undo();
-                    }
+                s.composer.clear_optimistic(Some(&m.id));
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
+                if let Some(existing) = s.messages.iter_mut().find(|existing| existing.id == m.id) {
+                    *existing = m.into();
+                } else {
                     s.messages.push(m.into());
                 }
+                composer::reconcile(s);
             }
             Event::Inbox {
                 items,
@@ -578,16 +666,49 @@ fn drain_chat(
                 }
             }
             Event::InboxDelta(delta) => {
-                if let codenomad_client::inbox::InboxDelta::Upsert(ref item) = delta
-                    && s.messages.iter().any(|row| row.id == item.id)
-                {
+                let mut local_changed = false;
+                match &delta {
+                    codenomad_client::inbox::InboxDelta::Upsert(item) => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, &item.id);
+                        if s.composer.is_optimistic(&item.id) {
+                            s.composer.clear_optimistic(Some(&item.id));
+                            if let Some(index) = s.messages.iter().position(|row| row.id == item.id)
+                            {
+                                s.messages.remove(index);
+                                s.revision += 1;
+                                local_changed = true;
+                            }
+                        } else if s.messages.iter().any(|row| row.id == item.id) {
+                            changed |= local_changed;
+                            continue;
+                        }
+                    }
+                    codenomad_client::inbox::InboxDelta::Delivery { id, .. } => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, id);
+                    }
+                    codenomad_client::inbox::InboxDelta::Removed(id) => {
+                        local_changed |= composer::confirm_unconfirmed_id(s, id);
+                        if s.composer.is_optimistic(id) {
+                            s.composer.clear_optimistic(Some(id));
+                            if let Some(index) = s.messages.iter().position(|row| row.id == *id) {
+                                s.messages.remove(index);
+                                s.revision += 1;
+                                local_changed = true;
+                            }
+                        }
+                    }
+                }
+                if !visible {
+                    changed |= local_changed;
                     continue;
                 }
                 let Some(next) = s.transcript_display.queue.preview_delta(&delta) else {
+                    changed |= local_changed;
                     continue;
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
                 s.transcript_display.queue.apply_preview(next);
+                composer::reconcile(s);
             }
             Event::InboxFailed => {
                 s.transcript_display.queue.failed();
@@ -683,11 +804,12 @@ fn drain_chat(
                 if let Some(reader) = &mut s.reader {
                     reader.failed();
                 }
-                chat::reader::cancel_page(s);
+                chat::reader::fail_pending_page(s);
                 s.paging = false;
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.stream_offline = true;
                 s.transcript_display.tool_clock.pause();
                 if matches!(&event, Event::AuthenticationRequired(..)) {
                     s.conversation_stream_connected = false;
@@ -697,19 +819,21 @@ fn drain_chat(
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
-                if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
+                if !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
-                if let Event::AuthenticationRequired(auth) = event
-                    && !settings::conversation_authentication(s, auth)
-                {
-                    continue;
+                if let Event::AuthenticationRequired(auth) = event {
+                    if !settings::conversation_authentication(s, auth) {
+                        continue;
+                    }
+                    // A pending send without a prior receipt was queued before the transport exited on 401.
+                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
                 s.status_services.online(false);
                 s.status_usage.disconnect();
-                chat::reader::suspend(s);
+                suspend_preserving_page_retry(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -728,11 +852,42 @@ fn drain_chat(
         .as_ref()
         .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
+        let terminal_phase = matches!(s.phase, Phase::Failed) || {
+            #[cfg(target_arch = "wasm32")]
+            {
+                matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                false
+            }
+        };
+        let needs_transition = s.conversation_stream_connected
+            || !s.stream_offline
+            || s.composer.pending()
+            || !terminal_phase;
         s.conversation_stream_connected = false;
-        if s.composer.pending() || s.phase == Phase::Reconnecting {
+        if needs_transition {
+            s.stream_offline = true;
             s.transcript_display.tool_clock.pause();
-            composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
-            s.phase = Phase::Failed;
+            if s.composer.pending() {
+                composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
+            }
+            s.composer.picker.set_attachments_supported(false);
+            s.status_permissions.online(false);
+            s.status_usage.disconnect();
+            suspend_preserving_page_retry(s);
+            git::online(s, false);
+            if let Some(files) = &mut s.files {
+                files.online(false);
+            }
+            if let Some(a) = s.agent.as_mut() {
+                a.online = false;
+                a.attention.disconnected();
+            }
+            if !terminal_phase {
+                s.phase = Phase::Failed;
+            }
             changed = true;
         }
     }
@@ -748,7 +903,26 @@ fn drain_chat(
         s.revision += 1;
         changed = true;
     }
+    changed |= chat::reader::settle_discarded_inbox(s);
     changed | super::usage::family::Totals::poll(s)
+}
+
+fn suspend_preserving_page_retry(s: &mut State) {
+    let saved_retry = s.transcript_display.timeline.page_retry;
+    let saved_history_error = s.history_error;
+    let pending_edge = s
+        .transcript_display
+        .timeline
+        .paging
+        .as_ref()
+        .map(|(_, edge)| *edge);
+    chat::reader::suspend(s);
+    if let Some(edge) = pending_edge.or(saved_retry) {
+        s.transcript_display.timeline.page_retry = Some(edge);
+        s.history_error = true;
+    } else {
+        s.history_error = saved_history_error;
+    }
 }
 
 fn uses_workspace_attention(s: &State) -> bool {

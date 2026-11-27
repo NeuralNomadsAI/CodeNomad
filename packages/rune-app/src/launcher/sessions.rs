@@ -341,6 +341,7 @@ pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
+    crate::shell::blank_cleanup::abort_for_session(s, &id);
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -362,7 +363,7 @@ fn choose_from(
 }
 fn choose_from_inner(
     s: &mut State,
-    candidates: Vec<(String, Option<usize>)>,
+    mut candidates: Vec<(String, Option<usize>)>,
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
@@ -388,12 +389,20 @@ fn choose_from_inner(
     if l.pending {
         return;
     }
+    candidates.retain(|(id, _)| !crate::shell::blank_cleanup::is_deleting_session(s, &p.id, id));
+    if candidates.is_empty() {
+        return;
+    }
+    for (id, _) in &candidates {
+        crate::shell::blank_cleanup::abort_for_session(s, id);
+    }
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     l.selection_ticket = ticket;
     l.close_mission_reader_on_bind = close_mission_reader;
+    l.rebinding_failed = recovery;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
@@ -414,6 +423,11 @@ fn choose_from_inner(
         }
         Ok(Reply::Selected(missing, None, dismiss, allow_streaming))
     });
+    if recovery {
+        s.commands = None;
+        s.incoming = None;
+        s.phase = Phase::Reconnecting;
+    }
 }
 fn session_switch_allowed(s: &State) -> bool {
     !s.composer.blocks_navigation()
@@ -488,6 +502,7 @@ fn clear_conversation_only(s: &mut State) {
     s.status_services.attach(None);
     s.status_usage.invalidate();
     s.history_detached = false;
+    s.stream_offline = false;
     s.messages.clear();
     s.chat_title.clear();
     s.draft = TextEdit::new("");
@@ -523,7 +538,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     } else if !s.draft.text.is_empty()
         || !s.composer.draft.attachments.is_empty()
         || s.composer.unconfirmed_id().is_some()
-        || s.composer.command_unconfirmed.is_some()
+        || s.command_receipts.has_for_state(s)
     {
         return false;
     }
@@ -623,7 +638,7 @@ fn bind_at(
         } else {
             // This is the same owned occurrence and session; the in-flight reply guard stays live.
             agent.mark_offline();
-            if s.phase == Phase::Failed {
+            if matches!(s.phase, Phase::Failed | Phase::Reconnecting) {
                 crate::git::close_preview(s);
                 if let Some(files) = &mut s.files {
                     files.close_reader();
@@ -632,7 +647,7 @@ fn bind_at(
         }
     } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
         crate::files::bind(s, &b);
-    } else if s.phase == Phase::Failed {
+    } else if matches!(s.phase, Phase::Failed | Phase::Reconnecting) {
         crate::git::close_preview(s);
         if let Some(files) = &mut s.files {
             files.close_reader();
@@ -640,7 +655,9 @@ fn bind_at(
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
-    s.phase = Phase::Loading;
+    if !(same_session && s.phase == Phase::Reconnecting) {
+        s.phase = Phase::Loading;
+    }
     crate::git::online(s, false);
     crate::git::connected_placed(s, &b, slug);
     crate::workspace::restore_files_mode(s);

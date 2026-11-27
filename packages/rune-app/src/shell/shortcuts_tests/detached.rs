@@ -10,6 +10,7 @@ fn session_new_resolves_authoritative_directory_and_honors_placement_hold() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());
@@ -792,6 +793,8 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             &mut rt.state,
             &[codenomad_client::transport::WorkspaceEvent::Stopped {
                 workspace_id: bound.workspace.clone(),
+                deleted: false,
+                temporary_retained: false,
             }],
         ));
         assert!(rt.state.files.as_ref().unwrap().stopped);
@@ -802,6 +805,7 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         let canonical_project = Project {
             id: "proj-win".into(),
             path: r"D:\Repo".into(),
+            temporary: false,
         };
         let create_task = tokio::spawn({
             let backend = http.backend.clone();
@@ -838,6 +842,7 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         let alias_project = Project {
             id: "proj-alias".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let dir_task = tokio::spawn({
             let backend = http.backend.clone();

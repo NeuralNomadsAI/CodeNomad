@@ -145,7 +145,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             && worktree.head === target.head
             && (branch === undefined || worktree.branch === branch))
         },
-        runMutation: async (directories, operation) => {
+        runMutation: async (directories, operation, sessionIds) => {
           const identities = await Promise.all(directories.map((directory) => (
             deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, directory)
           )))
@@ -155,7 +155,10 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           const release = deps.worktreeDeletionFence.enter(identities as string[])
           if (!release) throw new ProjectSessionError("A session worktree is being removed", 409)
           try {
-            return await operation()
+            const members = sessionIds?.length ? sessionIds : [request.params.sessionId]
+            const placed = await deps.worktreeDeletionFence.tryRunSessions(members, operation)
+            if (!placed.acquired) throw new ProjectSessionError("A session request is in progress", 409)
+            return placed.value
           } finally {
             release()
           }

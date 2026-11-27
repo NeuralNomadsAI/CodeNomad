@@ -14,7 +14,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -23,6 +23,7 @@ pub(super) enum Turn {
     Process,
     Next,
     Stop,
+    AuthenticationExpired,
 }
 
 pub(super) struct Reader {
@@ -259,7 +260,15 @@ impl Reader {
                     backend.restore(self.first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(backend, reading, self.generation, wire, snapshot).await
+            let Some(snapshot) = read_page(
+                backend,
+                reading,
+                self.generation,
+                wire,
+                Fence::Live(stamp),
+                snapshot,
+            )
+            .await
             else {
                 return Ok(Turn::Next);
             };
@@ -524,8 +533,8 @@ impl Reader {
                     return Ok(Turn::Next);
                 }
                 Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
+                    expire_reading(reading, wire, out).await;
+                    return Ok(Turn::AuthenticationExpired);
                 }
                 Err(PageFailure::Read(error)) => {
                     if cfg!(target_arch = "wasm32")
@@ -647,7 +656,6 @@ impl Reader {
         }
         self.inbox_flight = None;
         let Lane {
-            backend,
             reading,
             wire,
             out,
@@ -750,8 +758,8 @@ impl Reader {
                 return Ok(Turn::Next);
             }
             Err(InboxReadError::AuthenticationExpired) => {
-                expire_reading(backend, reading, wire, out, wake).await;
-                return Ok(Turn::Stop);
+                expire_reading(reading, wire, out).await;
+                return Ok(Turn::AuthenticationExpired);
             }
             Err(InboxReadError::Failed) => {
                 self.inbox_retries = self.inbox_retries.saturating_add(1);
@@ -815,6 +823,7 @@ pub struct ReadingLane {
     pub demand: demand::Observer,
     pub events: Sender<(u64, u64, Event)>,
     pub connection: Arc<AtomicU64>,
+    pub revoked: Arc<AtomicBool>,
 }
 
 impl ReadingLane {
@@ -846,14 +855,30 @@ enum PageFailure {
     Read(history::Error),
 }
 
+#[derive(Clone, Copy)]
+enum Fence {
+    Live(u64),
+    History(u64),
+}
+
+impl Fence {
+    fn valid(self, wire: &stream::State) -> bool {
+        match self {
+            Self::Live(stamp) => wire.valid(stamp),
+            Self::History(revision) => wire.history_current(revision),
+        }
+    }
+}
+
 async fn read_page(
     backend: &Backend,
     reading: Option<&ReadingLane>,
     generation: u64,
     wire: &stream::State,
+    fence: Fence,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
-    read_fenced(backend, reading, generation, wire, page).await
+    read_fenced(backend, reading, generation, wire, fence, page).await
 }
 
 async fn read_fenced<T>(
@@ -861,6 +886,7 @@ async fn read_fenced<T>(
     reading: Option<&ReadingLane>,
     generation: u64,
     wire: &stream::State,
+    fence: Fence,
     read: impl std::future::Future<Output = history::Result<T>>,
 ) -> Option<Result<T, PageFailure>> {
     if wire.is_placement_changed()
@@ -901,12 +927,23 @@ async fn read_fenced<T>(
         content,
         futures_lite::future::race(
             async {
-                wire.placement_changed().await;
-                None
-            },
-            async {
                 wire.stream_closed().await;
                 Some(Err(PageFailure::StreamClosed))
+            },
+            async {
+                futures_lite::future::race(wire.placement_changed(), async {
+                    while fence.valid(wire) {
+                        crate::runtime::sleep(Duration::from_millis(25)).await;
+                    }
+                })
+                .await;
+                if wire.is_placement_changed() || wire.placement_closed() {
+                    None
+                } else if !wire.alive.load(SeqCst) {
+                    Some(Err(PageFailure::StreamClosed))
+                } else {
+                    None
+                }
             },
         ),
     )
@@ -919,7 +956,50 @@ async fn read_fenced<T>(
     if wire.is_stream_closed() {
         return Some(Err(PageFailure::StreamClosed));
     }
-    result
+    match result {
+        Some(Err(PageFailure::Read(_))) if !wire.alive.load(SeqCst) => {
+            Some(Err(PageFailure::StreamClosed))
+        }
+        Some(Err(PageFailure::Read(_))) if !fence.valid(wire) => None,
+        other => other,
+    }
+}
+
+pub(super) async fn reader_inbox_delta(
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    delta: crate::inbox::InboxDelta,
+) -> bool {
+    let Some(reading) = reading else {
+        return publish(out, wake, Event::InboxDelta(delta)).await;
+    };
+    let connection = reading.connection.load(SeqCst);
+    let delivered = futures_lite::future::race(
+        async {
+            reading.demand.changed_after(generation).await;
+            None
+        },
+        async {
+            Some(
+                reading
+                    .events
+                    .send((generation, connection, Event::InboxDelta(delta.clone())))
+                    .await
+                    .is_ok(),
+            )
+        },
+    )
+    .await;
+    match delivered {
+        Some(true) => {
+            wake();
+            true
+        }
+        Some(false) => false,
+        None => publish(out, wake, Event::InboxDelta(delta)).await,
+    }
 }
 
 pub(super) async fn reader_event(
@@ -1061,14 +1141,48 @@ mod diagnostic_tests {
         rt.block_on(async {
             let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
             let wire = stream::State::default();
-            let mut fut =
-                std::pin::pin!(read_page(&backend, None, 0, &wire, std::future::pending()));
+            wire.alive.store(true, std::sync::atomic::Ordering::SeqCst);
+            wire.upstream
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut fut = std::pin::pin!(read_page(
+                &backend,
+                None,
+                0,
+                &wire,
+                super::Fence::Live(0),
+                std::future::pending(),
+            ));
             assert!(futures_lite::future::poll_once(&mut fut).await.is_none());
             wire.close_stream();
             assert!(matches!(
                 futures_lite::future::poll_once(&mut fut).await,
                 Some(Some(Err(PageFailure::StreamClosed)))
             ));
+
+            // Exercise the HTTP-error branch directly: wire is still open when polling starts,
+            // closes during the HTTP poll, and the HTTP future returns Err(...) so read_page
+            // must reclassify the read error as StreamClosed rather than Read.
+            let closing_wire = std::sync::Arc::new(stream::State::default());
+            closing_wire
+                .alive
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            closing_wire
+                .upstream
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let close_on_poll = std::sync::Arc::clone(&closing_wire);
+            let outcome = read_page(
+                &backend,
+                None,
+                0,
+                &closing_wire,
+                super::Fence::Live(0),
+                std::future::poll_fn(move |_| {
+                    close_on_poll.close_stream();
+                    std::task::Poll::Ready(Err("transient read failure".into()))
+                }),
+            )
+            .await;
+            assert!(matches!(outcome, Some(Err(PageFailure::StreamClosed))));
         });
     }
 
@@ -1095,6 +1209,7 @@ mod diagnostic_tests {
                 demand: demand_rx,
                 events: reader_tx.clone(),
                 connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                revoked: Default::default(),
             };
             let wake: crate::Wake = Arc::new(|| {});
             let wire = Arc::new(stream::State::default());

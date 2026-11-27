@@ -91,8 +91,13 @@ pub enum WorkspaceEvent {
         workspace_id: String,
         session_id: String,
     },
+    TemporaryChanged {
+        folders: Vec<String>,
+    },
     Stopped {
         workspace_id: String,
+        deleted: bool,
+        temporary_retained: bool,
     },
 }
 #[derive(Debug)]
@@ -142,6 +147,7 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    UpstreamReady,
     AgentControl(AgentLane),
     SessionUsage(crate::content::Usage),
     FamilyUsage(crate::content::FamilyChange),

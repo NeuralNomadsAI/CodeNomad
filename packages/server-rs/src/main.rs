@@ -11,6 +11,7 @@ mod extensions;
 mod files;
 mod git;
 mod host;
+mod integrations;
 mod memory;
 mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
@@ -27,6 +28,7 @@ mod sessions;
 mod settings;
 mod shared;
 mod sidecars;
+mod speech;
 mod storage;
 mod subagent_depth;
 mod temporary_workspaces;
@@ -143,6 +145,9 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         opencode::launch::resolve(&opencode::install::plan::resolve_default().await.0)
     };
     let native = opencode::Native::connect(&binary)?;
+    if !positional.is_empty() {
+        native.pin_binary();
+    }
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
     let calendar_profile = missions::calendar::setup(&data, &settings.location.config)?;
     let watches = files::watch::Watches::new(watch_tx);
@@ -177,11 +182,13 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(subagent_depth::routes())
         .merge(opencode_settings::routes())
         .merge(plugin_controls::routes())
+        .merge(integrations::routes())
         .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())
         .merge(missions::routes())
         .merge(sidecars::routes())
+        .merge(speech::routes())
         .merge(usage::routes())
         .merge(provider_usage::routes())
         .merge(previews::routes())

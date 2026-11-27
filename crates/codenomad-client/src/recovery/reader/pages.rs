@@ -12,10 +12,10 @@ impl Reader {
         let Lane {
             backend,
             reading,
-            rx,
             wire,
             out,
             wake,
+            ..
         } = *lane;
         let failed = || {
             cancel
@@ -33,6 +33,7 @@ impl Reader {
                 && (!self.dirty || self.historical)
                 && wire.upstream.load(SeqCst)
         }) {
+            let revision = wire.history_revision.load(SeqCst);
             let stamp = wire.version.load(SeqCst);
             let Some(page) = crate::timeline::until_cancelled(
                 cancel,
@@ -41,15 +42,25 @@ impl Reader {
                     reading,
                     self.generation,
                     wire,
+                    Fence::History(revision),
                     backend.page(target.clone()),
                 ),
             )
             .await
             else {
+                if self.active_reader
+                    && !wire.history_current(revision)
+                    && !wire.placement_closed()
+                    && !cancel.is_some_and(Receiver::is_closed)
+                {
+                    self.dirty = true;
+                    self.quiet = Instant::now() + Duration::from_millis(100);
+                    reader_event(reading, self.generation, out, wake, failed()).await;
+                }
                 return Ok(Turn::Next);
             };
             match page {
-                Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
+                Ok(mut page) if wire.history_current(revision) => {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
@@ -58,9 +69,15 @@ impl Reader {
                         if crate::content::merge_page(&self.resident, &mut merged).is_ok() {
                             page.rows = merged;
                         }
-                        if !crate::timeline::page_offer(cancel, &page, wire, stamp, async |event| {
-                            reader_event(reading, self.generation, out, wake, event).await
-                        })
+                        if !crate::timeline::page_offer(
+                            cancel,
+                            &page,
+                            wire,
+                            revision,
+                            async |event| {
+                                reader_event(reading, self.generation, out, wake, event).await
+                            },
+                        )
                         .await
                         {
                             return Ok(Turn::Next);
@@ -68,6 +85,7 @@ impl Reader {
                         if !page.rows.is_empty() {
                             let reordered = !history::order_consistent(&self.resident, &page.rows);
                             self.historical = page.newer.is_some();
+                            self.fence = stamp;
                             self.resident = page.rows.clone();
                             self.first = self.resident.first().map(|r| r.id.clone());
                             self.known = self.resident.iter().map(|r| r.id.clone()).collect();
@@ -100,7 +118,10 @@ impl Reader {
                                     .await;
                                 }
                             }
-                            if !self.historical
+                            if !self.historical && !wire.valid(stamp) {
+                                self.dirty = true;
+                                self.quiet = Instant::now();
+                            } else if !self.historical
                                 && (reordered || !self.owed_tools.is_empty())
                                 && !self.dirty
                             {
@@ -128,8 +149,8 @@ impl Reader {
                     reader_event(reading, self.generation, out, wake, failed()).await;
                 }
                 Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
+                    expire_reading(reading, wire, out).await;
+                    return Ok(Turn::AuthenticationExpired);
                 }
                 Err(PageFailure::Read(_)) => {
                     reader_event(reading, self.generation, out, wake, failed()).await;
@@ -146,9 +167,9 @@ impl Reader {
         lane: &Lane<'_>,
         opened: bool,
         jump: crate::timeline::Jump,
-    ) {
+    ) -> Turn {
         if jump.cancelled.is_closed() {
-            return;
+            return Turn::Next;
         }
         let Lane {
             backend,
@@ -167,57 +188,73 @@ impl Reader {
                 Event::AnchorFailed(jump.ticket),
             )
             .await;
-            return;
+            return Turn::Next;
         }
-        if let Some((page, raw_rows, stamp)) = jump
+        match jump
             .offer(backend, &self.resident, wire, async |event| {
                 reader_event(reading, self.generation, out, wake, event).await
             })
             .await
         {
-            self.historical = page.newer.is_some();
-            self.fence = stamp;
-            self.first = page.rows.first().map(|row| row.id.clone());
-            self.older = page.older.clone();
-            self.newer = page.newer.clone();
-            self.known = page.rows.iter().map(|row| row.id.clone()).collect();
-            self.resident = page.rows;
-            self.owed.retain(|(id, _)| self.known.contains(id));
-            self.owed_tools.retain(|(id, call), _| {
-                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
-            });
-            self.frozen_tools.retain(|(id, call), _| {
-                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
-            });
-            let mut removed = Vec::new();
-            self.inbox.retain(|item| {
-                if self.known.contains(&item.id) {
-                    removed.push(item.id.clone());
-                    false
+            crate::timeline::JumpOffer::Loaded(page, raw_rows, stamp) => {
+                self.historical = page.newer.is_some();
+                self.fence = stamp;
+                self.first = page.rows.first().map(|row| row.id.clone());
+                self.older = page.older.clone();
+                self.newer = page.newer.clone();
+                self.known = page.rows.iter().map(|row| row.id.clone()).collect();
+                self.resident = page.rows;
+                self.owed.retain(|(id, _)| self.known.contains(id));
+                self.owed_tools.retain(|(id, call), _| {
+                    self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                });
+                self.frozen_tools.retain(|(id, call), _| {
+                    self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                });
+                let mut removed = Vec::new();
+                self.inbox.retain(|item| {
+                    if self.known.contains(&item.id) {
+                        removed.push(item.id.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !removed.is_empty() {
+                    self.schedule_inbox_sync(std::time::Duration::from_millis(100));
+                    for id in removed {
+                        let _ = reader_event(
+                            reading,
+                            self.generation,
+                            out,
+                            wake,
+                            Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
+                        )
+                        .await;
+                    }
+                }
+                self.anchored = None;
+                self.parked = false;
+                if !self.historical && !wire.valid(stamp) {
+                    self.dirty = true;
+                    self.quiet = crate::runtime::Instant::now();
+                } else if !self.historical
+                    && (self.execution_settlement > 0
+                        || !self.owed_tools.is_empty()
+                        || !self.owed_synthetics.is_empty())
+                {
+                    self.dirty = true;
+                    self.quiet =
+                        crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
                 } else {
-                    true
+                    self.dirty = false;
                 }
-            });
-            if !removed.is_empty() {
-                self.schedule_inbox_sync(std::time::Duration::from_millis(100));
-                for id in removed {
-                    let _ = reader_event(
-                        reading,
-                        self.generation,
-                        out,
-                        wake,
-                        Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
-                    )
-                    .await;
-                }
+                Turn::Next
             }
-            self.anchored = None;
-            self.parked = false;
-            if !self.historical && !self.owed_tools.is_empty() {
-                self.dirty = true;
-                self.quiet = crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
-            } else {
-                self.dirty = false;
+            crate::timeline::JumpOffer::Failed => Turn::Next,
+            crate::timeline::JumpOffer::AuthenticationExpired => {
+                expire_reading(reading, wire, out).await;
+                Turn::AuthenticationExpired
             }
         }
     }

@@ -16,7 +16,7 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Shared, opencode_settings::Scope, subagent_depth::Fail};
+use crate::{Shared, opencode::Endpoint, opencode_settings::Scope, subagent_depth::Fail};
 
 use super::{
     catalog::{IntegrationCatalog, integrations_for_spec},
@@ -34,17 +34,17 @@ const PLUGIN_SOURCE_ABORT_GRACE: Duration = Duration::from_secs(5);
 static ADD_QUEUE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Clone, Debug)]
-pub(super) enum SourceError {
+pub(crate) enum SourceError {
     Refused { status: Status, code: Option<&'static str> },
     Failed,
 }
 
 impl SourceError {
-    pub(super) const fn with_code(status: Status, code: &'static str) -> Self {
+    pub(crate) const fn with_code(status: Status, code: &'static str) -> Self {
         Self::Refused { status, code: Some(code) }
     }
 
-    pub(super) fn from_fail(err: Fail) -> Self {
+    pub(crate) fn from_fail(err: Fail) -> Self {
         match err {
             Fail::Status(status, _) => Self::Refused { status, code: None },
             Fail::Generic => Self::Failed,
@@ -52,10 +52,10 @@ impl SourceError {
     }
 }
 
-pub(super) struct SourceAddRequest {
-    pub(super) location: ControlLocation,
-    pub(super) scope: Scope,
-    pub(super) spec: String,
+pub(crate) struct SourceAddRequest {
+    pub(crate) location: ControlLocation,
+    pub(crate) scope: Scope,
+    pub(crate) spec: String,
 }
 
 pub(super) enum SourceRemoveTarget {
@@ -80,11 +80,11 @@ pub(super) struct SourceRemoveRequest {
 }
 
 #[derive(Serialize)]
-pub(super) struct SourceMutationResponse {
-    pub(super) scope: &'static str,
-    pub(super) spec: String,
+pub(crate) struct SourceMutationResponse {
+    pub(crate) scope: &'static str,
+    pub(crate) spec: String,
     #[serde(rename = "reloadPending")]
-    pub(super) reload_pending: bool,
+    pub(crate) reload_pending: bool,
 }
 
 pub(super) async fn add(
@@ -93,14 +93,60 @@ pub(super) async fn add(
     req: SourceAddRequest,
     principal: Option<CancellationToken>,
 ) -> Result<SourceMutationResponse, SourceError> {
-    add_with_timeouts(app, workspace_id, req, principal, PLUGIN_SOURCE_ADD_TIMEOUT, PLUGIN_SOURCE_ABORT_GRACE).await
+    add_with_timeouts_pinned(
+        app,
+        workspace_id,
+        req,
+        principal,
+        None,
+        None,
+        PLUGIN_SOURCE_ADD_TIMEOUT,
+        PLUGIN_SOURCE_ABORT_GRACE,
+    )
+    .await
 }
 
+pub(crate) async fn add_pinned(
+    app: &Shared,
+    workspace_id: &str,
+    req: SourceAddRequest,
+    principal: Option<CancellationToken>,
+    pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
+) -> Result<SourceMutationResponse, SourceError> {
+    add_with_timeouts_pinned(
+        app,
+        workspace_id,
+        req,
+        principal,
+        pinned_endpoint,
+        pinned_location,
+        PLUGIN_SOURCE_ADD_TIMEOUT,
+        PLUGIN_SOURCE_ABORT_GRACE,
+    )
+    .await
+}
+
+#[cfg(test)]
 pub(super) async fn add_with_timeouts(
     app: &Shared,
     workspace_id: &str,
     req: SourceAddRequest,
     principal: Option<CancellationToken>,
+    add_timeout: Duration,
+    abort_grace: Duration,
+) -> Result<SourceMutationResponse, SourceError> {
+    add_with_timeouts_pinned(app, workspace_id, req, principal, None, None, add_timeout, abort_grace).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn add_with_timeouts_pinned(
+    app: &Shared,
+    workspace_id: &str,
+    req: SourceAddRequest,
+    principal: Option<CancellationToken>,
+    pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
     add_timeout: Duration,
     abort_grace: Duration,
 ) -> Result<SourceMutationResponse, SourceError> {
@@ -121,7 +167,17 @@ pub(super) async fn add_with_timeouts(
         let _ = state_timer.compare_exchange(COMMIT_PENDING, COMMIT_ABORTED, Ordering::SeqCst, Ordering::SeqCst);
         cancel_timer.cancel();
     });
-    let op = add_serialized(app, workspace_id, &req, principal, cancel.clone(), deadline, commit_state.clone());
+    let op = add_serialized(
+        app,
+        workspace_id,
+        &req,
+        principal,
+        pinned_endpoint,
+        pinned_location,
+        cancel.clone(),
+        deadline,
+        commit_state.clone(),
+    );
     tokio::pin!(op);
     let outcome = match tokio::time::timeout_at(hard_deadline, &mut op).await {
         Ok(Ok(res)) => Ok(res),
@@ -149,11 +205,14 @@ pub(super) async fn add_with_timeouts(
     outcome
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn add_serialized(
     app: &Shared,
     workspace_id: &str,
     req: &SourceAddRequest,
     principal: Option<CancellationToken>,
+    pinned_endpoint: Option<Arc<Endpoint>>,
+    pinned_location: Option<engine::PinnedLocation>,
     cancel: CancellationToken,
     deadline: tokio::time::Instant,
     commit_state: Arc<AtomicU8>,
@@ -181,6 +240,9 @@ async fn add_serialized(
     )?;
     if cancel.is_cancelled() {
         return Err(timeout_err());
+    }
+    if pinned_location.as_ref().is_some_and(|p| p.directory != snapshot.location.directory) {
+        return Err(SourceError::Refused { status: Status::FORBIDDEN, code: None });
     }
 
     // Integration catalog rules (`plugin-sources.ts:89-101`):
@@ -220,7 +282,14 @@ async fn add_serialized(
     let cancel_edit = cancel.clone();
     engine::edit_config_document_cancellable(
         app,
-        engine::EditTarget { workspace_id, location: &req.location, scope: req.scope, principal },
+        engine::EditTarget {
+            workspace_id,
+            location: &req.location,
+            scope: req.scope,
+            principal,
+            pinned_endpoint,
+            pinned_location,
+        },
         cancel,
         deadline,
         commit_state,
@@ -260,7 +329,14 @@ pub(super) async fn remove(
 
     let result = engine::edit_plugin_documents(
         app,
-        engine::EditTarget { workspace_id, location: &req.location, scope, principal },
+        engine::EditTarget {
+            workspace_id,
+            location: &req.location,
+            scope,
+            principal,
+            pinned_endpoint: None,
+            pinned_location: None,
+        },
         &req.expected_revision,
         SourceError::from_fail,
         |view| {

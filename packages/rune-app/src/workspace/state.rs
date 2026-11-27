@@ -1,16 +1,30 @@
 mod tabs;
 use tabs::{activate, close_blocked};
-pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
+pub use tabs::{
+    active_project_title, can_close_active, can_new, can_switch_tabs, close, close_ordinary,
+    new_tab, rename_tab, select, select_index, select_relative, tab_rename_seed,
+};
 
+mod cleanup;
+pub(crate) use cleanup::{remove_cleaned_session, session_cleanup_protected};
 mod drafts;
 mod notification;
 mod observation;
 mod panel_state;
 mod polling;
 mod strip;
+mod temporary;
+pub(crate) use temporary::{
+    StashedTemporary, TemporaryTabInfo, active_temporary_workspace, clear_temporary_mark,
+    close_after_keep, detach_dead_temporary, detach_stopped_temporary, finish_discarded,
+    has_temporary_tabs, reconcile_temporary_folders, restore_stashed, stash_for_discard,
+    stashed_has_in_memory_state, temporary_tab_info,
+};
 
-pub use drafts::{
-    attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
+pub(crate) use drafts::{
+    MAX_WINDOW_DEVICE_FILES, attachment_draft_admissible, bound, capture, confirm_unconfirmed,
+    draft_changed, has_unconfirmed, note_unconfirmed, unconfirmed_drafts_full,
+    window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -70,6 +84,7 @@ pub(super) struct Entry {
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
+    unmarked_by_registry: bool,
 }
 impl Entry {
     pub(in crate::workspace) fn key_str(&self) -> &str {
@@ -140,6 +155,17 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn revoke_cached_sessions(s: &mut State) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    for entry in &mut ui.entries {
+        if let Some(cache) = &mut entry.cache {
+            cache.revoke_pairing();
+        }
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
     if !s.screen.is_launcher()
@@ -173,9 +199,104 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    // Bounded in-memory lock registry across tabs (kept out of Snapshot to preserve the v1 client-state-codec schema).
+    closed_unconfirmed: Vec<ClosedUnconfirmed>,
     memory_budget: super::memory_budget::Coordinator,
 }
+pub(super) const MAX_UNCONFIRMED_LOCKS: usize = super::MAX_DRAFTS;
+struct ClosedUnconfirmed {
+    backend_id: Option<String>,
+    server_id: Option<String>,
+    session_id: String,
+    unconfirmed: crate::composer::UnconfirmedPrompt,
+}
+impl ClosedUnconfirmed {
+    fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
+        self.session_id == session_id
+            && self.backend_id == workspace.backend_id
+            && (self.backend_id.is_none() || self.server_id == workspace.server_id)
+    }
+}
 impl Ui {
+    pub(super) fn remember_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: String,
+        unconfirmed: crate::composer::UnconfirmedPrompt,
+    ) {
+        if let Some(existing) = self
+            .closed_unconfirmed
+            .iter_mut()
+            .find(|item| item.matches(workspace, &session_id))
+        {
+            if existing.unconfirmed.id() == unconfirmed.id() {
+                if existing.unconfirmed.is_edited() && !unconfirmed.is_edited() {
+                    existing.unconfirmed = unconfirmed;
+                }
+            } else {
+                existing.unconfirmed = unconfirmed;
+            }
+            return;
+        }
+        if self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS {
+            return;
+        }
+        self.closed_unconfirmed.push(ClosedUnconfirmed {
+            backend_id: workspace.backend_id.clone(),
+            server_id: workspace.server_id.clone(),
+            session_id,
+            unconfirmed,
+        });
+    }
+    pub(super) fn closed_unconfirmed_entry(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<&crate::composer::UnconfirmedPrompt> {
+        self.closed_unconfirmed
+            .iter()
+            .find(|item| item.matches(workspace, session_id))
+            .map(|item| &item.unconfirmed)
+    }
+    pub(super) fn closed_unconfirmed_id(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<&str> {
+        self.closed_unconfirmed_entry(workspace, session_id)
+            .map(crate::composer::UnconfirmedPrompt::id)
+    }
+    pub(super) fn closed_unconfirmed_count(&self) -> usize {
+        self.closed_unconfirmed.len()
+    }
+    pub(super) fn has_closed_unconfirmed_for(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> bool {
+        self.closed_unconfirmed
+            .iter()
+            .any(|item| item.matches(workspace, session_id))
+    }
+    pub(super) fn forget_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: &str,
+        attempt_id: &str,
+    ) -> Option<crate::composer::UnconfirmedPrompt> {
+        let mut removed = None;
+        self.closed_unconfirmed.retain(|item| {
+            if item.matches(workspace, session_id) && item.unconfirmed.id() == attempt_id {
+                if removed.is_none() {
+                    removed = Some(item.unconfirmed.clone());
+                }
+                false
+            } else {
+                true
+            }
+        });
+        removed
+    }
     pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
         &self.entries
     }
@@ -252,6 +373,9 @@ impl Ui {
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }
+    pub(crate) fn has_tab_key(&self, key: &str) -> bool {
+        self.entries.iter().any(|entry| entry.key == key)
+    }
     #[cfg(test)]
     pub(crate) fn fixture_ready(&mut self) {
         self.ready = true;
@@ -268,7 +392,6 @@ impl Ui {
     pub(crate) fn active_index(&self) -> usize {
         self.active
     }
-    #[cfg(test)]
     pub(crate) fn tab_count(&self) -> usize {
         self.entries.len()
     }
@@ -290,6 +413,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            closed_unconfirmed: Vec::new(),
             memory_budget: super::memory_budget::Coordinator::new(),
         }
     }
@@ -300,27 +424,59 @@ impl Ui {
         self.persistence.dirty(self.clock);
     }
     pub(crate) fn snapshot(&self) -> Snapshot {
+        self.snapshot_with_stashed(None)
+    }
+    pub(crate) fn snapshot_with_stashed(&self, stashed: Option<&StashedTemporary>) -> Snapshot {
+        let mut refs: Vec<&Entry> = self.entries.iter().collect();
+        let mut active = self.active;
+        if let Some(stashed) = stashed {
+            if let Some(blank_key) = &stashed.created_blank_key
+                && let Some(pos) = refs
+                    .iter()
+                    .position(|e| e.key == *blank_key && matches!(e.saved, Tab::Blank))
+            {
+                refs.remove(pos);
+                if active > pos {
+                    active -= 1;
+                }
+            }
+            let insert_at = stashed.original_index.min(refs.len());
+            refs.insert(insert_at, &stashed.entry);
+            if stashed.was_active {
+                active = insert_at;
+            } else if insert_at <= active {
+                active += 1;
+            }
+        }
+        let active = if refs.is_empty() {
+            None
+        } else {
+            Some(active.min(refs.len() - 1))
+        };
         Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
             panel_widths: self.panel_widths,
             file_wrap: self.file_wrap,
-            tabs: self.entries.iter().map(|e| {
-                let mut saved = e.saved.clone();
-                if let Tab::Workspace(w) = &mut saved {
-                    // Persist only clears protecting against another restored occurrence's text.
-                    for id in &e.cleared {
-                        if self.entries.iter().any(|other| {
-                            other.key != e.key && matches!(&other.saved, Tab::Workspace(old)
-                                if same_project(w, old) && old.drafts.get(id).is_some_and(|text| !text.is_empty()))
-                        }) {
-                            w.drafts.insert(id.clone(), String::new());
+            tabs: refs
+                .iter()
+                .map(|e| {
+                    let mut saved = e.saved.clone();
+                    if let Tab::Workspace(w) = &mut saved {
+                        // Persist only clears protecting against another restored occurrence's text.
+                        for id in &e.cleared {
+                            if refs.iter().any(|other| {
+                                other.key != e.key && matches!(&other.saved, Tab::Workspace(old)
+                                    if same_project(w, old) && old.drafts.get(id).is_some_and(|text| !text.is_empty()))
+                            }) {
+                                w.drafts.insert(id.clone(), String::new());
+                            }
                         }
                     }
-                }
-                saved
-            }).collect(),
-            active: Some(self.active),
+                    saved
+                })
+                .collect(),
+            active,
         }
     }
     fn hydrate(&mut self, saved: Snapshot) {
@@ -344,27 +500,32 @@ impl Ui {
         self.panel_widths = saved.panel_widths;
         self.file_wrap = saved.file_wrap;
     }
-    pub(super) fn release_all(&self) {
-        let records = self
+    pub(super) fn release_all_with_stashed(&self, stashed: Option<&StashedTemporary>) {
+        let mut records: Vec<_> = self
             .entries
             .iter()
             .filter_map(|item| Some((item.binding.clone()?, item.project.as_ref()?.id.clone())))
             .collect();
+        if let Some(stashed) = stashed {
+            records.push((stashed.backend.clone(), stashed.project.id.clone()));
+        }
         platform::release_records_on_exit(records, self.openings.clone());
     }
-    fn stage(&mut self) {
+    pub(super) fn stage_with_stashed(&mut self, stashed: Option<&StashedTemporary>) {
         #[cfg(target_arch = "wasm32")]
         if let Some(store) = &self.persistence.store {
             store.watch_openings(self.openings.clone());
         }
-        if self.persistence.read_error || !self.ready || self.staged_revision == Some(self.revision)
+        if self.persistence.read_error
+            || !self.ready
+            || (stashed.is_none() && self.staged_revision == Some(self.revision))
         {
             return;
         }
         let Some(store) = &self.persistence.store else {
             return;
         };
-        let records: Vec<_> = self
+        let mut records: Vec<_> = self
             .entries
             .iter()
             .filter_map(|e| {
@@ -374,12 +535,17 @@ impl Ui {
                 ))
             })
             .collect();
+        if let Some(stashed) = stashed {
+            records.push((stashed.backend.base.clone(), stashed.project.id.clone()));
+        }
         if self.persistence.suppresses_snapshot(self.revision) {
             store.stage(&[], &records);
-            self.staged_revision = Some(self.revision);
+            if stashed.is_none() {
+                self.staged_revision = Some(self.revision);
+            }
             return;
         }
-        let bytes = match super::encode_for_save(&self.snapshot()) {
+        let bytes = match super::encode_for_save(&self.snapshot_with_stashed(stashed)) {
             Ok((bytes, partial)) => {
                 self.persistence.partial = partial;
                 bytes
@@ -391,7 +557,9 @@ impl Ui {
             }
         };
         store.stage(&bytes, &records);
-        self.staged_revision = Some(self.revision);
+        if stashed.is_none() {
+            self.staged_revision = Some(self.revision);
+        }
     }
     pub(crate) fn persistence_store(&self) -> Option<platform::storage::Store> {
         self.persistence.store.clone()
@@ -427,16 +595,21 @@ impl Ui {
         &mut self,
         documents: &crate::files::document::store::Store,
         outlines: &mut super::outlines::Cache,
+        stashed: Option<&StashedTemporary>,
     ) {
         self.persistence
             .begin_startup_mutation(self.revision, documents, outlines);
         self.staged_revision = None;
-        self.stage();
+        self.stage_with_stashed(stashed);
     }
-    pub(crate) fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+    pub(crate) fn cancel_startup_mutation(
+        &mut self,
+        outlines: &mut super::outlines::Cache,
+        stashed: Option<&StashedTemporary>,
+    ) {
         self.persistence.cancel_startup_mutation(outlines);
         self.staged_revision = None;
-        self.stage();
+        self.stage_with_stashed(stashed);
     }
     pub(crate) fn apply_restore_enabled(
         &mut self,
@@ -444,6 +617,7 @@ impl Ui {
         documents: &crate::files::document::store::Store,
         outlines: &mut super::outlines::Cache,
         wake: rune::Waker,
+        stashed: Option<&StashedTemporary>,
     ) {
         if self
             .persistence
@@ -452,24 +626,26 @@ impl Ui {
             self.changed();
         }
         self.staged_revision = None;
-        self.stage();
+        self.stage_with_stashed(stashed);
     }
     pub(crate) fn apply_startup_cleared(
         &mut self,
         outcome: platform::storage::ClearOutcome,
         documents: &crate::files::document::store::Store,
         outlines: &mut super::outlines::Cache,
+        stashed: Option<&StashedTemporary>,
     ) {
         self.persistence
             .apply_cleared(outcome, self.revision, documents, outlines);
         self.staged_revision = None;
-        self.stage();
+        self.stage_with_stashed(stashed);
     }
 }
+fn same_backend(a: &Workspace, b: &Workspace) -> bool {
+    a.backend_id == b.backend_id && (a.backend_id.is_none() || a.server_id == b.server_id)
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
-    same_folder(&a.folder, &b.folder)
-        && a.backend_id == b.backend_id
-        && (a.backend_id.is_none() || a.server_id == b.server_id)
+    same_folder(&a.folder, &b.folder) && same_backend(a, b)
 }
 fn entry(key: String, mut saved: Tab) -> Entry {
     let mut cleared = HashSet::new();
@@ -506,11 +682,13 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         cleared,
         pending_drafts: HashSet::new(),
         live_drafts: Default::default(),
+        unmarked_by_registry: false,
     }
 }
 fn busy(s: &State) -> bool {
     s.status_permissions.settling()
         || s.transcript_display.messages.pending()
+        || s.temporary.in_flight()
         || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
@@ -534,13 +712,14 @@ pub fn unselect_missing(s: &mut State, id: &str) -> bool {
         return false;
     }
     capture(s);
+    let stashed = s.temporary.stashed_for_snapshot();
     let Some(ui) = &mut s.workspace else {
         return false;
     };
     if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved {
         saved.active_session_id = None;
         ui.changed();
-        ui.stage();
+        ui.stage_with_stashed(stashed);
         return true;
     }
     false
@@ -668,11 +847,45 @@ pub fn opened(s: &mut State, project: &Project) {
     let occurrence = (0..super::MAX_TABS as u64).find(|ordinal| !ui.entries.iter().any(|entry| {
         matches!(&entry.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id) && w.occurrence == *ordinal)
     })).unwrap_or(0);
+    let inherited_name = ui
+        .entries
+        .iter()
+        .find_map(|entry| match &entry.saved {
+            Tab::Workspace(w)
+                if same_folder(&w.folder, &project.path)
+                    && w.backend_id == backend_id
+                    && (backend_id.is_none() || w.server_id == l.server_id) =>
+            {
+                w.project_name.clone()
+            }
+            _ => None,
+        })
+        .or_else(|| {
+            ui.closed.iter().rev().find_map(|w| {
+                (same_folder(&w.folder, &project.path)
+                    && w.backend_id == backend_id
+                    && (backend_id.is_none() || w.server_id == l.server_id))
+                    .then(|| w.project_name.clone())
+                    .flatten()
+            })
+        });
+    let initial_name = inherited_name.or_else(|| {
+        if project.temporary {
+            let base = crate::shell::temporary::base_name();
+            Some(temporary::next_temporary_name(ui, &base))
+        } else {
+            None
+        }
+    });
     let item = &mut ui.entries[ui.active];
     if matches!(&item.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id))
     {
         if let Tab::Workspace(w) = &mut item.saved {
             w.workspace_id = Some(project.id.clone());
+            w.temporary = project.temporary;
+            if w.temporary && w.project_name.is_none() {
+                w.project_name = initial_name;
+            }
         }
     } else {
         let mut drafts = std::collections::BTreeMap::new();
@@ -715,6 +928,8 @@ pub fn opened(s: &mut State, project: &Project) {
                 None
             },
             folder: project.path.clone(),
+            project_name: initial_name,
+            temporary: project.temporary,
             occurrence,
             workspace_id: Some(project.id.clone()),
             active_session_id: None,
@@ -731,6 +946,8 @@ pub fn opened(s: &mut State, project: &Project) {
         item.catalogue.schedule(ui.clock);
     }
     ui.changed();
+    s.command_palette.dismiss();
+    s.tab_rename.dismiss();
 }
 
 pub fn schedule_catalogue(s: &mut State) {

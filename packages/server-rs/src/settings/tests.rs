@@ -29,6 +29,18 @@ fn speech_keys_follow_their_base_url() {
     );
     let kept = json!({"speech": {"baseUrl": "a", "apiKey": "new"}});
     assert_eq!(speech_pairing(&kept, &current), kept);
+    // A nested speech.speech object must never shadow the effective speech.baseUrl reference.
+    let nested_bypass = owner(Some(&json!({
+        "speech": {
+            "baseUrl": "https://trusted.example/v1",
+            "apiKey": "secret",
+            "speech": {"baseUrl": "https://attacker.invalid/v1"}
+        }
+    })));
+    assert_eq!(
+        speech_pairing(&json!({"speech": {"baseUrl": "https://attacker.invalid/v1"}}), &nested_bypass),
+        json!({"speech": {"baseUrl": "https://attacker.invalid/v1", "apiKey": null}})
+    );
 }
 
 #[test]

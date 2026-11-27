@@ -11,6 +11,10 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
     let mut valid = snapshot.clone();
     for tab in &mut valid.tabs {
         let Tab::Workspace(saved) = tab else { continue };
+        saved.project_name = saved
+            .project_name
+            .as_deref()
+            .and_then(super::normalize_project_name);
         let mut shell = saved.clone();
         shell.drafts.clear();
         shell.attachment_drafts.clear();
@@ -69,6 +73,7 @@ fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
 }
 
 fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
+    super::drop_excess_project_names(snapshot)?;
     let excess = snapshot_string_units(snapshot)?.saturating_sub(MAX_STRINGS);
     if excess == 0 {
         return Ok(());
@@ -106,7 +111,21 @@ fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
 }
 
 fn fit_parts(snapshot: &mut Snapshot) -> Result<Vec<u8>, Error> {
-    let bytes = snapshot_bytes(snapshot)?;
+    let mut bytes = snapshot_bytes(snapshot)?;
+    if bytes.len() > MAX_BYTES {
+        for index in super::project_name_drop_order(snapshot) {
+            let changed = match &mut snapshot.tabs[index] {
+                Tab::Workspace(saved) => saved.project_name.take().is_some(),
+                Tab::Blank => false,
+            };
+            if changed {
+                bytes = snapshot_bytes(snapshot)?;
+                if bytes.len() <= MAX_BYTES {
+                    return Ok(bytes);
+                }
+            }
+        }
+    }
     let excess = bytes.len().saturating_sub(MAX_BYTES);
     if excess == 0 {
         return Ok(bytes);

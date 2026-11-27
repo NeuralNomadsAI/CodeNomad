@@ -145,6 +145,15 @@ async fn attest(mut backend: Backend, expected: Option<&str>) -> Reply {
     if expected.is_some_and(|expected| expected != id) {
         return Reply::Failed("authRecovery.unavailable");
     }
+    if !backend.session.is_empty() {
+        match backend.prompt_directory().await {
+            Ok(directory) => backend.session_directory = Some(directory),
+            Err(error) if codenomad_client::http::authentication_expired(&error) => {
+                return Reply::Required;
+            }
+            Err(_) => return Reply::Failed("authRecovery.unavailable"),
+        }
+    }
     let Ok(client) = codenomad_client::http::client_id() else {
         return Reply::Failed("authRecovery.unavailable");
     };

@@ -22,10 +22,10 @@ use super::{
 };
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ControlLocation {
-    pub(super) directory: String,
+pub(crate) struct ControlLocation {
+    pub(crate) directory: String,
     #[serde(rename = "workspaceID", skip_serializing_if = "Option::is_none")]
-    pub(super) workspace_id: Option<String>,
+    pub(crate) workspace_id: Option<String>,
     /// Raw JSON `location.directory` contained an unpaired UTF-16 surrogate (never substituted).
     #[serde(skip)]
     pub(super) unrepresentable_directory: bool,
@@ -35,14 +35,14 @@ pub(super) struct ControlLocation {
 }
 
 impl ControlLocation {
-    pub(super) fn new(directory: String, workspace_id: Option<String>) -> Self {
+    pub(crate) fn new(directory: String, workspace_id: Option<String>) -> Self {
         Self { directory, workspace_id, unrepresentable_directory: false, unrepresentable_workspace_id: false }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(super) enum ConfigScope {
+pub(crate) enum ConfigScope {
     Global,
     Project,
     Other,
@@ -60,7 +60,7 @@ impl From<Scope> for ConfigScope {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub(super) enum RuntimeSource {
+pub(crate) enum RuntimeSource {
     Builtin,
     Sdk,
     Local {
@@ -80,20 +80,20 @@ pub(super) enum RuntimeSource {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
-pub(super) struct RuntimeFeatures {
+pub(crate) struct RuntimeFeatures {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) server: Option<bool>,
+    pub(crate) server: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tui: Option<bool>,
+    pub(crate) tui: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) rpc: Option<bool>,
+    pub(crate) rpc: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) gui: Option<bool>,
+    pub(crate) gui: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
-pub(super) enum RuntimeState {
+pub(crate) enum RuntimeState {
     Active,
     Failed {
         error: String,
@@ -104,92 +104,92 @@ pub(super) enum RuntimeState {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct RuntimeEntry {
-    pub(super) key: String,
+pub(crate) struct RuntimeEntry {
+    pub(crate) key: String,
     #[serde(rename = "managedBy", skip_serializing_if = "Option::is_none")]
-    pub(super) managed_by: Option<&'static str>,
+    pub(crate) managed_by: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) id: Option<String>,
-    pub(super) source: RuntimeSource,
-    pub(super) features: RuntimeFeatures,
-    pub(super) state: RuntimeState,
+    pub(crate) id: Option<String>,
+    pub(crate) source: RuntimeSource,
+    pub(crate) features: RuntimeFeatures,
+    pub(crate) state: RuntimeState,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ConfiguredRule {
-    pub(super) selector: String,
-    pub(super) enabled: bool,
-    pub(super) scope: ConfigScope,
+pub(crate) struct ConfiguredRule {
+    pub(crate) selector: String,
+    pub(crate) enabled: bool,
+    pub(crate) scope: ConfigScope,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) path: Option<String>,
-    pub(super) order: usize,
+    pub(crate) path: Option<String>,
+    pub(crate) order: usize,
     #[serde(rename = "entryIndex")]
-    pub(super) entry_index: usize,
+    pub(crate) entry_index: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ConfiguredSource {
-    pub(super) target: String,
+pub(crate) struct ConfiguredSource {
+    pub(crate) target: String,
     #[serde(rename = "managedBy", skip_serializing_if = "Option::is_none")]
-    pub(super) managed_by: Option<&'static str>,
-    pub(super) scope: ConfigScope,
+    pub(crate) managed_by: Option<&'static str>,
+    pub(crate) scope: ConfigScope,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) path: Option<String>,
+    pub(crate) path: Option<String>,
     #[serde(rename = "entryIndex")]
-    pub(super) entry_index: usize,
+    pub(crate) entry_index: usize,
     #[serde(rename = "hasOptions")]
-    pub(super) has_options: bool,
+    pub(crate) has_options: bool,
     #[serde(rename = "pluginId", skip_serializing_if = "Option::is_none")]
-    pub(super) plugin_id: Option<String>,
+    pub(crate) plugin_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(super) enum ScopeRuleState {
+pub(crate) enum ScopeRuleState {
     Default,
     Enabled,
     Disabled,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ActivationControl {
-    pub(super) id: String,
+pub(crate) struct ActivationControl {
+    pub(crate) id: String,
     #[serde(rename = "managedBy", skip_serializing_if = "Option::is_none")]
-    pub(super) managed_by: Option<&'static str>,
+    pub(crate) managed_by: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) runtime: Option<RuntimeEntry>,
-    pub(super) builtin: bool,
-    pub(super) effective: ScopeRuleState,
-    pub(super) global: ScopeRuleState,
-    pub(super) project: ScopeRuleState,
+    pub(crate) runtime: Option<RuntimeEntry>,
+    pub(crate) builtin: bool,
+    pub(crate) effective: ScopeRuleState,
+    pub(crate) global: ScopeRuleState,
+    pub(crate) project: ScopeRuleState,
     #[serde(rename = "controllingRule", skip_serializing_if = "Option::is_none")]
-    pub(super) controlling_rule: Option<ConfiguredRule>,
+    pub(crate) controlling_rule: Option<ConfiguredRule>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) orphan: Option<bool>,
+    pub(crate) orphan: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ControlTarget {
-    pub(super) scope: &'static str,
-    pub(super) path: String,
-    pub(super) exists: bool,
+pub(crate) struct ControlTarget {
+    pub(crate) scope: &'static str,
+    pub(crate) path: String,
+    pub(crate) exists: bool,
     #[serde(rename = "expectedRevision", skip_serializing_if = "Option::is_none")]
-    pub(super) expected_revision: Option<String>,
+    pub(crate) expected_revision: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ConfiguredSummary {
-    pub(super) rules: Vec<ConfiguredRule>,
-    pub(super) sources: Vec<ConfiguredSource>,
+pub(crate) struct ConfiguredSummary {
+    pub(crate) rules: Vec<ConfiguredRule>,
+    pub(crate) sources: Vec<ConfiguredSource>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct Snapshot {
-    pub(super) location: ControlLocation,
-    pub(super) runtime: Vec<RuntimeEntry>,
-    pub(super) configured: ConfiguredSummary,
-    pub(super) controls: Vec<ActivationControl>,
-    pub(super) targets: Vec<ControlTarget>,
+pub(crate) struct Snapshot {
+    pub(crate) location: ControlLocation,
+    pub(crate) runtime: Vec<RuntimeEntry>,
+    pub(crate) configured: ConfiguredSummary,
+    pub(crate) controls: Vec<ActivationControl>,
+    pub(crate) targets: Vec<ControlTarget>,
 }
 
 #[derive(Clone, Debug)]

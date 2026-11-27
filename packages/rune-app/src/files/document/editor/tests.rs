@@ -87,6 +87,7 @@ fn reopening_requires_a_fresh_native_project_identity_after_git_init() {
         ui.document.set_project(Project {
             id: "owned".into(),
             path: "/private".into(),
+            temporary: false,
         });
         for (project, expected) in [("global", None), ("initialized", Some("initialized"))] {
             ui.open("first.txt".into());

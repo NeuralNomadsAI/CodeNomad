@@ -257,6 +257,14 @@ pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
     )
 }
 
+pub(crate) fn open_history(s: &mut State, tx: &mut Tx) {
+    if !s.notifications.in_app.opened {
+        s.notifications.in_app.pause_bubbles(tx.clock());
+        tx.focus_when_shown("notification-history-close", tx.focus_visible());
+        tx.instant();
+    }
+}
+
 fn close(s: &mut State, tx: &mut Tx) {
     s.notifications.in_app.resume_bubbles(tx.clock());
     tx.return_focus(theme::ANCHOR, tx.focus_visible());
