@@ -1093,3 +1093,63 @@ fn palette_toggle_focus_stashed_reconcile_device_attachment_404_and_auth_abandon
             .any(|(req, _)| req == "POST /api/workspaces/temporary/abandon HTTP/1.1")
     });
 }
+
+#[test]
+fn keep_then_close_aborts_detach_when_oversized_draft_arrives_in_flight() {
+    let server = MockServer::start(vec![MockReply {
+        status: "200 OK",
+        body: r#"{"ok":true}"#.into(),
+    }]);
+    let mut rt = connected_runtime(server.backend.clone());
+    open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-keep",
+        "/tmp/cn-keep-draft",
+        true,
+        vec![Session {
+            id: "s-keep".into(),
+            title: "Keep".into(),
+        }],
+    );
+    let temp_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    let oversized = "x".repeat(32_769);
+    rt.update(|s, tx| {
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-keep".into();
+                b.session = "s-keep".into();
+                b
+            })
+            .unwrap();
+        let _ = workspace::bound(s, &bound_backend);
+        s.draft.text = "short draft".into();
+        workspace::capture(s);
+        strings::with_locale("en", || {
+            open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx);
+            choose_keep(s, tx);
+        });
+        assert!(s.temporary.keeping.is_some());
+        // Simulate typing an oversized draft while POST /keep is still in flight.
+        s.draft.text = oversized.clone();
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        temp_key,
+        "tab must stay open when an oversized draft makes close_blocked true during keep"
+    );
+    assert!(
+        !workspace::active_workspace(&rt.state).unwrap().1.temporary,
+        "temporary marker must still be cleared after keep succeeds"
+    );
+    assert_eq!(
+        rt.state.draft.text.len(),
+        32_769,
+        "in-flight oversized draft must be preserved intact"
+    );
+}

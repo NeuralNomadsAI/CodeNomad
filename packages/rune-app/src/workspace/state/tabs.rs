@@ -355,6 +355,7 @@ pub fn rename_tab(s: &mut State, tab_key: &str, raw_name: &str) -> bool {
 
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     crate::shell::Panels::dismiss_outside(s, tx);
+    capture(s);
     if busy(s) {
         return;
     }
@@ -376,6 +377,20 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
 }
 
 pub fn close_ordinary(s: &mut State, id: &str, tx: &mut Tx) {
+    capture(s);
+    if busy(s) {
+        return;
+    }
+    let Some(index) = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.iter().position(|e| e.key == id))
+    else {
+        return;
+    };
+    if close_blocked(s, index) {
+        return;
+    }
     detach_entry(s, id, true, true, tx);
 }
 
