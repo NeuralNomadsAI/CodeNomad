@@ -25,10 +25,13 @@ export const MISSION_CALENDAR_CARRIER = "codenomad.mission-calendar"
 
 const slotSchema = z.object({ version: z.literal(1),
   // `ended`: seen no longer active, so later runs need not ask Missions again.
-  launched: z.object({ run: z.number().int().positive(), missionID: z.string().min(1).max(100), ended: z.literal(true).optional() }).strict().optional(),
+  launched: z.object({ automationID: z.string().min(1).max(100), run: z.number().int().positive(), missionID: z.string().min(1).max(100),
+    ended: z.literal(true).optional() }).strict().optional(),
   checkpoints: missionCheckpointsSchema.optional() }).strict()
-/** The calendar's latest Mission and event checkpoints, per project and Automation. */
-export const missionCalendarKey = (projectToken: string, automationID: string) => `codenomad-missions/calendar-v1/${projectToken}/${automationID}`
+/** A calendar with several date rules is several Automations naming the same calendar: they share its slot. */
+export const missionCalendarIDSchema = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
+/** The calendar's latest Mission and event checkpoints, per project and calendar (its only Automation's ID when it names none). */
+export const missionCalendarKey = (projectToken: string, calendar: string) => `codenomad-missions/calendar-v1/${projectToken}/${calendar}`
 
 /** OpenCode names an Automation run's message `msg_<automationID>_<run>`; nothing else is a calendar run. */
 export function missionCalendarOccurrence(messageID: string): { automationID: string; run: number } | undefined {
@@ -62,7 +65,7 @@ type Storage = { get(key: string): Promise<MissionJsonValue | undefined>; set(ke
 
 /** One occurrence: an ordinary one-time Mission, created and started, unless the
  * calendar's previous Mission is still active or its events (`news`) brought nothing
- * new. An active Mission leaves the events unread, so their news waits for it.
+ * new since the calendar's last launch. An active Mission leaves the events unread, so their news waits for it.
  * Repeating a run changes nothing. */
 export async function runMissionCalendar(control: MissionCalendarControl, storage: Storage,
   key: string, occurrence: { automationID: string; run: number },
@@ -74,7 +77,8 @@ export async function runMissionCalendar(control: MissionCalendarControl, storag
     return (await control.lifecycle({ missionID: map.id, action: "start", requestID: pending?.requestID ?? "calendar-start",
       expectedRevision: pending?.expectedRevision ?? map.revision })).mission
   }
-  const slot = slotSchema.safeParse(await storage.get(key)).data, repeated = slot?.launched?.run === occurrence.run
+  const slot = slotSchema.safeParse(await storage.get(key)).data
+  const repeated = slot?.launched?.automationID === occurrence.automationID && slot.launched.run === occurrence.run
   let launched = slot?.launched, checkpoints = slot?.checkpoints
   if (launched && !repeated && !launched.ended) {
     const previous = (await control.mission(launched.missionID)).mission
@@ -90,7 +94,7 @@ export async function runMissionCalendar(control: MissionCalendarControl, storag
     }
   }
   const created = (await control.create({ ...mission, prepared: true, requestID: `calendar_${occurrence.automationID}_${occurrence.run}` })).mission
-  await storage.set(key, { version: 1, launched: { run: occurrence.run, missionID: created.id }, ...(checkpoints ? { checkpoints } : {}) } as MissionJsonValue)
+  await storage.set(key, { version: 1, launched: { ...occurrence, missionID: created.id }, ...(checkpoints ? { checkpoints } : {}) } as MissionJsonValue)
   const started = await start(created)
   return { missionID: started.id, status: started.status }
 }

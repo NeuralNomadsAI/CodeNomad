@@ -3,7 +3,7 @@ import path from "node:path"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import type { Plugin } from "@opencode/plugin"
-import { MISSION_CALENDAR_CARRIER, MISSION_CALENDAR_TOOL, missionCalendarEventsSchema, missionCalendarKey, missionCalendarNews, missionCalendarOccurrence,
+import { MISSION_CALENDAR_CARRIER, MISSION_CALENDAR_TOOL, missionCalendarEventsSchema, missionCalendarIDSchema, missionCalendarKey, missionCalendarNews, missionCalendarOccurrence,
   runMissionCalendar, type MissionCalendarControl } from "../../missions/calendar-run"
 import { stableToken } from "../../missions/receipt-identity"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
@@ -38,10 +38,11 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
       try {
         const occurrence = missionCalendarOccurrence(tool.messageID)
         if (!occurrence || !(await ctx.session.get({ sessionID: tool.sessionID })).metadata?.[MISSION_CALENDAR_CARRIER]) throw new Error("mission-calendar-caller")
-        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, when } = input as Record<string, unknown>
+        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, when, calendar } = input as Record<string, unknown>
         const mission = parseCreateMissionInput({ objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, requestID: occurrence.automationID })
         const events = missionCalendarEventsSchema.parse(when ?? [])
-        const key = missionCalendarKey(stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24), occurrence.automationID)
+        const key = missionCalendarKey(stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24),
+          calendar === undefined ? occurrence.automationID : missionCalendarIDSchema.parse(calendar))
         // OpenCode gives the whole program 30 seconds.
         const read = events.length ? missionCalendarNews(events, ctx.location.directory, AbortSignal.timeout(20_000)) : undefined
         const news = read && ((previous: Parameters<typeof read>[0]) => read(previous).catch(() => { throw new Error("mission-calendar-source") }))

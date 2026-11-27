@@ -10,26 +10,24 @@ export type MissionCalendarAutomation = {
   trigger: { type: "cron"; cron: string; tz: string } | { type: "every"; every: string }
   action: { type: "code"; code: string; args: Record<string, unknown> }
 }
-export type MissionCalendarUnsupported = "one-time" | "several-schedules" | "fallback-schedule" | "event" | "followed-conversations" | "ending"
+export type MissionCalendarUnsupported = "one-time" | "fallback-schedule" | "ending" | "event" | "followed-conversations"
 
-/** The one native Automation that carries a Mission's launch criteria: a single date
- * rule with optional events as its condition, or events alone. Everything else names
- * what a single Automation cannot express. */
-export function missionCalendarAutomation(configuration: MissionConfiguration): MissionCalendarAutomation | { unsupported: MissionCalendarUnsupported } {
-  const model = missionLaunchModel(configuration.launch), schedule = model.schedules[0], plan = model.plans[0]
-  if (!model.schedules.length && !model.events.length) return { unsupported: "one-time" }
+/** The native Automations that carry a Mission's launch criteria under one calendar
+ * identity: one per date rule, each with the events after the rules as its condition,
+ * or one that asks for events alone. Everything else names what they cannot express. */
+export function missionCalendarAutomations(configuration: MissionConfiguration, calendar: string): MissionCalendarAutomation[] | { unsupported: MissionCalendarUnsupported } {
+  const model = missionLaunchModel(configuration.launch)
+  if (!model.schedules.length && !model.events.length || model.schedules.some(item => item.kind !== "cron" && item.kind !== "every")) return { unsupported: "one-time" }
   if (model.plans.some(item => item.fallback)) return { unsupported: "fallback-schedule" }
-  if (model.schedules.length > 1) return { unsupported: "several-schedules" }
-  if (schedule && schedule.kind !== "cron" && schedule.kind !== "every") return { unsupported: "one-time" }
   if (model.until !== null || model.endAfterMs !== null || model.maxLaunches !== null) return { unsupported: "ending" }
   if (configuration.watchedConversationIDs.length) return { unsupported: "followed-conversations" }
-  const events: MissionCondition[] = schedule ? plan!.conditions : model.triggers
-  if (!missionCalendarEventsSchema.safeParse(events).success) return { unsupported: "event" }
+  if (!missionCalendarEventsSchema.safeParse(model.events).success) return { unsupported: "event" }
   const { title, objective, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID } = configuration
-  // JSON drops what the configuration leaves out.
-  const args = JSON.parse(JSON.stringify({ title, objective, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID,
-    ...(events.length ? { when: events } : {}) })) as Record<string, unknown>
-  return { name: title, action: { type: "code", code: MISSION_CALENDAR_CODE, args },
-    trigger: schedule?.kind === "cron" ? { type: "cron", cron: schedule.expression, tz: schedule.zone }
-      : { type: "every", every: schedule?.kind === "every" ? `${schedule.intervalMs} millis` : MISSION_CALENDAR_EVENT_INTERVAL } }
+  const automation = (trigger: MissionCalendarAutomation["trigger"], events: MissionCondition[]): MissionCalendarAutomation => ({ name: title, trigger,
+    // JSON drops what the configuration leaves out.
+    action: { type: "code", code: MISSION_CALENDAR_CODE, args: JSON.parse(JSON.stringify({ calendar, title, objective, notes, template, taskMode, profiles,
+      coordinatorGoal, coordinatorSessionID, ...(events.length ? { when: events } : {}) })) } })
+  if (!model.schedules.length) return [automation({ type: "every", every: MISSION_CALENDAR_EVENT_INTERVAL }, model.triggers)]
+  return model.schedules.map((schedule, index) => automation(schedule.kind === "cron" ? { type: "cron", cron: schedule.expression, tz: schedule.zone }
+    : { type: "every", every: `${(schedule as { intervalMs: number }).intervalMs} millis` }, model.plans[index]!.conditions))
 }

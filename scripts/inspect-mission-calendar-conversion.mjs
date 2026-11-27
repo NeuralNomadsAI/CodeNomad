@@ -4,7 +4,7 @@
 import { DatabaseSync } from "node:sqlite"
 import os from "node:os"
 import path from "node:path"
-import { missionCalendarAutomation } from "../packages/server/src/missions/calendar-automation.ts"
+import { missionCalendarAutomations } from "../packages/server/src/missions/calendar-automation.ts"
 import { missionConfigurationSchema, requiresMissionCalendar } from "../packages/server/src/missions/launch-policy.ts"
 
 const file = process.argv[2] ?? path.join(os.homedir(), ".local", "share", "opencode", "opencode.db")
@@ -17,9 +17,9 @@ try {
     const parsed = missionConfigurationSchema.safeParse(doc.configuration)
     if (!parsed.success) { console.log(JSON.stringify({ id: doc.id, title: doc.configuration?.title, unreadable: true })); continue }
     if (!requiresMissionCalendar(parsed.data.launch)) continue
-    const automation = missionCalendarAutomation(parsed.data)
-    console.log(JSON.stringify("unsupported" in automation ? { id: doc.id, title: parsed.data.title, ...automation }
-      : { id: doc.id, title: parsed.data.title, trigger: automation.trigger, when: automation.action.args.when ?? [],
-        coordinator: automation.action.args.coordinatorSessionID ? "named" : "new each launch", arguments: Object.keys(automation.action.args) }))
+    const automations = missionCalendarAutomations(parsed.data, doc.id)
+    console.log(JSON.stringify(!Array.isArray(automations) ? { id: doc.id, title: parsed.data.title, ...automations }
+      : { id: doc.id, title: parsed.data.title, automations: automations.map(item => ({ trigger: item.trigger, when: item.action.args.when ?? [] })),
+        coordinator: automations[0].action.args.coordinatorSessionID ? "named" : "new each launch", arguments: Object.keys(automations[0].action.args) }))
   }
 } finally { db.close() }

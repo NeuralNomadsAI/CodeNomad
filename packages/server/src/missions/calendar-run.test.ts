@@ -31,7 +31,7 @@ function fixture() {
     mission: async (id: string) => ({ mission: missions.get(id) }),
   } as unknown as MissionCalendarControl
   const storage = { get: async (key: string) => values.get(key), set: async (key: string, value: MissionJsonValue) => { values.set(key, value) } }
-  const run = (number: number, news?: MissionCalendarNews) => runMissionCalendar(control, storage, "key", { automationID: "aut_a", run: number },
+  const run = (number: number, news?: MissionCalendarNews, automationID = "aut_a") => runMissionCalendar(control, storage, "key", { automationID, run: number },
     { objective: "Review", template: "custom" }, news)
   return { missions, calls, run, failStarts: (value: boolean) => { failStart = value } }
 }
@@ -99,4 +99,12 @@ test("a calendar waits only for events read from Git and the forges", () => {
   assert.equal(missionCalendarEventsSchema.safeParse([{ kind: "files-changed", paths: ["package.json"] }]).success, true)
   for (const event of [{ kind: "mission-completed", missionID: "msn_other" }, { kind: "conversation-message", conversationID: "ses_other" }])
     assert.equal(missionCalendarEventsSchema.safeParse([event]).success, false)
+})
+
+test("the Automations of one calendar share its Mission: a second date rule waits for the first one's launch", async () => {
+  const f = fixture()
+  assert.deepEqual(await f.run(1, undefined, "aut_morning"), { missionID: "msn_calendar_aut_morning_1", status: "active" })
+  assert.deepEqual(await f.run(1, undefined, "aut_evening"), { waiting: "msn_calendar_aut_morning_1" }, "the same run number of another Automation is another occurrence")
+  f.missions.get("msn_calendar_aut_morning_1")!.status = "completed"
+  assert.deepEqual(await f.run(2, undefined, "aut_evening"), { missionID: "msn_calendar_aut_evening_2", status: "active" })
 })
