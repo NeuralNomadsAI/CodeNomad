@@ -937,3 +937,57 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
         assert!(!unavailable.is::<crate::catalog::CreateRejected>());
     });
 }
+
+#[test]
+fn attest_server_reprobes_on_voluntary_stream_handoff_but_not_on_transport_drop() {
+    run(async {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let body =
+            br#"{"apiContract":1,"serverId":"fixture","capabilities":["settings-atomic-patches"]}"#;
+        let worker = thread::spawn(move || {
+            for step in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf);
+                if step == 0 || step == 2 {
+                    arrived_tx.send(step).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).unwrap();
+                socket.write_all(body).unwrap();
+            }
+        });
+
+        let backend = Backend::unauthenticated(&address).unwrap();
+        let guard_handoff = backend.client.track_stream("outgoing");
+        assert!(guard_handoff.try_mark_open(&backend.client, true));
+        let client = backend.client.clone();
+        let detach = thread::spawn(move || {
+            assert_eq!(arrived_rx.recv().unwrap(), 0);
+            guard_handoff.close_and_revoke(&client, true, false);
+            release_tx.send(()).unwrap();
+            let guard_drop = client.track_stream("dropped");
+            assert!(guard_drop.try_mark_open(&client, true));
+            assert_eq!(arrived_rx.recv().unwrap(), 2);
+            guard_drop.close_and_revoke(&client, true, true);
+            release_tx.send(()).unwrap();
+        });
+
+        assert_eq!(backend.attest_server().await.unwrap(), "fixture");
+        assert!(backend.client.supports_atomic_settings_patches());
+        assert!(!backend.client.needs_capability_recheck());
+        assert_eq!(
+            backend.attest_server().await.unwrap_err().to_string(),
+            "Transport changed during server attestation"
+        );
+        detach.join().unwrap();
+        worker.join().unwrap();
+    });
+}

@@ -1,15 +1,27 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
 
-export async function historySearch(page, messages, touch, {holdNextAnchor, holdNextPreview}) {
+export async function historySearch(page, messages, touch, {holdNextAnchor, holdNextPreview, attestedPatch}) {
+  assert(typeof attestedPatch==='function','Attested PATCH helper required for historySearch')
   const viewport=page.viewportSize()
   const cdp=touch&&await page.context().newCDPSession(page)
   const resize=async size=>{
+    const cur=page.viewportSize()
+    const changed=!cur||cur.width!==size.width||cur.height!==size.height
+    const prev=await page.evaluate(()=>[...document.querySelectorAll('[data-rune-a11y] > button')].map(el=>el.style.cssText).join('|'))
     await page.setViewportSize(size)
-    await page.waitForFunction(({width,height})=>{
-      const box=document.querySelector('canvas')?.getBoundingClientRect()
-      return box&&Math.abs(box.width-width)<=1&&Math.abs(box.height-height)<=1
-    },size)
+    await page.waitForFunction(({width,height,prev,changed})=>{
+      const canvas=document.querySelector('canvas')
+      const box=canvas?.getBoundingClientRect()
+      if(!box||Math.abs(box.width-width)>1||Math.abs(box.height-height)>1)return false
+      if(!canvas.width||!canvas.height||Math.abs(canvas.width/canvas.height-width/height)>=0.05)return false
+      const buttons=[...document.querySelectorAll('[data-rune-a11y] > button')]
+      if(!buttons.length)return false
+      const maxRight=Math.max(...buttons.map(el=>el.getBoundingClientRect().right))
+      if(maxRight<width-32||maxRight>width+2)return false
+      return !changed||buttons.map(el=>el.style.cssText).join('|')!==prev
+    },{...size,prev,changed},{timeout:15_000})
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
   }
   const landscape={width:844,height:390}
   if(touch)await resize(landscape)
@@ -77,14 +89,14 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     await event('touchStart',0,0)
     await event('touchMove',10,14)
     await event('touchMove',40,distance)
-    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search textarea focused')
+    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search input focused')
     await event('touchEnd')
   }else{
     // Move the window away from the transcript area sampled for active-match ink.
     await page.mouse.move(x,y)
     await page.mouse.down()
     await page.mouse.move(x+40,y+distance,{steps:5})
-    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search textarea focused')
+    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search input focused')
     await page.mouse.up()
   }
   await title.evaluate((element,start)=>new Promise((resolve,reject)=>{
@@ -109,7 +121,7 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     assert.equal(windows,0,'A resident result needs no window')
     const technical=search.getByRole('checkbox',{name:messages['history.technical'],exact:true})
     await Promise.all([read('query'),activate(technical)])
-    assert.equal(await technical.getAttribute('aria-checked'),'true')
+    await search.getByRole('checkbox',{name:messages['history.technical'],exact:true,checked:true}).waitFor()
     const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
     const grep=rail.getByRole('button',{name:'grep',exact:true}).first()
     const toolHit='Existing technical tool match'
@@ -123,10 +135,10 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
       assert.equal(await page.getByRole('heading',{name:'Another session',exact:true}).count(),0)
     }
     const setTool=async mode=>{
-      const response=await page.request.patch(new URL('/api/storage/config/ui',page.url()).href,{data:{
+      const response=await attestedPatch('/api/storage/config/ui',{
         settings:{toolCallExpansionDefaults:{tools:{grep:mode}}},
-      }})
-      assert(response.ok())
+      })
+      assert(response.ok,`History search config PATCH failed with status ${response.status}`)
     }
     await grep.waitFor()
     await setTool('hidden')
@@ -139,20 +151,15 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     await grep.waitFor()
     assert.equal(await toolBody.count(),0,'Showing the tool must leave its group collapsed')
     await installPngReader(page)
-    const matchInk=async (box, active)=>{
+    const activeInk=async box=>{
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-      return page.evaluate(async ({png,active})=>{
+      return page.evaluate(async png=>{
         const [{pixels}]=await globalThis.__codenomadReadPngs([`data:image/png;base64,${png}`])
-        // Ranked prose uses translucent ink: sample its rendered blends in both fixture palettes.
-        const colors=active?[[250,204,21]]:[[235,213,163],[86,82,74]]
-        const tolerance=active?0:2
-        let matches=0
         for(let i=0;i<pixels.length;i+=4){
-          if(colors.some(([r,g,b])=>Math.abs(pixels[i]-r)<=tolerance&&Math.abs(pixels[i+1]-g)<=tolerance&&Math.abs(pixels[i+2]-b)<=tolerance)
-            && ++matches>=(active?1:32))return true
+          if(pixels[i]===250&&pixels[i+1]===204&&pixels[i+2]===21)return true
         }
         return false
-      },{png:(await page.screenshot(box?{clip:box}:{})).toString('base64'),active})
+      },(await page.screenshot(box?{clip:box}:{})).toString('base64'))
     }
     for(const [hit,body] of [
       ['Existing technical tool match','Found Existing technical tool match'],
@@ -162,7 +169,7 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
       await filtered.waitFor({state:'detached'})
       await page.getByText(body,{exact:true}).and(page.locator('p, pre, code')).first().waitFor()
       if(touch)continue
-      assert(await matchInk(undefined,true),`The active occurrence is painted for ${hit}`)
+      assert(await activeInk(),`The active occurrence is painted for ${hit}`)
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
     await press(search,'Existing arguments only')
@@ -249,20 +256,27 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
       await more.waitFor()
       // Rune may still be returning from elastic overscroll after CDP ends the gesture.
       // Tap only once the painted button is stable, rather than chasing it with a second tap.
-      await more.evaluate(element=>new Promise((resolve,reject)=>{
-        let previous, stable=0
+      await more.evaluate((element,bottom)=>new Promise((resolve,reject)=>{
+        let previous, stable=0, stableSince=0
         const deadline=performance.now()+3000
         const sample=now=>{
           const {x,y,width,height}=element.getBoundingClientRect()
           const rect=[x,y,width,height].join()
-          stable=width>0&&height>0&&rect===previous?stable+1:0
+          if(width>0&&height>0&&y+height<=bottom&&rect===previous){
+            stable++
+            if(stable>=4&&now-stableSince>=200)resolve()
+            else if(now>=deadline)reject(Error('Continuation never settled after the swipe'))
+            else requestAnimationFrame(sample)
+            return
+          }
           previous=rect
-          if(stable>=4)resolve()
-          else if(now>=deadline)reject(Error('Continuation never settled after the swipe'))
+          stable=0
+          stableSince=now
+          if(now>=deadline)reject(Error('Continuation never settled after the swipe'))
           else requestAnimationFrame(sample)
         }
         requestAnimationFrame(sample)
-      }))
+      }),bottom)
       assert(await inside(more),'Scrolling the window body reveals the continuation')
       assert.deepEqual(await close.boundingBox(),toolbar,'The toolbar stays fixed while the body scrolls')
       const [older]=await Promise.all([read('ranked'),activate(more)])
@@ -343,7 +357,7 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     const arrival=page.getByRole('paragraph').filter({hasText:'Existing ranked destination'})
     await arrival.waitFor()
     const box=await arrival.boundingBox()
-    assert(box&&await matchInk(box,false),'The destination passage paints the ranked search highlight')
+    assert(box&&await activeInk(box),'The destination passage paints the active search highlight')
   }finally{
     page.off('request',count)
     if(touch)await resize(viewport)
