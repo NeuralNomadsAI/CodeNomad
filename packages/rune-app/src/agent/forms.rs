@@ -341,7 +341,6 @@ pub enum ValidationError {
     Unsupported,
     Required,
     SelectDeclaredOption,
-    DuplicateCustomOption,
     InvalidFormat,
     TooShort { min: u64 },
     TooLong { max: u64 },
@@ -569,7 +568,7 @@ fn strip_leaked_defaults(
         if field["type"] != "boolean" && next.edit.text == raw {
             next.edit = TextEdit::new("");
             next.edit_baseline.clear();
-            next.explicit_empty_default = false;
+            next.has_string_value = false;
         }
         if next.custom.text == raw {
             next.custom = TextEdit::new("");
@@ -634,7 +633,7 @@ pub struct Draft {
     pub preserved_custom_selected: BTreeSet<String>,
     pub multiselect_order: Option<Vec<String>>,
     pub oversized_multiselect_default: bool,
-    pub explicit_empty_default: bool,
+    pub has_string_value: bool,
     pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
@@ -661,7 +660,15 @@ impl Draft {
         self.dirty = true;
     }
     pub fn clear_choice(&mut self) {
-        if self.choice.take().is_some() {
+        let cleared_choice = self.choice.take().is_some();
+        let cleared_custom = if !self.custom.text.is_empty() {
+            self.custom = TextEdit::new("");
+            self.custom_baseline.clear();
+            true
+        } else {
+            false
+        };
+        if cleared_choice || cleared_custom {
             self.dirty = true;
         }
     }
@@ -739,7 +746,7 @@ impl Default for Draft {
             preserved_custom_selected: BTreeSet::new(),
             multiselect_order: None,
             oversized_multiselect_default: false,
-            explicit_empty_default: false,
+            has_string_value: false,
             hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
@@ -893,9 +900,7 @@ fn fresh_draft(field: &Value) -> Draft {
                 d.hidden_value = Some(raw.to_string());
             } else {
                 d.edit = TextEdit::new(raw);
-                if raw.is_empty() {
-                    d.explicit_empty_default = true;
-                }
+                d.has_string_value = true;
             }
         }
     } else if !value.is_null() {
@@ -1316,7 +1321,7 @@ pub fn validate_budgeted(
                 }
                 let options = normalized_options(field);
                 let is_declared = options.iter().any(|o| o.value == selected_text);
-                if (from_custom && is_declared) || (!from_custom && !is_declared) {
+                if !from_custom && !is_declared {
                     return Err(ValidationError::SelectDeclaredOption);
                 }
                 let n = selected_text.encode_utf16().count() as u64;
@@ -1343,13 +1348,17 @@ pub fn validate_budgeted(
             }
             let hidden_present =
                 field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
-            let explicit_empty = !d.is_dirty() && d.explicit_empty_default && text.is_empty();
+            let has_constraints = min_len.is_some_and(|m| m > 0)
+                || field["format"].is_string()
+                || field["pattern"].as_str().is_some_and(|p| !p.is_empty());
+            let empty_present =
+                text.is_empty() && (d.has_string_value || (d.is_dirty() && !has_constraints));
             let effective_raw = if hidden_present {
                 d.hidden_value.as_deref().unwrap_or("")
             } else {
                 text
             };
-            if effective_raw.is_empty() && !hidden_present && !explicit_empty {
+            if effective_raw.is_empty() && !hidden_present && !empty_present {
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
@@ -1508,9 +1517,6 @@ pub fn validate_budgeted(
                 for entry in parse_custom_entries(&d.custom.text) {
                     if entry.value.is_empty() {
                         continue;
-                    }
-                    if is_declared(&entry.value) {
-                        return Err(ValidationError::DuplicateCustomOption);
                     }
                     parsed_custom.push(entry.value);
                 }

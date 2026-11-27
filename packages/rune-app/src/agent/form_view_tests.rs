@@ -229,7 +229,7 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             assert_eq!(env_group["description"], "Pick deployment target");
             assert_eq!(opt_staging["role"], "radio-button");
             assert_eq!(opt_staging["name"], "Staging");
-            assert_eq!(opt_staging["description"], "Pre-production");
+            assert_eq!(opt_staging["description"], "Pre-production · Environment");
             assert!(has_state(opt_staging, "unchecked"), "{opt_staging}");
             assert!(has_state(opt_prod, "unchecked"), "{opt_prod}");
 
@@ -1167,31 +1167,18 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             d.custom_editor().text.push_str("\nnew");
         });
         mrt.frame(2.0);
-        // Typing declared option "prod" into custom-targets while Production is unchecked must
-        // block submission with a field-associated conflict instead of silently dropping it.
+        // Typing declared option "prod" alongside custom text into custom-targets submits both
+        // entries cleanly, matching Solid and OpenCode.
         {
             let a = mrt.state.agent.as_ref().unwrap();
-            let td = &a.drafts[&("form-multi-edges".into(), "targets".into())];
+            let ans_with_declared = agent_forms::answer(&a.forms[0], &a.drafts)
+                .expect("declared value entered via custom multiselect input must submit");
             assert_eq!(
-                agent_forms::validate(&a.forms[0].fields[0], td),
-                Err(agent_forms::ValidationError::DuplicateCustomOption)
+                ans_with_declared["targets"],
+                json!(["prod", "extra-custom"])
             );
-            assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
         }
-        let conflict_tree = mrt.accessibility_json();
-        assert!(has_state(
-            find_input(&conflict_tree, "custom-targets"),
-            "invalid"
-        ));
-        assert_eq!(
-            find_node(&conflict_tree, "error:7:targets").unwrap()["name"],
-            "Clear — Other values"
-        );
-        assert!(has_state(
-            find_node(&conflict_tree, "answer-question").unwrap(),
-            "disabled"
-        ));
-        // Removing "prod" from custom-targets resolves the conflict and submits cleanly.
+        // Replacing custom-targets with "extra-custom" submits only the custom value.
         mrt.update(|s, _| {
             let d = s
                 .agent
@@ -1205,11 +1192,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         mrt.frame(3.0);
         let a = mrt.state.agent.as_ref().unwrap();
         let mans = agent_forms::answer(&a.forms[0], &a.drafts).expect("valid multiselect answer");
-        assert_eq!(
-            mans["targets"],
-            json!(["extra-custom"]),
-            "unchecked declared option must not be submitted via custom text"
-        );
+        assert_eq!(mans["targets"], json!(["extra-custom"]));
         assert_eq!(
             mans["multiline"],
             json!(["team\nlocal", "new"]),
@@ -1481,39 +1464,41 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             assert_eq!((md.custom.anchor, md.custom.focus), (0, 4));
             assert_eq!(
                 agent_forms::validate(&a.forms[0].fields[0], md),
-                Err(agent_forms::ValidationError::DuplicateCustomOption)
+                Ok(Some(json!(["prod"])))
             );
             let rd = &a.drafts[&("form-r6-ident".into(), "radio_env".into())];
             assert_eq!(rd.choice, None);
             assert_eq!(rd.custom.text, "prod");
             assert_eq!((rd.custom.anchor, rd.custom.focus), (1, 3));
-            // Typing a declared string option's wire value into custom while the radio is
-            // unchecked must conflict and block submission rather than submitting an unchecked radio.
+            // Typing a declared string option's value into custom resolves cleanly (matching Solid)
+            // without disturbing the editor caret on identical snapshot refresh.
             assert_eq!(
                 agent_forms::validate(&a.forms[0].fields[1], rd),
-                Err(agent_forms::ValidationError::SelectDeclaredOption)
+                Ok(Some(json!("prod")))
             );
-            assert!(agent_forms::value(&a.forms[0].fields[1], rd).is_err());
-            assert!(agent_forms::answer(&a.forms[0], &a.drafts).is_err());
+            let ans = agent_forms::answer(&a.forms[0], &a.drafts)
+                .expect("exact declared custom values must submit cleanly");
+            assert_eq!(ans["multi_env"], json!(["prod"]));
+            assert_eq!(ans["radio_env"], json!("prod"));
         }
         let id_tree = id_rt.accessibility_json();
-        assert!(has_state(
+        assert!(!has_state(
             find_input(&id_tree, "custom-multi_env"),
             "invalid"
         ));
-        assert_eq!(
-            find_node(&id_tree, "error:9:multi_env").unwrap()["name"],
-            "Clear — Other values"
-        );
-        assert!(has_state(
+        assert!(!has_state(
             find_input(&id_tree, "custom-radio_env"),
             "invalid"
         ));
-        let err_node = find_node(&id_tree, "error:9:radio_env")
-            .expect("conflict alert for declared string option in custom input");
-        assert_eq!(err_node["role"], "alert");
-        assert_eq!(err_node["name"], "Select an option");
         assert!(has_state(
+            find_node(
+                &id_tree,
+                &agent_forms::string_option_key("radio_env", "prod")
+            )
+            .unwrap(),
+            "checked"
+        ));
+        assert!(!has_state(
             find_node(&id_tree, "answer-question").unwrap(),
             "disabled"
         ));
@@ -4913,10 +4898,205 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         for i in 0..64 {
             let opt_key = agent_forms::string_option_key("choice", &format!("v{i}"));
             let opt_node = find_node(&dtree, &opt_key).unwrap();
-            assert!(
-                opt_node["description"].is_null(),
-                "radio option {i} must not duplicate the 1 MiB field description"
+            assert_eq!(
+                opt_node["description"].as_str(),
+                Some("Choice"),
+                "radio option {i} must carry only the short field caption, never the 1 MiB field description"
             );
         }
+    });
+}
+
+#[test]
+fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared_values_and_keyed_regex_cache()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Tabbing between two Yes/No questions exposes each focused radio's own question
+        // caption on the active descendant proxy itself (not only on the mirrored group).
+        let two_yes_no = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r19-active".into(),
+            title: "Confirmations".into(),
+            fields: vec![
+                json!({
+                    "key": "proceed",
+                    "title": "Proceed now?",
+                    "type": "boolean",
+                    "required": true
+                }),
+                json!({
+                    "key": "notify",
+                    "title": "Notify team?",
+                    "type": "boolean",
+                    "required": true
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(two_yes_no);
+        let mut art = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        art.frame(0.0);
+        // First Tab lands on the first radio group's selected radio ("No" for Proceed now?).
+        press_key(&mut art, Key::Tab);
+        let first_focus = focused_key(&mut art).expect("first focused radio");
+        assert_eq!(first_focus, "bool-proceed-false");
+        let web_items_1: Vec<serde_json::Value> = serde_json::from_str(&art.a11y_json()).unwrap();
+        let active_1 = web_items_1
+            .iter()
+            .find(|item| {
+                item["p"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(&format!("/{first_focus}")))
+            })
+            .expect("active descendant web item for first radio");
+        assert!(
+            active_1["d"]
+                .as_str()
+                .is_some_and(|d| d.contains("Proceed now?") && d.contains("Question Required")),
+            "focused active descendant must identify its own question: {active_1}"
+        );
+        // Tab to second radio group's selected radio ("No" for Notify team?).
+        press_key(&mut art, Key::Tab);
+        let second_focus = focused_key(&mut art).expect("second focused radio");
+        assert_eq!(second_focus, "bool-notify-false");
+        let web_items_2: Vec<serde_json::Value> = serde_json::from_str(&art.a11y_json()).unwrap();
+        let active_2 = web_items_2
+            .iter()
+            .find(|item| {
+                item["p"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(&format!("/{second_focus}")))
+            })
+            .expect("active descendant web item for second radio");
+        assert!(
+            active_2["d"]
+                .as_str()
+                .is_some_and(|d| d.contains("Notify team?") && d.contains("Question Required")),
+            "second focused active descendant must identify its own question: {active_2}"
+        );
+
+        // 2. Desktop accepts unpadded JS `Date.parse` dates like `2026-2-3` on required hidden
+        // `date-time` fields and submits them verbatim.
+        let unpadded_dt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r19-unpadded-dt".into(),
+            title: "Unpadded date".into(),
+            fields: vec![json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "2026-2-3"
+            })],
+        };
+        let mut dt_drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&unpadded_dt_form), &mut dt_drafts);
+        let dt_ans = agent_forms::answer(&unpadded_dt_form, &dt_drafts)
+            .expect("unpadded date-time default `2026-2-3` must pass on desktop");
+        assert_eq!(dt_ans["when"], json!("2026-2-3"));
+
+        // 3. Typing into an optional text field with `default: ""` and then clearing it back to
+        // `""` re-activates `when: eq ""` and submits `""` instead of omitting both keys.
+        let cleared_empty_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r19-cleared-empty".into(),
+            title: "Cleared empty".into(),
+            fields: vec![
+                json!({
+                    "key": "note",
+                    "title": "Note",
+                    "type": "string",
+                    "default": ""
+                }),
+                json!({
+                    "key": "followup",
+                    "title": "Follow-up",
+                    "type": "string",
+                    "default": "shown",
+                    "when": [{"key": "note", "op": "eq", "value": ""}]
+                }),
+            ],
+        };
+        let mut cdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&cleared_empty_form), &mut cdrafts);
+        cdrafts
+            .get_mut(&("form-r19-cleared-empty".into(), "note".into()))
+            .unwrap()
+            .editor()
+            .text = "x".into();
+        let while_typed = agent_forms::answer(&cleared_empty_form, &cdrafts).unwrap();
+        assert_eq!(while_typed, json!({"note": "x"}));
+        cdrafts
+            .get_mut(&("form-r19-cleared-empty".into(), "note".into()))
+            .unwrap()
+            .editor()
+            .text
+            .clear();
+        let after_clear = agent_forms::answer(&cleared_empty_form, &cdrafts)
+            .expect("clearing a defaulted empty string must keep value presence");
+        assert_eq!(after_clear, json!({"note": "", "followup": "shown"}));
+
+        // 4. Custom multiselect with declared option `prod` and `minItems: 2` accepts `prod, prod`
+        // in custom input, and custom scalar input matching a declared option selects & submits it.
+        let custom_declared_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r19-declared-custom".into(),
+            title: "Custom declared".into(),
+            fields: vec![
+                json!({
+                    "key": "targets",
+                    "title": "Targets",
+                    "type": "multiselect",
+                    "custom": true,
+                    "minItems": 2,
+                    "options": [{"value": "prod", "label": "Production"}]
+                }),
+                json!({
+                    "key": "tier",
+                    "title": "Tier",
+                    "type": "string",
+                    "custom": true,
+                    "options": [{"value": "prod", "label": "Production"}]
+                }),
+            ],
+        };
+        let mut mdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&custom_declared_form), &mut mdrafts);
+        mdrafts
+            .get_mut(&("form-r19-declared-custom".into(), "targets".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "prod, prod".into();
+        mdrafts
+            .get_mut(&("form-r19-declared-custom".into(), "tier".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "prod".into();
+        let mans = agent_forms::answer(&custom_declared_form, &mdrafts)
+            .expect("custom declared values and multiplicity must match Solid and OpenCode");
+        assert_eq!(mans["targets"], json!(["prod", "prod"]));
+        assert_eq!(mans["tier"], json!("prod"));
+
+        // 5. Pattern validation cache works consistently across repeated checks without storing
+        // plaintext draft values (keyed 128-bit digests only).
+        let secret_field = json!({
+            "key": "token",
+            "title": "Token",
+            "type": "string",
+            "required": true,
+            "pattern": "^sk-[a-z0-9]{4,}$"
+        });
+        let mut sd = agent_forms::Draft::default();
+        sd.editor().text = "sk-secret1234".into();
+        assert_eq!(
+            agent_forms::value(&secret_field, &sd),
+            Ok(Some(json!("sk-secret1234")))
+        );
+        sd.editor().text = "bad".into();
+        assert!(agent_forms::value(&secret_field, &sd).is_err());
     });
 }

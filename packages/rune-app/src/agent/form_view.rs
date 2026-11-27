@@ -41,13 +41,6 @@ fn validation_message(err: &agent_forms::ValidationError) -> String {
         agent_forms::ValidationError::SelectDeclaredOption => {
             t("formRequest.selectPlaceholder").to_string()
         }
-        agent_forms::ValidationError::DuplicateCustomOption => {
-            format!(
-                "{} — {}",
-                t("sessionList.selection.clearLabel"),
-                t("rune.other_values")
-            )
-        }
         agent_forms::ValidationError::TooShort { min } => {
             let limit = format!("≥ {min}");
             catalogue::format(
@@ -98,6 +91,17 @@ fn join_notes(parts: &[Option<&str>]) -> Option<String> {
         .filter(|s| !s.is_empty())
         .collect();
     (!joined.is_empty()).then(|| joined.join(" · "))
+}
+
+fn short_field_caption(name: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let mut chars = name.chars();
+    let prefix: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
 }
 
 fn field_title(field: &serde_json::Value) -> Option<&str> {
@@ -227,12 +231,17 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
             .and_then(|err| agent_forms::visible_validation_error_for(err, d));
         let error_text = validation_error.as_ref().map(validation_message);
         let is_invalid = error_text.is_some();
+        let short_caption = short_field_caption(&field_name);
         match field["type"].as_str() {
             Some("boolean") => {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
                 let req_note = required.then(|| t("toolCall.question.status.required"));
                 let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
-                let option_note = join_notes(&[req_note, error_text.as_deref()]);
+                let option_note = join_notes(&[
+                    Some(short_caption.as_str()),
+                    req_note,
+                    error_text.as_deref(),
+                ]);
                 let items = CHOICES
                     .iter()
                     .enumerate()
@@ -277,18 +286,17 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let valid = agent_forms::normalized_options(field);
                 let allow_custom = field["custom"] == true;
                 let custom_active = allow_custom && !d.custom.text.is_empty();
-                let custom_conflict =
-                    validation_error == Some(agent_forms::ValidationError::SelectDeclaredOption);
-                let has_choice = !custom_active && d.choice.is_some();
+                let has_choice = (!custom_active && d.choice.is_some())
+                    || (custom_active && valid.iter().any(|o| o.value == d.custom.text));
                 let shared_required = required && !valid.is_empty() && allow_custom;
                 let req_note = required.then(|| t("toolCall.question.status.required"));
                 let shared_req_note =
                     shared_required.then(|| t("toolCall.question.status.required"));
-                let custom_invalid = custom_conflict
-                    || (allow_custom && (valid.is_empty() || custom_active) && is_invalid);
-                let radio_invalid =
-                    !valid.is_empty() && is_invalid && !custom_conflict && !custom_active;
+                let custom_invalid =
+                    allow_custom && (valid.is_empty() || custom_active) && is_invalid;
+                let radio_invalid = !valid.is_empty() && is_invalid && !custom_active;
                 let radio_note = join_notes(&[
+                    Some(short_caption.as_str()),
                     req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -305,8 +313,9 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         .enumerate()
                         .map(|(index, option)| {
                             let label = option_label(*option, index);
-                            let selected =
-                                !custom_active && d.choice.as_deref() == Some(option.value);
+                            let selected = (!custom_active
+                                && d.choice.as_deref() == Some(option.value))
+                                || (custom_active && d.custom.text == option.value);
                             let value = option.value.to_string();
                             let id = identity.clone();
                             form_controls::radio_option(
@@ -425,12 +434,11 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 let has_choices =
                     !valid.is_empty() || (allow_custom && !d.preserved_custom.is_empty());
                 let shared_required = required && has_choices && allow_custom;
-                let custom_conflict =
-                    validation_error == Some(agent_forms::ValidationError::DuplicateCustomOption);
-                let checkbox_invalid = is_invalid && !custom_conflict;
+                let checkbox_invalid = is_invalid;
                 let req_note =
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
                 let choice_note = join_notes(&[
+                    Some(short_caption.as_str()),
                     req_note,
                     checkbox_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
