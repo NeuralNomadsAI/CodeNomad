@@ -11,7 +11,7 @@ import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import { assertOutsideAccount, assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
+import { assertOutsideAccount, assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const rawExe = process.argv[2]
 assert(path.isAbsolute(rawExe ?? ""), "usage: node service.mjs <absolute opencode executable> (Windows)")
@@ -54,6 +54,7 @@ const password = `bench-${Math.random().toString(36).slice(2)}`
 async function profile(label) {
   const root = path.join(out, "tmp", "opencode", `service-${label}-${Date.now()}`)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => INHERITED.test(k)))
+  await sanitizeBenchEnvPath(env, { allowedRoot: root })
   Object.assign(env, { HOME: root, USERPROFILE: root, APPDATA: path.join(root, "AppData", "Roaming"), LOCALAPPDATA: path.join(root, "AppData", "Local"),
     ProgramData: path.join(root, "ProgramData"), TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"),
     XDG_CONFIG_HOME: path.join(root, "xdg-config"), XDG_DATA_HOME: path.join(root, "xdg-data"), XDG_CACHE_HOME: path.join(root, "xdg-cache"),

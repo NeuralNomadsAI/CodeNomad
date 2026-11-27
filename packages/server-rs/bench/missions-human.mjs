@@ -7,7 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
-import { assertPrivateHost, assertPrivateOpenCodeExecutable, outsideUserHome } from "./private-profile.mjs"
+import { assertPrivateHost, assertPrivateOpenCodeExecutable, outsideUserHome, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const [rawSource, binary, plugins] = process.argv.slice(2)
 assert([rawSource, binary, plugins].every(p => p && path.isAbsolute(p)),
@@ -54,6 +54,7 @@ try {
     const password = randomUUID()
     const vars = { ...env, CLI_CONFIG: config, CODENOMAD_SERVER_PASSWORD: password,
       CODENOMAD_REMOTE_CONTROL: "disabled", FIXTURE_NATIVE_URL: url, FIXTURE_NATIVE_PASSWORD: nativePassword }
+    await sanitizeBenchEnvPath(vars, { allowedRoot: fixture })
     await assertPrivateHost(vars, fixture, config)
     await writeFile(config, `server:\n  opencodeBinary: ${JSON.stringify(shim)}\n`)
     const child = spawn(rust, ["serve", "--http", "true", "--http-port", "0", "--https", "false",

@@ -13,7 +13,7 @@ import tls from "node:tls"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
-import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 export function buildHardeningGitEnv(sourceEnv = process.env, platform = process.platform) {
   const clean = Object.fromEntries(Object.entries(sourceEnv).filter(([key]) => !/^GIT_/i.test(key)))
@@ -81,11 +81,14 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
   await writeFile(path.join(repo, "a.txt"), "one\n")
   git(repo, "add", "a.txt"); git(repo, "commit", "-q", "-m", "init")
   const password = randomUUID()
+  const childEnv = await sanitizeBenchEnvPath({
+    ...env, CNRS_FIXTURE_URL: connection.endpoint.url, CNRS_FIXTURE_PASSWORD: connection.endpoint.auth.password,
+    CNRS_SERVER_PASSWORD: password, CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1",
+    CNRS_FIXTURE_INGRESS: "1", CNRS_FIXTURE_STDIN_STOP: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "NUL",
+  }, { allowedRoot: home })
   const child = spawn(bin, [projects, path.join(home, "hardening.json"), "0", cli], {
     cwd: home, windowsHide: true,
-    env: { ...env, CNRS_FIXTURE_URL: connection.endpoint.url, CNRS_FIXTURE_PASSWORD: connection.endpoint.auth.password,
-      CNRS_SERVER_PASSWORD: password, CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1",
-      CNRS_FIXTURE_INGRESS: "1", CNRS_FIXTURE_STDIN_STOP: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "NUL" },
+    env: childEnv,
   })
   const stopped = new Promise(r => child.once("close", r))
   let lines = ""; for (const s of [child.stdout, child.stderr]) s.on("data", b => lines += b)

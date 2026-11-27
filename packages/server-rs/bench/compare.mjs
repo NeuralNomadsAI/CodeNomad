@@ -8,7 +8,7 @@ import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { inspect } from "node:util"
-import { assertPrivateOpenCodeExecutable, assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
+import { assertPrivateOpenCodeExecutable, assertPrivateProfile, outsideUserHome, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const MODES = ["http", "files", "contract", "history-bytes", "history-search", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, rawExe] = process.argv.slice(2)
@@ -137,6 +137,7 @@ async function start(label, fixture, folder, password, trustedCA) {
   const serve = label === "rs" && missionServe
   env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
     : path.join(root, serve || mode === "host" || bench?.configure ? "rust.yaml" : "rust.data")
+  await sanitizeBenchEnvPath(env, { allowedRoot: root })
   await assertPrivateProfile(root, env, resolveConfigLocation(env.CLI_CONFIG))
   const uiDir = await bench?.ui?.(root) ?? path.join(out, "ui")
   if (bench?.ui) env.CNRS_FIXTURE_UI_DIR = uiDir
@@ -560,8 +561,8 @@ try {
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
-        { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
-        { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
+        { ...hosts[0], exe, fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
+        { ...hosts[1], exe, fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
     } catch (error) {
       sequenceFailed = true

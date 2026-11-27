@@ -13,7 +13,7 @@ const send = (body, method = "PATCH", type = "application/json") =>
 /** Rust serves no restart, reload or web preview: those flags differ by design (HOST_ROUTES.md). */
 export const comparable = ({ updateActions, remoteControlPreviews, ...rest }) => rest
 
-export async function run({ call, fixture, folder, root }) {
+export async function run({ call, exe, fixture, folder, root }) {
   const home = fixture.root
   const scrub = value => {
     if (typeof value === "string") {
@@ -90,7 +90,8 @@ export async function run({ call, fixture, folder, root }) {
   out.configFileForeign = await read("/api/config-files/other/content", send({ contents: "x" }, "PUT"))
 
   // The selected OpenCode executable, its update status and Remote Control.
-  const binary = process.argv[3]
+  assert(typeof exe === "string" && path.isAbsolute(exe), "Expected canonical validated OpenCode executable")
+  const binary = exe
   out.binaryValid = await read("/api/storage/binaries/validate", send({ path: binary }, "POST"))
   out.binaryMissing = await read("/api/storage/binaries/validate", send({ path: path.join(home, "missing", "opencode.exe") }, "POST"))
   out.binaryDefault = await read("/api/storage/binaries/validate", send({ path: "opencode2" }, "POST"))

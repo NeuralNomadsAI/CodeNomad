@@ -10,7 +10,7 @@ import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
-import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 /** Route shape: identifiers, hashes and worktree slugs replaced, query keys kept without values. */
 export function shape(url) {
@@ -70,6 +70,7 @@ try {
     const info = await fixture.client.server.info()
     const env = { ...fixture.env, CNRS_FIXTURE_URL: fixture.connection.endpoint.url, CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password,
       CNRS_FIXTURE_PID: String(info.pid), CODENOMAD_SERVER_PASSWORD: password, CODENOMAD_REMOTE_CONTROL: "disabled" }
+    await sanitizeBenchEnvPath(env, { allowedRoot: fixture.root })
     await assertPrivateHost(env, fixture.root, path.join(fixture.root, "ts.yaml"))
     const child = spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(repo, "packages/server/public"), "--config", path.join(fixture.root, "ts.yaml"), "--unrestricted-root"],

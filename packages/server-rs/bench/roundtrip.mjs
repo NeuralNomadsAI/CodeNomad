@@ -9,7 +9,7 @@ import https from "node:https"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
-import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const args = process.argv.slice(2)
 const lanFlag = args.includes("--lan")
@@ -50,6 +50,7 @@ async function serve(label, fixture, config, extra = []) {
   const args = ["serve", "--host", ip, "--https", "true", "--http", "true", "--http-port", String(httpPort),
     "--https-port", String(httpsPort), "--generate-token", ...extra]
   const env = { ...fixture.env }
+  await sanitizeBenchEnvPath(env, { allowedRoot: fixture.root })
   Object.assign(env, { CLI_CONFIG: config, CLI_UI_NO_UPDATE: "1", CNRS_FIXTURE_URL: fixture.connection.endpoint.url,
     CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password, CNRS_FIXTURE_PID: String((await fixture.client.server.info()).pid) })
   const [command, prefix] = label.startsWith("ts") ? [process.execPath, [path.join(import.meta.dirname, "ts-server.mjs")]] : [rustBinary(), []]

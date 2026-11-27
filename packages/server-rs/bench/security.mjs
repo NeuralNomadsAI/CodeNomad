@@ -9,7 +9,7 @@ import http from "node:http"
 import https from "node:https"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
 const rawExe = process.argv[2]
 assert(path.isAbsolute(rawExe ?? ""), "usage: node security.mjs <absolute opencode executable>")
@@ -171,12 +171,13 @@ async function query(rust,ts) {
   for (const state of states) assert.deepEqual(state.body,{authenticated:false,pairingRequired:true})
 }
 await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
+  const safeEnv = await sanitizeBenchEnvPath({ ...env }, { allowedRoot: home })
   const password=randomUUID()
   const projects=path.join(home,"projects")
   await mkdir(projects)
   const start=(identity,extra={})=>{
     const child=spawn(bin,[projects,path.join(home,`${identity}.json`),"0",exe],{cwd:home,windowsHide:true,
-    env:{...env,CNRS_FIXTURE_URL:connection.endpoint.url,CNRS_FIXTURE_PASSWORD:connection.endpoint.auth.password,
+    env:{...safeEnv,CNRS_FIXTURE_URL:connection.endpoint.url,CNRS_FIXTURE_PASSWORD:connection.endpoint.auth.password,
        CNRS_SERVER_PASSWORD:password,CNRS_HTTPS_BIND:"127.0.0.1:0",CNRS_HTTPS_NAME:"127.0.0.1",
        CNRS_FIXTURE_INGRESS:"1",CNRS_FIXTURE_STDIN_STOP:"1",...extra}})
     const stopped=new Promise(resolve=>child.once("close",resolve))
