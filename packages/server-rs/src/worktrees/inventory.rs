@@ -610,13 +610,13 @@ impl Tree {
             return dir.starts_with(target)
                 && self.layout.live()
                 && target_layout.live()
-                && identity(target).ok().as_deref() == Some(target_id.as_str())
                 && link_path.to_str().is_some_and(|s| {
                     super::ownership::resolve_media_path_checked(&self.scope, s)
                         .ok()
                         .flatten()
                         .is_some_and(|(p, a)| p == a && p == *target)
-                });
+                })
+                && identity(target).ok().as_deref() == Some(target_id.as_str());
         }
         // Exact prefix match prevents cross-workspace matches on case-sensitive NTFS when
         // projected `Projet` is absent while a distinct sibling `projet` exists.
