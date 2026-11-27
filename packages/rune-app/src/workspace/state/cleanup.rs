@@ -1,5 +1,67 @@
-use super::{State, Tab};
+use super::{State, Tab, Ui};
 use crate::Phase;
+
+/// Shared local protection check across workspace tabs and closed tabs used by both
+/// manual and automatic blank-session cleanup sweeps.
+pub(super) fn session_protected_in_workspace(s: &State, ui: &Ui, session_id: &str) -> bool {
+    if !codenomad_client::history::valid_id(session_id)
+        || session_id.starts_with("ses_cn_schedule_")
+        || s.command_receipts.has_for_session(session_id)
+    {
+        return true;
+    }
+    if let Some(l) = s.screen.launcher()
+        && (l.rebind_after_send.as_deref() == Some(session_id)
+            || (!s.screen.is_launcher() && l.visits.current() == Some(session_id)))
+    {
+        return true;
+    }
+    for entry in &ui.entries {
+        if entry.idle_markers.is_working(session_id) {
+            return true;
+        }
+        if entry.rebind_after_send.as_deref() == Some(session_id) {
+            return true;
+        }
+        if let Tab::Workspace(saved) = &entry.saved {
+            if saved.active_session_id.as_deref() == Some(session_id) {
+                return true;
+            }
+            if ui.has_closed_unconfirmed_for(saved, session_id) {
+                return true;
+            }
+            if saved
+                .drafts
+                .get(session_id)
+                .is_some_and(|text| !text.is_empty())
+                || saved.attachment_drafts.contains(session_id)
+                || saved.attachment_parts.contains_key(session_id)
+            {
+                return true;
+            }
+        }
+        if entry
+            .live_drafts
+            .get(session_id)
+            .is_some_and(super::drafts::LiveDraft::has_content)
+            || entry.pending_drafts.contains(session_id)
+        {
+            return true;
+        }
+    }
+    for closed in &ui.closed {
+        if closed
+            .drafts
+            .get(session_id)
+            .is_some_and(|text| !text.is_empty())
+            || closed.attachment_drafts.contains(session_id)
+            || closed.attachment_parts.contains_key(session_id)
+        {
+            return true;
+        }
+    }
+    false
+}
 
 /// Local safety check for manual blank-session cleanup.
 /// Returns `true` when `session_id` is absent, reserved, currently open/active,
@@ -67,50 +129,11 @@ pub(crate) fn session_cleanup_protected(s: &State, project_id: &str, session_id:
             };
             known_in_project |= has_row;
         }
-        if entry.rebind_after_send.as_deref() == Some(session_id) {
-            return true;
-        }
-        if let Tab::Workspace(saved) = &entry.saved {
-            if saved.active_session_id.as_deref() == Some(session_id) {
-                return true;
-            }
-            if ui.has_closed_unconfirmed_for(saved, session_id) {
-                return true;
-            }
-            if saved
-                .drafts
-                .get(session_id)
-                .is_some_and(|text| !text.is_empty())
-                || saved.attachment_drafts.contains(session_id)
-                || saved.attachment_parts.contains_key(session_id)
-            {
-                return true;
-            }
-        }
-        if entry
-            .live_drafts
-            .get(session_id)
-            .is_some_and(super::drafts::LiveDraft::has_content)
-            || entry.pending_drafts.contains(session_id)
-        {
-            return true;
-        }
     }
     if !known_in_project {
         return true;
     }
-    for closed in &ui.closed {
-        if closed
-            .drafts
-            .get(session_id)
-            .is_some_and(|text| !text.is_empty())
-            || closed.attachment_drafts.contains(session_id)
-            || closed.attachment_parts.contains_key(session_id)
-        {
-            return true;
-        }
-    }
-    false
+    session_protected_in_workspace(s, ui, session_id)
 }
 
 /// Removes a confirmed-deleted blank session from local session lists and visit history
@@ -137,9 +160,13 @@ pub(crate) fn remove_cleaned_session(s: &mut State, project_id: &str, session_id
         let active = ui.active;
         for (index, entry) in ui.entries.iter_mut().enumerate() {
             if index == active {
+                if active_matches {
+                    entry.idle_markers.remove(session_id);
+                }
                 continue;
             }
             if entry.project.as_ref().is_some_and(|p| p.id == project_id) {
+                entry.idle_markers.remove(session_id);
                 let before = entry.sessions.len() + entry.linked.rows.len();
                 entry.sessions.retain(|row| row.id != session_id);
                 entry.linked.rows.retain(|row| row.id != session_id);

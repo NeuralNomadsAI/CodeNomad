@@ -23,7 +23,12 @@ pub(crate) use temporary::{
     stashed_has_in_memory_state, temporary_tab_info,
 };
 
-pub(crate) use blank_cleanup::schedule as schedule_blank_cleanup;
+pub(crate) use blank_cleanup::{
+    abort_for_project as auto_cleanup_abort_for_project,
+    abort_for_session as auto_cleanup_abort_for_session,
+    abort_if_protected as auto_cleanup_abort_if_protected,
+    is_deleting_session as auto_cleanup_is_deleting_session, schedule as schedule_blank_cleanup,
+};
 pub(crate) use drafts::{
     MAX_WINDOW_DEVICE_FILES, attachment_draft_admissible, bound, capture, confirm_unconfirmed,
     draft_changed, has_unconfirmed, note_unconfirmed, unconfirmed_drafts_full,

@@ -436,7 +436,9 @@ impl Signals {
             Some(
                 "session.execution.succeeded"
                 | "session.execution.failed"
-                | "session.execution.interrupted",
+                | "session.execution.interrupted"
+                | "session.compaction.ended"
+                | "session.compaction.failed",
             ) => SessionActivityKind::Idle,
             Some("session.deleted" | "session.moved") => SessionActivityKind::Deleted,
             _ => return false,
@@ -1145,5 +1147,59 @@ mod tests {
             ev,
             WorkspaceEvent::NativeStreamStatus { workspace_id, connected: true } if workspace_id == "proj-2"
         )));
+    }
+
+    #[test]
+    fn compaction_events_transition_session_activity_working_then_idle() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.started", "data": { "sessionID": "ses_cmp1" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.ended", "data": { "sessionID": "ses_cmp1" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.started", "data": { "sessionID": "ses_cmp2" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.failed", "data": { "sessionID": "ses_cmp2" } }
+        }));
+        let (_, hints) = watch.take_session_activity();
+        assert_eq!(
+            Vec::from(hints),
+            vec![
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp1".into(),
+                    kind: SessionActivityKind::Working,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp1".into(),
+                    kind: SessionActivityKind::Idle,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp2".into(),
+                    kind: SessionActivityKind::Working,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp2".into(),
+                    kind: SessionActivityKind::Idle,
+                },
+            ]
+        );
     }
 }
