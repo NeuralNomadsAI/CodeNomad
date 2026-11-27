@@ -184,8 +184,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   })
 
   // A programmed Mission is the ordinary Mission of its current launch; its programming is read beside a list that
-  // has Missions, again whenever one of them appears, goes or changes state.
-  const calendars = useMissionCalendars({ instanceId: () => props.instanceId, directory, active: () => visible() && rows().length > 0,
+  // has Missions or schedules, again whenever a Mission appears, goes or changes state.
+  const calendars = useMissionCalendars({ instanceId: () => props.instanceId, directory, active: () => visible() && (rows().length > 0 || scheduled.entries().length > 0),
     refresh: () => `${recurrenceRefresh()}|${rows().map(row => `${row.id}:${row.status}:${row.runState}`).join()}` })
   const programmingOf = (id: string | undefined) => calendars.rows().find(calendar => calendar.missionID === id)
   const [programmingFailed, setProgrammingFailed] = createSignal(false)
@@ -623,6 +623,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     },
     get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() },
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
+    calendars, onConverted: id => {
+      // The schedule became a programmed Mission: its row is now that Mission's.
+      const next = calendars.rows().find(calendar => calendar.id === id)?.missionID
+      if (selectedScheduled() === id) { if (next) selectMission(next); else updateView({ selectedScheduled: undefined, selectedTask: undefined }) }
+      void missionStore.refresh(props.instanceId)
+    },
     onDeleted: id => { if (selectedScheduled() === id) updateView({ selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
       const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = origin.instanceId
