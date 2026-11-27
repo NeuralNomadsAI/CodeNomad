@@ -1,3 +1,8 @@
+pub(crate) fn short_local(millis: f64, locale: &str) -> Option<String> {
+    let millis = (millis != 0.0 && millis.abs() <= 8.64e15).then_some(millis)?;
+    short(millis, locale)
+}
+
 pub(super) fn reset(millis: Option<f64>) -> Option<String> {
     let millis = millis.filter(|ms| *ms != 0.0 && ms.abs() <= 8.64e15)?;
     let date = short(millis, crate::strings::locale())?;

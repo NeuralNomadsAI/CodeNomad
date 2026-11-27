@@ -777,7 +777,8 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     crate::settings::startup_state::wait_for_flight(s, std::time::Duration::from_secs(5));
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
-        let snapshot = ui.snapshot();
+        let stashed = s.temporary.stashed_for_snapshot();
+        let snapshot = ui.snapshot_with_stashed(stashed);
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -788,7 +789,7 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
             );
         }
         if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
-            ui.release_all();
+            ui.release_all_with_stashed(stashed);
         } else {
             crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());
         }

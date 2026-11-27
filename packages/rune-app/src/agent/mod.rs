@@ -536,8 +536,10 @@ impl Ui {
             || self.permissions_lane.mutation_pending()
             || self.forms_lane.mutation_pending()
             || self.stopping
-            || self.drafts.values().any(|d| d.dirty)
-            || self.reasons.values().any(|d| !d.text.is_empty())
+            || self.has_unsaved_form_drafts()
+    }
+    pub(crate) fn has_unsaved_form_drafts(&self) -> bool {
+        self.drafts.values().any(|d| d.dirty) || self.reasons.values().any(|d| !d.text.is_empty())
     }
     pub fn toggle_picker(&mut self) {
         self.picker = !self.picker;
@@ -855,12 +857,15 @@ impl Ui {
         }
     }
     pub fn blocked(&self) -> bool {
+        self.blocks_prompt(false)
+    }
+    pub(crate) fn blocks_prompt(&self, stream_disconnected: bool) -> bool {
         self.scope_missing
             || self.busy
             || self.permissions_lane.mutation_pending()
             || self.forms_lane.mutation_pending()
             || !self.known
-            || !self.online
+            || (!self.online && !stream_disconnected)
             || self.stopping
     }
     pub fn model_locked(&self) -> bool {

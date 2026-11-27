@@ -23,7 +23,7 @@ pub(crate) async fn page_offer(
     cancelled: Option<&Receiver<()>>,
     page: &crate::history::Page,
     wire: &Arc<stream::State>,
-    stamp: u64,
+    revision: u64,
     send: impl AsyncFnOnce(Event) -> bool,
 ) -> bool {
     let Some(cancelled) = cancelled else {
@@ -35,8 +35,7 @@ pub(crate) async fn page_offer(
             page: page.clone(),
             admit: Admission {
                 wire: wire.clone(),
-                revision: wire.history_revision.load(SeqCst),
-                live_version: Some(stamp),
+                revision,
                 admit,
             },
             cancelled: cancelled.clone(),
@@ -55,7 +54,6 @@ pub(crate) async fn page_offer(
 pub struct Admission {
     wire: Arc<stream::State>,
     revision: u64,
-    live_version: Option<u64>,
     admit: Sender<()>,
 }
 
@@ -69,9 +67,7 @@ impl std::fmt::Debug for Admission {
 
 impl Admission {
     pub fn accept(self) -> bool {
-        self.wire.history_current(self.revision)
-            && self.live_version.is_none_or(|stamp| self.wire.valid(stamp))
-            && self.admit.try_send(()).is_ok()
+        self.wire.history_current(self.revision) && self.admit.try_send(()).is_ok()
     }
 }
 
@@ -82,6 +78,12 @@ pub struct Jump {
     pub cancelled: Receiver<()>,
 }
 
+pub(crate) enum JumpOffer {
+    Loaded(crate::history::Page, Vec<Row>, u64),
+    Failed,
+    AuthenticationExpired,
+}
+
 impl Jump {
     /// Offer a bounded destination to the reader before replacing the stream's rows.
     pub(crate) async fn offer(
@@ -90,7 +92,12 @@ impl Jump {
         resident: &[Row],
         wire: &Arc<stream::State>,
         send: impl AsyncFnOnce(Event) -> bool,
-    ) -> Option<(crate::history::Page, Vec<Row>, u64)> {
+    ) -> JumpOffer {
+        enum Fetch {
+            Loaded(crate::history::Page),
+            Failed,
+            AuthenticationExpired,
+        }
         let ticket = self.ticket;
         let revision = wire.history_revision.load(SeqCst);
         let stamp = wire.version.load(SeqCst);
@@ -100,36 +107,46 @@ impl Jump {
                     if wire.history_current(revision)
                         && (page.newer.is_some() || wire.valid(stamp)) =>
                 {
-                    Some(page)
+                    Fetch::Loaded(page)
                 }
-                _ => None,
+                Err(error)
+                    if crate::http::authentication_expired(&error)
+                        && matches!(backend.authentication_status().await, Ok(false)) =>
+                {
+                    Fetch::AuthenticationExpired
+                }
+                _ => Fetch::Failed,
             }
         };
-        let Some(mut page) = futures_lite::future::or(
+        let fetched = futures_lite::future::or(
             async {
                 self.cancelled.recv().await.ok();
-                None
+                Fetch::Failed
             },
             futures_lite::future::or(
                 futures_lite::future::or(
                     async {
                         wire.placement_changed().await;
-                        None
+                        Fetch::Failed
                     },
                     async {
                         wire.stream_closed().await;
-                        None
+                        Fetch::Failed
                     },
                 ),
                 request,
             ),
         )
-        .await
-        else {
-            if !self.cancelled.is_closed() {
-                send(Event::AnchorFailed(ticket)).await;
+        .await;
+        let mut page = match fetched {
+            Fetch::Loaded(page) => page,
+            Fetch::AuthenticationExpired => return JumpOffer::AuthenticationExpired,
+            Fetch::Failed => {
+                if !self.cancelled.is_closed() {
+                    send(Event::AnchorFailed(ticket)).await;
+                }
+                return JumpOffer::Failed;
             }
-            return None;
         };
         let raw_rows = page.rows.clone();
         let mut merged = page.rows.clone();
@@ -143,13 +160,12 @@ impl Jump {
             admit: Admission {
                 wire: wire.clone(),
                 revision,
-                live_version: page.newer.is_none().then_some(stamp),
                 admit,
             },
         })
         .await
         {
-            return None;
+            return JumpOffer::Failed;
         }
         // Only the receiver owning the current ticket can send admission.
         let accepted = futures_lite::future::or(async { verdict.recv().await.ok() }, async {
@@ -157,7 +173,10 @@ impl Jump {
             verdict.try_recv().ok()
         })
         .await;
-        accepted.map(|()| (page, raw_rows, stamp))
+        match accepted {
+            Some(()) => JumpOffer::Loaded(page, raw_rows, stamp),
+            None => JumpOffer::Failed,
+        }
     }
 }
 
@@ -205,6 +224,77 @@ fn an_accepted_older_window_follows_a_queued_reader_sync() {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
+fn jump_offer_returns_authentication_expired_on_401_without_anchor_failed() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                // First request: anchor history fetch -> 401
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(socket);
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                let body = r#"{"error":"Unauthorized"}"#;
+                reader
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                // Second request: /api/auth/status -> authenticated: false
+                let (status_socket, _) = listener.accept().await.unwrap();
+                let mut status_reader = BufReader::new(status_socket);
+                let mut status_line = String::new();
+                assert!(status_reader.read_line(&mut status_line).await.unwrap() > 0);
+                assert!(status_line.starts_with("GET /api/auth/status "));
+                let status_body = r#"{"authenticated":false}"#;
+                status_reader
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{status_body}",
+                            status_body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let wire = Arc::new(stream::State::default());
+            wire.alive.store(true, SeqCst);
+            wire.upstream.store(true, SeqCst);
+            let (_cancel_tx, cancelled) = bounded(1);
+            let (out, events) = bounded(4);
+            let jump = Jump {
+                ticket: 7,
+                message: "msg_target".into(),
+                cancelled,
+            };
+            let result = jump
+                .offer(&backend, &[], &wire, async |event| out.send(event).await.is_ok())
+                .await;
+            assert!(matches!(result, JumpOffer::AuthenticationExpired));
+            assert!(events.is_empty(), "401 must not emit AnchorFailed");
+            server.await.unwrap();
+        });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
 fn admission_rejects_after_placement_change_even_before_revision_bumps() {
     let (ev_tx, _ev_rx) = bounded(1);
     let wire = Arc::new(stream::State::observing_preferences(ev_tx, Arc::new(|| {})));
@@ -214,7 +304,6 @@ fn admission_rejects_after_placement_change_even_before_revision_bumps() {
     let admission = Admission {
         wire: wire.clone(),
         revision: 0,
-        live_version: None,
         admit,
     };
     wire.close_placement();

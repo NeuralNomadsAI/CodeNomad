@@ -244,6 +244,25 @@ impl Draft {
             .any(|part| !matches!(part, Attachment::Pasted { .. }))
     }
 
+    pub(crate) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.attachments
+            .iter()
+            .fold((0, 0), |(count, total), item| match item {
+                Attachment::Device { bytes, .. } => {
+                    let key = Arc::as_ptr(bytes) as *const u8 as usize;
+                    if bytes.is_empty() || seen.insert(key) {
+                        (count + 1, total.saturating_add(bytes.len()))
+                    } else {
+                        (count, total)
+                    }
+                }
+                _ => (count, total),
+            })
+    }
+
     pub fn inline_usage(&self) -> (usize, usize) {
         self.attachments
             .iter()

@@ -98,6 +98,7 @@ impl StartupState {
                         &s.documents,
                         &mut s.saved_outlines,
                         s.wake.clone(),
+                        s.temporary.stashed_for_snapshot(),
                     );
                 }
                 let mut prefs = s.settings.shared.borrow_mut();
@@ -112,7 +113,10 @@ impl StartupState {
             }
             (Command::SetRestore(_), Err(_)) => {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.cancel_startup_mutation(&mut s.saved_outlines);
+                    ui.cancel_startup_mutation(
+                        &mut s.saved_outlines,
+                        s.temporary.stashed_for_snapshot(),
+                    );
                 }
                 let mut prefs = s.settings.shared.borrow_mut();
                 prefs
@@ -121,7 +125,12 @@ impl StartupState {
             }
             (Command::Clear, Ok(CommandOutcome::Cleared(outcome))) => {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.apply_startup_cleared(outcome, &s.documents, &mut s.saved_outlines);
+                    ui.apply_startup_cleared(
+                        outcome,
+                        &s.documents,
+                        &mut s.saved_outlines,
+                        s.temporary.stashed_for_snapshot(),
+                    );
                 }
                 let mut prefs = s.settings.shared.borrow_mut();
                 if outcome.all_ok() {
@@ -136,7 +145,10 @@ impl StartupState {
             }
             (Command::Clear, Err(_)) | (_, Ok(_)) => {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.cancel_startup_mutation(&mut s.saved_outlines);
+                    ui.cancel_startup_mutation(
+                        &mut s.saved_outlines,
+                        s.temporary.stashed_for_snapshot(),
+                    );
                 }
                 let mut prefs = s.settings.shared.borrow_mut();
                 prefs
@@ -199,7 +211,11 @@ impl StartupState {
             changed = true;
             if let Some(store) = store.filter(|_| primary) {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.begin_startup_mutation(&s.documents, &mut s.saved_outlines);
+                    ui.begin_startup_mutation(
+                        &s.documents,
+                        &mut s.saved_outlines,
+                        s.temporary.stashed_for_snapshot(),
+                    );
                 }
                 let (tx, rx) = bounded(1);
                 let wake = s.wake.clone();

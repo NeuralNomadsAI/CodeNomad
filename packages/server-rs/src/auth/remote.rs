@@ -41,6 +41,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
+    ("POST",r"^/api/opencode/(?:service|update)$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/provider-accounts/[^/]+$"),
     ("GET PUT",r"^/api/config-files/[^/]+/content$"),
     ("POST",r"^/api/storage/binaries/validate$"),
@@ -57,7 +58,12 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET PUT",r"^/api/workspaces/[^/]+/(?:websearch-settings|image-settings|subagent-depth)$"),
     ("GET PATCH",r"^/api/workspaces/[^/]+/plugin-controls$"),
     ("POST DELETE",r"^/api/workspaces/[^/]+/plugin-sources$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations$"),
+    ("GET",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:hosts|binding)$"),
+    ("POST",r"^/api/workspaces/[^/]+/integrations/[^/]+/(?:install|attach|detach|install-host)$"),
     ("GET POST",r"^/api/sidecars$"),
+    ("GET",r"^/api/speech/capabilities$"),
+    ("POST",r"^/api/speech/(?:transcribe|synthesize/stream)$"),
     ("POST",r"^/api/previews$"),
     ("DELETE",r"^/api/previews/[^/]+$"),
     ("GET",r"^/api/usage/[^/]+$"),
@@ -174,9 +180,10 @@ pub async fn admit(
     req: Request,
     next: Next,
 ) -> Response {
-    let no_store = is_no_store_account_path(req.uri().path());
+    let no_store_account = is_no_store_account_path(req.uri().path());
+    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
     let mut response = admit_inner(state, req, next).await;
-    if no_store && !response.status().is_success() {
+    if no_store_integrations || (no_store_account && !response.status().is_success()) {
         response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     response
@@ -355,7 +362,9 @@ async fn admit_inner(
     {
         let response = bundle.serve(req, asset).await;
         let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
-            reply(Status::UNAUTHORIZED, "This device is not paired")
+            let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+            r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+            r
         } else {
             response
         };
@@ -387,7 +396,9 @@ async fn admit_inner(
         );
     }
     let Some((id, principal)) = owner else {
-        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+        let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+        r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+        return cors(r, supplied);
     };
     {
         let mut socket = channel.principal.lock().unwrap();
@@ -467,6 +478,16 @@ mod tests {
     fn admitted(method: &str, path: &str) -> bool {
         let effective = if method == "HEAD" { "GET" } else { method };
         CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == effective) && pat.is_match(path))
+    }
+
+    #[test]
+    fn remote_catalog_admits_opencode_service_and_update_but_not_logs() {
+        assert!(admitted("GET", "/api/opencode/update"));
+        assert!(admitted("POST", "/api/opencode/update"));
+        assert!(admitted("POST", "/api/opencode/service"));
+        assert!(!admitted("GET", "/api/opencode/service"));
+        assert!(!admitted("GET", "/api/opencode/logs"));
+        assert!(!admitted("POST", "/api/opencode/logs"));
     }
 
     #[test]

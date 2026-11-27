@@ -10,6 +10,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "../server/routes/workspaces"
 import { registerWorktreeRoutes } from "../server/routes/worktrees"
 import { registerInstanceProxyRoutes } from "../server/http-server"
+import { markDispatchHookAwareFetch, type RuntimeFetchDispatchHooks } from "../opencode/compatibility/transport"
 import { WorkspaceManager, canonicalWorktreeIdentity } from "./manager"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import { GitProbeUnavailableError, GitRequiredError, requireHostGit } from "./git-requirement"
@@ -76,7 +77,23 @@ test("no-Git conversations retain directory ownership, agent context and deletio
     sharedService: {
       headers: async () => ({ authorization: "Basic fixture" }),
       client: async () => client,
-      acquire: async () => ({ endpoint, client, fetch, assertCurrent() {}, invalidate() {}, profile: async () => "modern" }),
+      acquire: async () => ({
+        endpoint,
+        client,
+        fetch: markDispatchHookAwareFetch(async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+          _media?: unknown,
+          dispatchHooks?: RuntimeFetchDispatchHooks,
+        ) => {
+          await dispatchHooks?.beforeFetch?.()
+          dispatchHooks?.onDispatch?.()
+          return fetch(input, init)
+        }),
+        assertCurrent() {},
+        invalidate() {},
+        profile: async () => "modern",
+      }),
       validateLocation: async (location: { directory: string }) => ({ ...location, project: { id: "fixture", directory: repo, canonical: repo } }),
       shutdown: async () => {},
     } as never,

@@ -13,7 +13,7 @@ use codenomad_client::{
 use rune::Tx;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 struct SyncUndo {
@@ -29,7 +29,6 @@ struct SyncUndo {
     messages: Vec<crate::history::Row>,
     can_older: bool,
     history_detached: bool,
-    phase: crate::Phase,
     trimmed_older: bool,
     trimmed_newer: bool,
     age: u8,
@@ -62,6 +61,7 @@ pub(crate) struct Reader {
     request: Demand,
     events: Receiver<(u64, u64, Event)>,
     connection: Arc<AtomicU64>,
+    revoked: Arc<AtomicBool>,
     generation: u64,
     bookmark: Bookmark,
     bookmark_width: f32,
@@ -75,11 +75,13 @@ pub(crate) struct Reader {
     installed: bool,
     hidden: bool,
     resume_pending: bool,
+    offline_send: bool,
     pending_scroll: bool,
     gap: bool,
     parked: bool,
     activity: Option<(bool, u64)>,
     settling: bool,
+    settled_inbox: Vec<String>,
 }
 
 impl Reader {
@@ -107,11 +109,13 @@ impl Reader {
         let (request, demand) = demand::open();
         let (out, events) = bounded(8);
         let connection = Arc::new(AtomicU64::new(0));
+        let revoked = Arc::new(AtomicBool::new(false));
         (
             Self {
                 request,
                 events,
                 connection: connection.clone(),
+                revoked: revoked.clone(),
                 generation: 0,
                 bookmark: Bookmark::Latest,
                 bookmark_width: 0.0,
@@ -125,22 +129,61 @@ impl Reader {
                 installed: false,
                 hidden: false,
                 resume_pending: false,
+                offline_send: false,
                 pending_scroll: false,
                 gap: false,
                 parked: false,
                 activity: None,
                 settling: false,
+                settled_inbox: Vec::new(),
             },
             ReadingLane {
                 demand,
                 events: out,
                 connection,
+                revoked,
             },
         )
     }
 
-    fn drain(&self) {
-        while self.events.try_recv().is_ok() {}
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn revoke(&self) {
+        self.revoked.store(true, SeqCst);
+    }
+
+    fn record_settled_inbox(&mut self, event: &Event) {
+        match event {
+            Event::InboxDelta(codenomad_client::inbox::InboxDelta::Upsert(item)) => {
+                self.settled_inbox.push(item.id.clone());
+            }
+            Event::InboxDelta(codenomad_client::inbox::InboxDelta::Delivery { id, .. })
+            | Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed(id)) => {
+                self.settled_inbox.push(id.clone());
+            }
+            Event::Inbox {
+                items,
+                authoritative: true,
+                ..
+            } => {
+                for item in items {
+                    self.settled_inbox.push(item.id.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn drain(&mut self) {
+        while let Ok((_, _, event)) = self.events.try_recv() {
+            self.record_settled_inbox(&event);
+        }
+    }
+
+    pub(crate) fn drain_settled_inbox(&mut self) -> Vec<String> {
+        if self.hidden {
+            self.drain();
+        }
+        std::mem::take(&mut self.settled_inbox)
     }
 
     pub(crate) fn stop_content(&mut self) {
@@ -185,7 +228,6 @@ impl Reader {
         messages: Vec<crate::history::Row>,
         can_older: bool,
         history_detached: bool,
-        phase: crate::Phase,
         trimmed_older: bool,
         trimmed_newer: bool,
         clock: Option<f64>,
@@ -209,7 +251,6 @@ impl Reader {
             messages,
             can_older,
             history_detached,
-            phase,
             trimmed_older,
             trimmed_newer,
             age: 0,
@@ -278,6 +319,7 @@ impl Reader {
                 self.last_taken = Some((generation, connection));
                 return Some(event);
             }
+            self.record_settled_inbox(&event);
         }
         None
     }
@@ -287,7 +329,15 @@ impl Reader {
     }
 
     pub(crate) fn blocks_send(&self) -> bool {
-        self.hidden || self.resume_pending || self.gap || self.parked || self.settling
+        self.blocks_send_while(false)
+    }
+
+    pub(crate) fn blocks_send_while(&self, stream_offline: bool) -> bool {
+        self.hidden
+            || self.gap
+            || self.parked
+            || self.settling
+            || (self.resume_pending && (!self.installed || !(stream_offline && self.offline_send)))
     }
 
     pub(crate) fn has_visible_window(&self) -> bool {
@@ -368,6 +418,11 @@ impl Reader {
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
         self.resume_pending = false;
+        self.offline_send = false;
+    }
+
+    pub(crate) fn stream_reconnected(&mut self) {
+        self.offline_send = false;
     }
 
     pub(crate) fn anchor_in_place(&mut self, bookmark: Bookmark) {
@@ -382,6 +437,7 @@ impl Reader {
 
     pub(crate) fn failed(&mut self) {
         self.parked = true;
+        self.offline_send = false;
     }
 
     pub(crate) fn observed_running(&mut self, running: bool, version: u64, was_streaming: bool) {
@@ -404,8 +460,15 @@ impl Reader {
         self.settling = stale && !self.independent_status();
     }
 
-    fn reconnecting(&mut self, reading: &Reading, paging: bool, history_bounds: [f32; 4]) {
+    fn reconnecting(
+        &mut self,
+        reading: &Reading,
+        paging: bool,
+        history_bounds: [f32; 4],
+        stream_lost: bool,
+    ) {
         self.activity = None;
+        self.settling = false;
         self.last_taken = None;
         self.deferred_sync = None;
         self.sync_undo = None;
@@ -417,6 +480,9 @@ impl Reader {
             } else {
                 self.resume_watching(self.bookmark_at(reading, history_bounds), reading);
             }
+        }
+        if stream_lost {
+            self.offline_send = true;
         }
     }
 
@@ -594,7 +660,7 @@ pub(crate) fn renderer_ready(s: &mut State, tx: &mut Tx) -> bool {
     )
 }
 
-pub(crate) fn reconnecting(s: &mut State) {
+pub(crate) fn reconnecting(s: &mut State, stream_lost: bool) {
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
     let preserve_historical_page =
         s.history_detached && s.transcript_display.timeline.paging.is_some();
@@ -603,6 +669,7 @@ pub(crate) fn reconnecting(s: &mut State) {
             s.transcript_display.reading_mut(),
             s.paging && !preserve_historical_page,
             history_bounds,
+            stream_lost,
         );
     }
 
@@ -615,6 +682,7 @@ pub(crate) fn invalidate(s: &mut State) {
         .reading_mut()
         .reset_to_latest(s.revision);
     if let Some(reader) = &mut s.reader {
+        reader.offline_send = false;
         reader.bookmark = Bookmark::Latest;
         if !reader.hidden {
             reader.resume(Bookmark::Latest);
@@ -696,7 +764,6 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
     s.messages = undo.messages;
     s.can_older = undo.can_older;
     s.history_detached = undo.history_detached;
-    s.phase = undo.phase;
     crate::composer::reconcile(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = undo.bookmark;
@@ -931,7 +998,27 @@ pub(crate) fn suspend(s: &mut State) {
         }
         s.paging = false;
     }
+    let _ = settle_discarded_inbox(s);
     s.transcript_display.suspend_rendered();
+}
+
+pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
+    let Some(ids) = s.reader.as_mut().map(Reader::drain_settled_inbox) else {
+        return false;
+    };
+    let mut changed = false;
+    for id in ids {
+        changed |= crate::composer::confirm_unconfirmed_id(s, &id);
+        if s.composer.is_optimistic(&id) {
+            s.composer.clear_optimistic(Some(&id));
+            if let Some(index) = s.messages.iter().position(|row| row.id == id) {
+                s.messages.remove(index);
+                s.revision += 1;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
@@ -1042,10 +1129,10 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
 }
 
 mod pages;
-pub(super) use pages::install_page;
+pub(crate) use pages::install_page;
 pub(crate) use pages::{
-    admit_page, announce_paging, cancel_page, install_anchor, older, oldest, request_page,
-    set_timeline_position,
+    admit_page, announce_paging, cancel_page, fail_pending_page, install_anchor, older, oldest,
+    request_page, set_timeline_position,
 };
 
 #[cfg(test)]
@@ -2108,7 +2195,7 @@ mod resume_tests {
 
         // Trigger SSE reconnect before ReaderSync arrives; reconnect generation must still honor scrolled_top.
         rt.update(|s, _| {
-            reconnecting(s);
+            reconnecting(s, true);
         });
         let reconnect_gen = rt.state.reader.as_ref().unwrap().generation;
         lane.events
@@ -2445,7 +2532,7 @@ mod resume_tests {
     fn unprobed_manual_scroll_before_reader_sync_preserves_present_target() {
         let mut s = init();
         s.phase = Phase::Ready;
-        s.messages = (0..50)
+        s.messages = (0..60)
             .map(|i| {
                 crate::Message {
                     usage: None,
@@ -2458,7 +2545,7 @@ mod resume_tests {
                 .into()
             })
             .collect();
-        let window_15_30: Vec<_> = s.messages[15..=30].to_vec();
+        let all_messages = s.messages.clone();
         let (reader, lane) = Reader::open();
         s.reader = Some(reader);
         let mut rt = Runtime::new(s, crate::view, (390.0, 420.0), Env::new(false, 1.0));
@@ -2505,43 +2592,41 @@ mod resume_tests {
                     .then_some(k)
             })
         };
-        // Step 1: scroll down from row-20 to row-31..=36 (outside [15..=30]) and settle so
-        // reading.top records that out-of-window row.
+        // Step 1: scroll down from row-20 past row-36 and settle so reading.top records an
+        // out-of-window row far enough below row-20 for an unclamped ReaderSync window.
         let mut settled_high = None;
-        for _ in 0..24 {
+        for _ in 0..32 {
             rt.wheel(hx, hy, -220.0);
             for _ in 0..15 {
                 rt.frame(0.02);
             }
             if let Some(k) = top_key(&rt)
                 && let Some(num) = k.strip_prefix("row-").and_then(|s| s.parse::<usize>().ok())
-                && (31..=36).contains(&num)
+                && (36..=48).contains(&num)
             {
-                settled_high = Some(k);
+                settled_high = Some((k, num));
                 break;
             }
         }
-        let settled_high = settled_high.expect("first scroll must settle on row-31..=36");
+        let (settled_high, settled_high_num) =
+            settled_high.expect("first scroll must settle on row-36..=48");
+        let sync_window: Vec<_> = all_messages[15..settled_high_num].to_vec();
         assert!(
-            !window_15_30.iter().any(|r| r.id == settled_high),
-            "first scroll must settle outside [15..=30], got {settled_high}"
+            !sync_window.iter().any(|r| r.id == settled_high),
+            "first scroll must settle outside sync window, got {settled_high}"
         );
-        // Step 2: wheel up once and step a single frame so the visible top row moves into
-        // [15..=30] (!= row-20) while its on_drawn_layout_tx is still queued in frame.queue
-        // (reading.top still holds settled_high, which is absent from [15..=30]).
-        let mut target_in_window = None;
-        for _ in 0..8 {
-            rt.wheel(hx, hy, 360.0);
-            rt.frame(0.02);
-            if let Some(k) = top_key(&rt)
-                && window_15_30.iter().any(|r| r.id == k)
-                && k != "row-20"
-            {
-                target_in_window = Some(k);
-                break;
-            }
-        }
-        let target = target_in_window.expect("must reach a row inside [15..=30] != row-20");
+        // Step 2: wheel up by more than the history viewport height in a single frame so the
+        // visible top row moves well inside sync_window (!= row-20, with more than one viewport
+        // of trailing rows before settled_high to avoid bottom clamping across system fonts)
+        // while its on_drawn_layout_tx is still queued in frame.queue.
+        let wheel_up = (hist[3] + 160.0).max(460.0);
+        rt.wheel(hx, hy, wheel_up);
+        rt.frame(0.02);
+        let target = top_key(&rt).expect("visible row after single upward wheel");
+        assert!(
+            sync_window.iter().any(|r| r.id == target) && target != "row-20",
+            "single upward wheel must reach a row inside sync_window != row-20: got {target}, settled={settled_high}"
+        );
         assert_eq!(
             rt.state.transcript_display.reading().bookmark(false),
             Bookmark::Message {
@@ -2557,14 +2642,14 @@ mod resume_tests {
             !rt.state.transcript_display.reading().top_is_fresh(),
             "reading.top must be marked stale while queued row probe has not drained"
         );
-        // Step 3: deliver ReaderSync [15..=30] immediately before the next frame drains Action::Layout.
+        // Step 3: deliver ReaderSync immediately before the next frame drains Action::Layout.
         lane.events
             .try_send((
                 resume_gen,
                 0,
                 Event::ReaderSync {
                     page: crate::history::Page {
-                        rows: window_15_30,
+                        rows: sync_window,
                         older: None,
                         newer: None,
                         running: false,
@@ -3749,7 +3834,6 @@ mod resume_tests {
             vec![msg("m-0")],
             false,
             false,
-            crate::Phase::Ready,
             true,
             false,
             Some(1.0),
@@ -3799,7 +3883,6 @@ mod resume_tests {
             vec![msg("m-0")],
             false,
             false,
-            crate::Phase::Ready,
             true,
             false,
             Some(2.0),
@@ -3821,7 +3904,6 @@ mod resume_tests {
             vec![msg("m-0")],
             false,
             false,
-            crate::Phase::Ready,
             true,
             false,
             None,

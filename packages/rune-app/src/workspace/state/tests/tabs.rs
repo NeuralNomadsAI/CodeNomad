@@ -396,6 +396,8 @@ fn files_follow_their_occurrence_through_tab_switches_and_hidden_stream_events()
     out.try_send(crate::transport::Event::Workspace(
         WorkspaceEvent::Stopped {
             workspace_id: "alpha".into(),
+            deleted: false,
+            temporary_retained: false,
         },
     ))
     .unwrap();

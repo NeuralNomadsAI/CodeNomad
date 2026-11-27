@@ -1,3 +1,5 @@
+pub(crate) mod blank_cleanup;
+pub(crate) mod command_palette;
 pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
@@ -8,8 +10,11 @@ mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_services;
 pub(crate) mod status_usage;
+pub(crate) mod tab_rename;
+pub(crate) mod temporary;
 #[cfg(target_arch = "wasm32")]
 mod web_orientation;
+pub(crate) mod workspace_open;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -161,7 +166,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
 
 fn connection(s: &State) -> &'static str {
     t(match s.phase {
-        Phase::Loading | Phase::Reconnecting => "instanceShell.connection.connecting",
+        Phase::Loading | Phase::Reconnecting | Phase::StreamDisconnected { .. } => {
+            "instanceShell.connection.connecting"
+        }
         Phase::Ready | Phase::Streaming => "instanceShell.connection.connected",
         Phase::Failed => "instanceShell.connection.disconnected",
         #[cfg(target_arch = "wasm32")]
@@ -209,6 +216,13 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
 
 pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
+    if blank_cleanup::handle_key(s, event, tx)
+        || temporary::handle_key(s, event, tx)
+        || tab_rename::handle_key(s, event, tx)
+        || command_palette::handle_key(s, event, tx)
+    {
+        return true;
+    }
     if shortcuts::modal_open(s) {
         return false;
     }

@@ -193,6 +193,7 @@ async fn create(
     }
     let id = Uuid::new_v4();
     let temporary = app.temporary_workspaces.as_ref().is_some_and(|t| t.has(&path)).then_some(true);
+    let current_binary = app.current_binary();
     let mut workspace = Workspace {
         id,
         request_id,
@@ -200,8 +201,8 @@ async fn create(
         name: input.name,
         status: "starting",
         proxy_path: format!("/workspaces/{id}/instance"),
-        binary_id: app.binary.clone(),
-        binary_label: app.binary.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        binary_id: current_binary.clone(),
+        binary_label: current_binary.file_name().unwrap_or_default().to_string_lossy().into_owned(),
         created_at: now(),
         updated_at: now(),
         location,

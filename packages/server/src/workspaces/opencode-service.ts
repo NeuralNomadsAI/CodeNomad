@@ -7,7 +7,7 @@ import {
 } from "@opencode/client"
 import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
-import { createRuntimeTransport } from "../opencode/compatibility/transport"
+import { createRuntimeTransport, markDispatchHookAwareFetch } from "../opencode/compatibility/transport"
 import { rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
@@ -247,10 +247,10 @@ export class OpenCodeSharedService {
       connection.assertCurrent()
       return globalThis.fetch(input, init)
     }, negotiation.signal)
-    const fetch: ServiceConnection["fetch"] = (input, init, mediaResponseProcessor) => {
+    const fetch: ServiceConnection["fetch"] = markDispatchHookAwareFetch((input, init, mediaResponseProcessor, dispatchHooks) => {
       connection.assertCurrent()
-      return transport.fetch(input, init, mediaResponseProcessor)
-    }
+      return transport.fetch(input, init, mediaResponseProcessor, dispatchHooks)
+    })
     const connection: ServiceConnection = {
       endpoint,
       fetch,
