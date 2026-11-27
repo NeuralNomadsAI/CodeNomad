@@ -371,7 +371,16 @@ pub(super) fn receive_authoritative(
     });
     super::reader::preserve_anchor_on_inbox_change(s, &items);
     super::reader::reconcile_queued_bookmark(s, &items);
+    let replay_replacement = s
+        .transcript_display
+        .reading()
+        .queue_replay_replacement(s.transcript_display.queue.items(), &items);
     let changed = s.transcript_display.queue.set_items(items);
+    if changed {
+        s.transcript_display
+            .reading_mut()
+            .note_queue_layout_change(replay_replacement);
+    }
     crate::composer::reconcile(s);
     changed
 }
@@ -431,10 +440,22 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 Outcome::Edited { id, text } => {
                     crate::composer::confirm_unconfirmed_id(s, &id);
-                    s.transcript_display
+                    let next: Vec<_> = s
+                        .transcript_display
                         .queue
-                        .items
-                        .retain(|item| item.id != id);
+                        .items()
+                        .iter()
+                        .filter(|item| item.id != id)
+                        .cloned()
+                        .collect();
+                    let replay_replacement = s
+                        .transcript_display
+                        .reading()
+                        .queue_replay_replacement(s.transcript_display.queue.items(), &next);
+                    s.transcript_display.queue.items = next;
+                    s.transcript_display
+                        .reading_mut()
+                        .note_queue_layout_change(replay_replacement);
                     s.revision += 1;
                     if !job_suspended && !s.screen.is_launcher() && empty_draft(s) {
                         s.transcript_display.queue.saved_edit = None;
@@ -445,10 +466,22 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 Outcome::Removed { id } => {
                     crate::composer::confirm_unconfirmed_id(s, &id);
-                    s.transcript_display
+                    let next: Vec<_> = s
+                        .transcript_display
                         .queue
-                        .items
-                        .retain(|item| item.id != id);
+                        .items()
+                        .iter()
+                        .filter(|item| item.id != id)
+                        .cloned()
+                        .collect();
+                    let replay_replacement = s
+                        .transcript_display
+                        .reading()
+                        .queue_replay_replacement(s.transcript_display.queue.items(), &next);
+                    s.transcript_display.queue.items = next;
+                    s.transcript_display
+                        .reading_mut()
+                        .note_queue_layout_change(replay_replacement);
                     s.revision += 1;
                 }
             }

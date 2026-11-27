@@ -7299,4 +7299,375 @@ mod resume_tests {
             code_after.rect[0]
         );
     }
+
+    #[test]
+    fn live_streaming_text_deltas_do_not_stall_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rstrm-{i:02}"),
+                        role: "assistant".into(),
+                        completed: i != 29,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rstrm-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_30", 15..30),
+                        older: Some(serde_json::json!("older-rstrm")),
+                        newer: None,
+                        running: true,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + 40.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: wheel down 40 px to arm ReplayDeltas from rstrm-20.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Deliver a live streaming Event::Text delta before EVERY single frame — replay must
+        // execute immediately without waiting for a quiet frame.
+        for tick in 0..10 {
+            lane.events
+                .try_send((
+                    g,
+                    0,
+                    Event::Text(
+                        "rstrm-29".into(),
+                        crate::content::TextEvent::Delta {
+                            ordinal: Some(0),
+                            text: format!(" tok{tick}"),
+                        },
+                    ),
+                ))
+                .unwrap();
+            rt.frame(0.016);
+        }
+        assert!(
+            !rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe(),
+            "continuous live text deltas must not keep wheel replay stalled indefinitely"
+        );
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let row20 = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rstrm-20"))
+            .expect("rstrm-20 must remain visible after 40 px downward replay");
+        let rel_y = row20.rect[1] - hist[1];
+        assert!(
+            (rel_y - (-40.0)).abs() <= 3.0,
+            "wheel replay under continuous streaming deltas must land rstrm-20 at -40 px, got {rel_y}"
+        );
+    }
+
+    #[test]
+    fn touch_drag_before_replay_probe_frame_wins_over_queued_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rtch-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rtch-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim12_30", 12..30),
+                        older: Some(serde_json::json!("older-rtch")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: arm a 40 px downward wheel replay from rtch-20.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(px, py));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // Before Frame B: drag the transcript upward by 140 px with one finger and hold still.
+        rt.touch(1, rune::TouchPhase::Started, px, py, 10.0);
+        rt.touch(1, rune::TouchPhase::Moved, px, py + 140.0, 10.02);
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_offset < offset_at_anchor - 80.0,
+            "touch drag before replay probe frame must win over queued downward wheel replay: anchor={offset_at_anchor}, final={final_offset}"
+        );
+    }
+
+    #[test]
+    fn removing_anchored_queued_prompt_replays_accepted_wheel_from_surviving_neighbor() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rqvan-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let queued_a = codenomad_client::inbox::QueuedPrompt {
+            id: "rqvan-a".into(),
+            delivery: codenomad_client::prompt::Delivery::Queue,
+            text: (0..18)
+                .map(|i| format!("Queued prompt A line {i:02} at the reading line"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            parts: vec![],
+            created: Some(1),
+            editable: true,
+        };
+        let queued_b = codenomad_client::inbox::QueuedPrompt {
+            id: "rqvan-b".into(),
+            delivery: codenomad_client::prompt::Delivery::Queue,
+            text: (0..36)
+                .map(|i| format!("Queued prompt B line {i:02} long surviving neighbor below A"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            parts: vec![],
+            created: Some(2),
+            editable: true,
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full20", 0..20);
+        s.transcript_display
+            .queue
+            .fixture_set(None, vec![queued_a, queued_b]);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rqvan-a", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        assert!(
+            matches!(
+                &rt.state.reader.as_ref().unwrap().bookmark,
+                Bookmark::Message { id, .. } if id == "rqvan-a"
+            ),
+            "expected queued prompt A bookmark before resume, got {:?}",
+            rt.state.reader.as_ref().unwrap().bookmark
+        );
+
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_20", 10..20),
+                        older: Some(serde_json::json!("older-rqvan")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: wheel down 40 px to arm replay from queued prompt A.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B: remove anchored queued prompt A remotely.
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed(
+                    "rqvan-a".into(),
+                )),
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(rt.state.transcript_display.queue.items().len(), 1);
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let row_b = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rqvan-b"))
+            .expect("surviving neighbor queued prompt B must be visible");
+        let rel_y = row_b.rect[1] - hist[1];
+        assert!(
+            (rel_y - (-40.0)).abs() <= 3.0,
+            "removing anchored queued prompt A must replay accepted 40 px downward wheel onto surviving neighbor B (-40 px), got {rel_y}"
+        );
+    }
 }
