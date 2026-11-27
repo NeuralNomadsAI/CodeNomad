@@ -7,10 +7,18 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true, false, None)
+    let (changed, deleted) = drain_chat(s, limit, true, true, false, None);
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
 }
 
-pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
+pub(crate) fn poll_hidden_chat(
+    s: &mut State,
+    limit: usize,
+    active_has_stream: bool,
+) -> (bool, bool) {
     drain_chat(s, limit, false, !active_has_stream, false, None)
 }
 
@@ -20,7 +28,85 @@ pub(crate) fn poll_chat_for_window(
     defer_reader_sync: bool,
     clock: f64,
 ) -> bool {
-    drain_chat(s, limit, true, true, defer_reader_sync, Some(clock))
+    let (changed, deleted) = drain_chat(s, limit, true, true, defer_reader_sync, Some(clock));
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
+}
+
+/// Applies all queued conversation events on the active tab during tab closure without discarding
+/// non-deletion updates if closure is deferred, returning whether `Event::SessionDeleted` arrived.
+pub(crate) fn drain_active_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
+    drain_chat(s, 1024, true, true, false, None).1
+}
+
+/// Drains queued prompt confirmations and `Event::SessionDeleted` from the outgoing session's
+/// incoming and reader channels before leaving or rebinding that session, without starting new
+/// refreshes on the session being left.
+pub(crate) fn drain_outgoing_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
+    let mut session_deleted = false;
+    for _ in 0..1024 {
+        let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(false, reading, history_bounds, cached_gap, None)
+            })
+        });
+        let Some(event) = event else { break };
+        match event {
+            Event::SessionDeleted => session_deleted = true,
+            Event::InboxDelta(delta) => match &delta {
+                codenomad_client::inbox::InboxDelta::Upsert(item) => {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+                codenomad_client::inbox::InboxDelta::Delivery { id, .. }
+                | codenomad_client::inbox::InboxDelta::Removed(id) => {
+                    composer::confirm_unconfirmed_id(s, id);
+                }
+            },
+            Event::Inbox {
+                items,
+                authoritative: true,
+                ..
+            } => {
+                for item in &items {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+            }
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
+            }
+            Event::Message(m) => {
+                if m.role == "user" {
+                    composer::confirm_unconfirmed_id(s, &m.id);
+                }
+            }
+            Event::History(messages) => {
+                for m in &messages {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                for m in &page.rows {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = chat::reader::settle_discarded_inbox(s);
+    session_deleted
 }
 
 fn drain_chat(
@@ -30,8 +116,9 @@ fn drain_chat(
     affects_preferences: bool,
     defer_reader_sync: bool,
     clock: Option<f64>,
-) -> bool {
+) -> (bool, bool) {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
+    let mut session_deleted = false;
     if changed
         && s.reader
             .as_ref()
@@ -589,7 +676,10 @@ fn drain_chat(
                 crate::timeline::admit(s, ticket, page, admit);
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
-            Event::HistoryInvalidated => {
+            Event::HistoryInvalidated | Event::SessionDeleted => {
+                if matches!(event, Event::SessionDeleted) {
+                    session_deleted = true;
+                }
                 s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
                 s.history_error = false;
@@ -904,7 +994,10 @@ fn drain_chat(
         changed = true;
     }
     changed |= chat::reader::settle_discarded_inbox(s);
-    changed | super::usage::family::Totals::poll(s)
+    (
+        changed | super::usage::family::Totals::poll(s),
+        session_deleted,
+    )
 }
 
 fn suspend_preserving_page_retry(s: &mut State) {

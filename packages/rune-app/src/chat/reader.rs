@@ -82,6 +82,7 @@ pub(crate) struct Reader {
     activity: Option<(bool, u64)>,
     settling: bool,
     settled_inbox: Vec<String>,
+    settled_confirmations: Vec<String>,
 }
 
 impl Reader {
@@ -136,11 +137,13 @@ impl Reader {
                 activity: None,
                 settling: false,
                 settled_inbox: Vec::new(),
+                settled_confirmations: Vec::new(),
             },
             ReadingLane {
                 demand,
                 events: out,
                 connection,
+                on_session_deleted: None,
                 revoked,
             },
         )
@@ -169,7 +172,32 @@ impl Reader {
                     self.settled_inbox.push(item.id.clone());
                 }
             }
+            Event::Message(m) => {
+                if m.role == "user" {
+                    self.settled_confirmations.push(m.id.clone());
+                }
+            }
+            Event::History(messages) => {
+                for m in messages {
+                    if m.role == "user" {
+                        self.settled_confirmations.push(m.id.clone());
+                    }
+                }
+            }
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                for m in &page.rows {
+                    if m.role == "user" {
+                        self.settled_confirmations.push(m.id.clone());
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+
+    fn discard_deferred_sync(&mut self) {
+        if let Some(deferred) = self.deferred_sync.take() {
+            self.record_settled_inbox(&deferred.event);
         }
     }
 
@@ -186,11 +214,18 @@ impl Reader {
         std::mem::take(&mut self.settled_inbox)
     }
 
+    pub(crate) fn drain_settled_confirmations(&mut self) -> Vec<String> {
+        if self.hidden {
+            self.drain();
+        }
+        std::mem::take(&mut self.settled_confirmations)
+    }
+
     pub(crate) fn stop_content(&mut self) {
         self.hidden = true;
         self.pending_scroll = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.generation = self.request.publish(None);
@@ -267,35 +302,40 @@ impl Reader {
         clock: Option<f64>,
     ) -> Option<Event> {
         self.last_taken = None;
-        if let Some(mut deferred) = self.deferred_sync.take()
-            && !self.hidden
-            && deferred.generation == self.generation
-            && deferred.connection == self.connection.load(SeqCst)
-        {
-            if !defer_sync || !self.resume_pending {
-                self.last_taken = Some((deferred.generation, deferred.connection));
-                return Some(deferred.event);
-            }
-            let scroll_seq = reading.scroll_seq();
-            if clock.is_some() && deferred.last_clock == clock && scroll_seq == deferred.last_seq {
+        if let Some(mut deferred) = self.deferred_sync.take() {
+            if !self.hidden
+                && deferred.generation == self.generation
+                && deferred.connection == self.connection.load(SeqCst)
+            {
+                if !defer_sync || !self.resume_pending {
+                    self.last_taken = Some((deferred.generation, deferred.connection));
+                    return Some(deferred.event);
+                }
+                let scroll_seq = reading.scroll_seq();
+                if clock.is_some()
+                    && deferred.last_clock == clock
+                    && scroll_seq == deferred.last_seq
+                {
+                    self.deferred_sync = Some(deferred);
+                    return None;
+                }
+                let seq_ready = scroll_seq >= deferred.min_seq;
+                let ready = seq_ready
+                    && (reading.top_is_fresh()
+                        || reading
+                            .live_bookmark_fresh(history_bounds, cached_gap)
+                            .is_some());
+                if ready || deferred.stage >= 4 {
+                    self.last_taken = Some((deferred.generation, deferred.connection));
+                    return Some(deferred.event);
+                }
+                deferred.stage += 1;
+                deferred.last_clock = clock;
+                deferred.last_seq = scroll_seq;
                 self.deferred_sync = Some(deferred);
                 return None;
             }
-            let seq_ready = scroll_seq >= deferred.min_seq;
-            let ready = seq_ready
-                && (reading.top_is_fresh()
-                    || reading
-                        .live_bookmark_fresh(history_bounds, cached_gap)
-                        .is_some());
-            if ready || deferred.stage >= 4 {
-                self.last_taken = Some((deferred.generation, deferred.connection));
-                return Some(deferred.event);
-            }
-            deferred.stage += 1;
-            deferred.last_clock = clock;
-            deferred.last_seq = scroll_seq;
-            self.deferred_sync = Some(deferred);
-            return None;
+            self.record_settled_inbox(&deferred.event);
         }
         while let Ok((generation, connection, event)) = self.events.try_recv() {
             if !self.hidden
@@ -390,12 +430,13 @@ impl Reader {
         self.resume_pending = true;
         self.pending_scroll = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.resume_manual_seq = None;
         self.reconciled_manual_scroll = false;
         self.bookmark = current;
+        self.drain();
         self.generation = self.request.publish(Some(target));
     }
 
@@ -468,7 +509,7 @@ impl Reader {
         self.activity = None;
         self.settling = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         if !self.hidden && (self.resume_pending || paging) {
             if self.resume_pending {
@@ -973,7 +1014,7 @@ pub(crate) fn suspend(s: &mut State) {
     crate::timeline::suspend(s);
     crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
-        reader.deferred_sync = None;
+        reader.discard_deferred_sync();
         let reading = s.transcript_display.reading();
         if !reader.defers_scroll()
             || (!reader.hidden && reader.user_scrolled_while_resuming(reading))
@@ -1001,11 +1042,16 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
-    let Some(ids) = s.reader.as_mut().map(Reader::drain_settled_inbox) else {
+    let Some((inbox_ids, confirmation_ids)) = s.reader.as_mut().map(|reader| {
+        (
+            reader.drain_settled_inbox(),
+            reader.drain_settled_confirmations(),
+        )
+    }) else {
         return false;
     };
     let mut changed = false;
-    for id in ids {
+    for id in inbox_ids {
         changed |= crate::composer::confirm_unconfirmed_id(s, &id);
         if s.composer.is_optimistic(&id) {
             s.composer.clear_optimistic(Some(&id));
@@ -1015,6 +1061,9 @@ pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
                 changed = true;
             }
         }
+    }
+    for id in confirmation_ids {
+        changed |= crate::composer::confirm_unconfirmed_id(s, &id);
     }
     changed
 }
@@ -1076,7 +1125,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         reader.bookmark_width = 0.0;
         reader.width_grew_while_deferred = false;
         reader.resume_manual_seq = None;
-        reader.deferred_sync = None;
+        reader.discard_deferred_sync();
         reader.sync_undo = None;
         reader.awaiting_manual_probe = ManualProbeWait::Idle;
     } else {
@@ -1086,7 +1135,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
             reader.bookmark_width = 0.0;
             reader.width_grew_while_deferred = false;
             reader.resume_manual_seq = None;
-            reader.deferred_sync = None;
+            reader.discard_deferred_sync();
             reader.sync_undo = None;
             reader.awaiting_manual_probe = ManualProbeWait::Idle;
         }
@@ -2530,7 +2579,7 @@ mod resume_tests {
     fn unprobed_manual_scroll_before_reader_sync_preserves_present_target() {
         let mut s = init();
         s.phase = Phase::Ready;
-        s.messages = (0..50)
+        s.messages = (0..60)
             .map(|i| {
                 crate::Message {
                     usage: None,
@@ -2543,7 +2592,7 @@ mod resume_tests {
                 .into()
             })
             .collect();
-        let window_15_30: Vec<_> = s.messages[15..=30].to_vec();
+        let all_messages = s.messages.clone();
         let (reader, lane) = Reader::open();
         s.reader = Some(reader);
         let mut rt = Runtime::new(s, crate::view, (390.0, 420.0), Env::new(false, 1.0));
@@ -2590,43 +2639,41 @@ mod resume_tests {
                     .then_some(k)
             })
         };
-        // Step 1: scroll down from row-20 to row-31..=36 (outside [15..=30]) and settle so
-        // reading.top records that out-of-window row.
+        // Step 1: scroll down from row-20 past row-36 and settle so reading.top records an
+        // out-of-window row far enough below row-20 for an unclamped ReaderSync window.
         let mut settled_high = None;
-        for _ in 0..24 {
+        for _ in 0..32 {
             rt.wheel(hx, hy, -220.0);
             for _ in 0..15 {
                 rt.frame(0.02);
             }
             if let Some(k) = top_key(&rt)
                 && let Some(num) = k.strip_prefix("row-").and_then(|s| s.parse::<usize>().ok())
-                && (31..=36).contains(&num)
+                && (36..=48).contains(&num)
             {
-                settled_high = Some(k);
+                settled_high = Some((k, num));
                 break;
             }
         }
-        let settled_high = settled_high.expect("first scroll must settle on row-31..=36");
+        let (settled_high, settled_high_num) =
+            settled_high.expect("first scroll must settle on row-36..=48");
+        let sync_window: Vec<_> = all_messages[15..settled_high_num].to_vec();
         assert!(
-            !window_15_30.iter().any(|r| r.id == settled_high),
-            "first scroll must settle outside [15..=30], got {settled_high}"
+            !sync_window.iter().any(|r| r.id == settled_high),
+            "first scroll must settle outside sync window, got {settled_high}"
         );
-        // Step 2: wheel up once and step a single frame so the visible top row moves into
-        // [15..=30] (!= row-20) while its on_drawn_layout_tx is still queued in frame.queue
-        // (reading.top still holds settled_high, which is absent from [15..=30]).
-        let mut target_in_window = None;
-        for _ in 0..8 {
-            rt.wheel(hx, hy, 360.0);
-            rt.frame(0.02);
-            if let Some(k) = top_key(&rt)
-                && window_15_30.iter().any(|r| r.id == k)
-                && k != "row-20"
-            {
-                target_in_window = Some(k);
-                break;
-            }
-        }
-        let target = target_in_window.expect("must reach a row inside [15..=30] != row-20");
+        // Step 2: wheel up by more than the history viewport height in a single frame so the
+        // visible top row moves well inside sync_window (!= row-20, with more than one viewport
+        // of trailing rows before settled_high to avoid bottom clamping across system fonts)
+        // while its on_drawn_layout_tx is still queued in frame.queue.
+        let wheel_up = (hist[3] + 160.0).max(460.0);
+        rt.wheel(hx, hy, wheel_up);
+        rt.frame(0.02);
+        let target = top_key(&rt).expect("visible row after single upward wheel");
+        assert!(
+            sync_window.iter().any(|r| r.id == target) && target != "row-20",
+            "single upward wheel must reach a row inside sync_window != row-20: got {target}, settled={settled_high}"
+        );
         assert_eq!(
             rt.state.transcript_display.reading().bookmark(false),
             Bookmark::Message {
@@ -2642,14 +2689,14 @@ mod resume_tests {
             !rt.state.transcript_display.reading().top_is_fresh(),
             "reading.top must be marked stale while queued row probe has not drained"
         );
-        // Step 3: deliver ReaderSync [15..=30] immediately before the next frame drains Action::Layout.
+        // Step 3: deliver ReaderSync immediately before the next frame drains Action::Layout.
         lane.events
             .try_send((
                 resume_gen,
                 0,
                 Event::ReaderSync {
                     page: crate::history::Page {
-                        rows: window_15_30,
+                        rows: sync_window,
                         older: None,
                         newer: None,
                         running: false,

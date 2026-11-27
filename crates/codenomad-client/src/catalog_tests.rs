@@ -700,20 +700,19 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
             path: "/trial".into(),
             temporary: false,
         };
-        for (id, missing) in [
-            ("missing", true),
-            ("other", false),
-            ("unready", false),
-            ("moved", true),
-            ("forbidden", false),
+        for (id, missing, deleted) in [
+            ("missing", true, true),
+            ("other", false, false),
+            ("unready", false, false),
+            ("moved", true, false),
+            ("forbidden", false, false),
         ] {
+            let err = backend.bind_session(&project, id, false).await.unwrap_err();
+            assert_eq!(err.is::<crate::catalog::SessionMissing>(), missing);
             assert_eq!(
-                backend
-                    .bind_session(&project, id, false)
-                    .await
-                    .unwrap_err()
-                    .is::<crate::catalog::SessionMissing>(),
-                missing
+                err.downcast_ref::<crate::catalog::SessionMissing>()
+                    .is_some_and(|reason| reason.is_deleted()),
+                deleted
             );
         }
     });
@@ -780,6 +779,12 @@ fn catalogue_omissions_require_targeted_absence() {
                 404,
                 json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
             ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/moved",
+                None,
+                403,
+                json!({"reason":"session_located_elsewhere"}),
+            ),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
         let project = crate::catalog::Project {
@@ -787,12 +792,24 @@ fn catalogue_omissions_require_targeted_absence() {
             path: "/trial".into(),
             temporary: false,
         };
-        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let ids = [
+            "unresponsive",
+            "reordered",
+            "unavailable",
+            "deleted",
+            "moved",
+        ]
+        .map(str::to_owned);
         let (out, results) = async_channel::bounded(ids.len());
         backend
             .confirm_missing_sessions(&project, ids.into(), out, || {})
             .await;
-        assert_eq!(results.try_recv().unwrap().0, "deleted");
+        let first = results.try_recv().unwrap();
+        assert_eq!(first.0, "deleted");
+        assert_eq!(first.2, crate::catalog::SessionAbsence::NotFound);
+        let second = results.try_recv().unwrap();
+        assert_eq!(second.0, "moved");
+        assert_eq!(second.2, crate::catalog::SessionAbsence::LocatedElsewhere);
         assert!(results.try_recv().is_err());
     });
 }

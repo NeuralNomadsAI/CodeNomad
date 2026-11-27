@@ -113,6 +113,10 @@ impl Cache {
         self.conversation_client_id.as_deref()
     }
 
+    pub(super) fn is_launcher_visible(&self) -> bool {
+        self.launcher_visible
+    }
+
     fn is_detached(&self) -> bool {
         self.launcher_visible && self.incoming.is_none()
     }

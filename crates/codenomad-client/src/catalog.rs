@@ -19,8 +19,39 @@ impl std::fmt::Display for CreationRefused {
 }
 impl std::error::Error for CreationRefused {}
 
-#[derive(Debug)]
-pub struct SessionMissing;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAbsence {
+    NotFound,
+    LocatedElsewhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionMissing {
+    reason: SessionAbsence,
+}
+
+impl SessionMissing {
+    pub const fn not_found() -> Self {
+        Self {
+            reason: SessionAbsence::NotFound,
+        }
+    }
+
+    pub const fn located_elsewhere() -> Self {
+        Self {
+            reason: SessionAbsence::LocatedElsewhere,
+        }
+    }
+
+    pub const fn absence(self) -> SessionAbsence {
+        self.reason
+    }
+
+    pub const fn is_deleted(self) -> bool {
+        matches!(self.reason, SessionAbsence::NotFound)
+    }
+}
+
 impl std::fmt::Display for SessionMissing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("native session is no longer available in the workspace")

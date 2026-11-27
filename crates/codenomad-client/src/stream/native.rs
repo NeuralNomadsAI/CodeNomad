@@ -522,7 +522,9 @@ async fn receive_chunk(
     state: &State,
     frames: &Sender<(Parsed, u64)>,
 ) -> Result<()> {
-    // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
+    // Bytes already delivered by HTTP may still contain a session deletion or revocation past
+    // the next queued frame. Observe deletion hooks across the whole chunk before awaiting the
+    // bounded frame queue, while keeping quota and inbox ingress aligned with each queued frame.
     let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     struct InboxChunk<'a>(Option<&'a crate::inbox::InboxWire>);
     impl InboxChunk<'_> {
@@ -547,44 +549,65 @@ async fn receive_chunk(
         state.inbox.begin_chunk();
         InboxChunk(Some(&state.inbox))
     });
+    let mut parsed = Vec::new();
+    let mut parse_err = None;
     for byte in chunk {
-        if let Some(frame) = parser.byte(*byte)? {
-            let mark = match &frame {
-                Parsed::Data(kind, data) if kind != "codenomad.client.ping" => {
-                    if (kind.is_empty() || kind == "message")
-                        && let Some(quota) = quota
-                    {
-                        quota.frame(data);
-                    }
-                    if state.catalogue.is_none() {
-                        super::sessions::note_inbox_frame(
-                            &b.workspace,
-                            &b.session,
-                            &state.inbox,
-                            Some(state.history_revision.as_ref()),
-                            Some(state.upstream.as_ref()),
-                            Some(state.disconnect_mark.as_ref()),
-                            data,
-                        )
-                    } else {
-                        0
-                    }
+        match parser.byte(*byte) {
+            Ok(Some(frame)) => {
+                if let Parsed::Data(kind, data) = &frame {
+                    state.observe_frame(b, kind, data);
                 }
-                Parsed::Skipped => {
-                    if let Some(quota) = quota {
-                        quota.skipped();
-                    }
-                    if state.catalogue.is_none() {
-                        state.history_revision.fetch_add(1, SeqCst);
-                        state.inbox.record_ingress()
-                    } else {
-                        0
-                    }
+                parsed.push(frame);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                if let Some(quota) = quota {
+                    quota.skipped();
                 }
-                _ => 0,
-            };
-            frames.send((frame, mark)).await?;
+                parse_err = Some(err);
+                break;
+            }
         }
+    }
+    for frame in parsed {
+        let mark = match &frame {
+            Parsed::Data(kind, data) if kind != "codenomad.client.ping" => {
+                if (kind.is_empty() || kind == "message")
+                    && let Some(quota) = quota
+                {
+                    quota.frame(data);
+                }
+                if state.catalogue.is_none() {
+                    super::sessions::note_inbox_frame(
+                        &b.workspace,
+                        &b.session,
+                        &state.inbox,
+                        Some(state.history_revision.as_ref()),
+                        Some(state.upstream.as_ref()),
+                        Some(state.disconnect_mark.as_ref()),
+                        data,
+                    )
+                } else {
+                    0
+                }
+            }
+            Parsed::Skipped => {
+                if let Some(quota) = quota {
+                    quota.skipped();
+                }
+                if state.catalogue.is_none() {
+                    state.history_revision.fetch_add(1, SeqCst);
+                    state.inbox.record_ingress()
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        };
+        frames.send((frame, mark)).await?;
+    }
+    if let Some(err) = parse_err {
+        return Err(err);
     }
     if let Some(chunk) = inbox_chunk {
         chunk.finish();
