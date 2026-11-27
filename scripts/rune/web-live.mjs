@@ -138,11 +138,12 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   // Order A: Launcher opened the admitted SSE first; only the first Conversation sync counts (repetitions ignored).
   const conversationSecond=firstConv!==null&&handover.sseOpenedAt<=probes[0].receivedAt&&
     afterPrevGate(firstConv)&&isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
-  // Order B: Conversation already synced on P0; only the first post-gate Launcher /api/meta 200 counts.
-  const postGateMetas=metaSyncs.filter(afterPrevGate)
-  const firstLauncherMeta=postGateMetas.length?Math.min(...postGateMetas):null
+  // Order B: Conversation already synced on P0; fix the episode's first post-P0 Launcher /api/meta 200 before testing proximity.
+  const postP0Metas=metaSyncs.filter(at=>at>=probes[0].receivedAt)
+  const firstLauncherMeta=postP0Metas.length?Math.min(...postP0Metas):null
   const conversationFirst=firstConv!==null&&firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS&&
-    firstLauncherMeta!==null&&isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
+    firstLauncherMeta!==null&&afterPrevGate(firstLauncherMeta)&&
+    isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
   return conversationSecond||conversationFirst
 }
 
@@ -214,7 +215,6 @@ async function verifySseAuthenticated503Recovery({
       let sseScenarioActive=true
       let handoverFrozen=false
       let sseGate='pass'
-      let sseAdmittedAt=null
       let admittedSseRequest=null
       let recovered=false
       let routeError=null
@@ -273,14 +273,14 @@ async function verifySseAuthenticated503Recovery({
         const req=res.request()
         const target=new URL(res.url())
         if(target.origin!==url.origin||res.status()!==200)return
-        if(handover.sseOpenedAt===null&&admittedSseRequest&&req===admittedSseRequest){
+        if(handover.sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
           const nowAt=performance.now()
           handover.sseResponseAt=nowAt
-          handover.sseOpenedAt=sseAdmittedAt??nowAt
+          handover.sseOpenedAt=nowAt
           notifyHandoverSync?.()
           return
         }
-        if(admittedMetaRequests.has(req)){
+        if(handover.sseResponseAt!==null&&admittedMetaRequests.has(req)){
           admittedMetaRequests.delete(req)
           handover.launcherMetaTimes.push(performance.now())
           notifyHandoverSync?.()
@@ -288,7 +288,7 @@ async function verifySseAuthenticated503Recovery({
       }
       const activeWorkspace=id=>!workspaces?.size||workspaces.has(id)
       const onSubscriberRequest=req=>{
-        if(!injectTransient503||handoverFrozen||sseAdmittedAt===null)return
+        if(!injectTransient503||handoverFrozen||handover.sseResponseAt===null)return
         const target=new URL(req.url())
         if(target.origin!==url.origin)return
         if(req.method()==='GET'&&target.pathname==='/api/meta'){
@@ -320,7 +320,6 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='admit-one'){
           sseGate='hold'
-          sseAdmittedAt=performance.now()
           admittedSseRequest=route.request()
           return route.fallback()
         }
