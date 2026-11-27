@@ -1,5 +1,6 @@
 // Holds an owned Rust server on loopback for the Android application, reached from a device
-// through `adb reverse`. Its OpenCode is a synthetic endpoint: no installed daemon is used.
+// through `adb reverse`. Its OpenCode is a synthetic endpoint (`synthetic-opencode.mjs`): no
+// installed daemon is used.
 //
 //   node packages/rune-app/fixtures/android-native-serve.mjs [--port 3000] [--minutes 60] [--password <to type by hand>]
 //
@@ -9,12 +10,12 @@
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
-import {access,appendFile,mkdir,stat} from 'node:fs/promises'
-import {createServer} from 'node:http'
+import {access,mkdir,stat} from 'node:fs/promises'
 import {setTimeout as delay} from 'node:timers/promises'
 import {parseArgs} from 'node:util'
 import path from 'node:path'
 import {privateEnvironment} from './private-profile.mjs'
+import {syntheticOpenCode} from './synthetic-opencode.mjs'
 
 const {values}=parseArgs({options:{minutes:{type:'string',default:'60'},port:{type:'string',default:'3000'},password:{type:'string'}}})
 const minutes=Number(values.minutes),serverBinary=process.env.RUNE_SERVER_EXE
@@ -28,22 +29,8 @@ await mkdir(project,{recursive:true})
 // A password someone types on a phone may be given; the server still listens on loopback only.
 assert(values.password===undefined||values.password.length>=8,'Pass --password of at least 8 characters')
 const password=values.password??randomUUID(),nativePassword=randomUUID(),requests=path.join(profile,'native-requests.log')
-const streams=new Set()
-const upstream=createServer((req,res)=>{
-  const url=new URL(req.url,'http://127.0.0.1')
-  void appendFile(requests,`${req.method} ${url.pathname}\n`).catch(()=>{})
-  if(req.headers.authorization!==`Basic ${Buffer.from(`opencode:${nativePassword}`).toString('base64')}`){res.writeHead(401);res.end();return}
-  if(url.pathname==='/api/event'){
-    res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'});res.write(': connected\n\n')
-    streams.add(res);res.once('close',()=>streams.delete(res));return
-  }
-  res.setHeader('content-type','application/json')
-  if(req.method==='GET'&&url.pathname==='/api/location')
-    return res.end(JSON.stringify({data:{directory:url.searchParams.get('location[directory]')??project}}))
-  res.writeHead(404);res.end(JSON.stringify({_tag:'RpcError',type:'rpc.method_not_found',message:'Synthetic endpoint: unsupported'}))
-})
-await new Promise((resolve,reject)=>{upstream.once('error',reject);upstream.listen(0,'127.0.0.1',resolve)})
-const env={...await privateEnvironment(profile),CNRS_SERVER_PASSWORD:password,CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
+const upstream=await syntheticOpenCode({project,password:nativePassword,requests})
+const env={...await privateEnvironment(profile),CNRS_SERVER_PASSWORD:password,CNRS_FIXTURE_URL:upstream.origin,
   CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1'}
 // The fourth argument names no executable: with the synthetic endpoint set, none is started.
 const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),values.port,'synthetic-only'],
@@ -59,15 +46,18 @@ try{
   const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({username:'codenomad',password}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200,'The owned server refused its own password')
+  // The project is open before anyone connects: the launcher lists it, with no path to type.
+  const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie:login.headers.get('set-cookie').split(';')[0]},
+    body:JSON.stringify({path:project}),signal:AbortSignal.timeout(30000)})
+  assert.equal(opened.status,201,'The owned server did not open the synthetic project')
   const stop=path.join(profile,'stop')
   console.log(JSON.stringify({origin,port:Number(new URL(origin).port),password,profile,stop}))
   for(const end=Date.now()+minutes*60000;Date.now()<end&&server.exitCode===null;await delay(500))
     if(await access(stop).then(()=>true,()=>false))break
 }finally{
-  for(const stream of streams)stream.destroy()
   // The server owns no child process: a shutdown line ends it, a kill is the fallback.
   server.stdin.end('shutdown\n')
   if(await Promise.race([stopped.then(()=>false),delay(5000,true)]))server.kill()
   await stopped
-  await new Promise(resolve=>upstream.close(resolve))
+  await upstream.close()
 }
