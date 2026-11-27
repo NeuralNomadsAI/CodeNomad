@@ -660,6 +660,7 @@ pub(super) fn purge_closed_scope(
     }
     ui.closed_pending_deleted
         .retain(|(s, _)| !s.same_scope(scope));
+    ui.forget_closed_unconfirmed_for_project_scope(scope);
     for session_id in purge_sessions {
         ui.forget_closed_unconfirmed_for_scope(scope, &session_id);
     }

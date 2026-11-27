@@ -266,6 +266,7 @@ pub(super) const MAX_UNCONFIRMED_LOCKS: usize = super::MAX_DRAFTS;
 struct ClosedUnconfirmed {
     backend_id: Option<String>,
     server_id: Option<String>,
+    folder: String,
     session_id: String,
     unconfirmed: crate::composer::UnconfirmedPrompt,
 }
@@ -274,6 +275,11 @@ impl ClosedUnconfirmed {
         self.session_id == session_id
             && self.backend_id == workspace.backend_id
             && (self.backend_id.is_none() || self.server_id == workspace.server_id)
+    }
+    fn matches_project_scope(&self, scope: &ProjectScope) -> bool {
+        same_folder(&self.folder, &scope.folder)
+            && self.backend_id == scope.backend_id
+            && (self.backend_id.is_none() || self.server_id == scope.server_id)
     }
 }
 impl Ui {
@@ -288,6 +294,7 @@ impl Ui {
             .iter_mut()
             .find(|item| item.matches(workspace, &session_id))
         {
+            existing.folder = workspace.folder.clone();
             if existing.unconfirmed.id() == unconfirmed.id() {
                 if existing.unconfirmed.is_edited() && !unconfirmed.is_edited() {
                     existing.unconfirmed = unconfirmed;
@@ -303,6 +310,7 @@ impl Ui {
         self.closed_unconfirmed.push(ClosedUnconfirmed {
             backend_id: workspace.backend_id.clone(),
             server_id: workspace.server_id.clone(),
+            folder: workspace.folder.clone(),
             session_id,
             unconfirmed,
         });
@@ -374,6 +382,10 @@ impl Ui {
                 && item.backend_id == scope.backend_id
                 && (item.backend_id.is_none() || item.server_id == scope.server_id))
         });
+    }
+    pub(super) fn forget_closed_unconfirmed_for_project_scope(&mut self, scope: &ProjectScope) {
+        self.closed_unconfirmed
+            .retain(|item| !item.matches_project_scope(scope));
     }
     pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
         &self.entries
@@ -520,6 +532,7 @@ impl Ui {
     pub(crate) fn snapshot_with_stashed(&self, stashed: Option<&StashedTemporary>) -> Snapshot {
         let mut refs: Vec<&Entry> = self.entries.iter().collect();
         let mut active = self.active;
+        let mut stashed_idx: Option<usize> = None;
         if let Some(stashed) = stashed {
             if let Some(blank_key) = &stashed.created_blank_key
                 && let Some(pos) = refs
@@ -533,6 +546,7 @@ impl Ui {
             }
             let insert_at = stashed.original_index.min(refs.len());
             refs.insert(insert_at, &stashed.entry);
+            stashed_idx = Some(insert_at);
             if stashed.was_active {
                 active = insert_at;
             } else if insert_at <= active {
@@ -545,6 +559,50 @@ impl Ui {
             Some(active.min(refs.len() - 1))
         };
         let mut tabs: Vec<Tab> = refs.iter().map(|e| e.saved.clone()).collect();
+        // Resync any pending closed-draft projections on a stashed temporary tab against the
+        // current ui.closed archives (confirmations during stashing only resync self.entries),
+        // so stale projections are never persisted and surviving archives are never skipped.
+        let mut stashed_projected: HashSet<String> = HashSet::new();
+        if let Some(si) = stashed_idx
+            && let Tab::Workspace(snap_w) = &mut tabs[si]
+        {
+            let scope = ProjectScope::from_workspace(snap_w);
+            for id in &refs[si].pending_drafts {
+                snap_w.drafts.remove(id);
+                snap_w.attachment_drafts.remove(id);
+                snap_w.attachment_parts.remove(id);
+                let clear_authorities =
+                    drafts::collect_open_clear_authorities_for(refs.iter().copied(), &scope, id);
+                let (bundles, _) = drafts::collect_closed_bundles_for_recovery(
+                    self,
+                    &scope,
+                    id,
+                    &clear_authorities,
+                );
+                let projected_open = self
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.pending_drafts.contains(id)
+                            && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                    })
+                    .count();
+                if let Some(bundle) = bundles.get(projected_open) {
+                    if let Some(text) = bundle.text.as_ref()
+                        && !text.is_empty()
+                    {
+                        snap_w.drafts.insert(id.clone(), text.clone());
+                    }
+                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                        snap_w.attachment_drafts.insert(id.clone());
+                    }
+                    if let Some(parts) = bundle.attachment_parts.as_ref() {
+                        snap_w.attachment_parts.insert(id.clone(), parts.clone());
+                    }
+                    stashed_projected.insert(id.clone());
+                }
+            }
+        }
         // Exclude restored copies already superseded by a closed sibling's clear authority
         // without changing the v1 snapshot schema.
         for (idx, e) in refs.iter().enumerate() {
@@ -1109,13 +1167,18 @@ impl Ui {
                     if closed_bundles.is_empty() {
                         continue;
                     }
-                    let projected_count = refs
+                    let projected_count = self
+                        .entries
                         .iter()
                         .filter(|entry| {
                             entry.pending_drafts.contains(id)
                                 && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
                         })
-                        .count();
+                        .count()
+                        + usize::from(stashed_idx.is_some_and(|si| {
+                            stashed_projected.contains(id)
+                                && matches!(&refs[si].saved, Tab::Workspace(w) if scope.matches(w))
+                        }));
                     let no_session_free = !snap.tabs.iter().any(|tab| {
                         matches!(tab, Tab::Workspace(w) if scope.matches(w)
                         && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())

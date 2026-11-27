@@ -992,9 +992,25 @@ mod tests {
         let mut other_b = other_a.clone();
         other_b.occurrence = 2;
 
+        let derived_a = super::super::drafts::DraftCopy::from_workspace(&other_a, "ses-other")
+            .expect("derived copy a");
+        let mut derived_b_ws = other_b.clone();
+        derived_b_ws
+            .drafts
+            .insert("ses-other".into(), "origin-b".into());
+        let derived_b = super::super::drafts::DraftCopy::from_workspace(&derived_b_ws, "ses-other")
+            .expect("derived copy b");
         ui.closed = vec![temp_ws.clone(), other_a.clone(), other_b.clone()];
-        ui.closed_restored = vec![Default::default(), Default::default(), Default::default()];
-        ui.closed_derived_from = vec![Default::default(), Default::default(), Default::default()];
+        ui.closed_restored = vec![
+            std::collections::HashSet::from(["ses-temp".into()]),
+            std::collections::HashSet::from(["ses-restored-a".into()]),
+            std::collections::HashSet::from(["ses-restored-b".into()]),
+        ];
+        ui.closed_derived_from = vec![
+            Default::default(),
+            std::collections::BTreeMap::from([("ses-other".into(), derived_a.clone())]),
+            std::collections::BTreeMap::from([("ses-other".into(), derived_b.clone())]),
+        ];
         ui.closed_unconfirmed_attempts = vec![
             Default::default(),
             std::collections::BTreeMap::from([("ses-other".into(), "att-a".into())]),
@@ -1004,6 +1020,13 @@ mod tests {
             &temp_ws,
             "ses-temp".into(),
             crate::composer::UnconfirmedPrompt::locked("att-temp".into()),
+        );
+        // Also seed an edited/cleared unconfirmed lock from an earlier session on the same
+        // temporary workspace (absent from closed_unconfirmed_attempts and active_session_id).
+        ui.remember_closed_unconfirmed(
+            &temp_ws,
+            "ses-temp-edited".into(),
+            crate::composer::UnconfirmedPrompt::locked("att-temp-edited".into()),
         );
         ui.remember_closed_unconfirmed(
             &other_a,
@@ -1025,6 +1048,10 @@ mod tests {
         assert_eq!(ui.closed_restored.len(), 2);
         assert_eq!(ui.closed_derived_from.len(), 2);
         assert_eq!(ui.closed_unconfirmed_attempts.len(), 2);
+        assert!(ui.closed_restored[0].contains("ses-restored-a"));
+        assert!(ui.closed_restored[1].contains("ses-restored-b"));
+        assert_eq!(ui.closed_derived_from[0].get("ses-other"), Some(&derived_a));
+        assert_eq!(ui.closed_derived_from[1].get("ses-other"), Some(&derived_b));
         assert_eq!(
             ui.closed_unconfirmed_attempts[0]
                 .get("ses-other")
@@ -1036,6 +1063,11 @@ mod tests {
         assert!(
             ui.closed_unconfirmed_id(&temp_ws, "ses-temp").is_none(),
             "successful temporary discard must release closed_unconfirmed locks for deleted project"
+        );
+        assert!(
+            ui.closed_unconfirmed_id(&temp_ws, "ses-temp-edited")
+                .is_none(),
+            "successful temporary discard must release edited/cleared closed_unconfirmed locks for deleted project"
         );
         assert_eq!(
             ui.closed_unconfirmed_id(&other_a, "ses-other"),
@@ -1061,9 +1093,16 @@ mod tests {
         );
 
         // Now verify finish_discarded(..., keep_drafts = true) (e.g. 404 fallback) respects
-        // clear_authority instead of writing blanket empty tombstones that hide independent drafts.
+        // clear_authority: erases the matching restored copy while preserving an independent draft
+        // and never writing a blanket empty tombstone.
         temp_ws.drafts.clear();
         temp_ws.drafts.insert("ses-indep".into(), "keep me".into());
+        let mut old_restored_ws = temp_ws.clone();
+        old_restored_ws.occurrence = 3;
+        old_restored_ws.drafts.clear();
+        old_restored_ws
+            .drafts
+            .insert("ses-indep".into(), "older restored text".into());
         let mut stashed_404_ws = temp_ws.clone();
         stashed_404_ws.occurrence = 2;
         stashed_404_ws.drafts.clear();
@@ -1071,10 +1110,6 @@ mod tests {
         stashed_404_entry.project = Some(temp_project);
         stashed_404_entry.binding = Some(backend);
         stashed_404_entry.cleared.insert("ses-indep".into());
-        let mut old_restored_ws = temp_ws.clone();
-        old_restored_ws
-            .drafts
-            .insert("ses-indep".into(), "older restored text".into());
         stashed_404_entry.clear_authority.insert(
             "ses-indep".into(),
             super::super::drafts::ClearAuthority::Copy(
@@ -1088,6 +1123,11 @@ mod tests {
             ui.closed_restored.push(Default::default());
             ui.closed_derived_from.push(Default::default());
             ui.closed_unconfirmed_attempts.push(Default::default());
+            ui.closed.push(old_restored_ws.clone());
+            ui.closed_restored
+                .push(std::collections::HashSet::from(["ses-indep".into()]));
+            ui.closed_derived_from.push(Default::default());
+            ui.closed_unconfirmed_attempts.push(Default::default());
             ui.entries.push(stashed_404_entry);
             let stashed = stash_for_discard(s, "tab-temp-404", None, tx).expect("stash 404");
             finish_discarded(s, stashed, true, false, tx);
@@ -1096,6 +1136,12 @@ mod tests {
         assert_eq!(ui.closed.len(), ui.closed_restored.len());
         assert_eq!(ui.closed.len(), ui.closed_derived_from.len());
         assert_eq!(ui.closed.len(), ui.closed_unconfirmed_attempts.len());
+        assert!(
+            !ui.closed[ui.closed.len() - 2]
+                .drafts
+                .contains_key("ses-indep"),
+            "matching older restored copy must be erased by clear_authority during keep_drafts discard"
+        );
         let last = ui.closed.last().unwrap();
         assert!(
             !last.drafts.contains_key("ses-indep"),

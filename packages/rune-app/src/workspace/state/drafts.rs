@@ -3571,7 +3571,7 @@ mod tests {
         backend.session = "ses-rebind-a".into();
         let _ = bound(&mut rt.state, &backend);
         rt.state.phase = crate::Phase::Ready;
-        rt.state.commands = Some(cmd_tx);
+        rt.state.commands = Some(cmd_tx.clone());
         rt.state.incoming = Some(ev_rx2);
         rt.state.draft = rune::edit::TextEdit::new("confirmed before rebind");
         rt.update(|s, tx| crate::composer::send(s, tx, false));
@@ -3599,6 +3599,49 @@ mod tests {
         assert!(
             !resurrected_rebind,
             "bound_with_adopt must process queued InboxDelta confirmation before SessionDeleted recovery"
+        );
+
+        // Also test the real bound-conversation path where InboxDelta arrives on the Reader lane
+        // while SessionDeleted arrives on s.incoming before leaving via unselect_session / bound.
+        let (ev_tx3, ev_rx3) = codenomad_client::bounded(8);
+        let (mut reader3, lane3) = crate::chat::reader::Reader::fixture_open();
+        reader3.install(false);
+        let gen3 = reader3.generation();
+        backend.session = "ses-reader-lane".into();
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx);
+        rt.state.incoming = Some(ev_rx3);
+        rt.state.reader = Some(reader3);
+        rt.state.draft = rune::edit::TextEdit::new("confirmed via reader lane");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt3) = cmd_rx.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id3 = prompt3.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id3, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+
+        lane3
+            .events
+            .try_send((
+                gen3,
+                0,
+                Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed(attempt_id3)),
+            ))
+            .unwrap();
+        ev_tx3.try_send(Event::SessionDeleted).unwrap();
+        let mut next_backend3 = backend.clone();
+        next_backend3.session = "ses-reader-next".into();
+        let _ = bound(&mut rt.state, &next_backend3);
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let resurrected_reader = ui.entries.iter().any(|e| {
+            matches!(&e.saved, Tab::Workspace(w) if w.drafts.values().any(|t| t == "confirmed via reader lane"))
+        });
+        assert!(
+            !resurrected_reader,
+            "bound_with_adopt must drain queued InboxDelta confirmations from the Reader lane before SessionDeleted recovery"
         );
     }
 
@@ -3670,6 +3713,30 @@ mod tests {
         assert_eq!(
             local_copies, 0,
             "stashed temporary tab already projecting the closed draft must not duplicate it under __no_session_draft__"
+        );
+
+        // Also verify that if archive A (which stashed projected) is removed by confirmation while
+        // stashed, leaving archive B in ui.closed, snapshot_with_stashed clears stale A and
+        // persists B instead of letting the stale pending_drafts marker skip B.
+        let mut closed_b = make_ws(
+            "/tmp/stashed-proj",
+            Some("ses-del"),
+            &[("ses-del", "archive B")],
+        );
+        closed_b.temporary = true;
+        ui.closed = vec![closed_b];
+        let snap_resync = ui.snapshot_with_stashed(Some(&stashed));
+        let Tab::Workspace(stashed_snap_w) = &snap_resync.tabs[0] else {
+            panic!("expected stashed workspace tab")
+        };
+        assert_eq!(
+            stashed_snap_w.drafts.get("ses-del").map(String::as_str),
+            Some("archive B"),
+            "snapshot_with_stashed must replace stale stashed projection A with surviving archive B"
+        );
+        assert!(
+            !stashed_snap_w.drafts.contains_key(NO_SESSION_DRAFT_ID),
+            "surviving archive B projected onto the stashed tab must not also duplicate under __no_session_draft__"
         );
 
         // Medium #3: an optional project_name that pushes snapshot_string_units close to

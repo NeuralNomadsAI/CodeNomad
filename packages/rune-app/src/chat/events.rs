@@ -38,15 +38,28 @@ pub(crate) fn poll_chat_for_window(
 /// Applies all queued conversation events on the active tab during tab closure without discarding
 /// non-deletion updates if closure is deferred, returning whether `Event::SessionDeleted` arrived.
 pub(crate) fn drain_active_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
     drain_chat(s, 1024, true, true, false, None).1
 }
 
 /// Drains queued prompt confirmations and `Event::SessionDeleted` from the outgoing session's
-/// incoming channel before leaving or rebinding that session, without starting new refreshes on
-/// the session being left.
+/// incoming and reader channels before leaving or rebinding that session, without starting new
+/// refreshes on the session being left.
 pub(crate) fn drain_outgoing_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
     let mut session_deleted = false;
-    while let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) {
+    for _ in 0..1024 {
+        let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(false, reading, history_bounds, cached_gap, None)
+            })
+        });
+        let Some(event) = event else { break };
         match event {
             Event::SessionDeleted => session_deleted = true,
             Event::InboxDelta(delta) => match &delta {
@@ -92,6 +105,7 @@ pub(crate) fn drain_outgoing_incoming_deleted(s: &mut State) -> bool {
             _ => {}
         }
     }
+    let _ = chat::reader::settle_discarded_inbox(s);
     session_deleted
 }
 

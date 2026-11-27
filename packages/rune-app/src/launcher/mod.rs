@@ -890,13 +890,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Listed(workspace_id, rows, cursor)) => {
             let matches_current = l.project.as_ref().is_some_and(|p| p.id == workspace_id);
-            let stopped_in_flight = stopped_during_pending.contains_key(&workspace_id);
+            let stopped_in_flight = stopped_during_pending_overflow
+                || stopped_during_pending.contains_key(&workspace_id);
             if matches_current && !stopped_in_flight {
                 let listed_ids: HashSet<String> =
                     rows.rows.iter().map(|row| row.id.clone()).collect();
-                let record_present = !l.authentication_required
-                    && !stale_connection
-                    && !stopped_during_pending_overflow;
+                let record_present = !l.authentication_required && !stale_connection;
                 if let Some(cursor) = cursor {
                     l.consume_cursor(&cursor);
                     l.apply_listing(rows, true, selected.as_deref());
