@@ -189,7 +189,8 @@ try {
     const finished = list.find(mission => mission.id === first.id)?.status === "completed"
     if (finished) { script.mode = "held"; script.holdMs = 25_000 }
     return finished
-  }, 90_000)).find(mission => mission.id === first.id)
+    // The plugin admits the report at once; under `/goal` OpenCode took 20 to 60 seconds to hand it to the coordinator.
+  }, 180_000)).find(mission => mission.id === first.id)
   assert.equal(done.tasks[0]?.key, "probe")
   assert.ok(seen.rootReports >= 1 && seen.finals >= 1)
   const actor = done.actors.find(actor => actor.kind !== "coordinator")
