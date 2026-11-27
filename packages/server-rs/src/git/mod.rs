@@ -158,13 +158,13 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
     cmd.creation_flags(0x0800_0000);
     cmd
 }
-pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error> {
+async fn run_command(mut cmd: Command, max: usize) -> Result<Output, Error> {
     #[cfg(test)]
     crate::worktrees::fence_test_trace::record("git semaphore", "waiting");
     let _slot = SLOTS.acquire().await.unwrap();
     #[cfg(test)]
     let _trace = crate::worktrees::fence_test_trace::held("git semaphore");
-    let mut child = command(dir, args)
+    let mut child = cmd
         .spawn()
         .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_git() } else { bad("Git could not start") })?;
     let out = child.stdout.take().unwrap();
@@ -176,6 +176,29 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     .map_err(|_| bad("Git operation timed out"))?
     .map_err(|_| bad("Git output unavailable or too large"))?;
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
+}
+pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error> {
+    run_command(command(dir, args), max).await
+}
+/// Runs Git while setting `GIT_CEILING_DIRECTORIES` to include `scope.parent()` when `scope` is
+/// non-empty, preventing Git repository discovery from ascending above `scope` and loading a
+/// parent checkout's config or includes.
+pub async fn run_in_scope(dir: &Path, scope: &Path, args: &[&str], max: usize) -> Result<Output, Error> {
+    let mut cmd = command(dir, args);
+    if !scope.as_os_str().is_empty()
+        && let Some(ceiling) = scope.parent()
+    {
+        let mut ceilings = vec![ceiling.to_path_buf()];
+        if let Some(existing) = std::env::var_os("GIT_CEILING_DIRECTORIES") {
+            ceilings.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(joined) = std::env::join_paths(&ceilings) {
+            cmd.env("GIT_CEILING_DIRECTORIES", joined);
+        } else {
+            cmd.env("GIT_CEILING_DIRECTORIES", ceiling);
+        }
+    }
+    run_command(cmd, max).await
 }
 pub async fn run_with_stdin(dir: &Path, args: &[&str], stdin_bytes: &[u8], max: usize) -> Result<Output, Error> {
     let _slot = SLOTS.acquire().await.unwrap();

@@ -299,7 +299,7 @@ async fn local_common_dir(dir: &Path, scope: &Path, timeout: Duration) -> Result
     }
     let out = match tokio::time::timeout(
         timeout,
-        git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024),
+        git::run_in_scope(dir, scope, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024),
     )
     .await
     {
@@ -338,7 +338,7 @@ async fn local_worktree_toplevel(dir: &Path, scope: &Path, timeout: Duration) ->
     }
     let out = match tokio::time::timeout(
         timeout,
-        git::run(dir, &["rev-parse", "--path-format=absolute", "--show-toplevel"], 16 * 1024),
+        git::run_in_scope(dir, scope, &["rev-parse", "--path-format=absolute", "--show-toplevel"], 16 * 1024),
     )
     .await
     {
@@ -385,10 +385,13 @@ async fn local_listed_worktrees(repo_root: &Path, scope: &Path, timeout: Duratio
     if timeout.is_zero() {
         return Err(());
     }
-    let out = tokio::time::timeout(timeout, git::run(repo_root, &["worktree", "list", "--porcelain", "-z"], 4 << 20))
-        .await
-        .map_err(|_| ())?
-        .map_err(|_| ())?;
+    let out = tokio::time::timeout(
+        timeout,
+        git::run_in_scope(repo_root, scope, &["worktree", "list", "--porcelain", "-z"], 4 << 20),
+    )
+    .await
+    .map_err(|_| ())?
+    .map_err(|_| ())?;
     if out.code != 0 {
         return Err(());
     }

@@ -647,6 +647,7 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
             let mut value = String::new();
             let mut pending_ws = String::new();
             let mut quoted = false;
+            let mut started = false;
             while let Some(c) = chars.next() {
                 if !quoted && matches!(c, '#' | ';') {
                     for rest in chars.by_ref() {
@@ -670,6 +671,7 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                     break;
                 }
                 if c == '"' {
+                    started = true;
                     if !pending_ws.is_empty() {
                         value.push_str(&pending_ws);
                         pending_ws.clear();
@@ -685,6 +687,7 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                             continue;
                         }
                         Some(esc) => {
+                            started = true;
                             if !pending_ws.is_empty() {
                                 value.push_str(&pending_ws);
                                 pending_ws.clear();
@@ -705,9 +708,12 @@ fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
                     }
                     continue;
                 }
-                if !quoted && matches!(c, ' ' | '\t') {
-                    pending_ws.push(c);
+                if !quoted && matches!(c, ' ' | '\t' | '\r') {
+                    if started {
+                        pending_ws.push(c);
+                    }
                 } else {
+                    started = true;
                     if !pending_ws.is_empty() {
                         value.push_str(&pending_ws);
                         pending_ws.clear();
@@ -1056,7 +1062,7 @@ pub(crate) async fn probe_root_checkout(scope: &Path, workspace: &Workspace) -> 
         PreConfig::Refused => return Ok(RootCheckout::Git(Err(native_error()))),
     };
     let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
-    match crate::git::run(&workspace.path, &args, 128 * 1024).await {
+    match crate::git::run_in_scope(&workspace.path, scope, &args, 128 * 1024).await {
         Ok(out) if out.code == 0 => Ok(RootCheckout::Git(
             parse_checkout_in(scope.to_path_buf(), workspace.path.clone(), out.text(), pre).await.map(Box::new),
         )),
@@ -1092,8 +1098,21 @@ async fn checkout_in(scope: &Path, path: &Path) -> Result<Physical, Error> {
         PreConfig::None => None,
         PreConfig::Refused => return Err(native_error()),
     };
-    let text =
-        git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
+    let text = if scope.as_os_str().is_empty() {
+        git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?
+    } else {
+        crate::git::run_in_scope(
+            path,
+            scope,
+            &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"],
+            128 * 1024,
+        )
+        .await
+        .map_err(|_| native_error())?
+        .ok()
+        .map_err(|_| native_error())?
+        .text()
+    };
     parse_checkout_in(scope.to_path_buf(), path.to_path_buf(), text, pre).await
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -1516,12 +1535,13 @@ async fn catalogue_in_at(
     validate_local_config_includes(&live_scope, &local).await?;
     // Snapshot effective Git config with `--includes` when `include.path` is present so mid-scan
     // edits inside included config files are detected before publication (TS `git-worktrees.ts:104-135`).
-    let effective_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
-        .await
-        .map_err(|_| native_error())?
-        .ok()
-        .map_err(|_| native_error())?
-        .text();
+    let effective_config =
+        crate::git::run_in_scope(&local.root, &live_scope, &["config", "--null", "--list", "--includes"], 4 << 20)
+            .await
+            .map_err(|_| native_error())?
+            .ok()
+            .map_err(|_| native_error())?
+            .text();
     let include_snapshot = effective_config
         .split('\0')
         .any(|entry| {
@@ -1765,12 +1785,13 @@ async fn catalogue_in_at(
     // (TS `git-worktrees.ts:128-135`) so a mid-inventory config change cannot publish stale data.
     if let Some(expected_config) = include_snapshot {
         validate_local_config_includes(&live_scope, &local).await?;
-        let current_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
-            .await
-            .map_err(|_| native_error())?
-            .ok()
-            .map_err(|_| native_error())?
-            .text();
+        let current_config =
+            crate::git::run_in_scope(&local.root, &live_scope, &["config", "--null", "--list", "--includes"], 4 << 20)
+                .await
+                .map_err(|_| native_error())?
+                .ok()
+                .map_err(|_| native_error())?
+                .text();
         if current_config != expected_config {
             return Err(config_changed_error());
         }
