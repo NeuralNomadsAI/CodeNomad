@@ -92,6 +92,13 @@ test('SSE 503 backoff requires independent handover proof for 4-5 probes and rej
   assert.equal(shouldServeSse503(muxAfterRetry1, lateMetaHandover), false)
   assert.deepEqual(assertSse503Backoff(muxAfterRetry1, lateMetaHandover), {retryDelay1Ms: 1010, retryDelay2Ms: 2020, coalescedSlotProbes: 2})
 
+  // One conversation signal at 830 ms cannot justify both P1 (820 ms) and P2 (835 ms) to allow an extra retry (5 probes).
+  const doubleCounted = [probe(0, 5), probe(820, 825), probe(835, 840), probe(1850, 1855), probe(3870, 3875)]
+  const singleSignalAt830 = handover(0, {conv: [830]})
+  assert.equal(shouldServeSse503(doubleCounted.slice(0, 4), singleSignalAt830), false)
+  assert.throws(() => assertSse503Backoff(doubleCounted.slice(0, 4), singleSignalAt830), /first bounded retry delay/)
+  assert.throws(() => assertSse503Backoff(doubleCounted, singleSignalAt830), /cannot reuse a multiplexed handover already attributed to probe 2/)
+
   // Unproved extra retries (1 s, 1 s, 2 s), single-channel /api/meta without conversation sync, and distant/stale signals must be rejected.
   const threeRetries = [probe(0, 5), probe(1010, 1015), probe(2020, 2025), probe(4030, 4035)]
   assert.equal(shouldServeSse503(threeRetries.slice(0, 3), fastHandover), false)

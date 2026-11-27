@@ -151,10 +151,8 @@ export function shouldServeSse503(probes, handover){
     return false
   }
   if(probes.length===4){
-    const delay1=probeDelayMs(probes,2)
-    const delay2=probeDelayMs(probes,3)
-    if(hasMultiplexHandover(probes,handover,1)&&inRetry1Window(delay1)&&inRetry2Window(delay2,delay1))return false
-    return inRetry1Window(probeDelayMs(probes,1))&&hasMultiplexHandover(probes,handover,2)&&inRetry1Window(delay2)
+    if(hasMultiplexHandover(probes,handover,1))return false
+    return inRetry1Window(probeDelayMs(probes,1))&&hasMultiplexHandover(probes,handover,2)&&inRetry1Window(probeDelayMs(probes,3))
   }
   return false
 }
@@ -169,6 +167,8 @@ export function assertSse503Backoff(probes, handover){
     assert(hasMultiplexHandover(probes,handover,1),
       '4-probe SSE 503 recovery requires independent proof of a two-slot multiplexed handover before retry 1')
   } else if(probes.length===5){
+    assert(!hasMultiplexHandover(probes,handover,1),
+      '5-probe SSE 503 recovery cannot reuse a multiplexed handover already attributed to probe 2')
     const priorRetry1Ms=probeDelayMs(probes,1)
     assert(inRetry1Window(priorRetry1Ms),
       `Expected 5-probe multiplexed handover to follow a ~1 s first retry (${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(priorRetry1Ms)} ms`)
@@ -207,12 +207,14 @@ async function verifySseAuthenticated503Recovery({
     try {
       await page.bringToFront()
       let injectTransient503=false
+      let sseScenarioActive=true
       let sseGate='pass'
       let sseAdmittedAt=null
       let recovered=false
       let routeError=null
       const statusProbes=[]
       const handover={sseOpenedAt:null,sseResponseAt:null,conversationSyncTimes:[],launcherMetaTimes:[]}
+      const admittedMetaRequests=new WeakSet()
       let notifyHandoverSync=null
       const first503Served=Promise.withResolvers()
       const releaseRecovered=Promise.withResolvers()
@@ -249,6 +251,17 @@ async function verifySseAuthenticated503Recovery({
       }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise,routeFailed.promise])
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
+      const checkRoute=async route=>{
+        try {
+          if(await admitRoute(route.request()))return true
+          await route.abort('blockedbyclient').catch(()=>{})
+          return false
+        } catch (err) {
+          if(sseScenarioActive)failRoute(err)
+          await route.abort().catch(()=>{})
+          return false
+        }
+      }
       const onSseResponse=res=>{
         if(!injectTransient503)return
         const req=res.request()
@@ -261,16 +274,21 @@ async function verifySseAuthenticated503Recovery({
           notifyHandoverSync?.()
           return
         }
-        if(sseAdmittedAt!==null&&req.method()==='GET'&&target.pathname==='/api/meta'){
+        if(admittedMetaRequests.has(req)){
+          admittedMetaRequests.delete(req)
           handover.launcherMetaTimes.push(performance.now())
           notifyHandoverSync?.()
         }
       }
       const activeWorkspace=id=>!workspaces?.size||workspaces.has(id)
-      const onConversationRequest=req=>{
+      const onSubscriberRequest=req=>{
         if(!injectTransient503||sseAdmittedAt===null)return
         const target=new URL(req.url())
         if(target.origin!==url.origin)return
+        if(req.method()==='GET'&&target.pathname==='/api/meta'){
+          admittedMetaRequests.add(req)
+          return
+        }
         let matched=false
         if(req.method()==='GET'){
           const sessionMatch=target.pathname.match(/^\/workspaces\/([^/]+)\/instance\/api\/session\/ses_existing$/)
@@ -289,10 +307,10 @@ async function verifySseAuthenticated503Recovery({
         }
       }
       const routeEvents=async route=>{
-        if(sseGate==='pass')return route.fallback()
+        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='abort')return route.abort().catch(()=>{})
-        if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
-        if(sseGate==='pass')return route.fallback()
+        if(!await checkRoute(route))return
+        if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='abort')return route.abort().catch(()=>{})
         if(sseGate==='admit-one'){
           sseGate='hold'
@@ -306,14 +324,14 @@ async function verifySseAuthenticated503Recovery({
         try {
           await route.fulfill({status:503,contentType:'application/json',body:'{}'})
         } catch (err) {
-          if(injectTransient503)failRoute(err)
+          if(sseScenarioActive&&injectTransient503)failRoute(err)
         }
       }
       const routeStatus=async route=>{
         const receivedAt=performance.now()
-        if(route.request().method()!=='GET')return route.fallback()
-        if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
-        if(!injectTransient503)return route.fallback()
+        if(!sseScenarioActive||route.request().method()!=='GET')return route.fallback()
+        if(!await checkRoute(route))return
+        if(!sseScenarioActive||!injectTransient503)return route.fallback()
         const probe={receivedAt,fulfilledAt:receivedAt}
         statusProbes.push(probe)
         const attempt=statusProbes.length
@@ -363,7 +381,7 @@ async function verifySseAuthenticated503Recovery({
       }
       try {
         page.on('response',onSseResponse)
-        page.on('request',onConversationRequest)
+        page.on('request',onSubscriberRequest)
         await page.route(eventsUrl,routeEvents)
         await page.route(authStatusUrl,routeStatus)
         await step(command('revoke'))
@@ -422,13 +440,14 @@ async function verifySseAuthenticated503Recovery({
         if(routeError)throw routeError
         throw err
       } finally {
+        sseScenarioActive=false
         injectTransient503=false
         sseGate=recovered?'pass':'abort'
         notifyHandoverSync?.()
         releaseRecovered.resolve(false)
         releaseHeldSse.resolve(recovered)
         page.off('response',onSseResponse)
-        page.off('request',onConversationRequest)
+        page.off('request',onSubscriberRequest)
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
         await page.unroute(eventsUrl,routeEvents).catch(()=>{})
         await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
@@ -592,9 +611,20 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           }
         }
         const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
+        const checkFocusRoute=async route=>{
+          try {
+            if(await admitRoute(route.request()))return true
+            await route.abort('blockedbyclient').catch(()=>{})
+            return false
+          } catch (err) {
+            if(focusActive)failFocusRoute(err)
+            await route.abort().catch(()=>{})
+            return false
+          }
+        }
         const holdEvents=async route=>{
           if(!focusActive||!blockEvents)return route.fallback()
-          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          if(!await checkFocusRoute(route))return
           if(!focusActive||!blockEvents)return route.fallback()
           try {
             await route.fulfill({status:503,contentType:'application/json',body:'{}'})
@@ -609,7 +639,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         }
         const holdStaleStatus=async route=>{
           if(!focusActive||route.request().method()!=='GET')return route.fallback()
-          if(!await admitRoute(route.request()))return route.abort('blockedbyclient')
+          if(!await checkFocusRoute(route))return
           if(!focusActive)return route.fallback()
           authStatusRequests++
           if(heldStale){
