@@ -103,10 +103,6 @@ fn replay_deltas(start: f32, max: f32, deltas: &[f32]) -> f32 {
     dest
 }
 
-fn replay_deltas_mixed_signs(deltas: &[f32]) -> bool {
-    deltas.iter().any(|&d| d > 0.0) && deltas.iter().any(|&d| d < 0.0)
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct FrameRestore {
     epoch: u64,
@@ -118,6 +114,7 @@ struct FrameRestore {
     target: FrameRestoreTarget,
     probe_live: bool,
     probe_ready: Option<f32>,
+    defer_for_press: bool,
     handled: bool,
     post_probe: Option<PostProbe>,
     checked: Cell<Option<Option<f32>>>,
@@ -265,12 +262,12 @@ impl Reading {
     }
 
     fn on_history_press(&mut self) -> bool {
-        if self.frame_restore.as_ref().is_some_and(|fr| {
-            !fr.handled
-                && fr.probe_live
-                && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
-        }) {
-            self.frame_restore = None;
+        if let Some(fr) = self.frame_restore.as_mut()
+            && !fr.handled
+            && fr.probe_live
+            && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+        {
+            fr.defer_for_press = true;
             return true;
         }
         false
@@ -486,6 +483,7 @@ impl Reading {
                     },
                     probe_live: false,
                     probe_ready: None,
+                    defer_for_press: false,
                     handled: true,
                     post_probe: None,
                     checked: Cell::new(Some(None)),
@@ -517,6 +515,7 @@ impl Reading {
                 target,
                 probe_live,
                 probe_ready: None,
+                defer_for_press: false,
                 handled: false,
                 post_probe: None,
                 checked: Cell::new(None),
@@ -1224,7 +1223,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                     && pt.window_y >= bounds[1]
                     && pt.window_y <= bounds[1] + bounds[3];
                 if inside && s.transcript_display.reading_mut().on_history_press() {
-                    return;
+                    tx.wake_after(std::time::Duration::ZERO);
                 }
             }
             tx.live_only();
@@ -1506,6 +1505,7 @@ fn handle_reading_wheel(
                 fr.direct_seq = cur.last_direct_seq;
                 fr.queue_layout_seq = reading.queue_layout_seq;
                 fr.probe_ready = None;
+                fr.defer_for_press = false;
             }
             fr.post_probe = None;
             fr.probe_live = true;
@@ -1700,6 +1700,7 @@ fn handle_reading_wheel(
                 target: fr_target,
                 probe_live: from_bottom,
                 probe_ready: None,
+                defer_for_press: false,
                 handled: !from_bottom,
                 post_probe: None,
                 checked: Cell::new(if from_bottom {
@@ -1784,6 +1785,7 @@ fn handle_reading_wheel(
                 },
                 probe_live: false,
                 probe_ready: None,
+                defer_for_press: false,
                 handled: true,
                 post_probe: None,
                 checked: Cell::new(Some(None)),
@@ -1809,6 +1811,7 @@ fn handle_reading_wheel(
             },
             probe_live: true,
             probe_ready: None,
+            defer_for_press: false,
             handled: false,
             post_probe: None,
             checked: Cell::new(Some(Some(0.0))),
@@ -2016,8 +2019,8 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     }
     let target = {
-        let reading = s.transcript_display.reading();
-        let Some(fr) = reading.frame_restore.as_ref() else {
+        let reading = s.transcript_display.reading_mut();
+        let Some(fr) = reading.frame_restore.as_mut() else {
             return false;
         };
         if fr.handled || !fr.probe_live {
@@ -2026,6 +2029,11 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         let Some(target) = fr.probe_ready else {
             return false;
         };
+        if fr.defer_for_press {
+            fr.defer_for_press = false;
+            tx.wake_after(std::time::Duration::ZERO);
+            return false;
+        }
         target
     };
     let reading = s.transcript_display.reading_mut();
@@ -2095,10 +2103,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             let queue_layout_seq = s.transcript_display.reading().queue_layout_seq;
             let anchor_present = replay_anchor_present(s, &anchor);
             let queue_changed = fr.queue_layout_seq != queue_layout_seq;
-            let needs_rearm = anchor_retargeted
-                || !anchor_present
-                || (queue_changed
-                    && (matches!(anchor, Bookmark::Latest) || replay_deltas_mixed_signs(&deltas)));
+            let needs_rearm = anchor_retargeted || !anchor_present || queue_changed;
             if needs_rearm {
                 let next_anchor = if anchor_present {
                     Some(anchor)
@@ -2123,6 +2128,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         },
                         probe_live: true,
                         probe_ready: None,
+                        defer_for_press: false,
                         handled: false,
                         post_probe: None,
                         checked: Cell::new(Some(Some(0.0))),
@@ -2183,6 +2189,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     },
                     probe_live: false,
                     probe_ready: None,
+                    defer_for_press: false,
                     handled: true,
                     post_probe: Some(probe),
                     checked: Cell::new(Some(None)),
@@ -2221,6 +2228,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 },
                 probe_live: false,
                 probe_ready: None,
+                defer_for_press: false,
                 handled: true,
                 post_probe: Some(probe),
                 checked: Cell::new(Some(None)),
@@ -2339,6 +2347,7 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
         fr.queue_layout_seq = reading.queue_layout_seq;
         fr.probe_live = true;
         fr.probe_ready = None;
+        fr.defer_for_press = false;
         fr.handled = false;
         fr.post_probe = None;
         fr.checked.set(Some(Some(0.0)));

@@ -225,6 +225,23 @@ impl Queue {
         self.pending_sync = None;
         self.deferred_snapshot = None;
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_settle_remove(&mut self, id: String) {
+        let backend = self.backend.clone().unwrap_or_else(|| {
+            platform::block_on(Backend::connect("http://127.0.0.1:1/", "")).unwrap()
+        });
+        self.backend = Some(backend.clone());
+        let (cancel, _) = bounded(1);
+        let (tx, returned) = bounded(1);
+        let _ = tx.try_send(Ok(Outcome::Removed { id }));
+        self.busy = Some(Job {
+            owner: backend,
+            cancel,
+            returned,
+            suspended: false,
+        });
+    }
 }
 
 fn available(s: &State) -> bool {

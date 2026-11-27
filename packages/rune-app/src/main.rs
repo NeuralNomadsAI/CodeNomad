@@ -307,6 +307,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if wait_rail_layout {
         tx.wake_after(std::time::Duration::ZERO);
     }
+    let queue_changed = chat::queue::poll(s, tx);
     let flushed_replay = conversation_visible && chat::reading::flush_wheel_replay(s, tx);
     let rearmed_replay =
         conversation_visible && chat::reading::rearm_replay_on_layout_change(s, tx);
@@ -323,6 +324,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         && chat::reader::renderer_ready(s, tx);
     let mut changed = gesture
         | chat
+        | queue_changed
         | flushed_replay
         | rearmed_replay
         | restored
@@ -340,7 +342,6 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
-    changed |= chat::queue::poll(s, tx);
     changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
