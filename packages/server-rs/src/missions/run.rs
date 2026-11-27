@@ -17,14 +17,13 @@ use std::sync::{Arc, LazyLock};
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 
+const NATIVE_PLAYBOOKS: &str = include_str!("../../contracts/mission-playbooks-native.json");
+const INDEPENDENT_PLAYBOOKS: &str = include_str!("playbooks_independent.json");
+
 pub(super) fn playbook_details(task_mode: &str) -> &'static Value {
-    static NATIVE: LazyLock<Value> = LazyLock::new(|| {
-        serde_json::from_str(include_str!("../../contracts/mission-playbooks-native.json"))
-            .expect("bundled native playbooks")
-    });
-    static INDEPENDENT: LazyLock<Value> = LazyLock::new(|| {
-        serde_json::from_str(include_str!("playbooks_independent.json")).expect("bundled independent playbooks")
-    });
+    static NATIVE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(NATIVE_PLAYBOOKS).expect("bundled native playbooks"));
+    static INDEPENDENT: LazyLock<Value> =
+        LazyLock::new(|| serde_json::from_str(INDEPENDENT_PLAYBOOKS).expect("bundled independent playbooks"));
     if task_mode == "independent" { &INDEPENDENT } else { &NATIVE }
 }
 
@@ -35,8 +34,8 @@ pub async fn playbooks(RawQuery(raw): RawQuery) -> Result<Response, Error> {
         return Err(invalid());
     }
     let body = match query.get("taskMode").and_then(Value::as_str) {
-        None | Some("native") => include_str!("../../contracts/mission-playbooks-native.json"),
-        Some("independent") => include_str!("playbooks_independent.json"),
+        None | Some("native") => NATIVE_PLAYBOOKS,
+        Some("independent") => INDEPENDENT_PLAYBOOKS,
         Some(_) => return Err(invalid()),
     };
     Ok(([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response())

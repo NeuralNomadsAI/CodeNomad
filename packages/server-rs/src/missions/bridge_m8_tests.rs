@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -20,7 +20,9 @@ struct FakeState {
     prompted: Vec<(String, Value)>,
     interrupted: Vec<String>,
     control_calls: Vec<Value>,
-    control_reply: Option<Value>,
+    control_replies: VecDeque<Value>,
+    panel_override: Option<Value>,
+    extra_tasks: Vec<Value>,
     task_status: String,
 }
 
@@ -52,7 +54,7 @@ async fn spawn_fake_native(dir: String, state: Arc<Mutex<FakeState>>) -> std::ne
                 move |Path(id): Path<String>| {
                     let d = d.clone();
                     async move {
-                        let parent = if id == "ses_child" { json!("ses_co") } else { Value::Null };
+                        let parent = if matches!(id.as_str(), "ses_child" | "ses_sub") { json!("ses_co") } else { Value::Null };
                         Json(json!({
                             "data": {
                                 "id": id,
@@ -159,7 +161,16 @@ async fn spawn_fake_native(dir: String, state: Arc<Mutex<FakeState>>) -> std::ne
                         let input = body["input"].clone();
                         match method.as_str() {
                             "snapshot" => {
-                                let status = st.lock().unwrap().task_status.clone();
+                                let (status, extra) = {
+                                    let g = st.lock().unwrap();
+                                    (g.task_status.clone(), g.extra_tasks.clone())
+                                };
+                                let mut tasks = vec![json!({
+                                    "key": "task-a",
+                                    "status": status,
+                                    "executionMode": { "kind": "native", "parentTaskKey": null }
+                                })];
+                                tasks.extend(extra);
                                 Json(json!({
                                     "output": {
                                         "projectID": "prj_test",
@@ -175,32 +186,31 @@ async fn spawn_fake_native(dir: String, state: Arc<Mutex<FakeState>>) -> std::ne
                                             "revision": 3,
                                             "coordinatorSessionId": "ses_co",
                                             "actors": [{ "sessionId": "ses_co", "location": { "directory": d } }],
-                                            "tasks": [{
-                                                "key": "task-a",
-                                                "status": status,
-                                                "executionMode": { "kind": "native", "parentTaskKey": null }
-                                            }]
+                                            "tasks": tasks
                                         }]
                                     }
                                 }))
                             }
-                            "panelPage" => Json(json!({
-                                "output": {
-                                    "available": true,
-                                    "version": 1,
-                                    "projectID": "prj_test",
-                                    "projectCanonical": d,
-                                    "location": { "directory": d },
-                                    "source": "summaries",
-                                    "page": { "digest": "a".repeat(43), "total": 0, "pieces": [] }
-                                }
-                            })),
+                            "panelPage" => {
+                                let custom = st.lock().unwrap().panel_override.clone();
+                                Json(json!({
+                                    "output": custom.unwrap_or_else(|| json!({
+                                        "available": true,
+                                        "version": 1,
+                                        "projectID": "prj_test",
+                                        "projectCanonical": d,
+                                        "location": { "directory": d },
+                                        "source": "summaries",
+                                        "page": { "digest": "a".repeat(43), "total": 0, "pieces": [] }
+                                    }))
+                                }))
+                            }
                             "projectControl" => {
                                 let mut guard = st.lock().unwrap();
                                 guard.control_calls.push(input);
                                 let reply = guard
-                                    .control_reply
-                                    .clone()
+                                    .control_replies
+                                    .pop_front()
                                     .unwrap_or_else(|| json!({ "receipt": { "state": "completed" } }));
                                 Json(json!({ "output": { "json": reply.to_string() } }))
                             }
@@ -221,9 +231,18 @@ async fn spawn_fake_native(dir: String, state: Arc<Mutex<FakeState>>) -> std::ne
 }
 
 async fn bridge_call(app: &Arc<App>, secret: &str, command: Value) -> Result<Value, (StatusCode, Json<Value>)> {
+    bridge_call_as(app, secret, "ses_co", command).await
+}
+
+async fn bridge_call_as(
+    app: &Arc<App>,
+    secret: &str,
+    session_id: &str,
+    command: Value,
+) -> Result<Value, (StatusCode, Json<Value>)> {
     let payload = serde_json::to_vec(&json!({
         "mode": "mission-input",
-        "sessionID": "ses_co",
+        "sessionID": session_id,
         "command": command,
     }))
     .unwrap();
@@ -418,5 +437,262 @@ async fn m8_bridge_commands_dispatch_end_to_end() {
     .unwrap_err();
     assert_eq!(refused.0, StatusCode::CONFLICT);
     assert_eq!(refused.1.0["code"], "task-not-retired");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn m8_bridge_child_agent_holds_provenance_and_refusals() {
+    let dir = dunce::canonicalize(crate::shared::test_dir("missions-m8-edges")).unwrap();
+    let dir_str = dir.to_string_lossy().into_owned();
+    let state = Arc::new(Mutex::new(FakeState { task_status: "withdrawn".into(), ..Default::default() }));
+    let addr = spawn_fake_native(dir_str.clone(), state.clone()).await;
+
+    let auth = crate::auth::Auth::new(crate::auth::Settings {
+        username: "opencode".into(),
+        password: None,
+        file: None,
+        cookie: "cn".into(),
+        token: false,
+        skip: true,
+        managed_local: false,
+        idle: Duration::from_secs(60),
+        absolute: Duration::from_secs(60),
+    })
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+        dir.join("config.yaml").to_str().unwrap(),
+    ));
+    let mut app = App::new(
+        auth,
+        0,
+        dir.clone(),
+        dir.clone(),
+        false,
+        settings,
+        Value::Null,
+        crate::opencode::Native::test_connection(addr),
+        PathBuf::new(),
+        None,
+        crate::files::watch::Watches::new(tx),
+        None,
+    );
+    let secret = "edge-bridge-secret".to_owned();
+    app.mission_bridge = Some(secret.clone());
+    let wid = uuid::Uuid::new_v4();
+    app.inner.lock().unwrap().workspaces.push(Workspace {
+        id: wid,
+        request_id: None,
+        path: dir.clone(),
+        name: None,
+        status: "ready",
+        proxy_path: format!("/workspaces/{wid}/instance"),
+        binary_id: PathBuf::new(),
+        binary_label: String::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        location: json!({ "directory": dir_str }),
+        temporary: None,
+    });
+    let app = Arc::new(app);
+
+    // B1: child session (`ses_sub`, parentID: "ses_co") succeeds on settings, project-read,
+    // project-control, project-control-verify, and project-update.
+    let child_pref = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"settings","input":{"scope":"preferences","action":"read","field":"missionDeleteSessions"}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(child_pref["result"]["principal"]["sessionID"], "ses_sub");
+
+    let child_pb = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-read","input":{"kind":"playbook","template":"custom"}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(child_pb["result"]["playbook"]["id"], "custom");
+
+    let child_ctrl = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"read"}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(child_ctrl["result"]["receipt"]["state"], "completed");
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let child_unsigned = json!({
+        "principal": { "kind": "agent", "sessionID": "ses_sub" },
+        "projectID": "prj_test",
+        "directory": dir_str,
+        "command": {
+            "tool": "control",
+            "input": { "missionID": "msn_test", "action": "request-update", "requestID": "req_child_1", "expectedRevision": 3 }
+        },
+        "issuedAt": now,
+    });
+    let mut child_signed = child_unsigned.clone();
+    child_signed["proof"] = json!(sign(&child_unsigned, &secret));
+    assert_eq!(
+        bridge_call_as(&app, &secret, "ses_sub", json!({"kind":"project-control-verify","input":child_signed}))
+            .await
+            .unwrap()["result"],
+        json!({"verified":true})
+    );
+    assert_eq!(
+        bridge_call_as(&app, &secret, "ses_sub", json!({"kind":"project-update","input":child_signed}))
+            .await
+            .unwrap()["result"]["admitted"],
+        true
+    );
+
+    // Tampered proof (wrong sessionID / directory) is refused with 403.
+    let mut wrong_dir = child_unsigned.clone();
+    wrong_dir["directory"] = json!("/other");
+    wrong_dir["proof"] = json!(sign(&wrong_dir, &secret));
+    assert_eq!(
+        bridge_call_as(&app, &secret, "ses_sub", json!({"kind":"project-control-verify","input":wrong_dir}))
+            .await
+            .unwrap_err()
+            .0,
+        StatusCode::FORBIDDEN
+    );
+
+    // M1: RETAINED hold registry -> pending, request-conflict, control-pending, read observed, retry -> completed.
+    {
+        let mut g = state.lock().unwrap();
+        g.control_replies.push_back(json!({"receipt":{"state":"pending","retryable":true,"command":{"tool":"control","input":{"action":"pause"}}}}));
+        // other request checks pending receipt -> not retryable, blocks non-stop
+        g.control_replies.push_back(json!({"receipt":{"state":"pending","retryable":false,"command":{"tool":"control","input":{"action":"pause"}}}}));
+        // read marks observed = true
+        g.control_replies.push_back(json!({"receipt":{"state":"pending","retryable":true,"command":{"tool":"control","input":{"action":"pause"}}}}));
+        // retry observes still pending+retryable, then executes and completes
+        g.control_replies.push_back(json!({"receipt":{"state":"pending","retryable":true,"command":{"tool":"control","input":{"action":"pause"}}}}));
+        g.control_replies.push_back(json!({"receipt":{"state":"completed"}}));
+    }
+    let pending = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"pause","requestID":"req_hold_1","expectedRevision":3}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pending["result"]["receipt"]["state"], "pending");
+
+    // Different command with same requestID -> request-conflict
+    let conflict = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"resume","requestID":"req_hold_1","expectedRevision":3}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(conflict["result"]["code"], "request-conflict");
+
+    // Another requestID while held -> control-pending
+    let blocked = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"resume","requestID":"req_hold_2","expectedRevision":3}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(blocked["result"]["code"], "control-pending");
+
+    // Read marks observed = true, then retry succeeds and releases the hold
+    let _ = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"read","requestID":"req_hold_1"}}}),
+    )
+    .await
+    .unwrap();
+    let retried = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"control","input":{"missionID":"msn_test","action":"pause","requestID":"req_hold_1","expectedRevision":3,"retry":true}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(retried["result"]["receipt"]["state"], "completed");
+
+    // M1: delete fallback reads missionDeleteSessions (null -> false, true -> true)
+    crate::settings::patch_owner(
+        &app,
+        crate::settings::Kind::Config,
+        "ui",
+        json!({"settings":{"missionDeleteSessions":true}}),
+    )
+    .ok()
+    .unwrap();
+    {
+        let mut g = state.lock().unwrap();
+        g.control_calls.clear();
+        g.control_replies.push_back(json!({}));
+        g.control_replies.push_back(json!({"receipt":{"state":"completed"}}));
+    }
+    let del = bridge_call_as(
+        &app,
+        &secret,
+        "ses_sub",
+        json!({"kind":"project-control","input":{"tool":"delete","input":{"missionID":"msn_test","action":"delete","requestID":"req_del_1","expectedRevision":3}}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(del["result"]["receipt"]["state"], "completed");
+    assert_eq!(state.lock().unwrap().control_calls[1]["command"]["input"]["deleteManagedSessions"], true);
+
+    // M1: project-read provenance refusal on foreign projectID
+    state.lock().unwrap().panel_override = Some(json!({
+        "available": true,
+        "version": 1,
+        "projectID": "prj_foreign",
+        "projectCanonical": dir_str,
+        "location": { "directory": dir_str },
+        "source": "summaries",
+        "page": { "digest": "a".repeat(43), "total": 0, "pieces": [] }
+    }));
+    assert_eq!(
+        bridge_call_as(
+            &app,
+            &secret,
+            "ses_sub",
+            json!({"kind":"project-read","input":{"kind":"panel","input":{"source":"summaries"}}}),
+        )
+        .await
+        .unwrap_err()
+        .0,
+        StatusCode::FORBIDDEN
+    );
+
+    // M1: interrupt refuses task-reused when an active continuation references task-a
+    state.lock().unwrap().extra_tasks.push(json!({
+        "key": "task-b",
+        "status": "in-progress",
+        "executionMode": { "kind": "native", "parentTaskKey": null, "reuseFromTaskKey": "task-a" }
+    }));
+    let reused = bridge_call(
+        &app,
+        &secret,
+        json!({"kind":"interrupt","input":{"missionID":"msn_test","taskKey":"task-a"}}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(reused.0, StatusCode::CONFLICT);
+    assert_eq!(reused.1.0["code"], "task-reused");
+
     let _ = std::fs::remove_dir_all(&dir);
 }

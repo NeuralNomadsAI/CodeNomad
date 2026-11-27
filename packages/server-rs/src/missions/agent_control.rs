@@ -1,7 +1,7 @@
 //! Missions agent project control, proof verification, and briefing request bridge commands
 //! (reference `mission-agent-control.ts`, `project-control-tool.ts`, `project-control-proof.ts`, `briefing-request.ts`).
 use super::{
-    bridge::{self, current_root, dir, find, session, snapshot},
+    bridge::{self, current_agent, dir, find, session, snapshot},
     configuration,
     creation_admission::{self, Scope},
     recurrence_contract::{self, SAFE, same_location, sign},
@@ -69,7 +69,7 @@ fn trimmed_request_id(v: Option<&Value>) -> Result<Option<String>, ()> {
         None => Ok(None),
         Some(v) => {
             let s = js_trim(v.as_str().ok_or(())?);
-            let len = s.chars().count();
+            let len = s.encode_utf16().count();
             if !(1..=128).contains(&len) {
                 return Err(());
             }
@@ -181,7 +181,7 @@ fn parse_project_tool_command(raw: &Value) -> Result<Value, ()> {
                 None => None,
                 Some(v) => {
                     let s = js_trim(v.as_str().ok_or(())?);
-                    let len = s.chars().count();
+                    let len = s.encode_utf16().count();
                     if !(1..=20_000).contains(&len) {
                         return Err(());
                     }
@@ -192,7 +192,7 @@ fn parse_project_tool_command(raw: &Value) -> Result<Value, ()> {
                 None => None,
                 Some(v) => {
                     let s = v.as_str().ok_or(())?;
-                    if s.chars().count() > 20_000 {
+                    if s.encode_utf16().count() > 20_000 {
                         return Err(());
                     }
                     Some(s.to_owned())
@@ -287,16 +287,22 @@ fn uncertain_reply(mid: &str, request_id: Option<&str>) -> Value {
     out
 }
 
+enum RpcErr {
+    PreDispatch,
+    Refused(String),
+    Uncertain,
+}
+
 async fn rpc_project_control(
     app: &App,
     scope: &Scope,
     co: &Value,
     bridge_token: &str,
     command: &Value,
-) -> Result<Value, Result<String, ()>> {
-    scope.refresh(app).await.map_err(|_| Err(()))?;
-    current_root(app, scope, co).await.map_err(|_| Err(()))?;
-    let sid = co["id"].as_str().ok_or(Err(()))?;
+) -> Result<Value, RpcErr> {
+    scope.refresh(app).await.map_err(|_| RpcErr::PreDispatch)?;
+    current_agent(app, scope, co).await.map_err(|_| RpcErr::PreDispatch)?;
+    let sid = co["id"].as_str().ok_or(RpcErr::PreDispatch)?;
     let body = json!({
         "principal": { "kind": "agent", "sessionID": sid },
         "projectID": scope.project,
@@ -305,34 +311,35 @@ async fn rpc_project_control(
         "issuedAt": now_ms(),
     });
     if recurrence_contract::canonical(&body).len() > MAX_PROOF_BYTES {
-        return Err(Err(()));
+        return Err(RpcErr::PreDispatch);
     }
     let proof = sign(&body, bridge_token);
     let mut signed = body;
     signed["proof"] = json!(proof);
-    let (status, response) = scope.call(app, "projectControl", &signed, 85, 256 * 1024).await.map_err(|_| Err(()))?;
+    let (status, response) =
+        scope.call(app, "projectControl", &signed, 85, 256 * 1024).await.map_err(|_| RpcErr::Uncertain)?;
     if !status.is_success() {
         if let Some((_, Json(err))) = creation_admission::rejection(&response)
             && let Some(code) = err["code"].as_str()
         {
-            return Err(Ok(code.to_owned()));
+            return Err(RpcErr::Refused(code.to_owned()));
         }
-        return Err(Err(()));
+        return Err(RpcErr::Uncertain);
     }
-    let output = response.get("output").and_then(Value::as_object).ok_or(Err(()))?;
+    let output = response.get("output").and_then(Value::as_object).ok_or(RpcErr::Uncertain)?;
     if output.len() != 1 {
-        return Err(Err(()));
+        return Err(RpcErr::Uncertain);
     }
     let raw_json = output
         .get("json")
         .and_then(Value::as_str)
         .filter(|s| s.encode_utf16().count() <= MAX_CONTROL_JSON_UNITS)
-        .ok_or(Err(()))?;
-    scope.refresh(app).await.map_err(|_| Err(()))?;
-    current_root(app, scope, co).await.map_err(|_| Err(()))?;
-    let parsed: Value = serde_json::from_str(raw_json).map_err(|_| Err(()))?;
+        .ok_or(RpcErr::Uncertain)?;
+    scope.refresh(app).await.map_err(|_| RpcErr::Uncertain)?;
+    current_agent(app, scope, co).await.map_err(|_| RpcErr::Uncertain)?;
+    let parsed: Value = serde_json::from_str(raw_json).map_err(|_| RpcErr::Uncertain)?;
     if !parsed.is_object() {
-        return Err(Err(()));
+        return Err(RpcErr::Uncertain);
     }
     Ok(parsed)
 }
@@ -392,7 +399,7 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
                 match ui.get("settings") {
                     None => false,
                     Some(Value::Object(settings)) => match settings.get("missionDeleteSessions") {
-                        None => false,
+                        None | Some(Value::Null) => false,
                         Some(Value::Bool(flag)) => *flag,
                         Some(_) => return Err(held()),
                     },
@@ -407,7 +414,7 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
     let reg_key = (app.favorite_source, key.clone());
     let fingerprint = fingerprint_of(&selected);
     let (held_fp, held_observed, others) = {
-        let guard = RETAINED.lock().unwrap();
+        let guard = RETAINED.lock().unwrap_or_else(|e| e.into_inner());
         let current = guard.get(&reg_key).map(|r| (r.fingerprint.clone(), r.observed));
         let prefix = format!("{}\0{mid}\0", scope.project);
         let others: Vec<(String, String)> = if action != "read" && current.is_none() {
@@ -435,7 +442,7 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
             let observed = rpc_project_control(app, scope, co, bridge_token, &read_cmd).await.map_err(|_| held())?;
             let original = &observed["receipt"];
             if matches!(original["state"].as_str(), Some("completed" | "refused")) {
-                RETAINED.lock().unwrap().remove(&(app.favorite_source, other_key));
+                RETAINED.lock().unwrap_or_else(|e| e.into_inner()).remove(&(app.favorite_source, other_key));
                 continue;
             }
             let cmd = &original["command"];
@@ -453,7 +460,7 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
             let observed = rpc_project_control(app, scope, co, bridge_token, &read_cmd).await.map_err(|_| held())?;
             let original = &observed["receipt"];
             if matches!(original["state"].as_str(), Some("completed" | "refused")) {
-                RETAINED.lock().unwrap().remove(&reg_key);
+                RETAINED.lock().unwrap_or_else(|e| e.into_inner()).remove(&reg_key);
                 return Ok(observed);
             }
             if !retry || !held_observed || original["retryable"] != true {
@@ -463,7 +470,7 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
     }
 
     let hold = || {
-        let mut guard = RETAINED.lock().unwrap();
+        let mut guard = RETAINED.lock().unwrap_or_else(|e| e.into_inner());
         if !guard.contains_key(&reg_key)
             && let Some(retained_permit) = scope.permit()
         {
@@ -485,19 +492,20 @@ async fn execute(app: &App, scope: &Scope, co: &Value, bridge_token: &str, mut s
             let retryable = result["receipt"]["retryable"] == true;
             if action == "read"
                 && request_id.is_some()
-                && let Some(entry) = RETAINED.lock().unwrap().get_mut(&reg_key)
+                && let Some(entry) = RETAINED.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&reg_key)
             {
                 entry.observed = retryable;
             }
             if matches!(state, Some("completed" | "refused")) {
-                RETAINED.lock().unwrap().remove(&reg_key);
+                RETAINED.lock().unwrap_or_else(|e| e.into_inner()).remove(&reg_key);
             } else if action != "read" {
                 hold();
             }
             Ok(result)
         }
-        Err(Ok(code)) => Ok(refusal_reply(&code, &mid, request_id.as_deref())),
-        Err(Err(())) => {
+        Err(RpcErr::PreDispatch) => Err(held()),
+        Err(RpcErr::Refused(code)) => Ok(refusal_reply(&code, &mid, request_id.as_deref())),
+        Err(RpcErr::Uncertain) => {
             if action != "read" {
                 hold();
             }
@@ -593,7 +601,7 @@ pub(super) async fn verify(app: &Shared, scope: Scope, co: Value, kind: &str, in
         return Err(foreign());
     }
     scope.refresh(app).await?;
-    current_root(app, &scope, &co).await?;
+    current_agent(app, &scope, &co).await?;
     if kind == "project-control-verify" {
         return Ok(json!({ "verified": true }));
     }
@@ -612,7 +620,7 @@ async fn request_update(app: &Shared, scope: &Scope, co: &Value, command: &Value
     let read_mission = || async {
         let state = snapshot(app, scope).await?;
         scope.refresh(app).await?;
-        current_root(app, scope, co).await?;
+        current_agent(app, scope, co).await?;
         let mission = find(&state, "missions", "id", mid).ok_or_else(held)?;
         if state["projectID"] != co["projectID"]
             || state["controlUnavailable"] == true

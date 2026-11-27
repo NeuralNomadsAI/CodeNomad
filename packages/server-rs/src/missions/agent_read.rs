@@ -1,15 +1,13 @@
 //! Missions agent project read bridge command (reference `mission-agent-read.ts`, `project-read-tool.ts`).
 use super::{
-    bridge::{current_root, find},
+    bridge::{current_agent, find},
     configuration,
     creation_admission::Scope,
-    recurrence_contract::{
-        PANEL_PAGE_BYTES, PANEL_REQUEST_BYTES, SAFE, bytes, rid, same_location, units,
-    },
+    recurrence_contract::{PANEL_PAGE_BYTES, PANEL_REQUEST_BYTES, SAFE, bytes, rid, same_location, units},
     recurrence_selector,
     run::{bad, foreign, held, playbook_details},
 };
-use crate::{App, Error, shared::read_capped, worktrees::fence};
+use crate::{App, Error, shared::{js_trim, read_capped}, worktrees::fence};
 use axum::http::Method;
 use reqwest::Url;
 use serde_json::{Map, Value, json};
@@ -69,7 +67,7 @@ fn valid_cursor(v: &Value) -> bool {
 fn normalize_task_request(v: &mut Value) -> bool {
     let Some(t) = v.as_object_mut() else { return false };
     let list = |v: &Value, max: usize| v.as_array().is_some_and(|a| a.len() <= 50 && a.iter().all(|x| sized(x, 1, max)));
-    let Some(mid) = t.get("missionID").and_then(Value::as_str).map(|s| s.trim().to_owned()) else { return false };
+    let Some(mid) = t.get("missionID").and_then(Value::as_str).map(|s| js_trim(s).to_owned()) else { return false };
     if !(1..=100).contains(&units(&mid)) {
         return false;
     }
@@ -81,8 +79,13 @@ fn normalize_task_request(v: &mut Value) -> bool {
         && opt(t, "keys", |v| list(v, 64))
         && opt(t, "ids", |v| list(v, 240))
         && opt(t, "reportIds", |v| list(v, 240));
+    let total_named: usize = ["keys", "ids", "reportIds"]
+        .iter()
+        .filter_map(|k| t.get(*k).and_then(Value::as_array).map(Vec::len))
+        .sum();
     let named = ["keys", "ids", "reportIds"].iter().any(|k| t.contains_key(*k));
-    ok && [t.contains_key("offset"), t.contains_key("attention"), named].iter().filter(|x| **x).count() == 1
+    ok && total_named <= 50
+        && [t.contains_key("offset"), t.contains_key("attention"), named].iter().filter(|x| **x).count() == 1
 }
 
 /// Validates and normalizes `missionPanelPageRequestSchema` across all 7 panel sources.
@@ -367,22 +370,18 @@ pub(super) async fn read(app: &App, scope: Scope, co: Value, input: Value) -> Re
         let playbook = find(details, "playbooks", "id", template).ok_or_else(bad)?;
         let result = json!({ "taskMode": details["taskMode"], "playbook": playbook });
         scope.refresh(app).await?;
-        current_root(app, &scope, &co).await?;
+        current_agent(app, &scope, &co).await?;
         if serde_json::to_string_pretty(&result).map_or(usize::MAX, |s| units(&s)) > MAX_PLAYBOOK_CHARS {
             return Err(held());
         }
         return Ok(result);
     }
 
-    let _permit = scope.permit().ok_or_else(held)?;
-    let current = || async {
-        scope.refresh(app).await?;
-        current_root(app, &scope, &co).await?;
-        Ok::<(), Error>(())
-    };
-    current().await?;
-
-    if kind == "sources" {
+    enum ReadPlan<'a> {
+        Sources { source: &'a str, cursor: Option<&'a str>, search: Option<&'a str> },
+        Rpc { method: &'static str, input: Value },
+    }
+    let plan = if kind == "sources" {
         if !obj_keys(o, &["kind", "source", "cursor", "search"], &["kind", "source"]) {
             return Err(bad());
         }
@@ -401,98 +400,116 @@ pub(super) async fn read(app: &App, scope: Scope, co: Value, input: Value) -> Re
         if !matches!(source, "conversations" | "coordinators") && (cursor.is_some() || search.is_some()) {
             return Err(bad());
         }
-        if matches!(source, "conversations" | "coordinators") {
-            let mut query: Vec<(&str, &str)> = Vec::new();
-            if let Some(c) = cursor {
-                query.push(("cursor", c));
-            } else {
-                query.push(("directory", scope.dir.as_str()));
-                query.push(("limit", "50"));
-                query.push(("order", "desc"));
-                if let Some(s) = search {
-                    query.push(("search", s));
-                }
-                if source == "coordinators" {
-                    query.push(("parentID", "null"));
-                }
-            }
-            let (status, page) = scope.request(app, Method::GET, "/api/session", &query, None, 10, 2 * 1024 * 1024).await?;
-            current().await?;
-            let rows = page["data"]
-                .as_array()
-                .filter(|rows| status.is_success() && page["cursor"].is_object() && rows.len() <= 50)
-                .ok_or_else(held)?;
-            let sources: Vec<Value> = rows
-                .iter()
-                .filter(|row| {
-                    row["id"].as_str().is_some_and(|id| !id.starts_with("ses_cn_schedule_"))
-                        && row["projectID"] == co["projectID"]
-                        && row["location"] == co["location"]
-                        && (source != "coordinators" || row["parentID"].is_null())
-                })
-                .map(|row| json!({ "id": row["id"], "title": row["title"] }))
-                .collect();
-            return Ok(json!({ "sources": sources, "next": page["cursor"]["next"] }));
+        ReadPlan::Sources { source, cursor, search }
+    } else {
+        if !obj_keys(o, &["kind", "input"], &["kind", "input"]) {
+            return Err(bad());
         }
-        let checkout = Path::new(&scope.dir);
-        let result = if source == "branches" {
-            let refs = crate::git::run(
-                checkout,
-                &["for-each-ref", "--count=201", "--sort=refname", "--format=%(refname)", "refs/heads/"],
-                256 * 1024,
-            )
-            .await?
-            .ok()?
-            .text();
-            let branches: Vec<&str> = refs.lines().filter(|r| !r.is_empty()).collect();
-            if branches.len() > 200 || branches.iter().any(|r| !r.starts_with("refs/heads/") || units(r) > 1024) {
+        let inner = &o["input"];
+        let (method, normalized) = match kind {
+            "panel" => ("panelPage", parse_panel_request(inner).ok_or_else(bad)?),
+            "current" => ("recurrenceCurrent", parse_current_input(inner).ok_or_else(bad)?),
+            "current-page" => ("recurrenceCurrentPage", recurrence_selector::page_input(inner).ok_or_else(bad)?),
+            "current-content" => ("recurrenceCurrentContent", parse_current_content_input(inner).ok_or_else(bad)?),
+            _ => return Err(bad()),
+        };
+        ReadPlan::Rpc { method, input: normalized }
+    };
+
+    let _permit = scope.permit().ok_or_else(held)?;
+    let current = || async {
+        scope.refresh(app).await?;
+        current_agent(app, &scope, &co).await?;
+        Ok::<(), Error>(())
+    };
+    current().await?;
+
+    match plan {
+        ReadPlan::Sources { source, cursor, search } => {
+            if matches!(source, "conversations" | "coordinators") {
+                let mut query: Vec<(&str, &str)> = Vec::new();
+                if let Some(c) = cursor {
+                    query.push(("cursor", c));
+                } else {
+                    query.push(("directory", scope.dir.as_str()));
+                    query.push(("limit", "50"));
+                    query.push(("order", "desc"));
+                    if let Some(s) = search {
+                        query.push(("search", s));
+                    }
+                    if source == "coordinators" {
+                        query.push(("parentID", "null"));
+                    }
+                }
+                let (status, page) =
+                    scope.request(app, Method::GET, "/api/session", &query, None, 10, 2 * 1024 * 1024).await?;
+                current().await?;
+                let rows = page["data"]
+                    .as_array()
+                    .filter(|rows| status.is_success() && page["cursor"].is_object() && rows.len() <= 50)
+                    .ok_or_else(held)?;
+                let sources: Vec<Value> = rows
+                    .iter()
+                    .filter(|row| {
+                        row["id"].as_str().is_some_and(|id| !id.starts_with("ses_cn_schedule_"))
+                            && row["projectID"] == co["projectID"]
+                            && same_location(&row["location"], &scope.dir)
+                            && (source != "coordinators" || row["parentID"].is_null())
+                    })
+                    .map(|row| json!({ "id": row["id"], "title": row["title"] }))
+                    .collect();
+                return Ok(json!({ "sources": sources, "next": page["cursor"]["next"] }));
+            }
+            let checkout = Path::new(&scope.dir);
+            let result = if source == "branches" {
+                let refs = crate::git::run(
+                    checkout,
+                    &["for-each-ref", "--count=201", "--sort=refname", "--format=%(refname)", "refs/heads/"],
+                    256 * 1024,
+                )
+                .await?
+                .ok()?
+                .text();
+                let branches: Vec<&str> = refs.lines().filter(|r| !r.is_empty()).collect();
+                if branches.len() > 200 || branches.iter().any(|r| !r.starts_with("refs/heads/") || units(r) > 1024) {
+                    return Err(held());
+                }
+                json!({ "branches": branches })
+            } else {
+                let _slot = REPO_SLOTS.try_acquire().map_err(|_| held())?;
+                tokio::time::timeout(Duration::from_secs(10), discover_repository(checkout))
+                    .await
+                    .map_err(|_| held())?
+            };
+            current().await?;
+            Ok(result)
+        }
+        ReadPlan::Rpc { method, input: normalized } => {
+            let (status, response) = scope.call(app, method, &normalized, 15, 128 * 1024).await?;
+            if !status.is_success() {
                 return Err(held());
             }
-            json!({ "branches": branches })
-        } else {
-            let _slot = REPO_SLOTS.try_acquire().map_err(|_| held())?;
-            tokio::time::timeout(Duration::from_secs(10), discover_repository(checkout))
-                .await
-                .map_err(|_| held())?
-        };
-        current().await?;
-        return Ok(result);
+            let value = response.get("output").cloned().ok_or_else(held)?;
+            current().await?;
+            if bytes(&value) > PANEL_PAGE_BYTES {
+                return Err(held());
+            }
+            if value["available"] != false && value["projectID"] != co["projectID"] {
+                return Err(foreign());
+            }
+            if let Some(canonical) = value.get("projectCanonical")
+                && canonical.as_str().map(fence::normalize).as_deref() != Some(scope.canonical.as_str())
+            {
+                return Err(foreign());
+            }
+            if let Some(location) = value.get("location").filter(|v| !v.is_null())
+                && !same_location(location, &scope.dir)
+            {
+                return Err(foreign());
+            }
+            Ok(value)
+        }
     }
-
-    if !obj_keys(o, &["kind", "input"], &["kind", "input"]) {
-        return Err(bad());
-    }
-    let inner = &o["input"];
-    let (method, normalized) = match kind {
-        "panel" => ("panelPage", parse_panel_request(inner).ok_or_else(bad)?),
-        "current" => ("recurrenceCurrent", parse_current_input(inner).ok_or_else(bad)?),
-        "current-page" => ("recurrenceCurrentPage", recurrence_selector::page_input(inner).ok_or_else(bad)?),
-        "current-content" => ("recurrenceCurrentContent", parse_current_content_input(inner).ok_or_else(bad)?),
-        _ => return Err(bad()),
-    };
-    let (status, response) = scope.call(app, method, &normalized, 15, 128 * 1024).await?;
-    if !status.is_success() {
-        return Err(held());
-    }
-    let value = response.get("output").cloned().ok_or_else(held)?;
-    current().await?;
-    if bytes(&value) > PANEL_PAGE_BYTES {
-        return Err(held());
-    }
-    if value["available"] != false && value["projectID"] != co["projectID"] {
-        return Err(foreign());
-    }
-    if let Some(canonical) = value.get("projectCanonical")
-        && canonical.as_str().map(fence::normalize).as_deref() != Some(scope.canonical.as_str())
-    {
-        return Err(foreign());
-    }
-    if let Some(location) = value.get("location")
-        && !same_location(location, &scope.dir)
-    {
-        return Err(foreign());
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

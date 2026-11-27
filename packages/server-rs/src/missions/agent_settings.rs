@@ -1,11 +1,6 @@
 //! Missions agent configuration library and profile/depth settings bridge commands
 //! (reference `mission-profile-defaults.ts`, `mission-agent-settings.ts`, `model-library.ts`, `settings-tool.ts`).
-use super::{
-    bridge::current_root,
-    configuration,
-    creation_admission::Scope,
-    run::held,
-};
+use super::{bridge::current_agent, configuration, creation_admission::Scope, run::held};
 use crate::{App, Error, Shared, shared::js_trim};
 use axum::{
     Json,
@@ -331,7 +326,12 @@ fn parse_settings_input(raw: &Value) -> Result<SettingsRequest, ()> {
             let depth = match o.get("depth") {
                 None => None,
                 Some(Value::Null) => Some(None),
-                Some(v) => Some(Some(v.as_u64().filter(|n| (1..=10).contains(n)).ok_or(())?)),
+                Some(v) => Some(Some(
+                    v.as_u64()
+                        .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0 && (1.0..=10.0).contains(f)).map(|f| f as u64))
+                        .filter(|n| (1..=10).contains(n))
+                        .ok_or(())?,
+                )),
             };
             if matches!(action, SettingsAction::Delete | SettingsAction::Reset)
                 || matches!(action, SettingsAction::Save) != depth.is_some()
@@ -348,7 +348,8 @@ fn depth_refusal_code(status: Status) -> &'static str {
     match status {
         Status::CONFLICT => "settings-conflict",
         Status::UNPROCESSABLE_ENTITY | Status::BAD_REQUEST => "settings-invalid",
-        Status::FORBIDDEN | Status::NOT_FOUND => "settings-forbidden",
+        Status::NOT_FOUND => "settings-not-found",
+        Status::FORBIDDEN => "settings-forbidden",
         _ => "settings-unavailable",
     }
 }
@@ -359,7 +360,7 @@ pub(super) async fn settings(app: &Shared, scope: Scope, co: Value, input: Value
         Err(()) => return Ok(refused("settings-invalid")),
     };
     scope.refresh(app).await?;
-    current_root(app, &scope, &co).await?;
+    current_agent(app, &scope, &co).await?;
     let sid = co["id"].as_str().ok_or_else(held)?;
     let principal = json!({ "kind": "agent", "sessionID": sid });
 
@@ -384,7 +385,7 @@ pub(super) async fn settings(app: &Shared, scope: Scope, co: Value, input: Value
                     .map_err(|_| held())?;
                 let snapshot: Value = serde_json::from_slice(&bytes).map_err(|_| held())?;
                 scope.refresh(app).await?;
-                current_root(app, &scope, &co).await?;
+                current_agent(app, &scope, &co).await?;
                 Ok(json!({ "principal": principal, "scope": "project-location", "snapshot": snapshot }))
             }
             SettingsAction::Save => {
@@ -554,12 +555,12 @@ mod tests {
 
     #[test]
     fn expectation_uses_utf16le_json_sha256() {
-        // Matches Node: createHash("sha256").update(JSON.stringify({ present: false }), "utf16le").digest("hex")
-        let absent = expectation(false, None);
-        assert_eq!(absent.len(), 64);
-        let present = expectation(true, Some(&json!(false)));
-        assert_ne!(absent, present);
-        assert_eq!(expectation(true, Some(&json!(false))), present);
+        // Exact Node `createHash("sha256").update(JSON.stringify(...), "utf16le").digest("hex")` vectors.
+        assert_eq!(expectation(false, None), "02900f87c5a67e6b558a025a8cff645d0b221cb5535e0c6b69f7768e268d6aae");
+        assert_eq!(
+            expectation(true, Some(&json!(false))),
+            "d503aeec91f3fd4d6f7ec07bf037777fad497a4627622d7199964fef5d0a1c20"
+        );
     }
 
     #[test]
