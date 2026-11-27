@@ -10,6 +10,73 @@ import {navigatePair} from './web-live.mjs'
 
 const profile = JSON.parse(await readFile(new URL('../../packages/ui/src/lib/native/browser-emulation.json', import.meta.url)))
 
+export function assertMirroredTextboxState(snapshot, {name, focused}) {
+  assert(snapshot && typeof snapshot === 'object', 'Textbox mirror snapshot must be an object')
+  const mirrored = Array.isArray(snapshot.mirrored) ? snapshot.mirrored : []
+  const activeMatches = (snapshot.activeTag === 'TEXTAREA' || snapshot.activeTag === 'INPUT')
+    && snapshot.activeLabel === name
+  if (focused) {
+    assert(activeMatches, `Focused textbox "${name}" must hold native DOM focus: ${JSON.stringify(snapshot)}`)
+    assert.equal(
+      mirrored.length,
+      0,
+      `Focused textbox "${name}" must be omitted from [data-rune-a11y] to avoid duplicate controls: ${JSON.stringify(snapshot)}`,
+    )
+    return
+  }
+  assert(!activeMatches, `Unfocused textbox "${name}" must not hold native DOM focus: ${JSON.stringify(snapshot)}`)
+  assert.equal(
+    mirrored.length,
+    1,
+    `Unfocused textbox "${name}" must be exposed once in [data-rune-a11y] for TalkBack: ${JSON.stringify(snapshot)}`,
+  )
+  assert(
+    mirrored[0].width > 0 && mirrored[0].height > 0,
+    `Unfocused textbox "${name}" in [data-rune-a11y] must expose non-empty bounds: ${JSON.stringify(snapshot)}`,
+  )
+}
+
+export async function verifyMirroredTextbox(page, {name, focused, timeoutMs = 5_000}) {
+  const sample = () => page.evaluate(expected => {
+    const active = document.activeElement
+    const mirrored = [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
+      .filter(el => el.getAttribute('aria-label') === expected)
+      .map(el => {
+        const rect = el.getBoundingClientRect()
+        return {
+          tag: el.tagName,
+          role: el.getAttribute('role'),
+          label: el.getAttribute('aria-label'),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        }
+      })
+    return {
+      activeTag: active?.tagName ?? null,
+      activeLabel: active?.getAttribute?.('aria-label') ?? null,
+      mirrored,
+    }
+  }, name)
+  try {
+    await page.waitForFunction(({expected, wantFocused}) => {
+      const active = document.activeElement
+      const activeMatches = (active?.tagName === 'TEXTAREA' || active?.tagName === 'INPUT')
+        && active.getAttribute('aria-label') === expected
+      const mirrored = [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
+        .filter(el => el.getAttribute('aria-label') === expected)
+      if (wantFocused) return activeMatches && mirrored.length === 0
+      if (activeMatches || mirrored.length !== 1) return false
+      const rect = mirrored[0].getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }, {expected: name, wantFocused: focused}, {polling: 50, timeout: timeoutMs})
+  } catch {
+    // Fall through to assertMirroredTextboxState with the concrete DOM snapshot.
+  }
+  const snapshot = await sample()
+  assertMirroredTextboxState(snapshot, {name, focused})
+  return snapshot
+}
+
 export function mobileContext(browser) {
   return {
     viewport: profile.mobile, screen: profile.mobile, deviceScaleFactor: profile.deviceScaleFactor,
@@ -377,15 +444,17 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       return {moved,before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
     })
     await probe('touchEditor', async () => {
+      await verifyMirroredTextbox(page, {name: labels.prompt, focused: false})
       const focus = await fieldCenter()
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:10_000})
+      await verifyMirroredTextbox(page, {name: labels.prompt, focused: true})
       assert.equal(await page.locator('[data-rune-menu]').count(),0,'Primary tap on composer must not open a long-press menu')
       blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
       return {...await editor.evaluate(el => ({focused:true,name:el.getAttribute('aria-label'),inputMode:el.inputMode,
-        autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
+        autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center',unfocusedMirrorTextbox:true}
     })
     await probe('compositionAndReplacement', async () => {
       const clip=inkClip(await fieldRect())

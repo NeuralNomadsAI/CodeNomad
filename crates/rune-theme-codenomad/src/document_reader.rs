@@ -313,6 +313,7 @@ fn markdown_style(dark: bool) -> MarkdownStyle {
         .link_underline(rune::Color::TRANSPARENT)
         .link_hover(t.color("accent-hover"))
         .code_block(t.color("surface-inset"), t.color("border-muted"))
+        .table_column_rules(Some(t.color("border-base")))
         .diagram_max_items(MERMAID_MAX_ITEMS);
     for level in 1..=4 {
         style = style.heading_font(level, font(t, &format!("readerHeading{level}")));

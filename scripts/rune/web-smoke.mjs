@@ -9,7 +9,7 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
 import {activateControl,launchOwnedChromium} from './web-chromium.mjs'
 import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,stripFixtureServerSecrets,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
-import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
+import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar, verifyMirroredTextbox} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
@@ -807,10 +807,12 @@ try {
         const group = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const action = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
         assert(group && action && action.y > group.y, 'Composer field must have a visible area above its actions')
+        await verifyMirroredTextbox(page, {name: messages['rune.prompt'], focused: false})
         const x = group.x + group.width / 2, y = (group.y + action.y) / 2
         if (touch) await page.touchscreen.tap(x, y)
         else await page.mouse.click(x, y)
         await page.locator('textarea:focus').waitFor({state: 'attached'})
+        await verifyMirroredTextbox(page, {name: messages['rune.prompt'], focused: true})
         const captureFocus = async state => {
           // The editing proxy can receive DOM focus before the canvas presents that frame.
           await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
@@ -821,6 +823,7 @@ try {
         const focused = values['paste-only'] ? await captureFocus('focus') : null
         await page.keyboard.press('Tab')
         await page.waitForFunction(() => document.activeElement?.tagName !== 'TEXTAREA')
+        await verifyMirroredTextbox(page, {name: messages['rune.prompt'], focused: false})
         const unfocused = values['paste-only'] ? await captureFocus('blur') : null
         await page.keyboard.press('Shift+Tab')
         await page.locator('textarea:focus').waitFor({state: 'attached'})

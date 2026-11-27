@@ -35,6 +35,7 @@ pub fn prose<S: 'static>(
         .inline_code_text(t.color("text-primary"))
         .quote(t.color("border-base"), 3.0, 12.0, t.color("text-secondary"))
         .rule(t.color("border-base"))
+        .table_column_rules(Some(t.color("border-base")))
         .link(t.color("accent-primary"))
         .link_hover(t.color("accent-hover"))
         .link_underline(rune::Color::TRANSPARENT)
@@ -811,4 +812,80 @@ fn hold_frame_invalidates_when_palette_or_contrast_changes_at_same_luminance() {
         5,
         "editing custom palette colors must rebuild"
     );
+}
+
+#[cfg(test)]
+#[test]
+fn markdown_tables_draw_border_base_column_rules_without_row_hover() {
+    const TABLE_MD: &str = "| Key | Value |\n| --- | --- |\n| Alpha | 1 |\n| Beta | 2 |\n";
+    for dark in [false, true] {
+        let border = tokens(dark).color("border-base");
+        let prose_rt = {
+            let mut rt = rune::Runtime::new(
+                dark,
+                |&dark, cx| {
+                    crate::layout::render_with_dark(cx, dark, |_| {
+                        prose::<bool>(
+                            TABLE_MD,
+                            false,
+                            false,
+                            false,
+                            None,
+                            |_, _, _| {},
+                            |_, _, _, _| {},
+                            |_| None,
+                            |_, _| true,
+                            |body, _| body,
+                            |body, _| body,
+                        )
+                    })
+                },
+                (480.0, 300.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+            rt
+        };
+        let prose_rules = prose_rt
+            .elements()
+            .into_iter()
+            .filter(|n| n.key.as_deref() == Some("rule") && n.fill == border && n.rect[2] <= 1.0)
+            .count();
+        assert!(
+            prose_rules >= 3,
+            "prose markdown table must render vertical column rules in border-base (dark={dark}, found {prose_rules})"
+        );
+
+        let reader_rt = {
+            let mut rt = rune::Runtime::new(
+                dark,
+                |&dark, cx| {
+                    crate::layout::render_with_dark(cx, dark, |_| {
+                        crate::document_reader::markdown::<bool>(
+                            dark,
+                            TABLE_MD,
+                            "Diagram",
+                            |_, _, _| {},
+                            |_, _| true,
+                            |_| rune::el(),
+                            |_| None,
+                        )
+                    })
+                },
+                (480.0, 300.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+            rt
+        };
+        let reader_rules = reader_rt
+            .elements()
+            .into_iter()
+            .filter(|n| n.key.as_deref() == Some("rule") && n.fill == border && n.rect[2] <= 1.0)
+            .count();
+        assert!(
+            reader_rules >= 3,
+            "document_reader markdown table must render vertical column rules in border-base (dark={dark}, found {reader_rules})"
+        );
+    }
 }

@@ -7,8 +7,9 @@ use crate::{
 };
 use rune::{Color, Spring};
 use rune_kit::{
-    ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, Kit, Metrics, Motion, Palette,
-    Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css, glyphs,
+    ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, IconButtonMetrics, Kit,
+    Metrics, Motion, Palette, Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css,
+    glyphs,
 };
 use std::{ops::Deref, rc::Rc, sync::OnceLock};
 
@@ -272,6 +273,33 @@ pub(crate) fn build_from(
                 icon: icon_lg,
             },
         }),
+        icon_button: Some(BySize {
+            mini: IconButtonMetrics {
+                size: t.length(Length::ControlSmall).px() - t.space(Space::Xs).px(),
+                radius: button_radius,
+                icon: icon_sm,
+            },
+            small: IconButtonMetrics {
+                size: t.length(Length::ControlSmall).px(),
+                radius: button_radius,
+                icon: icon_md,
+            },
+            regular: IconButtonMetrics {
+                size: t.length(Length::IconButton).px(),
+                radius: button_radius,
+                icon: icon_md,
+            },
+            large: IconButtonMetrics {
+                size: t.length(Length::TouchCompact).px(),
+                radius: button_radius,
+                icon: icon_lg,
+            },
+            extra_large: IconButtonMetrics {
+                size: t.length(Length::TouchTarget).px(),
+                radius: button_radius,
+                icon: icon_lg,
+            },
+        }),
         // Circular thumb (knob_width == knob_height) inside a capsule track, matching switches.css.
         switch: Some(BySize {
             mini: switch(t.length(Length::Control).px(), t.space(Space::Lg).px()),
@@ -337,7 +365,7 @@ pub(crate) fn build_from(
 mod tests {
     use super::*;
     use rune::{Cx, El, Env, Runtime, TextEdit, col};
-    use rune_kit::{Button, Checkbox, ControlSize, Switch, TextInput};
+    use rune_kit::{Button, Checkbox, ControlSize, IconButton, Switch, TextInput};
 
     #[test]
     fn kit_metrics_follow_generated_tokens_and_drive_rendered_controls() {
@@ -354,6 +382,21 @@ mod tests {
             );
             assert_eq!(buttons.regular.padding_x, t.length(Length::ButtonPadX).px());
             assert_eq!(buttons.regular.radius, 0.0);
+
+            let icon_buttons = k.metrics.icon_button.expect("icon_button metrics");
+            assert_eq!(
+                icon_buttons.mini.size,
+                t.length(Length::ControlSmall).px() - t.space(Space::Xs).px()
+            );
+            assert_eq!(icon_buttons.small.size, t.length(Length::ControlSmall).px());
+            assert_eq!(icon_buttons.regular.size, t.length(Length::IconButton).px());
+            assert_eq!(icon_buttons.large.size, t.length(Length::TouchCompact).px());
+            assert_eq!(
+                icon_buttons.extra_large.size,
+                t.length(Length::TouchTarget).px()
+            );
+            assert_eq!(icon_buttons.regular.icon, t.length(Length::Icon).px());
+            assert_eq!(icon_buttons.regular.radius, 0.0);
 
             let switches = k.metrics.switch.expect("switch metrics");
             for size in [
@@ -409,6 +452,27 @@ mod tests {
                                 .key("btn-regular"),
                         )
                         .child(
+                            IconButton::new(k.glyph.close)
+                                .label("Icon small")
+                                .control_size(ControlSize::Small)
+                                .build(&k)
+                                .key("icon-btn-small"),
+                        )
+                        .child(
+                            IconButton::new(k.glyph.close)
+                                .label("Icon regular")
+                                .control_size(ControlSize::Regular)
+                                .build(&k)
+                                .key("icon-btn-regular"),
+                        )
+                        .child(
+                            IconButton::new(k.glyph.close)
+                                .label("Icon large")
+                                .control_size(ControlSize::Large)
+                                .build(&k)
+                                .key("icon-btn-large"),
+                        )
+                        .child(
                             TextInput::new(edit)
                                 .label("Field")
                                 .build(&field_kit(dark))
@@ -454,6 +518,12 @@ mod tests {
             assert_eq!(rect("btn-default")[3], buttons.regular.height);
             assert_eq!(rect("btn-small")[3], buttons.small.height);
             assert_eq!(rect("btn-regular")[3], buttons.regular.height);
+            assert_eq!(rect("icon-btn-small")[2], icon_buttons.small.size);
+            assert_eq!(rect("icon-btn-small")[3], icon_buttons.small.size);
+            assert_eq!(rect("icon-btn-regular")[2], icon_buttons.regular.size);
+            assert_eq!(rect("icon-btn-regular")[3], icon_buttons.regular.size);
+            assert_eq!(rect("icon-btn-large")[2], icon_buttons.large.size);
+            assert_eq!(rect("icon-btn-large")[3], icon_buttons.large.size);
             let field_floor = k.ty.ui_compact.line_px() + 12.0;
             assert_eq!(rect("field-box")[3], field.height.max(field_floor));
             assert_eq!(rect("field-large")[3], field.large_height.max(field_floor));
