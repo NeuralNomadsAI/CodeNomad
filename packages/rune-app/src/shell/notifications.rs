@@ -83,6 +83,16 @@ pub(crate) struct Host {
     recorded: Option<Vec<(u64, String, String)>>,
 }
 
+#[cfg(test)]
+impl Host {
+    pub(crate) fn queued_messages(&self) -> Vec<(Category, String)> {
+        self.messages
+            .iter()
+            .map(messages::Message::summary)
+            .collect()
+    }
+}
+
 struct Click {
     target: Target,
     ticket: u64,

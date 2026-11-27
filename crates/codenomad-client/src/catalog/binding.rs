@@ -1,5 +1,8 @@
 //! Session binding and targeted absence verification.
-use super::{Backend, Project, Result, Session, SessionMissing, read_json, session_at, valid_id};
+use super::{
+    Backend, Project, Result, Session, SessionAbsence, SessionMissing, read_json, session_at,
+    valid_id,
+};
 
 impl Backend {
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
@@ -10,7 +13,7 @@ impl Backend {
         &self,
         project: &Project,
         ids: Vec<String>,
-        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
+        missing: async_channel::Sender<(String, crate::runtime::Instant, SessionAbsence)>,
         notify: impl Fn(),
     ) {
         futures_lite::future::race(
@@ -21,16 +24,19 @@ impl Backend {
                         async {
                             self.bind_session(project, &id, false)
                                 .await
-                                .is_err_and(|error| error.is::<SessionMissing>())
+                                .err()
+                                .and_then(|error| {
+                                    error.downcast_ref::<SessionMissing>().map(|m| m.absence())
+                                })
                         },
                         async {
                             crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
-                            false
+                            None
                         },
                     )
                     .await;
-                    if confirmed {
-                        if missing.send((id, started)).await.is_err() {
+                    if let Some(absence) = confirmed {
+                        if missing.send((id, started, absence)).await.is_err() {
                             return;
                         }
                         notify();
@@ -40,6 +46,29 @@ impl Backend {
             missing.closed(),
         )
         .await;
+    }
+    /// Probes one session ID for confirmed presence (`Some(None)`), confirmed 404/403 absence
+    /// (`Some(Some(absence))`), or transient error/timeout (`None`).
+    pub async fn probe_session_absence(
+        &self,
+        project: &Project,
+        id: &str,
+    ) -> Option<Option<SessionAbsence>> {
+        futures_lite::future::race(
+            async {
+                match self.bind_session(project, id, false).await {
+                    Ok(_) => Some(None),
+                    Err(error) => error
+                        .downcast_ref::<SessionMissing>()
+                        .map(|missing| Some(missing.absence())),
+                }
+            },
+            async {
+                crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                None
+            },
+        )
+        .await
     }
     pub async fn bind_session(
         &self,
@@ -167,8 +196,10 @@ impl Backend {
                 && data["sessionID"] == id;
             let moved = status == reqwest::StatusCode::FORBIDDEN
                 && data["reason"] == "session_located_elsewhere";
-            return Err(if absent || moved {
-                SessionMissing.into()
+            return Err(if absent {
+                SessionMissing::not_found().into()
+            } else if moved {
+                SessionMissing::located_elsewhere().into()
             } else {
                 "session request unavailable".into()
             });

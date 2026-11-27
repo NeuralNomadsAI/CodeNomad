@@ -1027,7 +1027,7 @@ fn unconfirmed_queued_prompt_reconciles_on_authoritative_inbox_and_confirmed_can
         ))
         .unwrap();
     rt.update(|s, _| {
-        assert!(crate::chat::events::poll_hidden_chat(s, 8, false));
+        assert!(crate::chat::events::poll_hidden_chat(s, 8, false).0);
     });
     assert_eq!(rt.state.composer.unconfirmed_id(), None);
     assert!(rt.state.draft.text.is_empty());

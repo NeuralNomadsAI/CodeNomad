@@ -488,6 +488,7 @@ fn delivery_promotion_and_reconnect_reconcile_authoritative_order_without_duplic
             demand: demand_rx,
             events: reader_tx,
             connection,
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wakes = Arc::new(AtomicUsize::new(0));
@@ -674,6 +675,7 @@ fn pagination_detects_reordered_overlap_and_schedules_authoritative_resync() {
             demand: demand_rx,
             events: reader_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wake: crate::Wake = Arc::new(|| {});
@@ -776,6 +778,7 @@ fn background_inbox_read_does_not_block_streaming_or_stall_and_generation_switch
             demand: demand_rx,
             events: reader_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wake: crate::Wake = Arc::new(|| {});
@@ -966,6 +969,7 @@ fn persistent_inbox_history_overlap_prefers_committed_and_bounds_repairs() {
             demand: demand_rx,
             events: reader_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wake: crate::Wake = Arc::new(|| {});
@@ -1077,6 +1081,7 @@ fn available_retry_and_queued_sse_cancel_fence_and_resync_inbox() {
             demand: demand_rx,
             events: reader_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wake: crate::Wake = Arc::new(|| {});
@@ -1221,6 +1226,7 @@ fn unrelated_sse_text_burst_does_not_starve_completed_inbox_read() {
             demand: demand_rx,
             events: reader_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let wake: crate::Wake = Arc::new(|| {});
@@ -1294,6 +1300,7 @@ fn unrelated_sse_text_burst_does_not_starve_completed_inbox_read() {
             demand: demand_rx,
             events: h_tx,
             connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            on_session_deleted: None,
             revoked: Default::default(),
         };
         let h_task = tokio::spawn(recovery::run_with_reading(
