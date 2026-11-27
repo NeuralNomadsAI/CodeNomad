@@ -124,6 +124,7 @@ struct FrameRestore {
     probe_ready: Option<f32>,
     input_poll_clock: Option<f64>,
     defer_for_input_clock: Option<f64>,
+    superseded_by_key: bool,
     handled: bool,
     post_probe: Option<PostProbe>,
     checked: Cell<Option<Option<f32>>>,
@@ -145,6 +146,7 @@ pub(crate) struct Reading {
     frame_restore: Option<FrameRestore>,
     phased_wheel_active: bool,
     phased_vertical_claimed_clock: Option<f64>,
+    paging_key_clock: Option<f64>,
     sync_undo_gesture_clock: Option<f64>,
     sync_undo_gesture_moved: bool,
     last_touch_probe_seq: Cell<u64>,
@@ -184,6 +186,7 @@ impl Default for Reading {
             frame_restore: None,
             phased_wheel_active: false,
             phased_vertical_claimed_clock: None,
+            paging_key_clock: None,
             sync_undo_gesture_clock: None,
             sync_undo_gesture_moved: false,
             last_touch_probe_seq: Cell::new(0),
@@ -276,13 +279,16 @@ impl Reading {
         self.content_layout_seq = self.content_layout_seq.wrapping_add(1);
     }
 
-    fn on_history_input_pending(&mut self, clock: f64) -> bool {
+    fn on_history_input_pending(&mut self, clock: f64, supersede: bool) -> bool {
         if let Some(fr) = self.frame_restore.as_mut()
             && !fr.handled
             && fr.probe_live
             && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
         {
             fr.defer_for_input_clock = Some(clock);
+            if supersede {
+                fr.superseded_by_key = true;
+            }
             return true;
         }
         false
@@ -502,6 +508,7 @@ impl Reading {
                     probe_ready: None,
                     input_poll_clock: None,
                     defer_for_input_clock: None,
+                    superseded_by_key: false,
                     handled: true,
                     post_probe: None,
                     checked: Cell::new(Some(None)),
@@ -536,6 +543,7 @@ impl Reading {
                 probe_ready: None,
                 input_poll_clock: None,
                 defer_for_input_clock: None,
+                superseded_by_key: false,
                 handled: false,
                 post_probe: None,
                 checked: Cell::new(None),
@@ -1245,7 +1253,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                 if inside
                     && s.transcript_display
                         .reading_mut()
-                        .on_history_input_pending(tx.clock())
+                        .on_history_input_pending(tx.clock(), false)
                 {
                     tx.wake_after(std::time::Duration::ZERO);
                 }
@@ -1307,25 +1315,33 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
 }
 
 pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) {
-    if s.screen.is_launcher() || event.mods.cmd || event.mods.alt || event.mods.ctrl {
+    if s.screen.is_launcher()
+        || !crate::timeline::conversation_shown(s)
+        || event.mods.cmd
+        || event.mods.alt
+        || event.mods.ctrl
+    {
         return;
     }
+    let history_focused = tx.focused() == Some("history");
     let paging = match &event.key {
-        rune::Key::PageUp
-        | rune::Key::PageDown
-        | rune::Key::Home
-        | rune::Key::End
-        | rune::Key::Up
-        | rune::Key::Down => true,
-        rune::Key::Text(text) => text == " ",
+        rune::Key::PageUp | rune::Key::PageDown | rune::Key::Home | rune::Key::End => true,
+        rune::Key::Up | rune::Key::Down => history_focused && !event.mods.shift,
+        rune::Key::Text(text) => history_focused && text == " ",
         _ => false,
     };
-    if paging
-        && s.transcript_display
-            .reading_mut()
-            .on_history_input_pending(tx.clock())
-    {
+    if !paging {
+        return;
+    }
+    let clock = tx.clock();
+    let reading = s.transcript_display.reading_mut();
+    reading.paging_key_clock = Some(clock);
+    reading.clear_sync_undo_gesture();
+    if reading.on_history_input_pending(clock, true) {
         tx.wake_after(std::time::Duration::ZERO);
+    }
+    if let Some(reader) = &mut s.reader {
+        reader.clear_sync_undo();
     }
 }
 
@@ -1378,6 +1394,15 @@ fn handle_reading_wheel(
     let (dx, dy) = effective_wheel_delta(ev);
     let ended = ev.phase == rune_theme_codenomad::timeline::GesturePhase::Ended;
     let clock = tx.clock();
+    if s.transcript_display.reading().paging_key_clock == Some(clock)
+        || s.transcript_display
+            .reading()
+            .frame_restore
+            .as_ref()
+            .is_some_and(|fr| fr.superseded_by_key)
+    {
+        return false;
+    }
     let vertical_locked = s
         .transcript_display
         .reading()
@@ -1557,6 +1582,7 @@ fn handle_reading_wheel(
                 fr.probe_ready = None;
                 fr.input_poll_clock = None;
                 fr.defer_for_input_clock = None;
+                fr.superseded_by_key = false;
                 *content_clamped_retried = false;
             }
             fr.post_probe = None;
@@ -1755,6 +1781,7 @@ fn handle_reading_wheel(
                 probe_ready: None,
                 input_poll_clock: None,
                 defer_for_input_clock: None,
+                superseded_by_key: false,
                 handled: !from_bottom,
                 post_probe: None,
                 checked: Cell::new(if from_bottom {
@@ -1843,6 +1870,7 @@ fn handle_reading_wheel(
                 probe_ready: None,
                 input_poll_clock: None,
                 defer_for_input_clock: None,
+                superseded_by_key: false,
                 handled: true,
                 post_probe: None,
                 checked: Cell::new(Some(None)),
@@ -1872,6 +1900,7 @@ fn handle_reading_wheel(
             probe_ready: None,
             input_poll_clock: None,
             defer_for_input_clock: None,
+            superseded_by_key: false,
             handled: false,
             post_probe: None,
             checked: Cell::new(Some(Some(0.0))),
@@ -2091,8 +2120,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             return false;
         };
         let is_replay = matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. });
-        let superseded = is_replay && cur.last_direct_seq != fr.direct_seq;
-        if !superseded && is_replay {
+        if is_replay {
             if let Some(defer_clock) = fr.defer_for_input_clock {
                 if defer_clock == tx.clock() && tx.input_waiting() {
                     tx.wake_after(std::time::Duration::ZERO);
@@ -2100,12 +2128,18 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 fr.defer_for_input_clock = None;
             }
-            if tx.input_waiting() && fr.input_poll_clock != Some(tx.clock()) {
+            if cur.last_direct_seq == fr.direct_seq
+                && !fr.superseded_by_key
+                && tx.input_waiting()
+                && fr.input_poll_clock != Some(tx.clock())
+            {
                 fr.input_poll_clock = Some(tx.clock());
                 tx.request_poll();
                 return false;
             }
         }
+        let superseded =
+            is_replay && (cur.last_direct_seq != fr.direct_seq || fr.superseded_by_key);
         (target, superseded)
     };
     let reading = s.transcript_display.reading_mut();
@@ -2212,6 +2246,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         probe_ready: None,
                         input_poll_clock: None,
                         defer_for_input_clock: None,
+                        superseded_by_key: false,
                         handled: false,
                         post_probe: None,
                         checked: Cell::new(Some(Some(0.0))),
@@ -2271,6 +2306,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     probe_ready: None,
                     input_poll_clock: None,
                     defer_for_input_clock: None,
+                    superseded_by_key: false,
                     handled: true,
                     post_probe: Some(probe),
                     checked: Cell::new(Some(None)),
@@ -2313,6 +2349,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 probe_ready: None,
                 input_poll_clock: None,
                 defer_for_input_clock: None,
+                superseded_by_key: false,
                 handled: true,
                 post_probe: Some(probe),
                 checked: Cell::new(Some(None)),
@@ -2436,6 +2473,7 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
         fr.probe_ready = None;
         fr.input_poll_clock = None;
         fr.defer_for_input_clock = None;
+        fr.superseded_by_key = false;
         fr.handled = false;
         fr.post_probe = None;
         fr.checked.set(Some(Some(0.0)));

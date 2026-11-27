@@ -8487,4 +8487,208 @@ mod resume_tests {
             "bounded clamp retry must not stall indefinitely under continuous streaming"
         );
     }
+
+    #[test]
+    fn end_at_bottom_cancels_queued_upward_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rend-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        rt.on_key = Some(crate::shell::keys);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rend")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+
+        // Frame A: at bottom, wheel up +80 px to arm an upward ReplayDeltas.
+        rt.pointer_move(px, py);
+        rt.wheel_event(rune::WheelEvent::new(0.0, 80.0).at(px, py));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Frame B: press End while already at the bottom (no Direct scroll observation emitted).
+        rt.key(rune::KeyEvent {
+            key: rune::Key::End,
+            mods: rune::Mods::default(),
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            (final_max - final_offset).abs() <= 1.0,
+            "End at bottom must cancel older upward wheel replay: offset={final_offset}, max={final_max}"
+        );
+    }
+
+    #[test]
+    fn wheel_after_page_down_on_replay_frame_applies_from_page_down_landing() {
+        let run_case = |extra_wheel: Option<f32>| -> (f32, f32) {
+            let make_rows =
+                |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+                    range
+                        .map(|i| {
+                            crate::Message {
+                                usage: None,
+                                id: format!("rpgwh-{i:02}"),
+                                role: "assistant".into(),
+                                completed: true,
+                                body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                                parts: vec![],
+                            }
+                            .into()
+                        })
+                        .collect()
+                };
+            let mut s = init();
+            s.phase = Phase::Ready;
+            s.messages = make_rows("Full30", 0..30);
+            let (reader, lane) = Reader::open();
+            s.reader = Some(reader);
+            let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+            rt.poll = Some(crate::poll);
+            rt.on_key = Some(crate::shell::keys);
+            for _ in 0..20 {
+                rt.frame(0.02);
+            }
+            rt.update(|_, tx| {
+                tx.instant();
+                tx.scroll_key_to("rpgwh-16", 0.0);
+            });
+            for _ in 0..20 {
+                rt.frame(0.02);
+            }
+            rt.update(|s, tx| {
+                suspend(s);
+                resume(s, tx);
+            });
+            let g = rt.state.reader.as_ref().unwrap().generation;
+            for _ in 0..10 {
+                rt.frame(0.02);
+            }
+            lane.events
+                .try_send((
+                    g,
+                    0,
+                    Event::ReaderSync {
+                        page: crate::history::Page {
+                            rows: make_rows("Trim10_30", 10..30),
+                            older: Some(serde_json::json!("older-rpgwh")),
+                            newer: None,
+                            running: false,
+                            user_file_references: false,
+                        },
+                        version: 1,
+                    },
+                ))
+                .unwrap();
+            rt.set_viewport((844.0, 390.0), 1.0);
+            rt.frame(0.02);
+            assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+            rt.frame(0.02);
+            assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+            let h_rect = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+
+            // Frame A: arm a 40 px wheel replay from rpgwh-16.
+            rt.pointer_move(px, py);
+            rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(px, py));
+            rt.frame(0.016);
+            assert!(
+                rt.state
+                    .transcript_display
+                    .reading()
+                    .has_pending_restore_probe()
+            );
+            let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+            // Frame B: queue PageDown and optionally a subsequent downward wheel in the same frame.
+            rt.key(rune::KeyEvent {
+                key: rune::Key::PageDown,
+                mods: rune::Mods::default(),
+            });
+            if let Some(dy) = extra_wheel {
+                rt.wheel_event(rune::WheelEvent::new(0.0, dy).at(px, py));
+            }
+            for _ in 0..10 {
+                rt.frame(0.02);
+            }
+            let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+            (offset_at_anchor, final_offset)
+        };
+        let (anchor_only, key_only) = run_case(None);
+        let (anchor_wheel, key_plus_wheel) = run_case(Some(-60.0));
+        assert!((anchor_only - anchor_wheel).abs() <= 0.5);
+        assert!(
+            key_only > anchor_only + 150.0,
+            "control PageDown must advance by a page: anchor={anchor_only}, key_only={key_only}"
+        );
+        assert!(
+            ((key_plus_wheel - key_only) - 60.0).abs() <= 3.0,
+            "wheel delta queued after PageDown on replay frame must apply from PageDown landing: key_only={key_only}, key_plus_wheel={key_plus_wheel}"
+        );
+    }
 }
