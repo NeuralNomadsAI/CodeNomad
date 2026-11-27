@@ -225,6 +225,7 @@ async function verifySseAuthenticated503Recovery({
   await runWithPairTab(context, again, {fromLink, waitUntil:'commit'}, async pairFlow=>{
       await page.bringToFront()
       let injectTransient503=false
+      let observeStatusEpisode=false
       let sseScenarioActive=true
       let sseTeardown=false
       let recoveryReserved=false
@@ -232,10 +233,12 @@ async function verifySseAuthenticated503Recovery({
       let metaGate='pass'
       let admittedSseRequest=null
       let sseResponseAt=null
+      let episodeDeadline=0
       let recovered=false
       let routeError=null
       const sseAbort=new AbortController()
       const statusProbes=[]
+      const observedStatusRequests=[]
       const observedStatusCodes=[]
       const pendingSseRoutes=new Set()
       const pendingStatusRoutes=new Set()
@@ -297,16 +300,26 @@ async function verifySseAuthenticated503Recovery({
         pendingHeldRoutes.add(run)
         await run
       }
+      const isAuthStatusUrl=raw=>{
+        try {
+          const target=new URL(raw)
+          return target.origin===url.origin&&target.pathname==='/api/auth/status'
+        } catch {
+          return false
+        }
+      }
+      const onStatusRequest=req=>{
+        if(!observeStatusEpisode||req.method()!=='GET')return
+        if(isAuthStatusUrl(req.url()))observedStatusRequests.push(performance.now())
+      }
       const onSseResponse=res=>{
-        if(!injectTransient503)return
+        if(!observeStatusEpisode)return
         if(sseResponseAt===null&&admittedSseRequest&&res.request()===admittedSseRequest&&res.status()===200){
           sseResponseAt=performance.now()
           return
         }
-        const target=new URL(res.url())
-        if(target.origin===url.origin&&target.pathname==='/api/auth/status'){
-          observedStatusCodes.push(res.status())
-        }
+        if(res.request().method()!=='GET')return
+        if(isAuthStatusUrl(res.url()))observedStatusCodes.push(res.status())
       }
       const routeMeta=route=>trackPending(pendingSseRoutes,(async()=>{
         const entryGate=metaGate
@@ -397,128 +410,139 @@ async function verifySseAuthenticated503Recovery({
       })())
       let cleanupError=null
       try {
+        page.on('request',onStatusRequest)
         page.on('response',onSseResponse)
-        await page.route(metaUrl,routeMeta)
-        await page.route(eventsUrl,routeEvents)
-        await page.route(authStatusUrl,routeStatus)
-        await step(command('revoke'))
-        await step(dialog.waitFor({timeout:15_000}))
-        await step(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
-        await step(page.evaluate(targetOrigin=>{
-          globalThis.__runeSse503Signals=[]
-          const browserProbes=[]
-          const pushEntry=entry=>{
-            let parsed
-            try { parsed=new URL(entry.name) } catch { return }
-            if(parsed.origin!==targetOrigin||parsed.pathname!=='/api/auth/status')return
-            const responseAt=entry.responseStart>0?entry.responseStart:entry.responseEnd
-            browserProbes.push({
-              receivedAt:entry.startTime,
-              fulfilledAt:responseAt,
-            })
-          }
-          const flush=()=>{ for(const entry of observer.takeRecords())pushEntry(entry) }
-          const onFocus=()=>globalThis.__runeSse503Signals.push('focus')
-          const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeSse503Signals.push('visibility') }
-          const observer=new PerformanceObserver(list=>{
-            for(const entry of list.getEntries())pushEntry(entry)
-          })
-          observer.observe({type:'resource',buffered:false})
-          window.addEventListener('focus',onFocus)
-          document.addEventListener('visibilitychange',onVis)
-          globalThis.__runeSse503ProbesCount=()=>{
-            flush()
-            return browserProbes.length
-          }
-          globalThis.__runeCleanupSse503Signals=()=>{
-            flush()
-            observer.disconnect()
-            window.removeEventListener('focus',onFocus)
-            document.removeEventListener('visibilitychange',onVis)
-            const signals=globalThis.__runeSse503Signals
-            delete globalThis.__runeSse503Signals
-            delete globalThis.__runeSse503ProbesCount
-            delete globalThis.__runeCleanupSse503Signals
-            return {signals,browserProbes}
-          }
-        },url.origin))
-        const beforeSseAuth=eventSources()
-        metaGate='block'
-        sseGate='block'
-        injectTransient503=true
-        // Re-pair in the prepared tab without returning focus or clicking Check, then admit one
-        // /api/meta attestation and one /api/events stream so only one multiplexed subscriber
-        // attaches and drives both bounded retries (1 s, 2 s) before releasing the other subscriber.
-        await step(pairFlow.complete())
-        metaGate='admit-one'
-        sseGate='admit-one'
-        const episodeDeadline=now()+30_000
-        const episodeTimeout=()=>Math.max(1,Math.round(episodeDeadline-now()))
         try {
-          await step(withBudget(episodeDeadline,'first transient 503 on SSE-driven /api/auth/status',
-            ()=>step(first503Served.promise)))
-          assert.equal(await step(withBudget(episodeDeadline,'pairing overlay visible after first 503',
-            ()=>dialog.count())),1,'Pairing overlay must stay visible after the first transient 503 status failure')
-          releaseRecovered.resolve(true)
+          await page.route(metaUrl,routeMeta)
+          await page.route(eventsUrl,routeEvents)
+          await page.route(authStatusUrl,routeStatus)
+          await step(command('revoke'))
+          await step(dialog.waitFor({timeout:15_000}))
+          await step(page.getByText(messages['rune.pairing_guide'],{exact:true}).waitFor())
+          await step(page.evaluate(targetOrigin=>{
+            globalThis.__runeSse503Signals=[]
+            const browserProbes=[]
+            const pushEntry=entry=>{
+              let parsed
+              try { parsed=new URL(entry.name) } catch { return }
+              if(parsed.origin!==targetOrigin||parsed.pathname!=='/api/auth/status')return
+              const responseAt=entry.responseStart>0?entry.responseStart:entry.responseEnd
+              browserProbes.push({
+                receivedAt:entry.startTime,
+                fulfilledAt:responseAt,
+              })
+            }
+            const flush=()=>{ for(const entry of observer.takeRecords())pushEntry(entry) }
+            const onFocus=()=>globalThis.__runeSse503Signals.push('focus')
+            const onVis=()=>{ if(document.visibilityState==='visible')globalThis.__runeSse503Signals.push('visibility') }
+            const observer=new PerformanceObserver(list=>{
+              for(const entry of list.getEntries())pushEntry(entry)
+            })
+            observer.observe({type:'resource',buffered:false})
+            window.addEventListener('focus',onFocus)
+            document.addEventListener('visibilitychange',onVis)
+            globalThis.__runeSse503ProbesCount=()=>{
+              flush()
+              return browserProbes.length
+            }
+            globalThis.__runeCleanupSse503Signals=()=>{
+              flush()
+              observer.disconnect()
+              window.removeEventListener('focus',onFocus)
+              document.removeEventListener('visibilitychange',onVis)
+              const signals=globalThis.__runeSse503Signals
+              delete globalThis.__runeSse503Signals
+              delete globalThis.__runeSse503ProbesCount
+              delete globalThis.__runeCleanupSse503Signals
+              return {signals,browserProbes}
+            }
+          },url.origin))
+          const beforeSseAuth=eventSources()
+          metaGate='block'
+          sseGate='block'
+          observeStatusEpisode=true
+          injectTransient503=true
+          // Re-pair in the prepared tab without returning focus or clicking Check, then admit one
+          // /api/meta attestation and one /api/events stream so only one multiplexed subscriber
+          // attaches and drives both bounded retries (1 s, 2 s) before releasing the other subscriber.
+          await step(pairFlow.complete())
+          metaGate='admit-one'
+          sseGate='admit-one'
+          episodeDeadline=now()+30_000
+          try {
+            await step(withBudget(episodeDeadline,'first transient 503 on SSE-driven /api/auth/status',
+              ()=>step(first503Served.promise)))
+            assert.equal(await step(withBudget(episodeDeadline,'pairing overlay visible after first 503',
+              ()=>dialog.count())),1,'Pairing overlay must stay visible after the first transient 503 status failure')
+            releaseRecovered.resolve(true)
+          } catch (err) {
+            injectTransient503=false
+            releaseRecovered.resolve(false)
+            throw err
+          }
+          await step(withBudget(episodeDeadline,'bounded retry /api/auth/status 200 after transient 503s',
+            ()=>step(recoveredCaptured.promise)))
+          if(forbiddenError)throw forbiddenError
+          if(routeError)throw routeError
+          await step(withBudget(episodeDeadline,'pairing overlay detached after SSE 503 recovery',
+            ms=>dialog.waitFor({state:'detached',timeout:Math.max(1,Math.round(ms))})))
+          if(forbiddenError)throw forbiddenError
+          if(routeError)throw routeError
+          await step(withBudget(episodeDeadline,'browser /api/auth/status resource timings',
+            ms=>page.waitForFunction(()=>(globalThis.__runeSse503ProbesCount?.()??0)>=3,undefined,{timeout:Math.max(1,Math.round(ms))})))
+          const {signals:accidentalSignals,browserProbes}=await step(withBudget(episodeDeadline,'collecting SSE 503 browser metrics',
+            ()=>page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??{signals:[],browserProbes:[]})))
+          assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
+          assert(eventSources()>beforeSseAuth,'Authenticated SSE 200 on the original page must be observed')
+          if(forbiddenError)throw forbiddenError
+          if(routeError)throw routeError
+          assert.equal(statusProbes.length,3,
+            `Expected exactly 3 intercepted /api/auth/status probes, observed ${statusProbes.length}`)
+          assert(sseResponseAt!==null&&sseResponseAt<=statusProbes[0].receivedAt,
+            'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
+          assert.equal(observedStatusRequests.length,3,
+            `Expected exactly 3 /api/auth/status requests during SSE 503 recovery, observed ${observedStatusRequests.length}`)
+          assert.deepEqual(observedStatusCodes,[503,503,200],
+            'Browser must receive exact [503, 503, 200] statuses for /api/auth/status probes')
+          assert(browserProbes.every(p=>p.receivedAt>0&&p.fulfilledAt>=p.receivedAt),
+            'Browser resource timings for /api/auth/status probes must be monotonic')
+          ;({retryDelay1Ms,retryDelay2Ms}=assertSse503Backoff(browserProbes))
+          assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
+          assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
+          recovered=true
         } catch (err) {
-          injectTransient503=false
-          releaseRecovered.resolve(false)
+          if(forbiddenError)throw forbiddenError
+          if(routeError)throw routeError
           throw err
+        } finally {
+          sseTeardown=true
+          sseScenarioActive=false
+          injectTransient503=false
+          sseGate=recovered?'pass':'abort'
+          metaGate=recovered?'pass':'abort'
+          sseAbort.abort()
+          releaseRecovered.resolve(false)
+          releaseHeldSse.resolve(recovered)
+          const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
+          const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
+          cleanupError??=heldRouteError??teardownFulfillError??unrouteErr??drainErr
+          await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
         }
-        await step(withBudget(episodeDeadline,'bounded retry /api/auth/status 200 after transient 503s',
-          ()=>step(recoveredCaptured.promise)))
+        if(cleanupError)throw cleanupError
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
-        await step(withBudget(episodeDeadline,'pairing overlay detached after SSE 503 recovery',
-          ()=>dialog.waitFor({state:'detached',timeout:episodeTimeout()})))
-        if(forbiddenError)throw forbiddenError
-        if(routeError)throw routeError
-        await step(withBudget(episodeDeadline,'browser /api/auth/status resource timings',
-          ()=>page.waitForFunction(()=>(globalThis.__runeSse503ProbesCount?.()??0)>=3,undefined,{timeout:episodeTimeout()})))
-        const {signals:accidentalSignals,browserProbes}=await step(withBudget(episodeDeadline,'collecting SSE 503 browser metrics',
-          ()=>page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??{signals:[],browserProbes:[]})))
-        assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
-        assert(eventSources()>beforeSseAuth,'Authenticated SSE 200 on the original page must be observed')
-        if(forbiddenError)throw forbiddenError
-        if(routeError)throw routeError
-        assert.equal(statusProbes.length,3,
-          `Expected exactly 3 intercepted /api/auth/status probes, observed ${statusProbes.length}`)
-        assert(sseResponseAt!==null&&sseResponseAt<=statusProbes[0].receivedAt,
-          'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
+        await withBudget(episodeDeadline,'reconnection settled after SSE 503 recovery',
+          ms=>connecting.waitFor({state:'hidden',timeout:Math.max(1,Math.round(ms))}))
+        assert.equal(observedStatusRequests.length,3,
+          `Expected exactly 3 /api/auth/status requests through reconnection, observed ${observedStatusRequests.length}`)
         assert.deepEqual(observedStatusCodes,[503,503,200],
-          'Browser must receive exact [503, 503, 200] statuses for /api/auth/status probes')
-        assert(browserProbes.every(p=>p.receivedAt>0&&p.fulfilledAt>=p.receivedAt),
-          'Browser resource timings for /api/auth/status probes must be monotonic')
-        ;({retryDelay1Ms,retryDelay2Ms}=assertSse503Backoff(browserProbes))
-        assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
-        assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
-        recovered=true
-      } catch (err) {
-        if(forbiddenError)throw forbiddenError
-        if(routeError)throw routeError
-        throw err
+          'Browser must receive exact [503, 503, 200] statuses through reconnection')
       } finally {
-        sseTeardown=true
-        sseScenarioActive=false
-        injectTransient503=false
-        sseGate=recovered?'pass':'abort'
-        metaGate=recovered?'pass':'abort'
-        sseAbort.abort()
-        releaseRecovered.resolve(false)
-        releaseHeldSse.resolve(recovered)
+        observeStatusEpisode=false
+        page.off('request',onStatusRequest)
         page.off('response',onSseResponse)
-        const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
-        const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
-        cleanupError??=heldRouteError??teardownFulfillError??unrouteErr??drainErr
-        await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
       }
-      if(cleanupError)throw cleanupError
-      if(forbiddenError)throw forbiddenError
-      if(routeError)throw routeError
-      assert.equal(statusProbes.length,3,
-        `Expected exactly 3 intercepted /api/auth/status probes after unroute, observed ${statusProbes.length}`)
   })
-  await connecting.waitFor({state:'hidden',timeout:15_000})
   assert.equal(await (await focus()).inputValue(),draft)
   assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
   return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
