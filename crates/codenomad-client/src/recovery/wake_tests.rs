@@ -217,6 +217,7 @@ fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
         demand: observer,
         events,
         connection: Default::default(),
+        on_session_deleted: None,
         revoked: Default::default(),
     };
 
@@ -324,6 +325,7 @@ fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    on_session_deleted: None,
                     revoked: Default::default(),
                 },
             ));
@@ -400,6 +402,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    on_session_deleted: None,
                     revoked: Default::default(),
                 },
             ));

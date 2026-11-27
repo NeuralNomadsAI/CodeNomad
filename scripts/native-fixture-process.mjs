@@ -44,11 +44,10 @@ export function resolveFixtureJobBinary(sourceEnv=process.env){
   ].filter(v=>typeof v==='string'&&v.length>0&&path.isAbsolute(v)&&!isUnc(v))
   for(const candidate of candidates){
     try{
-      if(path.basename(candidate).toLowerCase()!==expectedName.toLowerCase())continue
       if(!existsSync(candidate))continue
       const info=lstatSync(candidate)
       if(info.isSymbolicLink()||!info.isFile())continue
-      const resolved=realpathSync(candidate)
+      const resolved=realpathSync.native(candidate)
       if(path.basename(resolved).toLowerCase()!==expectedName.toLowerCase())continue
       return resolved
     }catch{}

@@ -177,42 +177,40 @@ impl Persistence {
     pub fn dirty(&mut self, now: f64) {
         self.due = now + 0.25;
     }
-    pub fn poll_save(
-        &mut self,
-        snapshot: &Snapshot,
-        now: f64,
-        tx: &mut rune::Tx,
-        wake: rune::Waker,
-    ) {
-        if let Some((revision, ok)) = self.saving.as_ref().and_then(|rx| rx.try_recv().ok()) {
+    pub fn poll_save_ready(&mut self, revision: u64, now: f64, tx: &mut rune::Tx) -> bool {
+        if let Some((saved_rev, ok)) = self.saving.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.saving = None;
             self.write_error = !ok;
             if ok {
-                self.saved = self.saved.max(revision);
+                self.saved = self.saved.max(saved_rev);
             }
         }
-        let Some(store) = self.store.clone() else {
-            return;
-        };
-        if !self.restore_enabled
+        if self.store.is_none()
+            || !self.restore_enabled
             || self.mutating
             || self.read_error
             || self.write_error
             || self.saving.is_some()
-            || self.saved >= snapshot.revision
+            || self.saved >= revision
         {
-            return;
+            return false;
         }
         if self
             .cleared_revision
-            .is_some_and(|cleared| snapshot.revision > cleared)
+            .is_some_and(|cleared| revision > cleared)
         {
             self.cleared_revision = None;
         }
         if now < self.due {
             tx.wake_at(self.due);
-            return;
+            return false;
         }
+        true
+    }
+    pub fn start_save(&mut self, snapshot: &Snapshot, wake: rune::Waker) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
         let bytes = match encode_for_save(snapshot) {
             Ok((bytes, partial)) => {
                 self.partial = partial;
@@ -232,6 +230,18 @@ impl Persistence {
             let _ = out.send((revision, ok)).await;
             wake();
         });
+    }
+    #[cfg(test)]
+    pub fn poll_save(
+        &mut self,
+        snapshot: &Snapshot,
+        now: f64,
+        tx: &mut rune::Tx,
+        wake: rune::Waker,
+    ) {
+        if self.poll_save_ready(snapshot.revision, now, tx) {
+            self.start_save(snapshot, wake);
+        }
     }
     pub fn retry(&mut self) {
         if self.store.is_none() {

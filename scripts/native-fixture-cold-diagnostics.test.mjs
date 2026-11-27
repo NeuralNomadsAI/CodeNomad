@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { chmod, copyFile, mkdtemp, mkdir, readFile, realpath, writeFile, rm, symlink } from "node:fs/promises"
 import { createServer } from "node:http"
-import { spawn } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import { DatabaseSync } from "node:sqlite"
 import path from "node:path"
 import os from "node:os"
@@ -760,6 +760,29 @@ test("coldDiagnosticWorkerEnv propagates only the resolved fixture job binary an
   assert.equal(webAttestation.CODENOMAD_FIXTURE_JOB_EXE, expectedExe)
   assert.equal(webAttestation.CARGO_TARGET_DIR, path.resolve(externalTarget))
   assert.equal(webAttestation.RUNE_SERVER_EXE, serverBin)
+
+  if (process.platform === "win32") {
+    // Mixed-case and 8.3 short paths must canonicalize identically to fs/promises realpath.
+    const casedTarget = path.join(path.dirname(externalTarget), path.basename(externalTarget).toUpperCase())
+    const casedExe = path.join(casedTarget, "DEBUG", path.basename(fakeExe).toUpperCase())
+    assert.equal(resolveFixtureJobBinary({ CARGO_TARGET_DIR: casedTarget }), expectedExe)
+    assert.equal(resolveFixtureJobBinary({ CODENOMAD_FIXTURE_JOB_EXE: casedExe }), expectedExe)
+    const cmdExe = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe")
+    const shortPathOf = target => execFileSync(cmdExe, ["/d", "/c", 'for %I in ("%TARGET_PATH%") do @echo %~sI'], {
+      env: { ...process.env, TARGET_PATH: target },
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      encoding: "utf8",
+    }).trim()
+    const shortTarget = shortPathOf(externalTarget)
+    if (shortTarget && shortTarget !== externalTarget) {
+      assert.equal(resolveFixtureJobBinary({ CARGO_TARGET_DIR: shortTarget }), expectedExe)
+    }
+    const shortExe = shortPathOf(fakeExe)
+    if (shortExe && shortExe !== fakeExe) {
+      assert.equal(coldDiagnosticWorkerEnv({ SystemRoot: "C:\\Windows", CODENOMAD_FIXTURE_JOB_EXE: shortExe }).CODENOMAD_FIXTURE_JOB_EXE, expectedExe)
+    }
+  }
 })
 
 test("cold worker attests loopback HTTP with an external CARGO_TARGET_DIR and explicit CODENOMAD_FIXTURE_JOB_EXE", async t => {
