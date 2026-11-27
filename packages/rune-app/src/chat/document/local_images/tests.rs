@@ -1811,3 +1811,54 @@ fn reread_same_http_url_in_new_tool_call_uses_distinct_cache_key() {
         "rereading the same HTTP URL in a newer tool call must bust the previous call's cache slot"
     );
 }
+
+#[test]
+fn incomplete_root_history_refuses_relative_match_while_resolving_exact_path() {
+    let read_b = history::decode_message(&json!({
+        "id": "m2", "type": "assistant", "time": {"completed": 2},
+        "content": [{
+            "type": "tool", "id": "call-b", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/b/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![read_b.into()];
+    state.can_older = true;
+    let plan = prepare(
+        &state,
+        "root-paged",
+        "![Short](chart.png)\n\n![Exact](/b/chart.png)",
+        false,
+        Conversation::Root,
+    );
+    let fallback = plan.fallback_label();
+    assert_eq!(
+        fallback("chart.png", true).as_deref(),
+        Some("chart.png"),
+        "root conversation with unloaded older pages must refuse short relative name"
+    );
+    assert_eq!(
+        fallback("/b/chart.png", true),
+        None,
+        "exact absolute path on loaded root page still resolves"
+    );
+    state.can_older = false;
+    state.history_detached = true;
+    let detached_plan = prepare(
+        &state,
+        "root-detached",
+        "![Short](chart.png)\n\n![Exact](/b/chart.png)",
+        false,
+        Conversation::Root,
+    );
+    assert_eq!(
+        detached_plan.fallback_label()("chart.png", true).as_deref(),
+        Some("chart.png"),
+        "detached root window with unloaded newer pages must refuse short relative name"
+    );
+}

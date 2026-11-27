@@ -72,6 +72,7 @@ enum Match<'a> {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(super) enum SlotStamp {
     Ready(u64),
+    Evicted([u32; 2]),
     Pending,
     Failed,
 }
@@ -84,6 +85,7 @@ struct Slot {
     drawn: Rc<DrawnRect>,
     label: String,
     image: Option<Image>,
+    placeholder_size: Option<[u32; 2]>,
 }
 
 pub(super) struct Plan {
@@ -166,7 +168,7 @@ impl Plan {
                     .iter()
                     .filter_map(Option::as_ref)
                     .map(|slot| {
-                        if slot.image.is_some() {
+                        if slot.image.is_some() || slot.placeholder_size.is_some() {
                             markdown::ImageSearch::Hidden
                         } else {
                             markdown::ImageSearch::Fallback {
@@ -203,7 +205,7 @@ impl Plan {
             for entry in entries {
                 if let Some(slot) = entry {
                     flags.push(true);
-                    meta.push(if slot.image.is_some() {
+                    meta.push(if slot.image.is_some() || slot.placeholder_size.is_some() {
                         markdown::ImageSearch::Hidden
                     } else {
                         markdown::ImageSearch::Fallback {
@@ -241,6 +243,8 @@ impl Plan {
                 };
                 let content = if slot.image.is_some() {
                     markdown::prose_image(el)
+                } else if let Some(size) = slot.placeholder_size {
+                    markdown::prose_image_placeholder(size, slot.drawn.get()[3], &slot.label)
                 } else {
                     let frame_query = search_terms.as_ref().map(|(terms, ranked)| {
                         rune_theme_codenomad::timeline::search::Query {
@@ -902,7 +906,7 @@ pub(super) fn prepare(
     let (candidates, allow_relative) = match conversation {
         Conversation::Root => (
             session_candidates(crate::chat::anchors::visible_rows(s)),
-            true,
+            !s.can_older && !s.history_detached,
         ),
         Conversation::Child { parent, id } => {
             let tool_state = s
@@ -970,18 +974,14 @@ pub(super) fn prepare(
                         drawn,
                         label,
                         image: Some(image),
+                        placeholder_size: None,
                     }));
             }
-            LocalImageState::Pending | LocalImageState::Failed => {
-                let failed = matches!(state, LocalImageState::Failed);
+            LocalImageState::Pending(placeholder_size) => {
                 plan.stamp.push((
                     raw_src.clone(),
                     key.clone(),
-                    if failed {
-                        SlotStamp::Failed
-                    } else {
-                        SlotStamp::Pending
-                    },
+                    placeholder_size.map_or(SlotStamp::Pending, SlotStamp::Evicted),
                 ));
                 if plan.sentinel_ready {
                     plan.occurrences
@@ -995,6 +995,29 @@ pub(super) fn prepare(
                             drawn,
                             label,
                             image: None,
+                            placeholder_size,
+                        }));
+                } else {
+                    // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.
+                    plan.occurrences.entry(raw_src).or_default().push(None);
+                }
+            }
+            LocalImageState::Failed => {
+                plan.stamp
+                    .push((raw_src.clone(), key.clone(), SlotStamp::Failed));
+                if plan.sentinel_ready {
+                    plan.occurrences
+                        .entry(raw_src)
+                        .or_default()
+                        .push(Some(Slot {
+                            key,
+                            source: matched.source.clone(),
+                            mime: matched.mime.clone(),
+                            lease,
+                            drawn,
+                            label,
+                            image: None,
+                            placeholder_size: None,
                         }));
                 } else {
                     // Wait for the web 1x1 sentinel microtask before lifting this slot into Block::Image.

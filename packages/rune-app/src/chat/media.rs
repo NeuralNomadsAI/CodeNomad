@@ -28,7 +28,7 @@ pub(crate) mod browser_fixture;
 
 pub(super) enum LocalImageState {
     Ready(Image),
-    Pending,
+    Pending(Option<[u32; 2]>),
     Failed,
 }
 
@@ -53,14 +53,142 @@ struct Entry {
     clip_gate: Option<(Rc<DrawnRect>, ActiveClip)>,
     request: Option<(Sender<()>, Receiver<Option<Arc<Vec<u8>>>>)>,
     image: Option<Image>,
+    frames: usize,
+    last_size: Option<[u32; 2]>,
     settled: bool,
     last_seen: u64,
 }
 
-fn decoded_bytes(image: &Image) -> usize {
+fn decoded_bytes(image: &Image, frames: usize) -> usize {
     attachment::decoded_size(image).map_or(0, |[w, h]| {
-        (w as usize).saturating_mul(h as usize).saturating_mul(4)
+        (w as usize)
+            .saturating_mul(h as usize)
+            .saturating_mul(4)
+            .saturating_mul(frames.max(1))
     })
+}
+
+fn encoded_frame_count(bytes: &[u8]) -> usize {
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return gif_frame_count(bytes);
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return apng_frame_count(bytes);
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return webp_frame_count(bytes);
+    }
+    1
+}
+
+fn skip_gif_subblocks(bytes: &[u8], mut pos: usize) -> Option<usize> {
+    loop {
+        let len = *bytes.get(pos)? as usize;
+        pos += 1;
+        if len == 0 {
+            return Some(pos);
+        }
+        pos = pos.checked_add(len)?;
+        if pos > bytes.len() {
+            return None;
+        }
+    }
+}
+
+fn gif_frame_count(bytes: &[u8]) -> usize {
+    let Some(&packed) = bytes.get(10) else {
+        return 1;
+    };
+    let mut pos = 13usize;
+    if packed & 0x80 != 0 {
+        let table = 3usize << ((packed & 0x07) + 1);
+        pos = pos.saturating_add(table);
+    }
+    let mut frames = 0usize;
+    while let Some(&introducer) = bytes.get(pos) {
+        match introducer {
+            0x2C => {
+                frames += 1;
+                let Some(&img_packed) = bytes.get(pos + 9) else {
+                    break;
+                };
+                pos += 10;
+                if img_packed & 0x80 != 0 {
+                    let table = 3usize << ((img_packed & 0x07) + 1);
+                    pos = pos.saturating_add(table);
+                }
+                // Skip LZW minimum code size byte, then compressed data sub-blocks.
+                pos = pos.saturating_add(1);
+                let Some(next) = skip_gif_subblocks(bytes, pos) else {
+                    break;
+                };
+                pos = next;
+            }
+            0x21 => {
+                pos = pos.saturating_add(2);
+                let Some(next) = skip_gif_subblocks(bytes, pos) else {
+                    break;
+                };
+                pos = next;
+            }
+            0x3B => break,
+            _ => break,
+        }
+    }
+    frames.max(1)
+}
+
+fn apng_frame_count(bytes: &[u8]) -> usize {
+    let mut pos = 8usize;
+    while let Some(header) = bytes.get(pos..pos + 8) {
+        let len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let kind = &header[4..8];
+        let data_start = pos + 8;
+        let Some(next) = data_start
+            .checked_add(len)
+            .and_then(|end| end.checked_add(4))
+        else {
+            break;
+        };
+        if next > bytes.len() {
+            break;
+        }
+        if kind == b"acTL" && len >= 4 {
+            let count = u32::from_be_bytes([
+                bytes[data_start],
+                bytes[data_start + 1],
+                bytes[data_start + 2],
+                bytes[data_start + 3],
+            ]) as usize;
+            return count.max(1);
+        }
+        if kind == b"IDAT" || kind == b"IEND" {
+            break;
+        }
+        pos = next;
+    }
+    1
+}
+
+fn webp_frame_count(bytes: &[u8]) -> usize {
+    let mut pos = 12usize;
+    let mut frames = 0usize;
+    while let Some(header) = bytes.get(pos..pos + 8) {
+        let kind = &header[0..4];
+        let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        let padded = len.saturating_add(len & 1);
+        let Some(next) = (pos + 8).checked_add(padded) else {
+            break;
+        };
+        if kind == b"ANMF" {
+            frames += 1;
+        }
+        if next > bytes.len() {
+            break;
+        }
+        pos = next;
+    }
+    frames.max(1)
 }
 
 fn entry_in_view(entry: &Entry, view: Option<(&Clock, [f32; 4])>) -> bool {
@@ -118,10 +246,7 @@ impl Pictures {
             let decoded = entry
                 .image
                 .as_ref()
-                .and_then(attachment::decoded_size)
-                .map_or(0, |[w, h]| {
-                    (w as usize).saturating_mul(h as usize).saturating_mul(4)
-                });
+                .map_or(0, |image| decoded_bytes(image, entry.frames));
             let source = match &entry.media {
                 PictureSource::Inline(bytes) => bytes.len(),
                 PictureSource::Http(url) => url.len(),
@@ -235,7 +360,7 @@ impl Pictures {
         {
             LocalImageState::Failed
         } else {
-            LocalImageState::Pending
+            LocalImageState::Pending(entry.and_then(|entry| entry.last_size))
         };
         (key, lease, drawn, state)
     }
@@ -267,6 +392,8 @@ impl Pictures {
                 clip_gate: None,
                 request: None,
                 image: None,
+                frames: 1,
+                last_size: None,
                 settled: false,
                 last_seen: tick,
             });
@@ -326,6 +453,8 @@ impl Pictures {
             clip_gate: None,
             request: None,
             image: None,
+            frames: 1,
+            last_size: None,
             settled: false,
             last_seen: tick,
         });
@@ -388,6 +517,8 @@ impl Pictures {
                 clip_gate: None,
                 request: None,
                 image: None,
+                frames: 1,
+                last_size: None,
                 settled: false,
                 last_seen: tick,
             });
@@ -464,6 +595,9 @@ impl Pictures {
             {
                 entry.request = None;
                 entry.settled = bytes.is_none();
+                entry.frames = bytes
+                    .as_deref()
+                    .map_or(1, |raw| encoded_frame_count(raw.as_slice()));
                 entry.image = bytes.map(|bytes| {
                     self.cache
                         .get_or_insert_with(|| ImageCache::new(wake.clone()))
@@ -472,18 +606,17 @@ impl Pictures {
                 changed = true;
             }
             if !entry.settled && entry.image.as_ref().is_some_and(Image::is_ready) {
-                if entry
-                    .image
-                    .as_ref()
-                    .and_then(attachment::decoded_size)
-                    .is_some_and(|[width, height]| {
-                        !codenomad_client::files::images::transcript_dimensions(
-                            width as usize,
-                            height as usize,
-                        )
-                    })
-                {
+                let decoded = entry.image.as_ref().and_then(attachment::decoded_size);
+                if decoded.is_some_and(|[width, height]| {
+                    !codenomad_client::files::images::transcript_dimensions(
+                        width as usize,
+                        height as usize,
+                    )
+                }) {
                     entry.image = None;
+                    entry.last_size = None;
+                } else if let Some(size) = decoded {
+                    entry.last_size = Some(size);
                 }
                 entry.settled = true;
                 changed = true;
@@ -548,7 +681,7 @@ impl Pictures {
                     .image
                     .as_ref()
                     .filter(|image| image.is_ready())
-                    .map_or(0, decoded_bytes),
+                    .map_or(0, |image| decoded_bytes(image, entry.frames)),
             )
         });
         if total <= budget {
@@ -573,7 +706,7 @@ impl Pictures {
                     .image
                     .as_ref()
                     .filter(|image| image.is_ready())
-                    .map(decoded_bytes)
+                    .map(|image| decoded_bytes(image, entry.frames))
                     .filter(|&bytes| bytes > 0)?;
                 Some((entry.last_seen, key.clone(), bytes))
             })
@@ -585,6 +718,9 @@ impl Pictures {
                 break;
             }
             if let Some(entry) = self.images.get_mut(&key) {
+                if let Some(size) = entry.image.as_ref().and_then(attachment::decoded_size) {
+                    entry.last_size = Some(size);
+                }
                 entry.image = None;
                 entry.settled = false;
                 total = total.saturating_sub(bytes);
@@ -686,9 +822,15 @@ fn view_on_platform(
         || entry.is_some_and(|entry| {
             entry.settled && image.is_none_or(|image| image.error().is_some())
         });
+    let placeholder_size = if image.is_none() && !unavailable {
+        entry.and_then(|entry| entry.last_size)
+    } else {
+        None
+    };
     let external = external_url(source, unavailable, web);
-    let mut content = attachment::picture(
+    let mut content = attachment::picture_with_placeholder(
         image,
+        placeholder_size,
         name,
         mime,
         (unavailable && external.is_none()).then(|| t("toolCall.image.unavailable")),

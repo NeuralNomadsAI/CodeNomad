@@ -290,6 +290,8 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
                 clip_gate: None,
                 request: None,
                 image: Some(make_ready()),
+                frames: 1,
+                last_size: Some([8, 4]),
                 settled: true,
                 last_seen,
             },
@@ -299,10 +301,73 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
     assert!(pictures.evict_offscreen_decoded(None, 256));
     assert!(pictures.images["off-old"].image.is_none());
     assert!(!pictures.images["off-old"].settled);
+    assert_eq!(
+        pictures.images["off-old"].last_size,
+        Some([8, 4]),
+        "evicted offscreen image must preserve its last decoded dimensions for layout stability"
+    );
     assert!(pictures.images["off-new"].image.is_some());
     assert!(pictures.images["on-screen"].image.is_some());
     // Budget 64 evicts the remaining offscreen image (`off-new`) but never evicts `on-screen`.
     assert!(pictures.evict_offscreen_decoded(None, 64));
     assert!(pictures.images["off-new"].image.is_none());
+    assert_eq!(pictures.images["off-new"].last_size, Some([8, 4]));
     assert!(pictures.images["on-screen"].image.is_some());
+
+    // Multi-frame animation accounting: a 32-frame 8x4 entry accounts for 32 * 128 = 4096 bytes.
+    let anim_lease = Rc::new(());
+    pictures.images.insert(
+        "off-gif".into(),
+        Entry {
+            lease: Rc::downgrade(&anim_lease),
+            media: PictureSource::Inline("gif".into()),
+            mime: "image/gif".into(),
+            visible: false,
+            clip_gate: None,
+            request: None,
+            image: Some(make_ready()),
+            frames: 32,
+            last_size: Some([8, 4]),
+            settled: true,
+            last_seen: 4,
+        },
+    );
+    // Budget 1024 exceeds a single frame (128) but is exceeded by 32 frames (4096) -> evicts `off-gif`.
+    assert!(pictures.evict_offscreen_decoded(None, 1024));
+    assert!(pictures.images["off-gif"].image.is_none());
+}
+
+#[test]
+fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
+    // Minimal 3-frame GIF89a with no color tables.
+    let mut gif = Vec::new();
+    gif.extend_from_slice(b"GIF89a");
+    gif.extend_from_slice(&[1, 0, 1, 0, 0x00, 0, 0]);
+    for _ in 0..3 {
+        // Image descriptor (10 bytes) + LZW min code size (1 byte) + empty sub-block terminator (0).
+        gif.extend_from_slice(&[0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0x00, 0x02, 0x00]);
+    }
+    gif.push(0x3B);
+    assert_eq!(encoded_frame_count(&gif), 3);
+
+    // Minimal APNG header with acTL num_frames = 12 before IDAT.
+    let mut apng = Vec::new();
+    apng.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    apng.extend_from_slice(&8u32.to_be_bytes());
+    apng.extend_from_slice(b"acTL");
+    apng.extend_from_slice(&12u32.to_be_bytes());
+    apng.extend_from_slice(&0u32.to_be_bytes());
+    apng.extend_from_slice(&0u32.to_be_bytes()); // CRC placeholder
+    assert_eq!(encoded_frame_count(&apng), 12);
+
+    // Minimal WebP container with 4 ANMF chunks.
+    let mut webp = Vec::new();
+    webp.extend_from_slice(b"RIFF");
+    webp.extend_from_slice(&40u32.to_le_bytes());
+    webp.extend_from_slice(b"WEBP");
+    for _ in 0..4 {
+        webp.extend_from_slice(b"ANMF");
+        webp.extend_from_slice(&0u32.to_le_bytes());
+    }
+    assert_eq!(encoded_frame_count(&webp), 4);
 }

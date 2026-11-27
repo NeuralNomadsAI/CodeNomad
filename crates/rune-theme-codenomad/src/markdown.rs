@@ -137,6 +137,21 @@ pub fn prose_image(image: El) -> El {
     image.radius(0.0).cursor(rune::Cursor::Default)
 }
 
+pub fn prose_image_placeholder([width, height]: [u32; 2], max_h: f32, label: &str) -> El {
+    let ratio = if width > 0 && height > 0 {
+        width as f32 / height as f32
+    } else {
+        1.0
+    };
+    rune::el()
+        .aspect_fit(ratio)
+        .max_w(width.max(1) as f32)
+        .max_h(if max_h > 0.0 { max_h } else { 512.0 })
+        .radius(0.0)
+        .role("img")
+        .label(label)
+}
+
 pub fn prose_fallback_text(label: &str, query: Option<crate::timeline::search::Query<'_>>) -> El {
     crate::timeline::search::ink(rune::text(label.to_owned()).selectable(true), label, query)
 }
