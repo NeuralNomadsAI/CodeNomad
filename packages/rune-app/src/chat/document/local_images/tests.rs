@@ -184,14 +184,23 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         Some(&PictureSource::Inline("b-newest".into()))
     );
 
-    // Re-reading the same path with its short name resolves to the newest candidate.
+    // Re-reading the same path with its short name resolves to the newest candidate, including
+    // redundant `.` segments such as `/tmp/./chart.png` vs `/tmp/chart.png`.
     let reread_same_path = vec![
         candidate(&["chart.png", r"C:\Work\A\Chart.PNG"], "win-new"),
-        candidate(&["chart.png", r"C:\Work\A\chart.png"], "win-old"),
+        candidate(&["chart.png", r"C:\Work\.\A\chart.png"], "win-old"),
     ];
     assert_eq!(
         match_local_image(&reread_same_path, "chart.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("win-new".into()))
+    );
+    let posix_dot_reread = vec![
+        candidate(&["chart.png", "/tmp/./chart.png"], "posix-new"),
+        candidate(&["chart.png", "/tmp/chart.png"], "posix-old"),
+    ];
+    assert_eq!(
+        match_local_image(&posix_dot_reread, "chart.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("posix-new".into()))
     );
     let win_shared_short = vec![
         candidate(&["Chart.PNG", r"C:\Work\B\Chart.PNG"], "win-b"),

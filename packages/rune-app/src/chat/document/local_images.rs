@@ -476,10 +476,39 @@ fn windows_path(value: &str) -> bool {
 
 fn comparable(value: &str) -> String {
     let normalized = normalize_path(value);
-    if windows_path(&normalized) {
-        normalized.to_lowercase()
+    let unc = normalized.starts_with("//");
+    let abs = !unc && normalized.starts_with('/');
+    let rest = if unc {
+        &normalized[2..]
+    } else if abs {
+        &normalized[1..]
     } else {
-        normalized
+        normalized.as_str()
+    };
+    let mut out = String::with_capacity(normalized.len());
+    if unc {
+        out.push_str("//");
+    } else if abs {
+        out.push('/');
+    }
+    let mut has_segment = false;
+    for segment in rest.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if has_segment {
+            out.push('/');
+        }
+        has_segment = true;
+        out.push_str(segment);
+    }
+    if !has_segment {
+        return String::new();
+    }
+    if windows_path(&out) {
+        out.to_lowercase()
+    } else {
+        out
     }
 }
 

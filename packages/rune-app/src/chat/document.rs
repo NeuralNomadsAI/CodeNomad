@@ -252,7 +252,7 @@ fn prose_for(
             && let Some(q) = query
             && let Some(claimed) = q.claimed
             && let Some(pq) = prose_query
-            && markdown::prose_has_match_with_images(
+            && markdown::prose_has_highlight_with_images(
                 shown,
                 truncated,
                 pq,

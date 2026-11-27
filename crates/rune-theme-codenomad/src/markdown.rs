@@ -24,9 +24,9 @@ pub enum ImageSearch {
 
 pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) -> bool {
     let source = literal_breaks(source);
-    let (ranges, active_image) =
+    let (ranges, active_image, unhighlighted_image) =
         prose_ranges_with_images(&source, query, 1, &|_| ImageSearch::Inline);
-    !ranges.is_empty() || active_image.is_some()
+    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
 }
 
 pub fn prose_has_match_with_images(
@@ -37,7 +37,20 @@ pub fn prose_has_match_with_images(
     image_search_text: &dyn Fn(&str) -> ImageSearch,
 ) -> bool {
     let source = literal_breaks_with_images(source, truncated, fallback_label);
-    let (ranges, active_image) = prose_ranges_with_images(&source, query, 1, image_search_text);
+    let (ranges, active_image, unhighlighted_image) =
+        prose_ranges_with_images(&source, query, 1, image_search_text);
+    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
+}
+
+pub fn prose_has_highlight_with_images(
+    source: &str,
+    truncated: bool,
+    query: crate::timeline::search::Query<'_>,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> bool {
+    let source = literal_breaks_with_images(source, truncated, fallback_label);
+    let (ranges, active_image, _) = prose_ranges_with_images(&source, query, 1, image_search_text);
     !ranges.is_empty() || active_image.is_some()
 }
 
@@ -203,7 +216,7 @@ pub fn prose_with_images<S: 'static>(
         Option<String>,
     ) = match query {
         Some(q) => {
-            let (ranges, first_image) =
+            let (ranges, first_image, _) =
                 prose_ranges_with_images(&source, q, 512, &image_search_text);
             let active_image = if q.active
                 && first_image.is_some()
@@ -271,15 +284,16 @@ fn prose_ranges_with_images(
     query: crate::timeline::search::Query<'_>,
     limit: usize,
     image_search_text: &dyn Fn(&str) -> ImageSearch,
-) -> (Vec<Vec<std::ops::Range<usize>>>, Option<String>) {
+) -> (Vec<Vec<std::ops::Range<usize>>>, Option<String>, bool) {
     if limit == 0 || source.is_empty() {
-        return (Vec::new(), None);
+        return (Vec::new(), None, false);
     }
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     const MAX_SPANS: usize = 2_048;
     let mut out = Vec::new();
     let mut first_image_hit: Option<String> = None;
+    let mut unhighlighted_image_match = false;
     let mut total_spans = 0usize;
     let mut blocks = 0usize;
     let mut rendered = String::new();
@@ -344,70 +358,73 @@ fn prose_ranges_with_images(
     let mut non_liftable_depth = 0usize;
     let mut skipped_image_depth = 0usize;
     let mut skipped_image_fallback: Option<(String, String)> = None;
-    let mut inline_lifted_image_depth = 0usize;
+    let mut skipped_image_collect_alt = false;
+    let mut skipped_image_alt = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         if skipped_image_depth > 0 {
             match event {
                 Event::Start(Tag::Image { .. }) => skipped_image_depth += 1,
                 Event::End(pulldown_cmark::TagEnd::Image) => {
                     skipped_image_depth = skipped_image_depth.saturating_sub(1);
-                    if skipped_image_depth == 0
-                        && let Some((slot_key, label)) = skipped_image_fallback.take()
-                        && out.is_empty()
-                        && first_image_hit.is_none()
-                        && query.matches(&label)
-                    {
-                        first_image_hit = Some(slot_key);
-                        if limit == 1 {
-                            break;
+                    if skipped_image_depth == 0 {
+                        if let Some((slot_key, label)) = skipped_image_fallback.take() {
+                            if out.is_empty() && first_image_hit.is_none() && query.matches(&label)
+                            {
+                                first_image_hit = Some(slot_key);
+                                if limit == 1 {
+                                    break;
+                                }
+                            }
+                        } else if skipped_image_collect_alt {
+                            if !unhighlighted_image_match
+                                && !skipped_image_alt.is_empty()
+                                && query.matches(&skipped_image_alt)
+                            {
+                                unhighlighted_image_match = true;
+                            }
+                            skipped_image_alt.clear();
+                            skipped_image_collect_alt = false;
                         }
                     }
+                }
+                Event::Text(ref text) | Event::Code(ref text) if skipped_image_collect_alt => {
+                    skipped_image_alt.push_str(text);
+                }
+                Event::SoftBreak | Event::HardBreak if skipped_image_collect_alt => {
+                    skipped_image_alt.push(' ');
                 }
                 _ => {}
             }
             continue;
         }
         match event {
-            Event::Start(Tag::Image { .. }) if inline_lifted_image_depth > 0 => {
-                inline_lifted_image_depth += 1;
-            }
-            Event::Start(Tag::Image { ref dest_url, .. }) if !dest_url.is_empty() => {
-                if non_liftable_depth == 0 {
-                    flush(
-                        &mut rendered,
-                        &mut map,
-                        &mut out,
-                        &mut total_spans,
-                        &mut blocks,
-                    );
-                    if limit == 1 && !out.is_empty() {
-                        break;
-                    }
-                    match image_search_text(dest_url) {
-                        ImageSearch::Inline => inline_lifted_image_depth = 1,
-                        ImageSearch::Hidden => {
-                            skipped_image_depth = 1;
-                            skipped_image_fallback = None;
-                        }
-                        ImageSearch::Fallback { key, label } => {
-                            skipped_image_depth = 1;
-                            skipped_image_fallback = Some((key, label));
-                        }
-                    }
+            Event::Start(Tag::Image { ref dest_url, .. })
+                if !dest_url.is_empty() && non_liftable_depth == 0 =>
+            {
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
+                if limit == 1 && !out.is_empty() {
+                    break;
                 }
-            }
-            Event::End(pulldown_cmark::TagEnd::Image) if inline_lifted_image_depth > 0 => {
-                inline_lifted_image_depth -= 1;
-                if inline_lifted_image_depth == 0 {
-                    flush(
-                        &mut rendered,
-                        &mut map,
-                        &mut out,
-                        &mut total_spans,
-                        &mut blocks,
-                    );
-                    if limit == 1 && !out.is_empty() {
-                        break;
+                skipped_image_depth = 1;
+                match image_search_text(dest_url) {
+                    ImageSearch::Inline => {
+                        skipped_image_fallback = None;
+                        skipped_image_collect_alt = true;
+                        skipped_image_alt.clear();
+                    }
+                    ImageSearch::Hidden => {
+                        skipped_image_fallback = None;
+                        skipped_image_collect_alt = false;
+                    }
+                    ImageSearch::Fallback { key, label } => {
+                        skipped_image_fallback = Some((key, label));
+                        skipped_image_collect_alt = false;
                     }
                 }
             }
@@ -524,7 +541,7 @@ fn prose_ranges_with_images(
     if limit > 1 {
         out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
     }
-    (out, first_image_hit)
+    (out, first_image_hit, unhighlighted_image_match)
 }
 
 fn map_inline_code(
@@ -1173,7 +1190,7 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         active: true,
         claimed: None,
     };
-    let (ok_spans, _) = prose_ranges_with_images(&rewritten, ok_query, 8, &|src| {
+    let (ok_spans, _, _) = prose_ranges_with_images(&rewritten, ok_query, 8, &|src| {
         if src == "found.png" {
             ImageSearch::Hidden
         } else {
@@ -1202,6 +1219,23 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     let heading_spans = prose_ranges(heading_remote, remote_query, 8);
     assert_eq!(heading_spans.len(), 1);
     assert_eq!(&heading_remote[heading_spans[0][0].clone()], "Plan réseau");
+    // A lifted remote image stays searchable but must not claim the active highlight span from
+    // subsequent paintable prose.
+    let lifted_then_prose = "![Plan réseau](https://example.test/plan.png)\n\nPlan réseau";
+    let lifted_spans = prose_ranges(lifted_then_prose, remote_query, 8);
+    assert_eq!(lifted_spans.len(), 1);
+    assert_eq!(
+        &lifted_then_prose[lifted_spans[0][0].clone()],
+        "Plan réseau"
+    );
+    assert!(lifted_spans[0][0].start > lifted_then_prose.find("\n\n").unwrap());
+    assert!(!prose_has_highlight_with_images(
+        "![Plan réseau](https://example.test/plan.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Inline,
+    ));
     assert_eq!(
         prose_lifted_images(
             "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)\n\n![left![ ](https://example.test/i.png)right](ws.png)",
