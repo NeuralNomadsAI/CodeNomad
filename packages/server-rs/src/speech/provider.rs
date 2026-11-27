@@ -16,9 +16,8 @@ use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::config::{NormalizedSpeechSettings, js_trim};
+use super::config::{DEFAULT_BASE_URL, NormalizedSpeechSettings, js_trim};
 
-const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const MAX_TRANSCRIPTION_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 

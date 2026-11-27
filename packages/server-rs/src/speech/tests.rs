@@ -182,13 +182,37 @@ async fn capabilities_and_direction_resolution_match_ts_contracts() {
         "voiceConversation must stay omitted while /api/speech/conversation/live is not served"
     );
 
-    // 2b. Process OPENAI_API_KEY applies only without an explicit YAML baseUrl (blocks remote-patched baseUrl exfiltration).
+    // 2b. Process OPENAI_API_KEY applies without YAML baseUrl, or when YAML baseUrl matches OpenAI's
+    //     default URL or the host's OPENAI_BASE_URL; foreign YAML baseUrls never receive the env key.
     let h_env_default = Harness::new("speech-env-default", Some("server:\n  speech: {}\n"), false);
     h_env_default.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), None);
     let caps_env = super::config::capabilities_json(&h_env_default.app.settings, true).unwrap();
     assert_eq!(caps_env["configured"], true);
     assert_eq!(caps_env["sttConfigured"], true);
     assert_eq!(caps_env["ttsConfigured"], true);
+
+    let h_env_openai_url = Harness::new(
+        "speech-env-openai-url",
+        Some("server:\n  speech:\n    baseUrl: https://api.openai.com/v1/\n"),
+        false,
+    );
+    h_env_openai_url.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), None);
+    assert_eq!(
+        super::config::resolve_stt_settings(&h_env_openai_url.app.settings).unwrap().api_key.as_deref(),
+        Some("sk-host-env-secret")
+    );
+    // When OPENAI_BASE_URL points to a host-configured endpoint, matching YAML baseUrl keeps the key,
+    // while pointing to a different URL (even api.openai.com) refuses the host key.
+    h_env_openai_url.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), Some("https://corp.internal/v1"));
+    assert!(super::config::resolve_stt_settings(&h_env_openai_url.app.settings).unwrap().api_key.is_none());
+
+    let h_env_corp_url =
+        Harness::new("speech-env-corp-url", Some("server:\n  speech:\n    baseUrl: https://corp.internal/v1\n"), false);
+    h_env_corp_url.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), Some("https://corp.internal/v1/"));
+    assert_eq!(
+        super::config::resolve_stt_settings(&h_env_corp_url.app.settings).unwrap().api_key.as_deref(),
+        Some("sk-host-env-secret")
+    );
 
     let h_env_custom_url = Harness::new(
         "speech-env-custom-url",

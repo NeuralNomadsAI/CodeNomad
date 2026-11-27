@@ -15,6 +15,7 @@ use crate::settings::{
 };
 
 pub(super) const DEFAULT_PROVIDER: &str = "openai-compatible";
+pub(super) const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 pub(super) const DEFAULT_STT_MODEL: &str = "gpt-4o-mini-transcribe";
 pub(super) const DEFAULT_TTS_MODEL: &str = "gpt-4o-mini-tts";
 pub(super) const DEFAULT_TTS_VOICE: &str = "alloy";
@@ -174,11 +175,37 @@ fn parse_server_speech(server: &Doc) -> Result<ParsedSpeech, InvalidSpeechConfig
     })
 }
 
+fn canonical_base_url(raw: &str) -> Option<reqwest::Url> {
+    let with_slash = if raw.ends_with('/') { raw.to_owned() } else { format!("{raw}/") };
+    let url = reqwest::Url::parse(&with_slash).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(url)
+}
+
+fn env_api_key_for_base_url(settings: &Settings, yaml_base_url: Option<&str>) -> Option<String> {
+    let env_key = env_non_empty(settings, "OPENAI_API_KEY")?;
+    let Some(yaml_url) = yaml_base_url else {
+        return Some(env_key);
+    };
+    // Allow OPENAI_API_KEY with an explicit YAML baseUrl only when it resolves to the
+    // exact host-configured OPENAI_BASE_URL (or OpenAI's default URL when unset), so a
+    // remote-patched foreign baseUrl can never exfiltrate the host environment key.
+    let candidate = canonical_base_url(yaml_url)?;
+    let env_base = env_non_empty(settings, "OPENAI_BASE_URL");
+    let trusted = canonical_base_url(env_base.as_deref().unwrap_or(DEFAULT_BASE_URL))?;
+    (candidate == trusted).then_some(env_key)
+}
+
 fn resolve_shared(settings: &Settings, speech: &ParsedSpeech) -> NormalizedSpeechSettings {
     let shared_base_url = non_empty_trimmed(speech.base_url.as_deref());
-    // Never pair the host process OPENAI_API_KEY with an explicit YAML baseUrl
-    // (a paired remote device may patch speech.baseUrl while speech_pairing clears speech.apiKey).
-    let env_api_key = if shared_base_url.is_none() { env_non_empty(settings, "OPENAI_API_KEY") } else { None };
+    let env_api_key = env_api_key_for_base_url(settings, shared_base_url.as_deref());
     NormalizedSpeechSettings {
         provider: non_empty_trimmed(speech.provider.as_deref()).unwrap_or_else(|| DEFAULT_PROVIDER.into()),
         api_key: non_empty_trimmed(speech.api_key.as_deref()).or(env_api_key),
@@ -212,7 +239,7 @@ fn resolve_directional(
     let api_key = if has_complete {
         dir_api_key
     } else if has_none {
-        let env_api_key = if shared_base_url.is_none() { env_non_empty(settings, "OPENAI_API_KEY") } else { None };
+        let env_api_key = env_api_key_for_base_url(settings, shared_base_url.as_deref());
         non_empty_trimmed(speech.api_key.as_deref()).or(env_api_key)
     } else {
         None
