@@ -363,7 +363,7 @@ async fn run_http_scan(
     pinned_endpoint: Option<&Arc<crate::opencode::Endpoint>>,
 ) -> HttpScanOutcome {
     let started = Instant::now();
-    let out = match probe_root_checkout(w).await {
+    let out = match probe_root_checkout(&app.scope, w).await {
         Err(err) => Err((err, None)),
         Ok(RootCheckout::NonGit | RootCheckout::FallbackNonGit) => Ok((HttpSnapshot::NonGit, None)),
         Ok(RootCheckout::MissingGit) => Ok((HttpSnapshot::MissingGit, None)),

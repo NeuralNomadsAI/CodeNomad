@@ -73,11 +73,34 @@ fn file_identity_stamp(path: &Path) -> Option<String> {
     }
     #[cfg(not(unix))]
     {
-        files::host_identity(path).ok()
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        let file = std::fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(path).ok()?;
+        let meta = file.metadata().ok()?;
+        if !meta.is_file() || (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            return None;
+        }
+        let mut h = DefaultHasher::new();
+        same_file::Handle::from_file(file).ok()?.hash(&mut h);
+        Some(format!("{:x}", h.finish()))
     }
 }
 
-fn resolve_symlink_file_in(scope: &Path, path: &Path) -> Result<Option<PathBuf>, std::io::ErrorKind> {
+fn resolve_dir_in(scope: &Path, path: &Path) -> Option<PathBuf> {
+    if !scope.as_os_str().is_empty() {
+        let raw = path.to_str()?;
+        super::ownership::resolve_media_path_checked(scope, raw).ok().flatten().and_then(|(p, a)| (p == a).then_some(p))
+    } else {
+        dunce::canonicalize(path).ok()
+    }
+}
+
+fn resolve_symlink_file_in(
+    scope: &Path,
+    path: &Path,
+) -> Result<Option<(PathBuf, std::fs::Metadata)>, std::io::ErrorKind> {
     let mut cur = path.to_path_buf();
     for _ in 0..40 {
         let raw_target = match std::fs::read_link(&cur) {
@@ -117,18 +140,16 @@ fn resolve_symlink_file_in(scope: &Path, path: &Path) -> Result<Option<PathBuf>,
         match std::fs::symlink_metadata(&candidate) {
             Ok(meta) if meta.file_type().is_symlink() => cur = candidate,
             Ok(meta) if meta.is_file() => {
-                let real = dunce::canonicalize(&candidate).map_err(|e| e.kind())?;
-                return Ok(real.starts_with(scope).then_some(real));
+                // `real_parent` is already canonical within `scope` and `name` is a verified
+                // regular file component; return `candidate` directly without a racy follow-up
+                // `canonicalize` that could chase a newly swapped link.
+                return Ok(candidate.starts_with(scope).then_some((candidate, meta)));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(std::io::ErrorKind::NotFound),
             _ => return Ok(None),
         }
     }
     Ok(None)
-}
-
-fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
-    config_stamp_in(Path::new(""), path)
 }
 
 fn config_stamp_in(scope: &Path, path: &Path) -> Option<Option<ConfigStamp>> {
@@ -142,37 +163,43 @@ fn config_stamp_in(scope: &Path, path: &Path) -> Option<Option<ConfigStamp>> {
             let entry = meta_stamp(&meta)?;
             // Represent a dangling config symlink (e.g. unused `config.worktree`) with `target: None`
             // rather than failing the inventory scan (TS `git-worktrees.ts:72-85`).
-            let real = if scope.as_os_str().is_empty() {
+            if scope.as_os_str().is_empty() {
                 match dunce::canonicalize(path) {
-                    Ok(real) => real,
+                    Ok(real) => match std::fs::symlink_metadata(&real) {
+                        Ok(target_meta) if target_meta.is_file() => {
+                            let id = file_identity_stamp(&real)?;
+                            Some(Some(ConfigStamp {
+                                entry,
+                                identity: None,
+                                target: Some((real, meta_stamp(&target_meta)?, id)),
+                            }))
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            Some(Some(ConfigStamp { entry, identity: None, target: None }))
+                        }
+                        _ => None,
+                    },
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        return Some(Some(ConfigStamp { entry, identity: None, target: None }));
+                        Some(Some(ConfigStamp { entry, identity: None, target: None }))
                     }
-                    Err(_) => return None,
+                    Err(_) => None,
                 }
             } else {
                 match resolve_symlink_file_in(scope, path) {
-                    Ok(Some(real)) => real,
-                    Ok(None) => return None,
-                    Err(std::io::ErrorKind::NotFound) => {
-                        return Some(Some(ConfigStamp { entry, identity: None, target: None }));
+                    Ok(Some((real, target_meta))) => {
+                        let id = file_identity_stamp(&real)?;
+                        Some(Some(ConfigStamp {
+                            entry,
+                            identity: None,
+                            target: Some((real, meta_stamp(&target_meta)?, id)),
+                        }))
                     }
-                    Err(_) => return None,
+                    Ok(None) => None,
+                    Err(std::io::ErrorKind::NotFound) => {
+                        Some(Some(ConfigStamp { entry, identity: None, target: None }))
+                    }
+                    Err(_) => None,
                 }
-            };
-            match std::fs::symlink_metadata(&real) {
-                Ok(target_meta) if target_meta.is_file() => {
-                    let id = file_identity_stamp(&real)?;
-                    Some(Some(ConfigStamp {
-                        entry,
-                        identity: None,
-                        target: Some((real, meta_stamp(&target_meta)?, id)),
-                    }))
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    Some(Some(ConfigStamp { entry, identity: None, target: None }))
-                }
-                _ => None,
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
@@ -190,10 +217,24 @@ fn small(path: &Path) -> Result<Vec<u8>, Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NONBLOCK);
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     let file = opts.open(path).map_err(|_| native_error())?;
     let meta = file.metadata().map_err(|_| native_error())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            return Err(native_error());
+        }
+    }
     if !meta.is_file() || meta.len() > 4096 {
         return Err(native_error());
     }
@@ -278,7 +319,11 @@ fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
         canonical_dir_in(scope, parent, exp_parent) && {
             let joined = exp_parent.join(name);
             std::fs::symlink_metadata(&joined).is_ok_and(|m| m.is_file())
-                && (name == exp_name || dunce::canonicalize(&joined).ok().as_deref() == Some(expected))
+                && (name == exp_name
+                    || (cfg!(windows)
+                        && name.eq_ignore_ascii_case(exp_name)
+                        && file_identity_stamp(&joined)
+                            .is_some_and(|id| file_identity_stamp(expected).as_deref() == Some(id.as_str()))))
         }
     } else {
         dunce::canonicalize(path).ok().as_deref() == Some(expected)
@@ -329,7 +374,22 @@ impl Physical {
 }
 /// The checkout's `.git`, its `gitdir:` admin directory, or an administrative backlink
 /// (`gitdir` / `commondir`) is missing (`ENOENT`, TS `readCheckoutIdentity` / `native-worktrees.ts:135-150`).
+#[cfg(test)]
 fn git_layout_gone(root: &Path) -> bool {
+    git_layout_gone_in(Path::new(""), root)
+}
+
+fn git_layout_gone_in(scope: &Path, root: &Path) -> bool {
+    if !scope.as_os_str().is_empty() {
+        let Some(root_str) = root.to_str() else {
+            return false;
+        };
+        match super::ownership::resolve_media_path_checked(scope, root_str) {
+            Ok(Some((resolved, anchor))) if resolved == anchor && resolved == root => {}
+            Ok(Some(_)) => return true,
+            Ok(None) | Err(()) => return false,
+        }
+    }
     let marker = root.join(".git");
     match std::fs::symlink_metadata(&marker) {
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
@@ -338,16 +398,28 @@ fn git_layout_gone(root: &Path) -> bool {
                 text.lines().find_map(|line| line.strip_prefix("gitdir:")).is_some_and(|dir| {
                     let dir = Path::new(dir.trim());
                     let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
-                    if std::fs::symlink_metadata(&dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
-                        return true;
-                    }
+                    let checked_dir = if !scope.as_os_str().is_empty() {
+                        let Some(dir_str) = dir.to_str() else {
+                            return false;
+                        };
+                        match super::ownership::resolve_media_path_checked(scope, dir_str) {
+                            Ok(Some((resolved, anchor))) if resolved == anchor => resolved,
+                            Ok(Some(_)) => return true,
+                            Ok(None) | Err(()) => return false,
+                        }
+                    } else {
+                        if std::fs::symlink_metadata(&dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                            return true;
+                        }
+                        dir
+                    };
                     // A linked worktree whose `admin/gitdir` backlink or `admin/commondir` disappeared
                     // mid-removal is gone (TS `readCheckoutIdentity` throws ENOENT).
-                    let is_linked = dir.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "worktrees");
+                    let is_linked = checked_dir.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "worktrees");
                     is_linked
-                        && (std::fs::symlink_metadata(dir.join("gitdir"))
+                        && (std::fs::symlink_metadata(checked_dir.join("gitdir"))
                             .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-                            || std::fs::symlink_metadata(dir.join("commondir"))
+                            || std::fs::symlink_metadata(checked_dir.join("commondir"))
                                 .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound))
                 })
             })
@@ -368,6 +440,7 @@ pub async fn readable_checkout(path: &Path) -> bool {
         .is_some_and(|out| out.not_a_repository())
 }
 
+#[cfg(test)]
 fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
     linked_markers_in(Path::new(""), root, admin, common)
 }
@@ -417,11 +490,10 @@ fn separate_marker_live_in(scope: &Path, root: &Path, common: &Path, expected: &
         .is_some_and(|gitdir| canonical_dir_in(scope, &root.join(gitdir), common))
 }
 
-fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
+fn separate_marker_in(scope: &Path, root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
     let dot_git = root.join(".git");
     if std::fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.file_type().is_symlink())
-        && std::fs::metadata(&dot_git).is_ok_and(|meta| meta.is_dir())
-        && dunce::canonicalize(&dot_git).ok().as_deref() == Some(common)
+        && canonical_dir_in(scope, &dot_git, common)
     {
         return Ok(Vec::new());
     }
@@ -431,21 +503,21 @@ fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
         .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
         .filter(|path| !path.is_empty())
         .ok_or_else(native_error)?;
-    if dunce::canonicalize(root.join(gitdir)).ok().as_deref() != Some(common) {
+    if !canonical_dir_in(scope, &root.join(gitdir), common) {
         return Err(conflict("External Git directory is unavailable"));
     }
     Ok(marker)
 }
 
-fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])> {
-    let mut cur = dunce::canonicalize(path).ok()?;
+fn pre_config_stamps_in(scope: &Path, path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])> {
+    let mut cur = resolve_dir_in(scope, path)?;
     loop {
         let marker = cur.join(".git");
         match std::fs::symlink_metadata(&marker) {
             Ok(meta) if meta.is_dir() => {
-                let common = dunce::canonicalize(&marker).ok()?;
-                let s0 = config_stamp(&common.join("config"))?;
-                let s1 = config_stamp(&common.join("config.worktree"))?;
+                let common = resolve_dir_in(scope, &marker)?;
+                let s0 = config_stamp_in(scope, &common.join("config"))?;
+                let s1 = config_stamp_in(scope, &common.join("config.worktree"))?;
                 return Some((common.clone(), common, [s0, s1]));
             }
             Ok(meta) if meta.is_file() => {
@@ -462,7 +534,7 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
                 } else {
                     cur.join(gitdir)
                 };
-                let admin = dunce::canonicalize(&admin_path).ok()?;
+                let admin = resolve_dir_in(scope, &admin_path)?;
                 let common = if let Ok(cb) = small(&admin.join("commondir")) {
                     let ct = std::str::from_utf8(&cb).ok()?.trim_end();
                     let common_path = if Path::new(ct).is_absolute() {
@@ -473,15 +545,18 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
                     } else {
                         admin.join(ct)
                     };
-                    dunce::canonicalize(&common_path).ok()?
+                    resolve_dir_in(scope, &common_path)?
                 } else {
                     admin.clone()
                 };
-                let s0 = config_stamp(&common.join("config"))?;
-                let s1 = config_stamp(&admin.join("config.worktree"))?;
+                let s0 = config_stamp_in(scope, &common.join("config"))?;
+                let s1 = config_stamp_in(scope, &admin.join("config.worktree"))?;
                 return Some((common, admin, [s0, s1]));
             }
             _ => {}
+        }
+        if !scope.as_os_str().is_empty() && cur == scope {
+            return None;
         }
         if !cur.pop() {
             return None;
@@ -498,32 +573,36 @@ pub(crate) enum RootCheckout {
     MissingGit,
 }
 
-async fn parse_checkout(
+async fn parse_checkout_in(
+    scope: PathBuf,
     opened: PathBuf,
     text: String,
     pre: Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])>,
 ) -> Result<Physical, Error> {
     tokio::task::spawn_blocking(move || {
         let mut lines = text.lines();
-        let root = lines.next().and_then(physical).ok_or_else(native_error)?;
-        let admin = lines.next().and_then(physical).ok_or_else(native_error)?;
-        let common = lines.next().and_then(physical).ok_or_else(native_error)?;
+        let resolve = |raw: &str| {
+            if !scope.as_os_str().is_empty() { resolve_dir_in(&scope, Path::new(raw)) } else { physical(raw) }
+        };
+        let root = lines.next().and_then(resolve).ok_or_else(native_error)?;
+        let admin = lines.next().and_then(resolve).ok_or_else(native_error)?;
+        let common = lines.next().and_then(resolve).ok_or_else(native_error)?;
         if lines.next().is_some() {
             return Err(native_error());
         }
         let (marker, backlink, common_marker) = if admin == common {
             if common != root.join(".git") {
-                (Some(separate_marker(&root, &common)?), None, None)
+                (Some(separate_marker_in(&scope, &root, &common)?), None, None)
             } else {
                 (None, None, None)
             }
         } else {
-            let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
+            let [marker, backlink, common_marker] = linked_markers_in(&scope, &root, &admin, &common)?;
             (Some(marker), Some(backlink), Some(common_marker))
         };
         let stamp = [
-            config_stamp(&common.join("config")).ok_or_else(native_error)?,
-            config_stamp(&admin.join("config.worktree")).ok_or_else(native_error)?,
+            config_stamp_in(&scope, &common.join("config")).ok_or_else(native_error)?,
+            config_stamp_in(&scope, &admin.join("config.worktree")).ok_or_else(native_error)?,
         ];
         if let Some((pre_common, pre_admin, pre_stamp)) = pre
             && pre_common == common
@@ -535,7 +614,7 @@ async fn parse_checkout(
         if std::fs::symlink_metadata(admin.join("HEAD")).is_err() {
             return Err(native_error());
         }
-        let opened = dunce::canonicalize(&opened).map_err(|_| native_error())?;
+        let opened = resolve_dir_in(&scope, &opened).ok_or_else(native_error)?;
         let ancestors = ancestor_markers(&opened, &root).ok_or_else(native_error)?;
         Ok(Physical {
             stamp,
@@ -558,11 +637,12 @@ async fn parse_checkout(
 /// Single `git::run` root probe (`SLOTS` + 15 s) that simultaneously classifies
 /// non-Git / missing-Git workspaces and captures the root `Physical` checkout so
 /// `catalogue` / `repo_target` / `worktrees::list` never spawn `rev-parse` twice.
-pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootCheckout, Error> {
+pub(crate) async fn probe_root_checkout(scope: &Path, workspace: &Workspace) -> Result<RootCheckout, Error> {
     let path = workspace.path.clone();
+    let scope_owned = scope.to_path_buf();
     let (canonical_ok, pre) = tokio::task::spawn_blocking(move || {
-        let ok = dunce::canonicalize(&path).ok().as_ref() == Some(&path);
-        let pre = ok.then(|| pre_config_stamps(&path)).flatten();
+        let ok = canonical_dir_in(&scope_owned, &path, &path);
+        let pre = ok.then(|| pre_config_stamps_in(&scope_owned, &path)).flatten();
         (ok, pre)
     })
     .await
@@ -573,9 +653,9 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
     }
     let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
     match crate::git::run(&workspace.path, &args, 128 * 1024).await {
-        Ok(out) if out.code == 0 => {
-            Ok(RootCheckout::Git(parse_checkout(workspace.path.clone(), out.text(), pre).await.map(Box::new)))
-        }
+        Ok(out) if out.code == 0 => Ok(RootCheckout::Git(
+            parse_checkout_in(scope.to_path_buf(), workspace.path.clone(), out.text(), pre).await.map(Box::new),
+        )),
         Ok(out) if out.not_a_repository() => Ok(RootCheckout::NonGit),
         Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
         Ok(out) => {
@@ -590,18 +670,23 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
 }
 
 async fn checkout(path: &Path) -> Result<Physical, Error> {
+    checkout_in(Path::new(""), path).await
+}
+
+async fn checkout_in(scope: &Path, path: &Path) -> Result<Physical, Error> {
     // Capture config stamps BEFORE `git rev-parse` (TS `git-worktrees.ts:92-135`) so a mid-probe
     // config edit cannot pair an old `rev-parse` root with a newly written config stamp.
     let pre = tokio::task::spawn_blocking({
         let path = path.to_path_buf();
-        move || pre_config_stamps(&path)
+        let scope = scope.to_path_buf();
+        move || pre_config_stamps_in(&scope, &path)
     })
     .await
     .ok()
     .flatten();
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
-    parse_checkout(path.to_path_buf(), text, pre).await
+    parse_checkout_in(scope.to_path_buf(), path.to_path_buf(), text, pre).await
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tree {
@@ -900,9 +985,10 @@ async fn root_at(
     )
     .await?;
     let project = here["project"]["id"].as_str().filter(|p| crate::opencode::valid_id(p)).ok_or_else(native_error)?;
+    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
     let local = match prechecked_local {
         Some(local) => local,
-        None => checkout(&w.path).await?,
+        None => checkout_in(&live_scope, &w.path).await?,
     };
     let main_raw = here["project"]["canonical"].as_str().map(str::to_owned).ok_or_else(native_error)?;
     let here_dir_raw = here["directory"].as_str().map(str::to_owned);
@@ -927,7 +1013,7 @@ async fn root_at(
     let main_path = main_path.ok_or_else(|| {
         if scoped { conflict("Workspace and native project do not share a checkout") } else { native_error() }
     })?;
-    let main = if main_path == local.root { local.clone() } else { checkout(&main_path).await? };
+    let main = if main_path == local.root { local.clone() } else { checkout_in(&live_scope, &main_path).await? };
     if here_dir.as_ref() != Some(&w.path)
         || project_dir.as_ref() != Some(&local.root)
         || main.root != main_path
@@ -939,7 +1025,6 @@ async fn root_at(
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
     let opened_path = w.path.clone();
-    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
     let (live_ok, local, main) = tokio::task::spawn_blocking(move || {
         let ok = local.live_for_in(&live_scope, &opened_path) && main.live_in(&live_scope);
         (ok, local, main)
@@ -1087,6 +1172,7 @@ async fn catalogue_in_at(
     })
     .await
     .map_err(|_| native_error())?;
+    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
     let mut verified_roots = Vec::new();
     for (service_root, root, meta) in candidates {
         let check = if root == local.root {
@@ -1094,7 +1180,7 @@ async fn catalogue_in_at(
         } else if root == main.root {
             main.clone()
         } else {
-            match checkout(&root).await {
+            match checkout_in(&live_scope, &root).await {
                 Ok(check) => check,
                 // Reference `listNativeWorktrees`: a registration whose Git layout
                 // is gone (removal or prune in progress, interrupted removal) is no
@@ -1102,7 +1188,8 @@ async fn catalogue_in_at(
                 Err(_)
                     if tokio::task::spawn_blocking({
                         let root = root.clone();
-                        move || git_layout_gone(&root)
+                        let live_scope = live_scope.clone();
+                        move || git_layout_gone_in(&live_scope, &root)
                     })
                     .await
                     .unwrap_or(false) =>
@@ -1131,7 +1218,7 @@ async fn catalogue_in_at(
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
-            let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
+            let live_scope = live_scope.clone();
             let repo_layouts = repo_layouts.clone();
             match tokio::task::spawn_blocking(
                 move || -> Result<
@@ -1141,7 +1228,11 @@ async fn catalogue_in_at(
                     if !check.live_in(&live_scope) {
                         // A layout that vanished mid-scan is omitted; a config change rejects the
                         // whole scan rather than publishing a partial inventory (TS `git-worktrees.ts:128-135`).
-                        return if git_layout_gone(&root) { Ok(None) } else { Err(config_changed_error()) };
+                        return if git_layout_gone_in(&live_scope, &root) {
+                            Ok(None)
+                        } else {
+                            Err(config_changed_error())
+                        };
                     }
                     let resolved_projected = if root.starts_with(&scope) {
                         match projected.to_str() {

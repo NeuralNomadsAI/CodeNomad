@@ -136,7 +136,7 @@ pub(super) async fn strict_non_git_workspace(workspace: &Workspace) -> Result<bo
 }
 
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
-    match inventory::probe_root_checkout(workspace).await? {
+    match inventory::probe_root_checkout(&app.scope, workspace).await? {
         inventory::RootCheckout::NonGit | inventory::RootCheckout::MissingGit => Ok(true),
         inventory::RootCheckout::FallbackNonGit => Err(probe_error()),
         inventory::RootCheckout::Git(Err(_)) => Ok(false),
