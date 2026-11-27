@@ -107,6 +107,7 @@ fn pagination_401_checks_authentication_without_replaying_the_page() {
                 demand,
                 events: page_out,
                 connection: connection.clone(),
+                on_session_deleted: None,
                 revoked: Default::default(),
             };
             let backend = backend.clone();

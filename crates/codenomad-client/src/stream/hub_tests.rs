@@ -1020,6 +1020,7 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
                 closed: Some(state.closed_signal()),
                 placement: state.placement_signal(),
                 inbox: Some(state.inbox.clone()),
+                session_deleted: state.session_deleted_hook(),
                 history_revision: Some(state.history_revision.clone()),
                 upstream: Some(state.upstream.clone()),
                 disconnect_mark: Some(state.disconnect_mark.clone()),
@@ -1131,6 +1132,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             closed: Some(state.closed_signal()),
             placement: None,
             inbox: Some(state.inbox.clone()),
+            session_deleted: None,
             history_revision: None,
             upstream: None,
             disconnect_mark: None,
@@ -1188,6 +1190,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
             closed: Some(state2.closed_signal()),
             placement: None,
             inbox: Some(state2.inbox.clone()),
+            session_deleted: None,
             history_revision: None,
             upstream: None,
             disconnect_mark: None,
@@ -1258,6 +1261,7 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
             closed: Some(state.closed_signal()),
             placement: state.placement_signal(),
             inbox: Some(state.inbox.clone()),
+            session_deleted: None,
             history_revision: Some(state.history_revision.clone()),
             upstream: Some(state.upstream.clone()),
             disconnect_mark: Some(state.disconnect_mark.clone()),
@@ -1474,4 +1478,108 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
             shared.finish(hub, false);
         },
     );
+}
+
+#[test]
+fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let hits_match = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hits_other = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hm = hits_match.clone();
+    let ho = hits_other.clone();
+    let (ev_tx, _ev_rx) = bounded(4);
+    let state_match = State::observing_preferences(ev_tx.clone(), Arc::new(|| {}))
+        .with_session_deleted(Some(Arc::new(move || {
+            hm.fetch_add(1, SeqCst);
+        })));
+    let state_other = State::observing_preferences(ev_tx, Arc::new(|| {})).with_session_deleted(
+        Some(Arc::new(move || {
+            ho.fetch_add(1, SeqCst);
+        })),
+    );
+    let sub_match = Subscriber::with_signals(
+        1,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: Some(("ws-1".into(), "ses-1".into())),
+            placement: state_match.placement_signal(),
+            session_deleted: state_match.session_deleted_hook(),
+            ..SubscriberSignals::default()
+        },
+    );
+    let sub_other = Subscriber::with_signals(
+        2,
+        None,
+        None,
+        SubscriberSignals {
+            conversation: Some(("ws-1".into(), "ses-2".into())),
+            placement: state_other.placement_signal(),
+            session_deleted: state_other.session_deleted_hook(),
+            ..SubscriberSignals::default()
+        },
+    );
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:5/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub_match.clone(), sub_other.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    assert!(shared.mark_open());
+    // Fill sub_match queue to capacity so the session.deleted frame triggers overflow.
+    for i in 0..MAX_SUBSCRIBER_FRAMES {
+        shared.broadcast_frame(
+            &hub,
+            "message".into(),
+            format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
+        );
+    }
+    let deleted = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.deleted","data":{"sessionID":"ses-1"}}}"#;
+    shared.broadcast_frame(&hub, "message".into(), deleted.into());
+    shared.broadcast_frame(&hub, "message".into(), deleted.into());
+    assert_eq!(
+        hits_match.load(SeqCst),
+        1,
+        "matching session.deleted hook must fire exactly once even when overflowing"
+    );
+    assert_eq!(
+        hits_other.load(SeqCst),
+        0,
+        "non-matching subscriber hook must not fire"
+    );
+    assert!(
+        state_match.placement_closed(),
+        "matching session.deleted must revoke send placement immediately even on overflow"
+    );
+    assert!(
+        !state_other.placement_closed(),
+        "non-matching subscriber placement must remain open"
+    );
+    match sub_match.pop_marked() {
+        Some((HubItem::Frame(frame), _)) => {
+            assert_eq!(
+                frame.1, deleted,
+                "overflow must preserve session.deleted frame"
+            );
+        }
+        _ => panic!("expected preserved session.deleted frame before Closed"),
+    }
+    assert!(matches!(
+        sub_match.pop_marked(),
+        Some((
+            HubItem::Closed {
+                auth_expired: false
+            },
+            _
+        ))
+    ));
+    shared.finish(&hub, false);
 }

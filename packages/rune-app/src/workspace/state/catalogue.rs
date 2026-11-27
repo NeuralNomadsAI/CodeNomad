@@ -6,12 +6,16 @@ use crate::catalog::Sessions;
 use codenomad_client::{Receiver, bounded, stream::CatalogueChanges};
 use rune::Tx;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
+type PresenceProofs = Vec<(String, u64)>;
+pub(super) type RefreshResult = (Sessions, bool, bool, PresenceProofs);
+
 enum LinkedCheck {
-    Page(Sessions),
+    Page(Sessions, PresenceProofs),
     Removed,
     Unverified,
 }
@@ -22,18 +26,26 @@ async fn load_linked_target_all(
     target_dir: &str,
     reads: &crate::platform::reads::Reads,
     cancelled: &Receiver<()>,
-) -> Option<crate::history::Result<Sessions>> {
+    presence_epoch: &AtomicU64,
+) -> Option<crate::history::Result<(Sessions, PresenceProofs)>> {
     let mut rows = Vec::new();
     let mut ids = HashSet::new();
+    let mut id_epochs = HashMap::<String, u64>::new();
     let mut seen_cursors = HashSet::new();
     let mut cursor: Option<String> = None;
     let mut bytes = 0usize;
     loop {
-        let page = {
+        let (page, read_epoch) = {
             let _permit = reads.background(cancelled).await?;
-            backend
-                .linked_session_page(project, target_dir, cursor.as_deref())
-                .await
+            let epoch = presence_epoch
+                .fetch_add(1, Ordering::SeqCst)
+                .wrapping_add(1);
+            (
+                backend
+                    .linked_session_page(project, target_dir, cursor.as_deref())
+                    .await,
+                epoch,
+            )
         };
         let page = match page {
             Ok(page) => page,
@@ -41,6 +53,10 @@ async fn load_linked_target_all(
             Err(_) => return Some(Err("linked target pagination incomplete".into())),
         };
         for row in page.rows {
+            id_epochs
+                .entry(row.id.clone())
+                .and_modify(|e| *e = (*e).max(read_epoch))
+                .or_insert(read_epoch);
             if ids.insert(row.id.clone()) {
                 bytes += row.id.len() + row.title.len();
                 if bytes > 24 * 1024 * 1024 {
@@ -48,12 +64,20 @@ async fn load_linked_target_all(
                 }
                 rows.push(row);
                 if rows.len() >= 2_000 {
-                    return Some(Ok(Sessions { rows, next: None }));
+                    let proofs = rows
+                        .iter()
+                        .filter_map(|r| Some((r.id.clone(), *id_epochs.get(&r.id)?)))
+                        .collect();
+                    return Some(Ok((Sessions { rows, next: None }, proofs)));
                 }
             }
         }
         let Some(next) = page.next else {
-            return Some(Ok(Sessions { rows, next: None }));
+            let proofs = rows
+                .iter()
+                .filter_map(|r| Some((r.id.clone(), *id_epochs.get(&r.id)?)))
+                .collect();
+            return Some(Ok((Sessions { rows, next: None }, proofs)));
         };
         let mut hash = DefaultHasher::new();
         next.hash(&mut hash);
@@ -70,9 +94,19 @@ async fn verify_uncertain_linked(
     target_dir: &str,
     reads: &crate::platform::reads::Reads,
     cancelled: &Receiver<()>,
+    presence_epoch: &AtomicU64,
 ) -> Option<LinkedCheck> {
-    match load_linked_target_all(backend, project, target_dir, reads, cancelled).await? {
-        Ok(target_page) => return Some(LinkedCheck::Page(target_page)),
+    match load_linked_target_all(
+        backend,
+        project,
+        target_dir,
+        reads,
+        cancelled,
+        presence_epoch,
+    )
+    .await?
+    {
+        Ok((target_page, proofs)) => return Some(LinkedCheck::Page(target_page, proofs)),
         Err(err) if !err.is::<codenomad_client::catalog::LocationUnavailable>() => {
             return Some(LinkedCheck::Unverified);
         }
@@ -101,8 +135,17 @@ async fn verify_uncertain_linked(
         return Some(LinkedCheck::Unverified);
     }
     Some(
-        match load_linked_target_all(backend, project, target_dir, reads, cancelled).await? {
-            Ok(target_page) => LinkedCheck::Page(target_page),
+        match load_linked_target_all(
+            backend,
+            project,
+            target_dir,
+            reads,
+            cancelled,
+            presence_epoch,
+        )
+        .await?
+        {
+            Ok((target_page, proofs)) => LinkedCheck::Page(target_page, proofs),
             Err(err) if err.is::<codenomad_client::catalog::LocationUnavailable>() => {
                 LinkedCheck::Removed
             }
@@ -114,9 +157,9 @@ async fn verify_uncertain_linked(
 #[derive(Default)]
 pub(super) struct Refresh {
     due: Option<f64>,
-    urgent: bool,
+    pub(super) urgent: bool,
     reset_cursor: bool,
-    request: Option<(u64, Receiver<Option<(Sessions, bool, bool)>>)>,
+    pub(super) request: Option<(u64, u64, Receiver<Option<RefreshResult>>)>,
 }
 
 impl Refresh {
@@ -172,7 +215,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if refresh
         .request
         .as_ref()
-        .is_some_and(|(generation, _)| *generation != l.catalogue_generation)
+        .is_some_and(|(generation, _, _)| *generation != l.catalogue_generation)
     {
         refresh.pause(now);
     }
@@ -184,18 +227,22 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         return false;
     }
     let mut changed = false;
-    if let Some(result) = refresh
+    let mut fresh_present: Option<(super::ProjectScope, PresenceProofs)> = None;
+    if let Some((req_conn_gen, result)) = refresh
         .request
         .as_ref()
-        .and_then(|(_, rx)| rx.try_recv().ok())
+        .and_then(|(_, conn_gen, rx)| rx.try_recv().ok().map(|res| (*conn_gen, res)))
     {
         refresh.request = None;
         if refresh.due.is_none() {
             refresh.urgent = false;
-            if let Some((page, authoritative, includes_linked)) = result {
-                let selected = match &entry.saved {
-                    super::Tab::Workspace(w) => w.active_session_id.as_deref(),
-                    _ => None,
+            if let Some((page, authoritative, includes_linked, proofs)) = result {
+                let (selected, scope) = match &entry.saved {
+                    super::Tab::Workspace(w) => (
+                        w.active_session_id.as_deref(),
+                        Some(super::ProjectScope::from_workspace(w)),
+                    ),
+                    _ => (None, None),
                 };
                 if let Some(row) = page
                     .rows
@@ -203,6 +250,13 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     .find(|row| Some(row.id.as_str()) == selected)
                 {
                     s.chat_title.clone_from(&row.title);
+                }
+                if !l.authentication_required
+                    && req_conn_gen == l.connection_generation
+                    && let Some(scope) = scope
+                    && !proofs.is_empty()
+                {
+                    fresh_present = Some((scope, proofs));
                 }
                 let reset_cursor = refresh.reset_cursor;
                 if authoritative || !includes_linked {
@@ -227,11 +281,12 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         } else {
             let (out, input) = bounded(1);
             let (owner, cancelled) = bounded(1);
-            let (backend, project, reads, wake) = (
+            let (backend, project, reads, wake, presence_epoch) = (
                 backend.clone(),
                 project.clone(),
                 s.reads.clone(),
                 s.wake.clone(),
+                ui.restored_draft_presence_epoch.clone(),
             );
             let selected = match &entry.saved {
                 super::Tab::Workspace(w) => w.active_session_id.clone(),
@@ -239,7 +294,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             };
             let uncertain_linked = l.creation_uncertain_linked.clone();
             refresh.due = None;
-            refresh.request = Some((l.catalogue_generation, input));
+            refresh.request = Some((l.catalogue_generation, l.connection_generation, input));
             crate::platform::spawn(async move {
                 let read = async {
                     let can_replace = match inventory::load(
@@ -248,19 +303,25 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                         selected.as_deref(),
                         &reads,
                         &cancelled,
+                        &presence_epoch,
                     )
                     .await
                     {
-                        Ok(Some(mut projected)) => {
+                        Ok(Some((mut projected, mut proofs))) => {
                             let Some(target_dir) = uncertain_linked.as_deref() else {
-                                return Some((projected, true, true));
+                                return Some((projected, true, true, proofs));
                             };
                             let verified = match verify_uncertain_linked(
-                                &backend, &project, target_dir, &reads, &cancelled,
+                                &backend,
+                                &project,
+                                target_dir,
+                                &reads,
+                                &cancelled,
+                                &presence_epoch,
                             )
                             .await?
                             {
-                                LinkedCheck::Page(target_page) => {
+                                LinkedCheck::Page(target_page, linked_proofs) => {
                                     let existing: HashSet<_> =
                                         projected.rows.iter().map(|row| row.id.clone()).collect();
                                     let mut missing: Vec<_> = target_page
@@ -272,12 +333,13 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                                         missing.extend(projected.rows);
                                         projected.rows = missing;
                                     }
+                                    proofs.extend(linked_proofs);
                                     true
                                 }
                                 LinkedCheck::Removed => true,
                                 LinkedCheck::Unverified => false,
                             };
-                            return Some((projected, true, verified));
+                            return Some((projected, true, verified, proofs));
                         }
                         Ok(None) => true,
                         Err(_) => false,
@@ -285,24 +347,35 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     let mut target_removed = false;
                     if let Some(target_dir) = uncertain_linked.as_deref() {
                         match verify_uncertain_linked(
-                            &backend, &project, target_dir, &reads, &cancelled,
+                            &backend,
+                            &project,
+                            target_dir,
+                            &reads,
+                            &cancelled,
+                            &presence_epoch,
                         )
                         .await?
                         {
-                            LinkedCheck::Page(mut target_page) => {
+                            LinkedCheck::Page(mut target_page, proofs) => {
                                 target_page.next = None;
-                                return Some((target_page, false, true));
+                                return Some((target_page, false, true, proofs));
                             }
                             LinkedCheck::Removed => target_removed = true,
                             LinkedCheck::Unverified => {}
                         }
                     }
                     let _permit = reads.background(&cancelled).await?;
-                    backend
-                        .sessions(&project, None)
-                        .await
-                        .ok()
-                        .map(|page| (page, can_replace, target_removed))
+                    let read_epoch = presence_epoch
+                        .fetch_add(1, Ordering::SeqCst)
+                        .wrapping_add(1);
+                    backend.sessions(&project, None).await.ok().map(|page| {
+                        let proofs = page
+                            .rows
+                            .iter()
+                            .map(|row| (row.id.clone(), read_epoch))
+                            .collect();
+                        (page, can_replace, target_removed, proofs)
+                    })
                 };
                 let result = codenomad_client::runtime::until_closed(&out, read).await;
                 drop(owner);
@@ -312,6 +385,9 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 }
             });
         }
+    }
+    if let Some((scope, proofs)) = fresh_present {
+        super::drafts::note_sessions_present_in_scope_epochs(ui, &scope, proofs);
     }
     changed
 }
@@ -386,10 +462,11 @@ mod tests {
             assert!(!s.shell.visible(0));
             let (out, rx) = codenomad_client::bounded(1);
             let generation = s.screen.launcher().unwrap().catalogue_generation;
+            let conn_gen = s.screen.launcher().unwrap().connection_generation;
             let ui = s.workspace.as_mut().unwrap();
             let entry = &mut ui.entries[ui.active];
             entry.catalogue.urgent = true;
-            entry.catalogue.request = Some((generation, rx));
+            entry.catalogue.request = Some((generation, conn_gen, rx));
             entry.catalogue.due = Some(2.0);
             assert!(out.try_send(None).is_ok());
             let _ = super::poll(s, 1.0, tx);

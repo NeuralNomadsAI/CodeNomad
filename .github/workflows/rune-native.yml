@@ -78,8 +78,10 @@ jobs:
           if [[ "$(uname -m)" == x86_64 ]] && ! command -v nasm >/dev/null; then brew install nasm; fi
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install generator browser
+        id: setup_env
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
       - name: Restore trusted Cargo downloads
+        id: cargo_cache
         if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
         uses: ./.github/actions/download-cache
         with:
@@ -93,26 +95,45 @@ jobs:
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
           node --test scripts/perf/*.test.mjs
-      - name: Build application and run native runtime tests
+      - name: Check Rust formatting, lints and style policy
+        if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
         run: |
           cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -- --check
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
           cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
           cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
-          if [[ "$RUNNER_OS" != Windows ]]; then
-            cargo test --no-run --locked --manifest-path packages/server-rs/Cargo.toml
-          fi
-          cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
+      - name: Run Rust workspace tests
+        if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
+        run: |
+          cargo test --locked --workspace
+      - name: Build native Rune and fixture binaries
+        id: build_native
+        if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
+        run: |
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
           cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+      - name: Run Node fixture guard and diagnostic tests
+        if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
+        run: |
           node --test scripts/native-fixture-guards.test.mjs
           node --test scripts/native-fixture-cold-diagnostics.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
+        if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+      - name: Run Rust server unit tests
+        if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # Windows defaults TMP/TEMP under the user profile, which serve.rs rejects.
+            win_temp="$(cygpath -w "$RUNNER_TEMP")"
+            TMP="$win_temp" TEMP="$win_temp" cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          else
+            cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          fi
       - name: Verify default product excludes qualification probes
         run: |
           suffix=''
@@ -134,13 +155,6 @@ jobs:
           node scripts/rune/parity/workspace-tree-row-native.mjs --binary "$CARGO_TARGET_DIR/debug/examples/workspace-tree-row$suffix"
       - name: Qualify restoration through the shared Rust server
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            # Windows defaults TMP/TEMP under the user profile, which serve.rs rejects.
-            win_temp="$(cygpath -w "$RUNNER_TEMP")"
-            TMP="$win_temp" TEMP="$win_temp" cargo test --locked --manifest-path packages/server-rs/Cargo.toml
-          else
-            cargo test --locked --manifest-path packages/server-rs/Cargo.toml
-          fi
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
           suffix=''
           if [[ "$RUNNER_OS" == Windows ]]; then
