@@ -20,7 +20,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
-import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
+import { hasTranscriptProjectionGates, isTranscriptWatched, publishResyncedTranscriptPage, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 import {
   divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, owedFragments, settleHeldTargets, type TranscriptDivergence,
@@ -672,9 +672,7 @@ async function resyncAuthoritativeTranscript(
 
     if (transcript.onResynced) {
       transcript.onResynced(fresh.data)
-    } else if (hasTranscriptProjectionGates()) {
-      scheduleTranscriptProjection(instanceId, sessionId, fresh.data)
-    } else {
+    } else if (!publishResyncedTranscriptPage(instanceId, sessionId, fresh.data)) {
       projectOpenCodeMessages(instanceId, sessionId, fresh.data, false)
     }
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
@@ -1318,10 +1316,11 @@ function repairDivergedTranscript(instanceId: string, sessionId: string, transcr
 
 /** Settlement evidence for a watched transcript that is still diverged, with
  * no tool settlement read of its own: the stale projection cannot be trusted. */
-function repairDivergedSettlement(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+function repairDivergedSettlement(instanceId: string, sessionId: string, transcript: TranscriptEntry): boolean {
   if (!isDiverged(transcript, transcript.entry) || !isTranscriptWatched(instanceId, sessionId)
-    || awaitsFirstPage(instanceId, sessionId, transcript)) return
+    || awaitsFirstPage(instanceId, sessionId, transcript)) return false
   repairDivergedTranscript(instanceId, sessionId, transcript, true)
+  return true
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -1499,8 +1498,7 @@ export function observeNonEventSettlement(instanceId: string, sessionId: string)
     return true
   }
   if (isDiverged(transcript, transcript.entry)) {
-    repairDivergedSettlement(instanceId, sessionId, transcript)
-    return true
+    return repairDivergedSettlement(instanceId, sessionId, transcript)
   }
   if (transcript.needsAuthoritativeResync || transcript.resyncing) return true
   // The run settled during an SSE gap without delivering a terminal event:

@@ -8,6 +8,7 @@ import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/clien
 import pino from "pino"
 import { EventBus } from "../events/bus"
 import { WorkspaceManager, canonicalWorktreeIdentity } from "./manager"
+import { isTransientOwnershipError } from "./git-worktrees"
 import { InstanceEventBridge } from "./instance-events"
 import { OpenCodeSharedService, type ServiceConnection } from "./opencode-service"
 
@@ -181,12 +182,13 @@ test("cold registered-only ownership after cancellation never acquires or provis
   assert.deepEqual([discoveries, starts, preparations, constructions, refreshes], [1, 0, 1, 1, 0])
 })
 
-test("event ownership rejects unreadable Git metadata instead of silently caching a negative match", async t => {
-  const root = mkdtempSync(path.join(tmpdir(), "codenomad-event-strict-git-"))
-  const repo = path.join(root, "repo"), broken = path.join(root, "broken")
+test("event ownership keeps CLI fallback under Git env overrides and malformed .git without false resyncs", async t => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-event-git-fallback-"))
+  const repo = path.join(root, "repo"), broken = path.join(root, "broken"), unrelated = path.join(root, "unrelated")
   const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { stdio: "pipe" })
   git(root, "init", "-b", "main", repo)
   mkdirSync(broken)
+  mkdirSync(unrelated)
   writeFileSync(path.join(broken, ".git"), "malformed gitdir pointer\n")
   const client = {
     location: { get: async ({ location }: { location: { directory: string } }) => ({
@@ -201,8 +203,21 @@ test("event ownership rejects unreadable Git metadata instead of silently cachin
     sharedService: { existingConnection: () => connection, client: async () => client, validateLocation: async (location: LocationRef) => client.location.get({ location }),
       headers: async () => ({}), shutdown: async () => {} } as any,
   })
-  t.after(async () => { await manager.shutdown(); rmSync(root, { recursive: true, force: true }) })
+  const previousCeiling = process.env.GIT_CEILING_DIRECTORIES
+  t.after(async () => {
+    if (previousCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES
+    else process.env.GIT_CEILING_DIRECTORIES = previousCeiling
+    await manager.shutdown()
+    rmSync(root, { recursive: true, force: true })
+  })
   const { workspace } = await manager.create(repo)
-  await assert.rejects(manager.ownsDirectory(workspace.id, broken, "event"))
-  assert.equal(await manager.ownsDirectory(workspace.id, broken, "request"), false)
+  assert.equal(await manager.ownsDirectory(workspace.id, broken, "event"), false)
+  process.env.GIT_CEILING_DIRECTORIES = root
+  assert.equal(await manager.ownsDirectory(workspace.id, unrelated, "event"), false)
+  assert.equal(isTransientOwnershipError({ killed: true }), true)
+  assert.equal(isTransientOwnershipError({ code: "EBUSY" }), true)
+  assert.equal(isTransientOwnershipError({ code: "ETIMEDOUT" }), true)
+  assert.equal(isTransientOwnershipError({ code: 128 }), false)
+  assert.equal(isTransientOwnershipError({ code: "ENOENT" }), false)
+  assert.equal(isTransientOwnershipError({ code: "EACCES" }), false)
 })

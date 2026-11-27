@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { serverEvents } from "../lib/server-events.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -588,6 +590,90 @@ describe("native session event reducer", () => {
       assert.equal(messageReads, 1)
       assert.deepEqual(store.getSessionMessageIds(sessionId), ["user-1", "assistant-1"])
     } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconnect resync keeps syncing inboxes for all loaded sessions while reloading the active transcript in parallel", async () => {
+    const instanceId = "native-reconnect-inbox-and-active"
+    const activeId = "session-1"
+    const backgroundId = "session-2"
+    const inboxReads: string[] = []
+    let messageReads = 0
+    let releasePending!: () => void
+    const pendingGate = new Promise<void>((resolve) => { releasePending = resolve })
+    const originalPending = serverApi.getPendingRequests
+    const originalWorktrees = serverApi.fetchWorktrees
+    const prompt = { id: "user-1", type: "user", text: "prompt", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "after reconnect" }],
+    }
+    const nativeRow = (id: string) => ({
+      id, title: id, projectID: "project", location: { directory: "/work" },
+      time: { created: 1, updated: 3 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    })
+    const client = {
+      session: {
+        list: async () => ({ data: [nativeRow(activeId), nativeRow(backgroundId)], cursor: {} }),
+        active: async () => ({}),
+        inbox: {
+          list: async ({ sessionID }: { sessionID: string }) => {
+            inboxReads.push(sessionID)
+            return { data: [] }
+          },
+        },
+      },
+      message: {
+        list: async () => {
+          messageReads += 1
+          return { data: [reply, prompt], cursor: {} }
+        },
+      },
+      agent: { list: async () => ({ data: [] }) },
+      provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
+      command: { list: async () => ({ data: [] }) },
+      location: { get: async () => ({ directory: "/work", project: { id: "project", directory: "/work", canonical: "/work" } }) },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.setMessageWindow(activeId, emptyLatestWindow())
+    setMessagesLoaded((previous) => new Map(previous).set(instanceId, new Set([activeId, backgroundId])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([
+      [activeId, { ...nativeRow(activeId), instanceId, parentId: null, status: "idle", agent: "build", model: { providerId: "provider", modelId: "model" } } as any],
+      [backgroundId, { ...nativeRow(backgroundId), instanceId, parentId: null, status: "idle", agent: "build", model: { providerId: "provider", modelId: "model" } } as any],
+    ])))
+    setActiveSession(instanceId, activeId)
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] })
+    serverApi.getPendingRequests = async (_id, directories) => {
+      await pendingGate
+      return {
+        supported: true,
+        directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }] })),
+      }
+    }
+
+    try {
+      ;(serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "error", reason: "event routing failed" })
+      ;(serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "connected" })
+      for (let attempt = 0; attempt < 40 && (messageReads === 0 || inboxReads.length < 2); attempt += 1) {
+        await delay(5)
+      }
+      assert.equal(messageReads, 1, "active session reloads without waiting for pending-request recovery")
+      assert.deepEqual([...inboxReads].sort(), [activeId, backgroundId], "every loaded session still gets its inbox synced")
+      assert.deepEqual(store.getSessionMessageIds(activeId), ["user-1", "assistant-1"])
+      assert.equal(messagesLoaded().get(instanceId)?.has(backgroundId), false, "inactive loaded session was invalidated")
+    } finally {
+      releasePending()
+      serverApi.getPendingRequests = originalPending
+      serverApi.fetchWorktrees = originalWorktrees
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)

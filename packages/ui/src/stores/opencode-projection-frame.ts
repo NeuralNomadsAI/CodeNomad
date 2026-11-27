@@ -25,6 +25,10 @@ export type TranscriptProjectionGates = {
   isLatestMessageWindow(instanceId: string, sessionId: string): boolean
   /** Inactive-session recovery: the next activation loads the page authoritatively. */
   invalidateInactiveLoadedSession(instanceId: string, sessionId: string): void
+  /** Authoritative reload when a watched latest-window session exhausts projection retries. */
+  reloadFailedProjection?(instanceId: string, sessionId: string): void
+  /** Synchronous authoritative resync publication (preserveOmitted=false) when no callback was registered. */
+  onResyncedPage?(instanceId: string, sessionId: string, data: Data): void
   /** Cost/token totals published after usage-affecting events. */
   onProjectedUsage(instanceId: string, sessionId: string): void
   /** Publishes a reduced page into the message store. */
@@ -72,7 +76,13 @@ function scheduleFailedProjectionRetry(entry: PendingProjection): void {
   if (!gates || !entry.operation.current() || pending.has(key)) return
   const attempt = entry.retries ?? 0
   if (attempt >= PROJECTION_RETRY_DELAYS_MS.length) {
-    gates.invalidateInactiveLoadedSession(entry.instanceId, entry.sessionId)
+    if (gates.isActiveSession(entry.instanceId, entry.sessionId)
+      && gates.isLatestMessageWindow(entry.instanceId, entry.sessionId)
+      && gates.reloadFailedProjection) {
+      gates.reloadFailedProjection(entry.instanceId, entry.sessionId)
+    } else {
+      gates.invalidateInactiveLoadedSession(entry.instanceId, entry.sessionId)
+    }
     return
   }
   clearRetryTimer(key)
@@ -84,6 +94,22 @@ function scheduleFailedProjectionRetry(entry: PendingProjection): void {
     requestScheduledRun()
   }, PROJECTION_RETRY_DELAYS_MS[attempt])
   retryTimers.set(key, timer)
+}
+
+/** Publishes an authoritative resynced page through registered gates when no per-event callback was registered. */
+export function publishResyncedTranscriptPage(instanceId: string, sessionId: string, data: Data): boolean {
+  if (!gates) return false
+  if (!gates.isActiveSession(instanceId, sessionId)) {
+    gates.invalidateInactiveLoadedSession(instanceId, sessionId)
+    return true
+  }
+  if (!gates.isLatestMessageWindow(instanceId, sessionId)) return true
+  if (gates.onResyncedPage) {
+    gates.onResyncedPage(instanceId, sessionId, data)
+    return true
+  }
+  scheduleTranscriptProjection(instanceId, sessionId, data)
+  return true
 }
 
 export function setTranscriptProjectionGates(next: TranscriptProjectionGates): void {

@@ -1727,6 +1727,30 @@ describe("OpenCode data projection", () => {
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })
+
+  it("reports unhandled for a diverged unwatched transcript on non-event settlement", async () => {
+    const instanceId = "opencode-data-diverged-unwatched"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, "other-session")
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      // Delta for a missing assistant message marks the unwatched reducer diverged.
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "orphan-delta", type: "session.text.delta", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "missing-assistant", ordinal: 0, delta: "x" },
+      } as any)
+      assert.equal(observeNonEventSettlement(instanceId, sessionId), false,
+        "unwatched diverged settlement must return false so the caller invalidates the loaded page")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
 })
 
 describe("frame-batched content reduction", () => {

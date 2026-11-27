@@ -582,7 +582,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
       settle(() => reloadWorktrees(instanceId, false, signal)),
       settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
       settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
-      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal, loadedMessages)),
     ])
     if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
@@ -599,11 +599,14 @@ function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId, serverEvents.signalForInstance(instanceId))
 }
 
-async function syncLoadedSessionInboxes(instanceId: string, signal?: AbortSignal): Promise<void> {
+async function syncLoadedSessionInboxes(
+  instanceId: string,
+  signal?: AbortSignal,
+  loaded: ReadonlySet<string> = messagesLoaded().get(instanceId) ?? new Set<string>(),
+): Promise<void> {
   if (signal?.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
-  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
   await Promise.all(Array.from(loaded, async (sessionId) => {
     if (signal?.aborted) return
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
@@ -2831,6 +2834,20 @@ setTranscriptProjectionGates({
     isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId)),
   invalidateInactiveLoadedSession: (instanceId, sessionId) => {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
+  },
+  reloadFailedProjection: (instanceId, sessionId) => {
+    const signal = serverEvents.signalForInstance(instanceId)
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
+      log.warn("Failed to reload transcript after projection retries exhausted", { instanceId, sessionId, error })
+    })
+  },
+  onResyncedPage: (instanceId, sessionId, data) => {
+    publishSynchronousPage(instanceId, sessionId, data, {
+      preserveOmitted: false,
+      confirmPending: true,
+      updateUsage: true,
+    })
+    schedulePendingRequestReconciliation(instanceId)
   },
   onProjectedUsage: updateSessionInfo,
   // Frame publications always keep omitted history; only their confirmation

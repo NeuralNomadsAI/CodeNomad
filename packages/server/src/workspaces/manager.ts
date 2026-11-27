@@ -36,7 +36,7 @@ import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from 
 import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory, WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
-import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
+import { isTransientOwnershipError, resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { readLocationRef } from "../opencode/compatibility/location"
 import type { TemporaryFolderRegistry } from "./temporary-workspaces"
@@ -532,11 +532,11 @@ export class WorkspaceManager {
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const event = purpose === "event"
     const readPath = (candidate: string) => event
-      ? realpath(candidate).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error })
+      ? realpath(candidate).catch(error => { if (isTransientOwnershipError(error)) throw error })
       : ownershipRealpath(candidate)
     const [target, root] = await Promise.all([readPath(directory), readPath(record.path)])
     if (target && target === root) return true
-    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, { strict: event })) return false
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, { propagateTransient: event })) return false
     return (await resolveOwnedWorktreePath({
       workspaceId: event ? `event:${record.id}` : record.id,
       workspacePath: record.path,

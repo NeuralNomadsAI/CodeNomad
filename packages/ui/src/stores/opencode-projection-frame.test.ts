@@ -504,3 +504,38 @@ test("a failed coalesced frame projection retries on bounded backoff instead of 
     f.cleanup()
   }
 })
+
+test("exhausting failed frame retries reloads a watched latest-window session authoritatively", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retry-exhausted")
+  const client = (sdkManager as any).clients.get(`${f.instanceId}:/workspaces/${f.instanceId}/instance`)
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let hydrateAttempts = 0
+  let messageReloads = 0
+  client.message.list = async () => {
+    messageReloads += 1
+    return { data: [], cursor: {} }
+  }
+  f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+    hydrateAttempts += 1
+    if (hydrateAttempts <= 3) throw new Error("persistent projection failure")
+    return originalHydrate(...args)
+  }) as typeof f.store.hydrateMessages
+  try {
+    f.stream(2)
+    clock.fire()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    clock.fire()
+    await new Promise(resolve => setTimeout(resolve, 240))
+    clock.fire()
+    for (let wait = 0; wait < 20 && messageReloads === 0; wait += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(hydrateAttempts, 3, "initial attempt plus two retries ran")
+    assert.equal(messageReloads, 1, "exhausted retries trigger an authoritative reload for the watched session")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})
