@@ -77,7 +77,7 @@ export type SessionAutomationsResponse =
 
 export type SessionAutomationMutationResponse =
   | { status: "ok"; automation?: SessionAutomation }
-  | { status: "error"; error: string }
+  | { status: "error"; error: string; upstream?: true }
 
 const rawTriggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("at"), at: z.string(), tz: z.string().nullish() }),
@@ -99,6 +99,8 @@ const rawActionSchema = z.discriminatedUnion("type", [
 const rawAutomationSchema = z.object({
   id: automationIdSchema,
   name: z.string(),
+  projectID: z.string().min(1),
+  directory: z.string().min(1),
   sessionID: z.string().nullish(),
   status: automationStatusSchema,
   trigger: rawTriggerSchema,
@@ -125,7 +127,12 @@ function serializeState(state: unknown): string | undefined {
 }
 
 /** Projects a raw OpenCode `Automation.Info` into the bounded display contract, dropping internal/unknown fields. */
-export function projectSessionAutomation(raw: unknown): { automation: SessionAutomation; sessionID?: string } | null {
+export function projectSessionAutomation(raw: unknown): {
+  automation: SessionAutomation
+  sessionID?: string
+  projectID: string
+  directory: string
+} | null {
   const parsed = rawAutomationSchema.safeParse(raw)
   if (!parsed.success) return null
   const item = parsed.data
@@ -170,5 +177,5 @@ export function projectSessionAutomation(raw: unknown): { automation: SessionAut
     createdAt: item.time.created,
     updatedAt: item.time.updated,
   }
-  return { automation, sessionID: item.sessionID ?? undefined }
+  return { automation, sessionID: item.sessionID ?? undefined, projectID: item.projectID, directory: item.directory }
 }

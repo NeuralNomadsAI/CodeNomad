@@ -233,3 +233,50 @@ test("rejects Mission schedule carriers and indeterminate carrier ownership on l
     assert.equal(f.calls.length, 0)
   } finally { await f.app.close() }
 })
+
+test("blocks cross-project and cross-directory automations for the same session and flags upstream errors", async () => {
+  const f = fixture()
+  try {
+    const crossProject = rawAutomation({ id: "aut_other_proj", sessionID: "ses_a", projectID: "proj_other", directory: "/repo/worktree" })
+    const crossDir = rawAutomation({ id: "aut_other_dir", sessionID: "ses_a", projectID: "proj_1", directory: "/other/project" })
+    f.state.fetch = async (url, init) => {
+      f.calls.push({ method: init?.method ?? "GET", url: url.toString() })
+      if (url.pathname === "/api/experimental/automation") {
+        return Response.json({ data: [rawAutomation(), crossProject, crossDir] })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_other_proj" && (init?.method ?? "GET") === "GET") {
+        return Response.json({ data: crossProject })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_other_dir" && (init?.method ?? "GET") === "GET") {
+        return Response.json({ data: crossDir })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_1" && (init?.method ?? "GET") === "GET") {
+        return Response.json({ data: rawAutomation() })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_1/pause") {
+        return Response.json({ message: "Upstream lock active" }, { status: 500 })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_1/resume") {
+        return new Response(null, { status: 500 })
+      }
+      return new Response(null, { status: 404 })
+    }
+
+    const listed = await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })
+    assert.equal(listed.statusCode, 200)
+    assert.deepEqual(listed.json().automations.map((a: { id: string }) => a.id), ["aut_1"])
+
+    const callsBefore = f.calls.length
+    assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_other_proj" })).statusCode, 403)
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_other_dir/pause" })).statusCode, 403)
+    assert.equal(f.calls.length, callsBefore + 2, "inspects only and refuses before mutating foreign project/directory")
+
+    const upstreamErr = await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })
+    assert.equal(upstreamErr.statusCode, 502)
+    assert.deepEqual(upstreamErr.json(), { status: "error", error: "Upstream lock active", upstream: true })
+
+    const fallbackErr = await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/resume" })
+    assert.equal(fallbackErr.statusCode, 502)
+    assert.equal(fallbackErr.json().upstream, undefined)
+  } finally { await f.app.close() }
+})

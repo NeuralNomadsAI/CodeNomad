@@ -86,13 +86,15 @@ export function createSessionAutomationsStore(
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return
     const nextDue = earliestActiveDueAt(automations)
     const hasActiveEventTrigger = automations.some(item => item.status === "active" && item.trigger.type === "event")
-    if (nextDue === null && !hasActiveEventTrigger) {
+    const hasPendingShellResult = automations.some(item =>
+      item.action.type === "shell" && item.status === "done" && item.lastOutput === undefined && item.lastOutcome === undefined)
+    if (nextDue === null && !hasActiveEventTrigger && !hasPendingShellResult) {
       entry.overdueChecks = 0
       return
     }
     let delayMs: number
-    if (retryFailure) {
-      // Bound retries if a due-time or event-driven read fails transiently.
+    if (retryFailure || (nextDue === null && !hasActiveEventTrigger && hasPendingShellResult)) {
+      // Bound retries if a read fails transiently or a one-shot shell automation has not yet written its outcome/output.
       if (entry.overdueChecks >= 3) return
       entry.overdueChecks += 1
       delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
@@ -211,7 +213,12 @@ export function createSessionAutomationsStore(
         if (released) return
         released = true
         tracked.demand -= 1
-        if (tracked.demand === 0) { cancel(tracked); tracked.releaseAuthority?.() }
+        if (tracked.demand === 0) {
+          cancel(tracked)
+          tracked.releaseAuthority?.()
+          if (entries.get(stateKey) === tracked) entries.delete(stateKey)
+          dropSnapshot(stateKey)
+        }
       }
     },
     refresh,

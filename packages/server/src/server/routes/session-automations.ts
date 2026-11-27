@@ -60,13 +60,13 @@ function automationUrl(connection: ServiceConnection, pathname: string, director
   return url
 }
 
-async function readErrorMessage(response: Response, connection: ServiceConnection, fallback: string): Promise<string> {
+async function readUpstreamErrorMessage(response: Response, connection: ServiceConnection): Promise<string | undefined> {
   try {
     const body = await readBoundedJson(response, connection) as { message?: unknown; error?: unknown } | undefined
     if (typeof body?.message === "string" && body.message.trim()) return body.message.trim()
     if (typeof body?.error === "string" && body.error.trim()) return body.error.trim()
   } catch { /* ignore error body parse failures */ }
-  return fallback
+  return undefined
 }
 
 async function resolveOwnedSession(
@@ -126,7 +126,22 @@ async function resolveOwnedSession(
     await verifyOrdinary(latest, latestLocation)
     current()
   }
-  return { kind: "ok" as const, connection, location, revalidate }
+  return { kind: "ok" as const, connection, location, projectID: session.projectID, revalidate }
+}
+
+async function isOwnedAutomation(
+  projected: { sessionID?: string; projectID: string; directory: string },
+  owned: Extract<Awaited<ReturnType<typeof resolveOwnedSession>>, { kind: "ok" }>,
+  sessionID: string,
+  workspaceId: string,
+  manager: SessionAutomationsRouteDeps["workspaceManager"],
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (projected.sessionID !== sessionID) return false
+  if (projected.projectID !== owned.projectID) return false
+  const automationLocation = { directory: projected.directory }
+  if (!sameLocation({ directory: owned.location.directory }, automationLocation)) return false
+  return manager.ownsLocation(workspaceId, automationLocation, owned.connection.client, { signal })
 }
 
 /**
@@ -174,7 +189,7 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
       for (const raw of payload.data) {
         const projected = projectSessionAutomation(raw)
         if (!projected) return { status: "unavailable" } satisfies SessionAutomationsResponse
-        if (projected.sessionID !== sessionID) continue
+        if (!await isOwnedAutomation(projected, owned, sessionID, request.params.id, deps.workspaceManager, signal)) continue
         automations.push(projected.automation)
       }
       return { status: "ok", automations } satisfies SessionAutomationsResponse
@@ -223,15 +238,19 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         return reply.code(404).send({ status: "error", error: "Automation not found" } satisfies SessionAutomationMutationResponse)
       }
       if (!inspectResponse.ok) {
-        const message = await readErrorMessage(inspectResponse, owned.connection, "Could not inspect the automation")
-        return reply.code(502).send({ status: "error", error: message } satisfies SessionAutomationMutationResponse)
+        const upstream = await readUpstreamErrorMessage(inspectResponse, owned.connection)
+        return reply.code(502).send({
+          status: "error",
+          error: upstream ?? "Could not inspect the automation",
+          ...(upstream ? { upstream: true as const } : {}),
+        } satisfies SessionAutomationMutationResponse)
       }
       const inspectBody = await readBoundedJson(inspectResponse, owned.connection) as { data?: unknown } | undefined
       const current = projectSessionAutomation(inspectBody?.data)
       if (!current) {
         return reply.code(502).send({ status: "error", error: "Automation response was invalid" } satisfies SessionAutomationMutationResponse)
       }
-      if (current.sessionID !== sessionID) {
+      if (!await isOwnedAutomation(current, owned, sessionID, workspaceId, deps.workspaceManager, signal)) {
         return reply.code(403).send({ status: "error", error: "Automation does not belong to session" } satisfies SessionAutomationMutationResponse)
       }
       await owned.revalidate()
@@ -249,8 +268,12 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         return reply.code(404).send({ status: "error", error: "Automation not found" } satisfies SessionAutomationMutationResponse)
       }
       if (!response.ok) {
-        const message = await readErrorMessage(response, owned.connection, "Could not update the automation")
-        return reply.code(502).send({ status: "error", error: message } satisfies SessionAutomationMutationResponse)
+        const upstream = await readUpstreamErrorMessage(response, owned.connection)
+        return reply.code(502).send({
+          status: "error",
+          error: upstream ?? "Could not update the automation",
+          ...(upstream ? { upstream: true as const } : {}),
+        } satisfies SessionAutomationMutationResponse)
       }
       if (action === "delete") {
         await response.body?.cancel()

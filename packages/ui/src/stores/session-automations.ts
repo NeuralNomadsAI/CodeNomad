@@ -25,11 +25,19 @@ const reconnects = createEventRefreshScheduler((instanceId, signal) =>
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
-  const native = event.event as { type: string; data?: { sessionID?: unknown } }
+  const native = event.event as { type: string; data?: { sessionID?: unknown; shell?: { metadata?: { sessionID?: unknown } } } }
   if (native.type === "session.deleted" && typeof native.data?.sessionID === "string") {
     sessionAutomations.forget(event.instanceId, native.data.sessionID)
   } else if (EXECUTION_SETTLED_EVENTS.has(native.type) && typeof native.data?.sessionID === "string") {
     void sessionAutomations.refresh(event.instanceId, native.data.sessionID)
+  } else if (native.type === "session.shell.ended") {
+    const shellSessionId = typeof native.data?.sessionID === "string"
+      ? native.data.sessionID
+      : typeof native.data?.shell?.metadata?.sessionID === "string"
+        ? native.data.shell.metadata.sessionID
+        : undefined
+    if (shellSessionId) void sessionAutomations.refresh(event.instanceId, shellSessionId)
+    else void sessionAutomations.refreshDemanded(event.instanceId)
   } else if (native.type === "server.connected") {
     reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
   }
@@ -72,7 +80,7 @@ export function runSessionAutomationAction(
           ? await api.resumeSessionAutomation(instanceId, sessionId, automationId)
           : await api.deleteSessionAutomation(instanceId, sessionId, automationId)
       if (result.status !== "ok") {
-        throw new Error(result.error || tGlobal("instanceShell.automations.error"))
+        throw new Error(result.upstream && result.error ? result.error : tGlobal("instanceShell.automations.error"))
       }
       ok = true
       if (action === "delete") {

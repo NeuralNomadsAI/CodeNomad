@@ -270,4 +270,49 @@ describe("session automations store", () => {
     assert.equal(f.reads.length, 2, "stops polling once event-triggered automation is paused")
     release()
   })
+
+  it("evicts snapshots on last release and polls boundedly for done one-shot shell automations awaiting output", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const authority = new AbortController()
+    const f = fixture({ signal: () => authority.signal })
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({
+      status: "ok",
+      automations: [automation("aut_shell", {
+        status: "done",
+        trigger: { type: "at", at: "2026-11-27T12:00:00Z", tz: "UTC" },
+        action: { type: "shell", command: "sleep 30 && echo ok" },
+        nextDueAt: undefined,
+        lastOutcome: undefined,
+        lastOutput: undefined,
+        runCount: 1,
+      })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    t.mock.timers.tick(15_000)
+    assert.equal(f.reads.length, 2, "schedules bounded follow-up for one-shot shell missing outcome/output")
+    f.reads[1]!.resolve({
+      status: "ok",
+      automations: [automation("aut_shell", {
+        status: "done",
+        trigger: { type: "at", at: "2026-11-27T12:00:00Z", tz: "UTC" },
+        action: { type: "shell", command: "sleep 30 && echo ok" },
+        nextDueAt: undefined,
+        lastOutcome: "fired",
+        lastOutput: "ok",
+        runCount: 1,
+      })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    t.mock.timers.tick(60_000)
+    assert.equal(f.reads.length, 2, "stops follow-up once shell outcome/output are populated")
+
+    release()
+    assert.deepEqual(f.store.state("i", "ses_a"), { status: "loading" }, "evicts snapshot on last release")
+    authority.abort()
+    assert.deepEqual(f.store.state("i", "ses_a"), { status: "loading" }, "evicted snapshot stays absent after detach")
+  })
 })
