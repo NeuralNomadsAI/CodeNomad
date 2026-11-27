@@ -87,7 +87,16 @@ function trackFulfill(pending, promise, onError){
 async function fulfillOrAbort(pending, route, payload, onError){
   let failed=false
   await trackFulfill(pending,route.fulfill(payload),err=>{ failed=true; onError(err) })
-  if(failed)await route.abort().catch(()=>{})
+  if(failed){
+    try {
+      await route.abort()
+    } catch {
+      const target=route.request().frame()?.page()
+      if(target&&!target.isClosed()){
+        await drainWithin([target.close()],'closing page after failed route fulfill',2_000)
+      }
+    }
+  }
   return !failed
 }
 
@@ -170,9 +179,9 @@ async function runWithPairTab(context, again, options, fn){
 }
 
 const SSE_RETRY1_MIN_MS=750
-const SSE_RETRY1_MAX_MS=2500
+const SSE_RETRY1_MAX_MS=1950
 const SSE_RETRY2_MIN_MS=1600
-const SSE_RETRY2_MAX_MS=4500
+const SSE_RETRY2_MAX_MS=3500
 
 function probeDelayMs(probes, index){
   return probes[index].receivedAt-probes[index-1].fulfilledAt
@@ -355,10 +364,8 @@ async function verifySseAuthenticated503Recovery({
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
           let fulfillError=null
-          await trackFulfill(pendingSseFulfills,
-            route.fulfill({status,headers,body:text}),
-            err=>{ fulfillError=err; onSseFulfillError(err) })
-          if(fulfillError)throw fulfillError
+          if(!await fulfillOrAbort(pendingSseFulfills,route,{status,headers,body:text},
+            err=>{ fulfillError=err; onSseFulfillError(err) }))throw fulfillError
           recoveredStatuses++
           probe.fulfilledAt=performance.now()
           recoveredCaptured.resolve()
@@ -663,10 +670,8 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
                   return
                 }
                 let fulfillError=null
-                await trackFulfill(pendingFocusFulfills,
-                  route.fulfill({status,headers,body:text}),
-                  err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err })
-                if(fulfillError)throw fulfillError
+                if(!await fulfillOrAbort(pendingFocusFulfills,route,{status,headers,body:text},
+                  err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err }))throw fulfillError
               } catch (err) {
                 followUpCaptured.reject(err)
                 if(!focusTeardown&&focusActive)failFocusRoute(err)
@@ -697,10 +702,8 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               return
             }
             let fulfillError=null
-            await trackFulfill(pendingFocusFulfills,
-              route.fulfill({status,headers,body:text}),
-              err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err })
-            if(fulfillError)throw fulfillError
+            if(!await fulfillOrAbort(pendingFocusFulfills,route,{status,headers,body:text},
+              err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err }))throw fulfillError
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)
