@@ -7,6 +7,8 @@ mod inventory;
 pub mod linked;
 pub mod ownership;
 
+pub(crate) use inventory::precheck_git_layout_in_scope;
+
 pub(crate) fn inventory_revision(app: &App) -> u64 {
     inventory::revision(app)
 }

@@ -275,6 +275,7 @@ enum LocalRepo {
     Git(PathBuf),
     NonGit,
     MissingGit,
+    Refused,
 }
 
 enum Precheck {
@@ -283,9 +284,18 @@ enum Precheck {
     Unavailable,
 }
 
-async fn local_common_dir(dir: &Path, timeout: Duration) -> Result<LocalRepo, ()> {
+async fn local_common_dir(dir: &Path, scope: &Path, timeout: Duration) -> Result<LocalRepo, ()> {
     if timeout.is_zero() {
         return Err(());
+    }
+    let dir_check = dir.to_path_buf();
+    let scope_check = scope.to_path_buf();
+    let layout_ok =
+        tokio::task::spawn_blocking(move || crate::worktrees::precheck_git_layout_in_scope(&scope_check, &dir_check))
+            .await
+            .map_err(|_| ())?;
+    if !layout_ok {
+        return Ok(LocalRepo::Refused);
     }
     let out = match tokio::time::timeout(
         timeout,
@@ -302,16 +312,29 @@ async fn local_common_dir(dir: &Path, timeout: Duration) -> Result<LocalRepo, ()
     }
     let out = out.ok().map_err(|_| ())?;
     let trimmed = out.text().trim().to_owned();
-    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok())
+    let scope_owned = scope.to_path_buf();
+    match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope_owned, &trimmed))
         .await
         .map_err(|_| ())?
-        .map(LocalRepo::Git)
-        .ok_or(())
+    {
+        Ok(Some((p, a))) if p == a => Ok(LocalRepo::Git(p)),
+        Ok(_) => Ok(LocalRepo::Refused),
+        Err(()) => Err(()),
+    }
 }
 
-async fn local_worktree_toplevel(dir: &Path, timeout: Duration) -> Result<Option<PathBuf>, ()> {
+async fn local_worktree_toplevel(dir: &Path, scope: &Path, timeout: Duration) -> Result<Option<PathBuf>, ()> {
     if timeout.is_zero() {
         return Err(());
+    }
+    let dir_check = dir.to_path_buf();
+    let scope_check = scope.to_path_buf();
+    let layout_ok =
+        tokio::task::spawn_blocking(move || crate::worktrees::precheck_git_layout_in_scope(&scope_check, &dir_check))
+            .await
+            .map_err(|_| ())?;
+    if !layout_ok {
+        return Ok(None);
     }
     let out = match tokio::time::timeout(
         timeout,
@@ -330,11 +353,19 @@ async fn local_worktree_toplevel(dir: &Path, timeout: Duration) -> Result<Option
     if trimmed.is_empty() {
         return Ok(None);
     }
-    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok()).await.map_err(|_| ())
+    let scope_owned = scope.to_path_buf();
+    match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope_owned, &trimmed))
+        .await
+        .map_err(|_| ())?
+    {
+        Ok(Some((p, a))) if p == a => Ok(Some(p)),
+        Ok(_) => Ok(None),
+        Err(()) => Err(()),
+    }
 }
 
-async fn local_repo_root(dir: &Path, timeout: Duration) -> PathBuf {
-    local_worktree_toplevel(dir, timeout).await.ok().flatten().unwrap_or_else(|| dir.to_path_buf())
+async fn local_repo_root(dir: &Path, scope: &Path, timeout: Duration) -> PathBuf {
+    local_worktree_toplevel(dir, scope, timeout).await.ok().flatten().unwrap_or_else(|| dir.to_path_buf())
 }
 
 fn has_git_component(path: &Path) -> bool {
@@ -412,10 +443,10 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
     }
     let rem = || deadline.saturating_duration_since(Instant::now());
     if path == workspace.path {
-        return Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]);
+        return Precheck::Owned(vec![local_repo_root(&workspace.path, &app.scope, rem()).await]);
     }
     let external = !ownership::within(&workspace.path, &path);
-    let root_repo = match local_common_dir(&workspace.path, rem()).await {
+    let root_repo = match local_common_dir(&workspace.path, &app.scope, rem()).await {
         Ok(repo) => repo,
         Err(()) => return Precheck::Unavailable,
     };
@@ -423,7 +454,7 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         let LocalRepo::Git(root_common) = root_repo else {
             return Precheck::Denied;
         };
-        let target_common = match local_common_dir(&anchor, rem()).await {
+        let target_common = match local_common_dir(&anchor, &app.scope, rem()).await {
             Ok(LocalRepo::Git(common)) => common,
             Ok(_) => return Precheck::Denied,
             Err(()) => return Precheck::Unavailable,
@@ -431,12 +462,12 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         if target_common != root_common {
             return Precheck::Denied;
         }
-        let toplevel = match local_worktree_toplevel(&anchor, rem()).await {
+        let toplevel = match local_worktree_toplevel(&anchor, &app.scope, rem()).await {
             Ok(Some(tl)) if tl.starts_with(&app.scope) => tl,
             Ok(_) => return Precheck::Denied,
             Err(()) => return Precheck::Unavailable,
         };
-        let Some(root_toplevel) = (match local_worktree_toplevel(&workspace.path, rem()).await {
+        let Some(root_toplevel) = (match local_worktree_toplevel(&workspace.path, &app.scope, rem()).await {
             Ok(tl) => tl,
             Err(()) => return Precheck::Unavailable,
         }) else {
@@ -519,16 +550,24 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
         };
     }
     match root_repo {
-        LocalRepo::MissingGit => Precheck::Denied,
+        LocalRepo::MissingGit | LocalRepo::Refused => Precheck::Denied,
         LocalRepo::NonGit => {
             let root = workspace.path.clone();
-            let live = tokio::task::spawn_blocking(move || dunce::canonicalize(&root).ok().as_ref() == Some(&root))
-                .await
-                .unwrap_or(false);
+            let scope = app.scope.clone();
+            let live = tokio::task::spawn_blocking(move || {
+                root.to_str().is_some_and(|s| {
+                    ownership::resolve_media_path_checked(&scope, s)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|(p, a)| p == a && p == root)
+                })
+            })
+            .await
+            .unwrap_or(false);
             if live { Precheck::Owned(vec![workspace.path.clone()]) } else { Precheck::Unavailable }
         }
-        LocalRepo::Git(root_common) => match local_common_dir(&anchor, rem()).await {
-            Ok(LocalRepo::Git(target_common)) => match local_worktree_toplevel(&anchor, rem()).await {
+        LocalRepo::Git(root_common) => match local_common_dir(&anchor, &app.scope, rem()).await {
+            Ok(LocalRepo::Git(target_common)) => match local_worktree_toplevel(&anchor, &app.scope, rem()).await {
                 Ok(Some(tl)) if target_common == root_common => {
                     if tl.starts_with(&app.scope) {
                         Precheck::Owned(vec![tl])
@@ -536,12 +575,12 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
                         Precheck::Denied
                     }
                 }
-                Ok(Some(_)) => Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]),
+                Ok(Some(_)) => Precheck::Owned(vec![local_repo_root(&workspace.path, &app.scope, rem()).await]),
                 Ok(None) => Precheck::Denied,
                 Err(()) => Precheck::Unavailable,
             },
-            Ok(LocalRepo::NonGit) => Precheck::Owned(vec![local_repo_root(&workspace.path, rem()).await]),
-            Ok(LocalRepo::MissingGit) => Precheck::Denied,
+            Ok(LocalRepo::NonGit) => Precheck::Owned(vec![local_repo_root(&workspace.path, &app.scope, rem()).await]),
+            Ok(LocalRepo::MissingGit | LocalRepo::Refused) => Precheck::Denied,
             Err(()) => Precheck::Unavailable,
         },
     }

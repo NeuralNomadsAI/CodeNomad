@@ -509,57 +509,124 @@ fn separate_marker_in(scope: &Path, root: &Path, common: &Path) -> Result<Vec<u8
     Ok(marker)
 }
 
-fn pre_config_stamps_in(scope: &Path, path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])> {
-    let mut cur = resolve_dir_in(scope, path)?;
+#[derive(PartialEq)]
+enum PreConfig {
+    Found((PathBuf, PathBuf, [Option<ConfigStamp>; 2])),
+    None,
+    Refused,
+}
+
+fn resolve_git_path_in(scope: &Path, path: &Path) -> Result<Option<PathBuf>, ()> {
+    if !scope.as_os_str().is_empty() {
+        let raw = path.to_str().ok_or(())?;
+        match super::ownership::resolve_media_path_checked(scope, raw)? {
+            Some((p, a)) if p == a => Ok(Some(p)),
+            Some(_) => Ok(None),
+            None => Err(()),
+        }
+    } else {
+        match dunce::canonicalize(path) {
+            Ok(p) => Ok(Some(p)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(()),
+        }
+    }
+}
+
+pub(crate) fn precheck_git_layout_in_scope(scope: &Path, dir: &Path) -> bool {
+    pre_config_stamps_in(scope, dir) != PreConfig::Refused
+}
+
+fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
+    let mut cur = match resolve_git_path_in(scope, path) {
+        Ok(Some(p)) => p,
+        Ok(None) => return PreConfig::None,
+        Err(()) => return PreConfig::Refused,
+    };
     loop {
         let marker = cur.join(".git");
         match std::fs::symlink_metadata(&marker) {
-            Ok(meta) if meta.is_dir() => {
-                let common = resolve_dir_in(scope, &marker)?;
-                let s0 = config_stamp_in(scope, &common.join("config"))?;
-                let s1 = config_stamp_in(scope, &common.join("config.worktree"))?;
-                return Some((common.clone(), common, [s0, s1]));
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return PreConfig::Refused,
+            Ok(meta) if meta.is_dir() || meta.file_type().is_symlink() => {
+                let common = match resolve_git_path_in(scope, &marker) {
+                    Ok(Some(p)) => p,
+                    Ok(None) => return PreConfig::None,
+                    Err(()) => return PreConfig::Refused,
+                };
+                let Some(s0) = config_stamp_in(scope, &common.join("config")) else {
+                    return PreConfig::Refused;
+                };
+                let Some(s1) = config_stamp_in(scope, &common.join("config.worktree")) else {
+                    return PreConfig::Refused;
+                };
+                return PreConfig::Found((common.clone(), common, [s0, s1]));
             }
             Ok(meta) if meta.is_file() => {
-                let bytes = small(&marker).ok()?;
-                let gitdir = std::str::from_utf8(&bytes)
+                let Ok(bytes) = small(&marker) else {
+                    return PreConfig::Refused;
+                };
+                let Some(gitdir) = std::str::from_utf8(&bytes)
                     .ok()
                     .and_then(|t| t.trim_end().strip_prefix("gitdir: "))
-                    .filter(|s| !s.is_empty())?;
+                    .filter(|s| !s.is_empty())
+                else {
+                    return PreConfig::None;
+                };
                 let admin_path = if Path::new(gitdir).is_absolute() {
                     if !is_local_git_target(gitdir) {
-                        return None;
+                        return PreConfig::Refused;
                     }
                     PathBuf::from(gitdir)
                 } else {
                     cur.join(gitdir)
                 };
-                let admin = resolve_dir_in(scope, &admin_path)?;
-                let common = if let Ok(cb) = small(&admin.join("commondir")) {
-                    let ct = std::str::from_utf8(&cb).ok()?.trim_end();
-                    let common_path = if Path::new(ct).is_absolute() {
-                        if !is_local_git_target(ct) {
-                            return None;
-                        }
-                        PathBuf::from(ct)
-                    } else {
-                        admin.join(ct)
-                    };
-                    resolve_dir_in(scope, &common_path)?
-                } else {
-                    admin.clone()
+                let admin = match resolve_git_path_in(scope, &admin_path) {
+                    Ok(Some(p)) => p,
+                    Ok(None) => return PreConfig::None,
+                    Err(()) => return PreConfig::Refused,
                 };
-                let s0 = config_stamp_in(scope, &common.join("config"))?;
-                let s1 = config_stamp_in(scope, &admin.join("config.worktree"))?;
-                return Some((common, admin, [s0, s1]));
+                let common = match std::fs::symlink_metadata(admin.join("commondir")) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => admin.clone(),
+                    Ok(m) if m.is_file() => {
+                        let Ok(cb) = small(&admin.join("commondir")) else {
+                            return PreConfig::Refused;
+                        };
+                        let Some(ct) = std::str::from_utf8(&cb).ok().map(str::trim_end).filter(|s| !s.is_empty())
+                        else {
+                            return PreConfig::None;
+                        };
+                        let common_path = if Path::new(ct).is_absolute() {
+                            if !is_local_git_target(ct) {
+                                return PreConfig::Refused;
+                            }
+                            PathBuf::from(ct)
+                        } else {
+                            admin.join(ct)
+                        };
+                        match resolve_git_path_in(scope, &common_path) {
+                            Ok(Some(p)) => p,
+                            Ok(None) => return PreConfig::None,
+                            Err(()) => return PreConfig::Refused,
+                        }
+                    }
+                    _ => return PreConfig::Refused,
+                };
+                let Some(s0) = config_stamp_in(scope, &common.join("config")) else {
+                    return PreConfig::Refused;
+                };
+                let Some(s1) = config_stamp_in(scope, &admin.join("config.worktree")) else {
+                    return PreConfig::Refused;
+                };
+                return PreConfig::Found((common, admin, [s0, s1]));
             }
-            _ => {}
+            Ok(_) => return PreConfig::Refused,
         }
         if !scope.as_os_str().is_empty() && cur == scope {
-            return None;
+            return PreConfig::None;
         }
         if !cur.pop() {
-            return None;
+            return PreConfig::None;
         }
     }
 }
@@ -642,15 +709,20 @@ pub(crate) async fn probe_root_checkout(scope: &Path, workspace: &Workspace) -> 
     let scope_owned = scope.to_path_buf();
     let (canonical_ok, pre) = tokio::task::spawn_blocking(move || {
         let ok = canonical_dir_in(&scope_owned, &path, &path);
-        let pre = ok.then(|| pre_config_stamps_in(&scope_owned, &path)).flatten();
+        let pre = if ok { pre_config_stamps_in(&scope_owned, &path) } else { PreConfig::Refused };
         (ok, pre)
     })
     .await
-    .unwrap_or((false, None));
+    .unwrap_or((false, PreConfig::Refused));
     if !canonical_ok {
         crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(super::probe_error());
     }
+    let pre = match pre {
+        PreConfig::Found(stamp) => Some(stamp),
+        PreConfig::None => None,
+        PreConfig::Refused => return Ok(RootCheckout::Git(Err(native_error()))),
+    };
     let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
     match crate::git::run(&workspace.path, &args, 128 * 1024).await {
         Ok(out) if out.code == 0 => Ok(RootCheckout::Git(
@@ -682,8 +754,12 @@ async fn checkout_in(scope: &Path, path: &Path) -> Result<Physical, Error> {
         move || pre_config_stamps_in(&scope, &path)
     })
     .await
-    .ok()
-    .flatten();
+    .unwrap_or(PreConfig::Refused);
+    let pre = match pre {
+        PreConfig::Found(stamp) => Some(stamp),
+        PreConfig::None => None,
+        PreConfig::Refused => return Err(native_error()),
+    };
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
     parse_checkout_in(scope.to_path_buf(), path.to_path_buf(), text, pre).await
@@ -1078,6 +1154,145 @@ pub(crate) async fn catalogue_at_with_local(
     catalogue_in_at(app, w, refresh, true, endpoint, timeout, prechecked_local).await
 }
 
+fn local_include_scope(scope: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut comps = scope.components();
+        let prefix = comps.next()?;
+        let root = comps.next()?;
+        if !matches!(prefix, std::path::Component::Prefix(_)) || !matches!(root, std::path::Component::RootDir) {
+            return None;
+        }
+        let mut out = PathBuf::new();
+        out.push(prefix.as_os_str());
+        out.push(root.as_os_str());
+        Some(out)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = scope;
+        Some(PathBuf::from("/"))
+    }
+}
+
+fn resolve_config_include_in(include_scope: &Path, base_dir: &Path, raw: &str) -> Result<Option<PathBuf>, ()> {
+    if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
+        return Err(());
+    }
+    let expanded = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).ok_or(())?;
+        PathBuf::from(home).join(rest)
+    } else if raw == "~" {
+        return Err(());
+    } else {
+        PathBuf::from(raw)
+    };
+    let simplified = dunce::simplified(&expanded);
+    super::ownership::reject_network_path(&simplified.to_string_lossy(), simplified)?;
+    let joined = if simplified.is_absolute() { simplified.to_path_buf() } else { base_dir.join(simplified) };
+    let parent = joined.parent().ok_or(())?;
+    let name = joined.file_name().ok_or(())?;
+    let parent_str = parent.to_str().ok_or(())?;
+    let (real_parent, anchor) = super::ownership::resolve_media_path_checked(include_scope, parent_str)?.ok_or(())?;
+    if real_parent != anchor {
+        return Ok(None);
+    }
+    let candidate = real_parent.join(name);
+    match std::fs::symlink_metadata(&candidate) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(include_scope, &candidate) {
+            Ok(Some((real, _))) => Ok(Some(real)),
+            Err(std::io::ErrorKind::NotFound) => Ok(None),
+            Ok(None) | Err(_) => Err(()),
+        },
+        Ok(meta) if meta.is_file() => candidate.starts_with(include_scope).then_some(Some(candidate)).ok_or(()),
+        _ => Err(()),
+    }
+}
+
+async fn validate_local_config_includes(scope: &Path, local: &Physical) -> Result<(), Error> {
+    if scope.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let include_scope = local_include_scope(scope).ok_or_else(native_error)?;
+    let root_ok = tokio::task::spawn_blocking({
+        let scope = scope.to_path_buf();
+        let root = local.root.clone();
+        move || canonical_dir_in(&scope, &root, &root)
+    })
+    .await
+    .unwrap_or(false);
+    if !root_ok {
+        return Err(native_error());
+    }
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    for candidate in [local.common.join("config"), local.admin.join("config.worktree")] {
+        let scope_owned = scope.to_path_buf();
+        let present = tokio::task::spawn_blocking(move || match std::fs::symlink_metadata(&candidate) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(&scope_owned, &candidate) {
+                Ok(Some(_)) => Ok(Some(candidate)),
+                Err(std::io::ErrorKind::NotFound) => Ok(None),
+                Ok(None) | Err(_) => Err(()),
+            },
+            Ok(meta) if meta.is_file() => candidate.starts_with(&scope_owned).then_some(Some(candidate)).ok_or(()),
+            _ => Err(()),
+        })
+        .await
+        .map_err(|_| native_error())?
+        .map_err(|()| native_error())?;
+        if let Some(path) = present
+            && seen.insert(path.clone())
+        {
+            queue.push_back(path);
+        }
+    }
+    while let Some(file) = queue.pop_front() {
+        let file_str = file.to_str().ok_or_else(native_error)?;
+        let out =
+            crate::git::run(&local.root, &["config", "--null", "--list", "--no-includes", "--file", file_str], 4 << 20)
+                .await
+                .map_err(|_| native_error())?
+                .ok()
+                .map_err(|_| native_error())?
+                .text();
+        let include_values: Vec<String> = out
+            .split('\0')
+            .filter_map(|entry| {
+                let (k, v) = entry.split_once('\n')?;
+                (k == "include.path" || (k.starts_with("includeif.") && k.ends_with(".path"))).then(|| v.to_owned())
+            })
+            .collect();
+        if include_values.is_empty() {
+            continue;
+        }
+        let base_dir = file.parent().ok_or_else(native_error)?.to_path_buf();
+        let include_scope_owned = include_scope.clone();
+        let targets = tokio::task::spawn_blocking(move || -> Result<Vec<PathBuf>, ()> {
+            let mut out = Vec::new();
+            for value in include_values {
+                if let Some(target) = resolve_config_include_in(&include_scope_owned, &base_dir, &value)? {
+                    out.push(target);
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| native_error())?
+        .map_err(|()| native_error())?;
+        for target in targets {
+            if seen.insert(target.clone()) {
+                if seen.len() > 32 {
+                    return Err(native_error());
+                }
+                queue.push_back(target);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn catalogue_in_at(
     app: &App,
     w: &Workspace,
@@ -1088,6 +1303,8 @@ async fn catalogue_in_at(
     prechecked_local: Option<Physical>,
 ) -> Result<Catalogue, Error> {
     let Root { project, local, main } = root_at(app, w, scoped, endpoint, timeout, prechecked_local).await?;
+    let live_scope = if scoped { app.scope.clone() } else { PathBuf::new() };
+    validate_local_config_includes(&live_scope, &local).await?;
     // Snapshot effective Git config with `--includes` when `include.path` is present so mid-scan
     // edits inside included config files are detected before publication (TS `git-worktrees.ts:104-135`).
     let effective_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
@@ -1338,6 +1555,7 @@ async fn catalogue_in_at(
     // Re-verify every checkout's Git layout and config stamps right before publication
     // (TS `git-worktrees.ts:128-135`) so a mid-inventory config change cannot publish stale data.
     if let Some(expected_config) = include_snapshot {
+        validate_local_config_includes(&live_scope, &local).await?;
         let current_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
             .await
             .map_err(|_| native_error())?
