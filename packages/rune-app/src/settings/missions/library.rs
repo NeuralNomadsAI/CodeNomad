@@ -23,8 +23,14 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 enum Reply {
-    Remove { outcome: MissionPatchOutcome },
-    Reset { outcome: MissionPatchOutcome },
+    Remove {
+        outcome: MissionPatchOutcome,
+        pre_send_aborted: bool,
+    },
+    Reset {
+        outcome: MissionPatchOutcome,
+        pre_send_aborted: bool,
+    },
 }
 
 enum PendingOp {
@@ -49,6 +55,7 @@ pub(super) struct State {
     pending_op: Option<PendingOp>,
     flight: Option<Receiver<Reply>>,
     confirming: bool,
+    reconciling: bool,
     reloading: bool,
 }
 
@@ -84,18 +91,23 @@ impl State {
     }
 
     pub(super) fn pending(&self) -> bool {
-        self.flight.is_some() || self.pending_op.is_some() || self.confirming || self.reloading
+        self.flight.is_some()
+            || self.pending_op.is_some()
+            || self.confirming
+            || self.reconciling
+            || self.reloading
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn draining(&self, config_read_failed: bool) -> bool {
+    pub(super) fn draining(&self, can_start_write: bool, config_refreshing: bool) -> bool {
         self.flight.is_some()
-            || (!config_read_failed && (self.confirming || self.pending_op.is_some()))
+            || (config_refreshing && (self.confirming || self.reconciling))
+            || (can_start_write && self.pending_op.is_some())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn needs_config_revalidation(&self) -> bool {
-        self.flight.is_some() || self.confirming || self.pending_op.is_some()
+        self.flight.is_some() || self.confirming || self.reconciling || self.pending_op.is_some()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -103,6 +115,7 @@ impl State {
         self.flight.is_some()
             || self.pending_op.is_some()
             || self.confirming
+            || self.reconciling
             || self.failed
             || self.needs_reload
             || self.reconciliation_pending
@@ -205,14 +218,21 @@ impl State {
         effects
     }
 
-    pub(super) fn poll_replies(&mut self) -> ConfigEffects {
+    pub(super) fn poll_replies(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
         let Some(reply) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) else {
             return effects;
         };
         self.flight = None;
         match reply {
-            Reply::Remove { outcome } | Reply::Reset { outcome } => match outcome {
+            Reply::Remove {
+                outcome,
+                pre_send_aborted,
+            }
+            | Reply::Reset {
+                outcome,
+                pre_send_aborted,
+            } => match outcome {
                 MissionPatchOutcome::Applied(_) => {
                     self.selected_id.clear();
                     self.failed = false;
@@ -224,9 +244,14 @@ impl State {
                 MissionPatchOutcome::Conflict
                 | MissionPatchOutcome::Unsupported
                 | MissionPatchOutcome::Failed => {
-                    self.pending_label = None;
                     self.failed = true;
                     self.needs_reload = true;
+                    if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                        self.reconciling = true;
+                        effects.invalidate = true;
+                    } else {
+                        self.pending_label = None;
+                    }
                 }
             },
         }
@@ -264,6 +289,17 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
+        if self.reconciling {
+            self.reconciling = false;
+            self.pending_label = None;
+            self.failed = true;
+            self.needs_reload = true;
+            if !ctx.config_loaded {
+                self.reconciliation_pending = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
         effects
     }
 
@@ -274,7 +310,7 @@ impl State {
         wake: &rune::Waker,
     ) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
-        if self.flight.is_some() || self.confirming || self.reloading {
+        if self.flight.is_some() || self.confirming || self.reconciling || self.reloading {
             return effects;
         }
         let Some(op) = self.pending_op.take() else {
@@ -323,17 +359,28 @@ impl State {
                 let wake = wake.clone();
                 self.flight = Some(inbox);
                 platform::spawn(async move {
-                    let outcome = if !send_authority.authorize_send(&backend).await {
-                        MissionPatchOutcome::Failed
-                    } else {
-                        patch_mission_preferences(
-                            &backend,
-                            json!({ "missionModels": next }),
-                            &[confirmed_expected],
-                        )
+                    let (outcome, pre_send_aborted) =
+                        if !send_authority.authorize_send(&backend).await {
+                            (MissionPatchOutcome::Failed, true)
+                        } else {
+                            (
+                                patch_mission_preferences(
+                                    &backend,
+                                    json!({ "missionModels": next }),
+                                    &[confirmed_expected],
+                                )
+                                .await,
+                                false,
+                            )
+                        };
+                    if out
+                        .send(Reply::Remove {
+                            outcome,
+                            pre_send_aborted,
+                        })
                         .await
-                    };
-                    if out.send(Reply::Remove { outcome }).await.is_ok() {
+                        .is_ok()
+                    {
                         wake();
                     }
                 });
@@ -357,17 +404,28 @@ impl State {
                 let wake = wake.clone();
                 self.flight = Some(inbox);
                 platform::spawn(async move {
-                    let outcome = if !send_authority.authorize_send(&backend).await {
-                        MissionPatchOutcome::Failed
-                    } else {
-                        patch_mission_preferences(
-                            &backend,
-                            json!({ "missionModels": [] }),
-                            &[confirmed_expected],
-                        )
+                    let (outcome, pre_send_aborted) =
+                        if !send_authority.authorize_send(&backend).await {
+                            (MissionPatchOutcome::Failed, true)
+                        } else {
+                            (
+                                patch_mission_preferences(
+                                    &backend,
+                                    json!({ "missionModels": [] }),
+                                    &[confirmed_expected],
+                                )
+                                .await,
+                                false,
+                            )
+                        };
+                    if out
+                        .send(Reply::Reset {
+                            outcome,
+                            pre_send_aborted,
+                        })
                         .await
-                    };
-                    if out.send(Reply::Reset { outcome }).await.is_ok() {
+                        .is_ok()
+                    {
                         wake();
                     }
                 });

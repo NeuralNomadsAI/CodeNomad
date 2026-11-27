@@ -38,7 +38,7 @@ struct Read {
     queued: bool,
     failed: bool,
     reattach: bool,
-    force_authoritative: bool,
+    authoritative_required: bool,
     recheck: bool,
     fresh_for_write: bool,
 }
@@ -117,12 +117,17 @@ impl Document {
         std::mem::take(&mut self.notification_failure)
     }
     pub(super) fn refreshing(&self) -> bool {
-        self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
+        self.read.queued
+            || self.read.reattach
+            || (self.read.authoritative_required && !self.read.failed)
+            || self.flight.is_some()
+            || self.barrier.is_some()
     }
 
     pub(super) fn confirmed(&self) -> Option<&Value> {
         if self.read.queued
             || self.read.reattach
+            || self.read.authoritative_required
             || self.read.failed
             || self.flight.is_some()
             || self.barrier.is_some()
@@ -156,7 +161,7 @@ impl Document {
 
     pub(super) fn invalidate_authoritative(&mut self) {
         self.read.queued = true;
-        self.read.force_authoritative = true;
+        self.read.authoritative_required = true;
         self.invalidation_seq.fetch_add(1, Ordering::Release);
     }
 
@@ -209,6 +214,7 @@ impl Document {
     pub(super) fn seed_external_snapshot(&mut self, snapshot: Value) {
         self.snapshot = Some(snapshot);
         self.read.failed = false;
+        self.read.authoritative_required = false;
         self.invalidation_seq.fetch_add(1, Ordering::Release);
     }
 

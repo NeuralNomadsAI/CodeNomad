@@ -642,10 +642,21 @@ impl Preferences {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn documents_draining(&self) -> bool {
+        let config_refreshing = self.can_retry() && self.config.refreshing();
+        let can_start_missions_write = self.can_retry()
+            && (config_refreshing
+                || (self.config_loaded()
+                    && !self.config.busy_for_external_write()
+                    && self
+                        .backend
+                        .as_ref()
+                        .is_some_and(super::ServerOwner::backend_verified)));
         self.config.draining()
             || self.state.draining()
             || self.server.draining()
-            || self.missions.draining(self.config.read_failed())
+            || self
+                .missions
+                .draining(can_start_missions_write, config_refreshing)
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -1215,13 +1226,18 @@ impl Preferences {
         } else {
             (false, false)
         };
-        let (missions_changed, missions_settled, missions_invalidated) =
-            if let Some(wake) = window.as_ref().or(main.as_ref()) {
-                let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
-                self.apply_mission_effects(effects)
-            } else {
-                (false, false, false)
+        let (missions_changed, missions_settled, missions_invalidated) = {
+            let fallback_wake: rune::Waker;
+            let wake = match window.as_ref().or(main.as_ref()) {
+                Some(wake) => wake,
+                None => {
+                    fallback_wake = Arc::new(|| {});
+                    &fallback_wake
+                }
             };
+            let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
+            self.apply_mission_effects(effects)
+        };
         if missions_invalidated && poll_config && !self.missions.config_write_in_flight() {
             let (followup_changed, followup_settled) = self.config.poll(
                 &backend,

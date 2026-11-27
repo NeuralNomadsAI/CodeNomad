@@ -77,6 +77,7 @@ pub(super) fn provider_stopped(s: &State, workspace: &str) {
             .is_some_and(|target| target.is_workspace(workspace))
         {
             prefs.provider_target = None;
+            prefs.missions.revoke_location();
             if let Some(wake) = &prefs.window_wake {
                 wake();
             }
@@ -112,11 +113,15 @@ fn provider_session_moved(s: &State, workspace: &str, session: &str) {
         return;
     }
     let mut prefs = s.settings.shared.borrow_mut();
-    if prefs.provider_target.as_mut().is_some_and(|target| {
-        target.session_moved(workspace, session)
-            | target.integrations_hint(workspace, Some(session))
-    }) && let Some(wake) = &prefs.window_wake
-    {
+    let mut moved = false;
+    let changed = prefs.provider_target.as_mut().is_some_and(|target| {
+        moved = target.session_moved(workspace, session);
+        moved | target.integrations_hint(workspace, Some(session))
+    });
+    if moved {
+        prefs.missions.revoke_location();
+    }
+    if changed && let Some(wake) = &prefs.window_wake {
         wake();
     }
 }
@@ -228,6 +233,9 @@ fn provider_transport(s: &State, online: bool) {
     let mut prefs = s.settings.shared.borrow_mut();
     if let Some(target) = &mut prefs.provider_target {
         target.transport(online);
+        if !online {
+            prefs.missions.revoke_location();
+        }
         if let Some(wake) = &prefs.window_wake {
             wake();
         }

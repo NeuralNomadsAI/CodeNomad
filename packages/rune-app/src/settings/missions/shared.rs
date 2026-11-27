@@ -21,6 +21,7 @@ pub(in crate::settings) struct SendAuthority {
     prefs_authority: Arc<AtomicU64>,
     expected_prefs_authority: u64,
     doc_epoch: Option<(Arc<AtomicU64>, u64)>,
+    location_token: Option<(Arc<AtomicU64>, u64)>,
     drop_generation: u64,
     stream_drop_epoch: u64,
     expected_server: Option<String>,
@@ -32,14 +33,18 @@ impl SendAuthority {
     pub(super) fn capture(
         prefs_authority: Arc<AtomicU64>,
         doc_epoch: Option<(Arc<AtomicU64>, u64)>,
+        location_token: Option<&Arc<AtomicU64>>,
         backend: &Backend,
         #[cfg(test)] pre_send_gate: Option<Receiver<()>>,
     ) -> Self {
         let expected_prefs_authority = prefs_authority.load(Ordering::SeqCst);
+        let location_token =
+            location_token.map(|guard| (guard.clone(), guard.load(Ordering::SeqCst)));
         Self {
             prefs_authority,
             expected_prefs_authority,
             doc_epoch,
+            location_token,
             drop_generation: backend.client.drop_generation(),
             stream_drop_epoch: backend.client.stream_drop_epoch(),
             expected_server: backend.client.server_identity().map(str::to_owned),
@@ -54,6 +59,10 @@ impl SendAuthority {
                 .doc_epoch
                 .as_ref()
                 .is_none_or(|(guard, expected)| guard.load(Ordering::Acquire) == *expected)
+            && self
+                .location_token
+                .as_ref()
+                .is_none_or(|(guard, expected)| guard.load(Ordering::SeqCst) == *expected)
             && backend.client.drop_generation() == self.drop_generation
             && backend.client.stream_drop_epoch() == self.stream_drop_epoch
             && ServerOwner::backend_verified(backend)
@@ -110,6 +119,7 @@ impl ConfigContext<'_> {
         SendAuthority::capture(
             self.prefs_authority.clone(),
             Some(self.doc_epoch.clone()),
+            None,
             backend,
             #[cfg(test)]
             pre_send_gate,
@@ -146,6 +156,7 @@ pub(in crate::settings) struct Shared {
     open_epoch: u64,
     pinned_directory: Option<String>,
     location_authority: Option<(String, u64)>,
+    location_token: Arc<AtomicU64>,
     location_flight: Option<LocationFlight>,
     location_failed: Option<(u64, String, u64, u64)>,
     location_retry_epoch: u64,
@@ -193,12 +204,17 @@ impl Shared {
             .choose(value, active, has_target, pinned_directory);
     }
 
+    pub(in crate::settings) fn revoke_location(&self) {
+        self.location_token.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(in crate::settings) fn capture_opener(
         &mut self,
         directory: Option<String>,
         target: Option<&Target>,
     ) {
         self.open_epoch = self.open_epoch.wrapping_add(1);
+        self.revoke_location();
         self.pinned_directory = directory.filter(|path| absolute_server_path(path));
         self.location_authority = target.map(|t| (t.location().0.to_owned(), t.authority()));
         self.location_flight = None;
@@ -219,6 +235,7 @@ impl Shared {
     }
 
     pub(in crate::settings) fn on_transport_lost(&mut self) {
+        self.revoke_location();
         self.pinned_directory = None;
         self.location_authority = None;
         self.location_flight = None;
@@ -241,12 +258,21 @@ impl Shared {
                 .as_ref()
                 .is_some_and(|(w, a)| w == workspace && *a == authority);
             if !same_authority {
+                self.revoke_location();
                 let invalidated = self.pinned_directory.take().is_some()
                     | self.location_flight.take().is_some()
                     | self.location_failed.take().is_some();
                 self.location_authority = Some((workspace.to_owned(), authority));
                 changed |= invalidated | self.depth.invalidate_location();
             }
+        } else if self.location_authority.take().is_some()
+            | self.pinned_directory.take().is_some()
+            | self.location_flight.take().is_some()
+            | self.location_failed.take().is_some()
+        {
+            self.revoke_location();
+            let _ = self.depth.invalidate_location();
+            changed = true;
         }
         if !online || !active {
             changed |= self.location_flight.take().is_some();
@@ -324,6 +350,7 @@ impl Shared {
     }
 
     pub(in crate::settings) fn rebind(&mut self, same_address: bool) {
+        self.revoke_location();
         self.defaults.rebind(same_address);
         self.library.rebind(same_address);
         self.depth.rebind(same_address);
@@ -343,10 +370,14 @@ impl Shared {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(in crate::settings) fn draining(&self, config_read_failed: bool) -> bool {
+    pub(in crate::settings) fn draining(
+        &self,
+        can_start_write: bool,
+        config_refreshing: bool,
+    ) -> bool {
         self.depth.saving()
-            || self.library.draining(config_read_failed)
-            || self.defaults.draining(config_read_failed)
+            || self.library.draining(can_start_write, config_refreshing)
+            || self.defaults.draining(can_start_write, config_refreshing)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -367,7 +398,7 @@ impl Shared {
         wake: &Waker,
     ) -> ConfigEffects {
         let mut effects = self.defaults.poll_replies(ctx);
-        effects.merge(self.library.poll_replies());
+        effects.merge(self.library.poll_replies(ctx));
         let (depth_changed, depth_settled) = self.depth.poll_save_only(ctx.transport_lost);
         effects.changed |= depth_changed;
         effects.settled |= depth_settled;
@@ -414,6 +445,7 @@ impl Shared {
             transport_lost,
             active,
             prefs_authority,
+            &self.location_token,
             #[cfg(test)]
             &mut self.pre_depth_put_gate,
             wake,

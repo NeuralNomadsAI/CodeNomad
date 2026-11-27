@@ -378,8 +378,10 @@ impl Document {
                         && !uncertain_transport
                         && !self.read.queued
                         && flight.transport_epoch == self.transport_epoch
-                        && !rev_changed;
+                        && !rev_changed
+                        && !drops_changed;
                     let has_snapshot = snapshot.is_some();
+                    let is_read = matches!(flight.operation, Operation::Read { .. });
                     self.settle(
                         flight.operation,
                         patched,
@@ -390,6 +392,9 @@ impl Document {
                     );
                     if has_snapshot && fresh_publish {
                         self.snapshot_rev = read_rev;
+                        if is_read {
+                            self.read.authoritative_required = false;
+                        }
                     }
                 }
                 changed = true;
@@ -422,18 +427,16 @@ impl Document {
         let needs_fresh_on_disk = !atomic && self.needs_fresh_snapshot();
         let operation = if !self.write.retry.is_empty() {
             self.read.reattach = false;
-            self.read.force_authoritative = false;
             self.read.queued = false;
             Operation::Read {
                 retry: std::mem::take(&mut self.write.retry),
             }
         } else if std::mem::take(&mut self.read.reattach) {
-            self.read.force_authoritative = false;
             self.read.queued = false;
             Operation::Read {
                 retry: BTreeSet::new(),
             }
-        } else if std::mem::take(&mut self.read.force_authoritative)
+        } else if (self.read.authoritative_required && (!self.read.failed || self.read.queued))
             || (writes_allowed
                 && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
                     || ((needs_fresh_on_disk || binaries_need_fresh || palette_needs_fresh)

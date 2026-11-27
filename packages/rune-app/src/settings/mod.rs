@@ -321,10 +321,22 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .provider_target
                 .as_ref()
                 .map(|target| target.revision());
+            let old_authority = shared
+                .provider_target
+                .as_ref()
+                .map(|target| (target.location().0.to_owned(), target.authority()));
             if let Some(target) = &mut shared.provider_target
                 && !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation)
             {
                 shared.provider_target = None;
+                shared.missions.revoke_location();
+            } else if old_authority.as_ref().is_some_and(|(w, a)| {
+                shared
+                    .provider_target
+                    .as_ref()
+                    .is_some_and(|t| t.location().0 != w || t.authority() != *a)
+            }) {
+                shared.missions.revoke_location();
             }
             let stats_changed = shared
                 .provider_target

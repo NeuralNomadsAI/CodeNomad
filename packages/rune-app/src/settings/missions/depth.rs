@@ -304,6 +304,7 @@ impl State {
         transport_lost: bool,
         active: bool,
         prefs_authority: &Arc<AtomicU64>,
+        location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
         wake: &rune::Waker,
     ) -> bool {
@@ -502,6 +503,7 @@ impl State {
                     let send_authority = SendAuthority::capture(
                         prefs_authority.clone(),
                         None,
+                        Some(location_token),
                         backend,
                         #[cfg(test)]
                         pre_put_gate.take(),

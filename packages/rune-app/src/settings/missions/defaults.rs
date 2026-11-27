@@ -183,14 +183,15 @@ impl State {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn draining(&self, config_read_failed: bool) -> bool {
+    pub(super) fn draining(&self, can_start_write: bool, config_refreshing: bool) -> bool {
         self.write_flight.is_some()
             || self.delete_flight.is_some()
-            || (!config_read_failed
+            || (config_refreshing
                 && (self.defaults_confirming
                     || self.delete_confirming.is_some()
-                    || self.reconciling.is_some()
-                    || self.pending_delete.is_some()
+                    || self.reconciling.is_some()))
+            || (can_start_write
+                && (self.pending_delete.is_some()
                     || (!self.needs_reload && !self.queued.is_empty())))
     }
 
