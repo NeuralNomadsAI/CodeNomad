@@ -175,7 +175,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
 export function allowBenchOwnedRoute({method, path: subPath, body, native}) {
   if (native && method === 'GET') {
     return /^(command|model|session)$/.test(subPath)
-      || /^session\/ses_tab_[1-7](?:\/(permission|form))?$/.test(subPath)
+      || /^session\/ses_tab_[1-7](?:\/(permission|form|inbox))?$/.test(subPath)
   }
   if (!native && method === 'GET') {
     return subPath === 'worktrees'
