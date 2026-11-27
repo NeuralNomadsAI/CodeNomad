@@ -217,7 +217,8 @@ The pending checkpoint is released at archive, which retains the journal revisio
 digest as `settlementProof`. Native source fences cover archive publication. Success-source
 reads use that archived proof and isolated completed journal, so later work in the same
 conversation leaves earlier results stable. Exact archive/deletion ownership releases
-the root to ordinary routing; missing or mismatched owner evidence stays unavailable.
+the root to ordinary routing, whether the passage reused it or created it, so a person
+can pick it to coordinate another Mission; missing or mismatched owner evidence stays unavailable.
 After archive, scoped cleanup clears only that exact old Missions marker. A changed
 marker is preserved. `coordinatorReleases` retains unconfirmed exact release identities
 independently of the thirty-result window, under the document byte bound. Those records
