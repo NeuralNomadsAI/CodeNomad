@@ -109,6 +109,9 @@ test('SSE 503 backoff requires independent handover proof for 4-5 probes and rej
   assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [3], meta: [20, 810]})), /4-probe SSE 503 recovery requires independent proof/)
   assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), handover(0, {conv: [3], meta: [20, 1508]})), false)
   assert.throws(() => assertSse503Backoff(muxAfterRetry1, handover(0, {conv: [3], meta: [20, 1508]})), /5-probe SSE 503 recovery requires independent proof/)
+  const muxAfterP0Offset = [probe(10, 15), probe(1025, 1030), probe(1530, 1535), probe(2545, 2550), probe(4570, 4575)]
+  assert.equal(shouldServeSse503(muxAfterP0Offset.slice(0, 3), handover(0, {conv: [12], meta: [4, 1518]})), false)
+  assert.throws(() => assertSse503Backoff(muxAfterP0Offset, handover(0, {conv: [12], meta: [4, 1518]})), /5-probe SSE 503 recovery requires independent proof/)
 
   // Unproved extra retries (1 s, 1 s, 2 s), single-channel /api/meta without conversation sync, and distant/stale signals must be rejected.
   const threeRetries = [probe(0, 5), probe(1010, 1015), probe(2020, 2025), probe(4030, 4035)]

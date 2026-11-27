@@ -131,16 +131,15 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   const convSyncs=(handover.conversationSyncTimes||[]).filter(at=>at>=handover.sseOpenedAt)
   const metaSyncs=(handover.launcherMetaTimes||[]).filter(at=>at>=handover.sseOpenedAt)
   const firstConv=convSyncs.length?Math.min(...convSyncs):null
+  const firstLauncherMeta=metaSyncs.length?Math.min(...metaSyncs):null
   const afterPrevGate=at=>targetIndex===1
     ? (delay<SSE_RETRY1_MIN_MS||at>probes[0].fulfilledAt)
     : at>=probes[1].receivedAt
   const allowPrevInFlight=targetIndex===1?delay<SSE_RETRY1_MIN_MS:true
-  // Order A: Launcher opened the admitted SSE first; only the first Conversation sync counts (repetitions ignored).
+  // Order A: Launcher opened the admitted SSE first; only the first Conversation sync since SSE 200 counts.
   const conversationSecond=firstConv!==null&&handover.sseOpenedAt<=probes[0].receivedAt&&
     afterPrevGate(firstConv)&&isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
-  // Order B: Conversation already synced on P0; fix the episode's first post-P0 Launcher /api/meta 200 before testing proximity.
-  const postP0Metas=metaSyncs.filter(at=>at>=probes[0].receivedAt)
-  const firstLauncherMeta=postP0Metas.length?Math.min(...postP0Metas):null
+  // Order B: Conversation synced on P0; only the first Launcher /api/meta 200 since SSE 200 counts.
   const conversationFirst=firstConv!==null&&firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS&&
     firstLauncherMeta!==null&&afterPrevGate(firstLauncherMeta)&&
     isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
@@ -214,6 +213,7 @@ async function verifySseAuthenticated503Recovery({
       let injectTransient503=false
       let sseScenarioActive=true
       let handoverFrozen=false
+      let recoveryReserved=false
       let sseGate='pass'
       let admittedSseRequest=null
       let recovered=false
@@ -343,13 +343,14 @@ async function verifySseAuthenticated503Recovery({
         const probe={receivedAt,fulfilledAt:receivedAt}
         statusProbes.push(probe)
         const attempt=statusProbes.length
-        if(recoveredStatuses>0||attempt>5){
+        const probePrefix=statusProbes.slice(0,attempt)
+        if(recoveryReserved||recoveredStatuses>0||attempt>5){
           failRoute(new Error(`Unexpected /api/auth/status probe #${attempt} after bounded SSE 503 recovery`))
           await route.abort().catch(()=>{})
           return
         }
-        await waitForSameFrameHandover(statusProbes)
-        if(!injectTransient503){
+        await waitForSameFrameHandover(probePrefix)
+        if(sseGate==='abort'||!injectTransient503){
           await route.abort().catch(()=>{})
           return
         }
@@ -364,10 +365,16 @@ async function verifySseAuthenticated503Recovery({
             await route.abort().catch(()=>{})
           }
         }
-        if(shouldServeSse503(statusProbes,handover)){
+        if(shouldServeSse503(probePrefix,handover)){
           await serve503()
           return
         }
+        if(recoveryReserved||recoveredStatuses>0){
+          failRoute(new Error(`Unexpected concurrent /api/auth/status recovery on probe #${attempt}`))
+          await route.abort().catch(()=>{})
+          return
+        }
+        recoveryReserved=true
         try {
           const deliver=await releaseRecovered.promise
           if(!deliver||!injectTransient503){
@@ -381,7 +388,8 @@ async function verifySseAuthenticated503Recovery({
           }
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
-          if(shouldServeSse503(statusProbes,handover)){
+          if(shouldServeSse503(probePrefix,handover)){
+            recoveryReserved=false
             await serve503()
             return
           }
