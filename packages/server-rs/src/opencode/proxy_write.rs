@@ -20,12 +20,18 @@ pub(super) struct ObserverGuards {
     pub principal: CancellationToken,
     pub retired: Pin<Box<dyn Future<Output = ()> + Send>>,
     pub closed: Pin<Box<dyn Future<Output = ()> + Send>>,
+    pub send_input: bool,
 }
 
 #[cfg(test)]
 impl ObserverGuards {
     fn principal_only(principal: CancellationToken) -> Self {
-        Self { principal, retired: Box::pin(std::future::pending()), closed: Box::pin(std::future::pending()) }
+        Self {
+            principal,
+            retired: Box::pin(std::future::pending()),
+            closed: Box::pin(std::future::pending()),
+            send_input: false,
+        }
     }
 }
 
@@ -100,11 +106,15 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
             return Err(crate::auth::unauthorized());
         }
         _ = &mut guards.retired => {
-            let _ = gate.abort_before_send();
+            if gate.abort_before_send() && guards.send_input {
+                return Ok(crate::opencode::proxy::before_dispatch_error(crate::opencode::pre_dispatch_unavailable()));
+            }
             return Err(upstream_error());
         }
         _ = &mut guards.closed => {
-            let _ = gate.abort_before_send();
+            if gate.abort_before_send() && guards.send_input {
+                return Ok(crate::opencode::proxy::before_dispatch_error(not_found()));
+            }
             return Err(not_found());
         }
         response = response => response.map_err(|_| upstream_error())??,
@@ -252,6 +262,7 @@ mod tests {
             closed: Box::pin(async move {
                 let _ = close_rx.await;
             }),
+            send_input: false,
         };
         let mut req = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, guards, |_, gate| async move {
             assert!(gate.try_dispatch());
@@ -280,6 +291,7 @@ mod tests {
                 let _ = retire_rx.await;
             }),
             closed: Box::pin(std::future::pending()),
+            send_input: false,
         };
         let mut req = tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, guards, |_, gate| async move {
             assert!(gate.try_dispatch());
@@ -296,6 +308,94 @@ mod tests {
         assert!(futures_util::poll!(&mut deletion).is_pending());
         finish.send(()).unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn send_input_retired_and_closed_before_dispatch_carry_before_dispatch_header() {
+        use crate::worktrees::fence;
+        use axum::http::StatusCode as Status;
+
+        // 1. Daemon retirement before try_dispatch -> 503 with x-codenomad-before-dispatch: 1, worker blocked.
+        let dirs_ret = ["/proxy-write-test/send-input-retired-before".to_string()];
+        let (entered, waiting) = oneshot::channel();
+        let (resume, proceed) = oneshot::channel();
+        let (dispatched_tx, dispatched_rx) = oneshot::channel();
+        let (retire_tx, retire_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(async move {
+                let _ = retire_rx.await;
+            }),
+            closed: Box::pin(std::future::pending()),
+            send_input: true,
+        };
+        let handle = tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, guards, |_, gate| async move {
+            entered.send(()).unwrap();
+            let _ = proceed.await;
+            let _ = dispatched_tx.send(gate.try_dispatch());
+            Ok(Response::new(Body::from("unused")))
+        }));
+        waiting.await.unwrap();
+        retire_tx.send(()).unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap().unwrap();
+        assert_eq!(response.status(), Status::BAD_GATEWAY);
+        assert_eq!(response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()), Some("1"));
+        let _ = resume.send(());
+        assert!(!dispatched_rx.await.unwrap(), "worker must not dispatch after pre-send retirement abort");
+
+        // 2. Workspace close before try_dispatch -> 404 with x-codenomad-before-dispatch: 1, worker blocked.
+        let dirs_ws = ["/proxy-write-test/send-input-closed-before".to_string()];
+        let (entered, waiting) = oneshot::channel();
+        let (resume, proceed) = oneshot::channel();
+        let (dispatched_tx, dispatched_rx) = oneshot::channel();
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(std::future::pending()),
+            closed: Box::pin(async move {
+                let _ = close_rx.await;
+            }),
+            send_input: true,
+        };
+        let handle = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, guards, |_, gate| async move {
+            entered.send(()).unwrap();
+            let _ = proceed.await;
+            let _ = dispatched_tx.send(gate.try_dispatch());
+            Ok(Response::new(Body::from("unused")))
+        }));
+        waiting.await.unwrap();
+        close_tx.send(()).unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap().unwrap();
+        assert_eq!(response.status(), Status::NOT_FOUND);
+        assert_eq!(response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()), Some("1"));
+        let _ = resume.send(());
+        assert!(!dispatched_rx.await.unwrap(), "worker must not dispatch after pre-send workspace close abort");
+
+        // 3. Daemon retirement AFTER try_dispatch -> unmarked 502 error (unconfirmed).
+        let dirs_after = ["/proxy-write-test/send-input-retired-after".to_string()];
+        let (sent_tx, sent_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (retire_tx, retire_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(async move {
+                let _ = retire_rx.await;
+            }),
+            closed: Box::pin(std::future::pending()),
+            send_input: true,
+        };
+        let handle_after =
+            tokio::spawn(forward(fence::enter(&dirs_after).unwrap(), None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                sent_tx.send(()).unwrap();
+                let _ = done_rx.await;
+                Ok(Response::new(Body::from("after")))
+            }));
+        sent_rx.await.unwrap();
+        retire_tx.send(()).unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(2), handle_after).await.unwrap().unwrap().unwrap_err();
+        assert_eq!(err.0, Status::BAD_GATEWAY);
+        let _ = done_tx.send(());
     }
 
     #[tokio::test]

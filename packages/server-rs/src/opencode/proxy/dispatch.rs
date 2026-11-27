@@ -578,6 +578,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     notified.await;
                 }
             }),
+            send_input,
         };
         crate::opencode::proxy_write::forward(permit, rules_lock, guards, dispatch).await
     } else {

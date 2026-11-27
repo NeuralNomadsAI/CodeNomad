@@ -34,7 +34,7 @@ use guards::{
     parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
 };
 
-pub(super) fn before_dispatch_error((status, body): Error) -> Response {
+pub(in crate::opencode) fn before_dispatch_error((status, body): Error) -> Response {
     (status, [("x-codenomad-before-dispatch", "1")], body).into_response()
 }
 
