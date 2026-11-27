@@ -59,18 +59,27 @@ struct Entry {
     last_seen: u64,
 }
 
+fn decoded_bytes_for(width: u32, height: u32, frames: usize) -> usize {
+    let base = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4)
+        .saturating_mul(frames.max(1));
+    // Account for mipmap storage (~1/3 of base pixel area).
+    base.saturating_add(base / 3)
+}
+
 fn decoded_bytes(image: &Image, frames: usize) -> usize {
-    attachment::decoded_size(image).map_or(0, |[w, h]| {
-        let base = (w as usize)
-            .saturating_mul(h as usize)
-            .saturating_mul(4)
-            .saturating_mul(frames.max(1));
-        // Account for mipmap storage (~1/3 of base pixel area).
-        base.saturating_add(base / 3)
-    })
+    attachment::decoded_size(image).map_or(0, |[w, h]| decoded_bytes_for(w, h, frames))
 }
 
 fn encoded_frame_count(bytes: &[u8]) -> usize {
+    if cfg!(target_arch = "wasm32") {
+        return 1;
+    }
+    encoded_frame_count_native(bytes)
+}
+
+fn encoded_frame_count_native(bytes: &[u8]) -> usize {
     if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
         return gif_frame_count(bytes);
     }
@@ -81,6 +90,40 @@ fn encoded_frame_count(bytes: &[u8]) -> usize {
         return webp_frame_count(bytes);
     }
     1
+}
+
+fn encoded_animation_dimensions(bytes: &[u8]) -> Option<[u32; 2]> {
+    if (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) && bytes.len() >= 10 {
+        let w = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
+        let h = u16::from_le_bytes([bytes[8], bytes[9]]) as u32;
+        return Some([w, h]);
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        && bytes.get(12..16) == Some(b"IHDR")
+        && bytes.len() >= 24
+    {
+        let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+        let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+        return Some([w, h]);
+    }
+    if bytes.len() >= 30
+        && &bytes[0..4] == b"RIFF"
+        && &bytes[8..12] == b"WEBP"
+        && &bytes[12..16] == b"VP8X"
+    {
+        let w = (bytes[24] as u32 | ((bytes[25] as u32) << 8) | ((bytes[26] as u32) << 16)) + 1;
+        let h = (bytes[27] as u32 | ((bytes[28] as u32) << 8) | ((bytes[29] as u32) << 16)) + 1;
+        return Some([w, h]);
+    }
+    None
+}
+
+fn animated_within_budget(bytes: &[u8], frames: usize) -> bool {
+    if frames <= 1 {
+        return true;
+    }
+    encoded_animation_dimensions(bytes)
+        .is_none_or(|[w, h]| decoded_bytes_for(w, h, frames) <= DECODED_BUDGET)
 }
 
 fn skip_gif_subblocks(bytes: &[u8], mut pos: usize) -> Option<usize> {
@@ -611,11 +654,13 @@ impl Pictures {
                 .and_then(|(_, result)| result.try_recv().ok())
             {
                 entry.request = None;
-                entry.settled = bytes.is_none();
-                entry.frames = bytes
+                let frames = bytes
                     .as_deref()
                     .map_or(1, |raw| encoded_frame_count(raw.as_slice()));
-                entry.image = bytes.map(|bytes| {
+                let admitted = bytes.filter(|raw| animated_within_budget(raw.as_slice(), frames));
+                entry.frames = frames;
+                entry.settled = admitted.is_none();
+                entry.image = admitted.map(|bytes| {
                     self.cache
                         .get_or_insert_with(|| ImageCache::new(wake.clone()))
                         .load(bytes.as_slice())
@@ -628,7 +673,8 @@ impl Pictures {
                     !codenomad_client::files::images::transcript_dimensions(
                         width as usize,
                         height as usize,
-                    )
+                    ) || (entry.frames > 1
+                        && decoded_bytes_for(width, height, entry.frames) > DECODED_BUDGET)
                 }) {
                     entry.image = None;
                     entry.last_size = None;

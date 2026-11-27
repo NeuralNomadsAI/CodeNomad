@@ -433,7 +433,22 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
         gif.extend_from_slice(&[0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0x00, 0x02, 0x00]);
     }
     gif.push(0x3B);
-    assert_eq!(encoded_frame_count(&gif), 3);
+    assert_eq!(encoded_frame_count_native(&gif), 3);
+
+    // Oversized 1024x1024 40-frame GIF exceeds DECODED_BUDGET (~213 MiB) and is rejected pre-decode.
+    let mut huge_gif = Vec::new();
+    huge_gif.extend_from_slice(b"GIF89a");
+    huge_gif.extend_from_slice(&1024u16.to_le_bytes());
+    huge_gif.extend_from_slice(&1024u16.to_le_bytes());
+    huge_gif.extend_from_slice(&[0x00, 0, 0]);
+    for _ in 0..40 {
+        huge_gif.extend_from_slice(&[0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0x00, 0x02, 0x00]);
+    }
+    huge_gif.push(0x3B);
+    let huge_frames = encoded_frame_count_native(&huge_gif);
+    assert_eq!(huge_frames, 40);
+    assert!(!animated_within_budget(&huge_gif, huge_frames));
+    assert!(animated_within_budget(&gif, 3));
 
     // Minimal APNG header with acTL num_frames = 12 before IDAT.
     let mut apng = Vec::new();
@@ -443,7 +458,7 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
     apng.extend_from_slice(&12u32.to_be_bytes());
     apng.extend_from_slice(&0u32.to_be_bytes());
     apng.extend_from_slice(&0u32.to_be_bytes()); // CRC placeholder
-    assert_eq!(encoded_frame_count(&apng), 12);
+    assert_eq!(encoded_frame_count_native(&apng), 12);
 
     // Minimal WebP container with 4 ANMF chunks.
     let mut webp = Vec::new();
@@ -454,5 +469,5 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
         webp.extend_from_slice(b"ANMF");
         webp.extend_from_slice(&0u32.to_le_bytes());
     }
-    assert_eq!(encoded_frame_count(&webp), 4);
+    assert_eq!(encoded_frame_count_native(&webp), 4);
 }

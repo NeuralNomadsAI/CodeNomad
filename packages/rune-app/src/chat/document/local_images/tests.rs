@@ -1863,3 +1863,70 @@ fn incomplete_root_history_refuses_relative_match_while_resolving_exact_path() {
         "detached root window with unloaded newer pages must refuse short relative name"
     );
 }
+
+#[test]
+fn converting_tool_output_with_different_name_does_not_shadow_input_file_and_refused_file_url_keeps_fallback()
+ {
+    let read_source = history::decode_message(&json!({
+        "id": "m1", "type": "assistant", "time": {"completed": 1},
+        "content": [{
+            "type": "tool", "id": "call-read", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/source.png"},
+                "content": [{"type": "file", "name": "source.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_A}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let convert_tool = history::decode_message(&json!({
+        "id": "m2", "type": "assistant", "time": {"completed": 2},
+        "content": [{
+            "type": "tool", "id": "call-convert", "name": "convert",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/source.png"},
+                "content": [{"type": "file", "name": "/tmp/resultat.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let convert_short = history::decode_message(&json!({
+        "id": "m3", "type": "assistant", "time": {"completed": 3},
+        "content": [{
+            "type": "tool", "id": "call-convert-short", "name": "convert",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/source.png"},
+                "content": [{"type": "file", "name": "other.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let candidates = session_candidates(&[
+        read_source.into(),
+        convert_tool.into(),
+        convert_short.into(),
+    ]);
+    assert_eq!(
+        match_local_image(&candidates, "/tmp/source.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline(PNG_A.into())),
+        "a tool outputting a differently named image must not index it under its input filePath"
+    );
+    assert_eq!(
+        match_local_image(&candidates, "/tmp/resultat.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline(PNG_B.into()))
+    );
+    assert_eq!(
+        match_local_image(&candidates, "other.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline(PNG_B.into()))
+    );
+
+    // Refused `file:` URLs (e.g. parent traversal) still keep a readable filename fallback label.
+    let state = init();
+    let plan = Plan::empty(state.transcript_display.tool_clock.current_clip());
+    assert_eq!(
+        plan.fallback_label()("file:///tmp/projet/../chart.png", true).as_deref(),
+        Some("chart.png")
+    );
+}

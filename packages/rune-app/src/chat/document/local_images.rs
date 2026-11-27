@@ -96,10 +96,28 @@ pub(super) struct Plan {
     pub(super) sentinel_ready: bool,
 }
 
+fn file_url_fallback_label(src: &str) -> String {
+    let cleaned = preprocess_whatwg_url(src);
+    let tail = cleaned
+        .get(5..)
+        .unwrap_or_default()
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default();
+    let decoded = decode_uri_component(tail);
+    decoded
+        .split(['/', '\\'])
+        .rfind(|segment| !segment.is_empty() && !matches!(*segment, "." | ".."))
+        .unwrap_or_else(|| trim_whatwg_c0_space(src))
+        .to_owned()
+}
+
 fn fallback_matcher(kept: HashMap<String, Vec<bool>>) -> impl Fn(&str, bool) -> Option<String> {
     let cursors: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
     move |src: &str, liftable: bool| {
-        let local = local_image_path(src)?;
+        let Some(local) = local_image_path(src) else {
+            return is_file_url(src).then(|| file_url_fallback_label(src));
+        };
         if !liftable {
             return Some(filename_label(&local));
         }
@@ -732,25 +750,56 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str, allow_relative: bool)
     }
 }
 
+fn input_matches_picture_name(input: &KnownPath, picture_name: &KnownPath) -> bool {
+    if input.comparable == picture_name.comparable {
+        return true;
+    }
+    if picture_name.windows || picture_name.comparable.starts_with('/') {
+        return false;
+    }
+    let mut stripped = picture_name.comparable.as_str();
+    while let Some(rest) = stripped.strip_prefix("./") {
+        stripped = rest;
+    }
+    if stripped.is_empty() || has_parent_segment(stripped) {
+        return false;
+    }
+    if input.windows {
+        comparable_relative_windows(stripped)
+            .is_some_and(|win| input.comparable.ends_with(&format!("/{win}")))
+    } else {
+        input.comparable.ends_with(&format!("/{stripped}"))
+    }
+}
+
 pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
     if tool.status != "completed" || tool.pictures.is_empty() {
         return Box::default();
     }
-    let input_path = tool
+    let input_raw = tool
         .input
         .get("filePath")
         .or_else(|| tool.input.get("path"))
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty());
+    let input_known = input_raw.and_then(KnownPath::new);
     let single = tool.pictures.len() == 1;
     let mut out = Vec::with_capacity(tool.pictures.len());
     for picture in &tool.pictures {
         let mut paths: Vec<Box<str>> = Vec::with_capacity(if single { 2 } else { 1 });
-        if let Some(name) = picture.name.as_deref().filter(|value| !value.is_empty()) {
+        let picture_raw = picture.name.as_deref().filter(|value| !value.is_empty());
+        let picture_known = picture_raw.and_then(KnownPath::new);
+        if let Some(name) = picture_raw {
             paths.push(name.into());
         }
+        let allow_input = picture_raw.is_none()
+            || picture_known
+                .as_ref()
+                .zip(input_known.as_ref())
+                .is_some_and(|(name, input)| input_matches_picture_name(input, name));
         if single
-            && let Some(path) = input_path
+            && allow_input
+            && let Some(path) = input_raw
             && !paths.iter().any(|existing| existing.as_ref() == path)
         {
             paths.push(path.into());
@@ -786,15 +835,18 @@ fn collect_tool_candidates(row_id: &str, tool: &Tool, call: u64, out: &mut Vec<C
     let single = tool.pictures.len() == 1;
     for (picture_index, picture) in tool.pictures.iter().enumerate() {
         let mut paths = Vec::new();
-        if let Some(known) = picture
-            .name
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .and_then(KnownPath::new)
-        {
+        let picture_raw = picture.name.as_deref().filter(|value| !value.is_empty());
+        let picture_known = picture_raw.and_then(KnownPath::new);
+        let allow_input = picture_raw.is_none()
+            || picture_known
+                .as_ref()
+                .zip(input_path.as_ref())
+                .is_some_and(|(name, input)| input_matches_picture_name(input, name));
+        if let Some(known) = picture_known {
             paths.push(known);
         }
         if single
+            && allow_input
             && let Some(path) = input_path.as_ref()
             && !paths.contains(path)
         {
