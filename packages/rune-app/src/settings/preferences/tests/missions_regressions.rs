@@ -6,7 +6,7 @@ use crate::settings::{providers::Target, view};
 use codenomad_client::transport::{Event, WorkspaceEvent};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
-fn depth_snapshot_json(directory: &str, depth: Option<u64>, expectation: &str) -> Value {
+pub(super) fn depth_snapshot_json(directory: &str, depth: Option<u64>, expectation: &str) -> Value {
     json!({
         "location": { "directory": directory },
         "capability": { "minimum": 1, "maximum": 5, "default": 2 },
@@ -23,7 +23,7 @@ fn depth_snapshot_json(directory: &str, depth: Option<u64>, expectation: &str) -
     })
 }
 
-async fn drain_location_catalog_and_depth(
+pub(super) async fn drain_location_catalog_and_depth(
     listener: &TcpListener,
     rt: &mut rune::Runtime<view::Window>,
     expected_dir: &str,
@@ -813,7 +813,7 @@ fn library_post_send_conflict_triggers_authoritative_read_ahead_of_queued_docume
 
 #[test]
 fn native_flush_exits_promptly_when_missions_queued_edit_cannot_start_after_transport_loss() {
-    platform::block_on(async {
+    let (listener, shared, _rt) = platform::block_on(async {
         let (listener, prefs) = fixture().await;
         let (shared, mut rt) = make_window(prefs);
         rt.frame(0.0);
@@ -834,22 +834,30 @@ fn native_flush_exits_promptly_when_missions_queued_edit_cannot_start_after_tran
             "DefaultsEdit must be queued behind the gated delete_flight"
         );
 
-        // Lose transport with no config GET scheduled and release the gated pre-send abort.
+        // Lose transport with no config GET scheduled and wait for the gated pre-send abort
+        // to settle deterministically before exercising flush() outside block_on.
         shared.borrow_mut().mark_transport_lost();
         release_patch.send(()).await.unwrap();
-        tick(&mut rt);
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().missions.config_write_in_flight()
+        })
+        .await;
+        (listener, shared, rt)
+    });
 
-        let started = std::time::Instant::now();
-        let flushed = shared.borrow_mut().flush();
-        assert!(
-            !flushed,
-            "flush must report unconfirmed Missions writes when transport is lost"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "flush must not spin waiting for an unstartable Missions edit, took {:?}",
-            started.elapsed()
-        );
+    let started = std::time::Instant::now();
+    let flushed = shared.borrow_mut().flush();
+    assert!(
+        !flushed,
+        "flush must report unconfirmed Missions writes when transport is lost"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "flush must not spin waiting for an unstartable Missions edit, took {:?}",
+        started.elapsed()
+    );
+    platform::block_on(async {
         assert!(
             timeout(Duration::from_millis(100), listener.accept())
                 .await

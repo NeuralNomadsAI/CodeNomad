@@ -642,7 +642,7 @@ impl Preferences {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn documents_draining(&self) -> bool {
-        let config_refreshing = self.can_retry() && self.config.refreshing();
+        let config_refreshing = self.can_retry() && self.config.read_refreshing();
         let can_start_missions_write = self.can_retry()
             && (config_refreshing
                 || (self.config_loaded()
@@ -1011,7 +1011,7 @@ impl Preferences {
         let ctx = super::missions::ConfigContext {
             backend: self.backend.as_ref(),
             config_loaded,
-            config_refreshing: self.config.refreshing(),
+            config_refreshing: self.config.read_refreshing(),
             config_busy: self.config.busy_for_external_write(),
             config_snapshot: self.config.snapshot.as_ref(),
             prefs_authority: self.authority.clone(),

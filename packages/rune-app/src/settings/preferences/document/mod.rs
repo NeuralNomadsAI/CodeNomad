@@ -124,6 +124,20 @@ impl Document {
             || self.barrier.is_some()
     }
 
+    pub(super) fn read_refreshing(&self) -> bool {
+        self.read.queued
+            || self.read.reattach
+            || (self.read.authoritative_required && !self.read.failed)
+            || matches!(
+                self.flight.as_ref().map(|flight| &flight.operation),
+                Some(Operation::Read { .. })
+            )
+            || matches!(
+                self.barrier.as_ref().map(|flight| &flight.operation),
+                Some(Operation::Read { .. })
+            )
+    }
+
     pub(super) fn confirmed(&self) -> Option<&Value> {
         if self.read.queued
             || self.read.reattach

@@ -431,12 +431,8 @@ impl Document {
             Operation::Read {
                 retry: std::mem::take(&mut self.write.retry),
             }
-        } else if std::mem::take(&mut self.read.reattach) {
-            self.read.queued = false;
-            Operation::Read {
-                retry: BTreeSet::new(),
-            }
-        } else if (self.read.authoritative_required && (!self.read.failed || self.read.queued))
+        } else if std::mem::take(&mut self.read.reattach)
+            || (self.read.authoritative_required && (!self.read.failed || self.read.queued))
             || (writes_allowed
                 && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
                     || ((needs_fresh_on_disk || binaries_need_fresh || palette_needs_fresh)

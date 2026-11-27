@@ -470,8 +470,12 @@ impl SharedStream {
                 }
                 FrameClass::ReplayStopped(id) => {
                     inner.replays.remove(id);
+                    hub.note_location_change();
                 }
-                FrameClass::SessionMoved { .. } | FrameClass::None => {}
+                FrameClass::SessionMoved { .. } => {
+                    hub.note_location_change();
+                }
+                FrameClass::None => {}
             }
             inner.subscribers.retain(|sub| {
                 let session_moved = matches!(
@@ -669,8 +673,11 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
     if value["type"] == "instance.event"
         && value["event"]["type"] == "session.moved"
         && let Some(workspace) = value["instanceId"].as_str()
-        && let Some(session) = value["event"]["data"]["sessionID"].as_str()
     {
+        let session = value["event"]["data"]["sessionID"]
+            .as_str()
+            .or_else(|| value["event"]["data"]["id"].as_str())
+            .unwrap_or("");
         return FrameClass::SessionMoved {
             workspace: workspace.to_owned(),
             session: session.to_owned(),
@@ -689,9 +696,17 @@ pub(crate) struct Hub {
     streams: Mutex<HashMap<String, StreamEntry>>,
     next_id: AtomicU64,
     next_connection: AtomicU64,
+    location_revision: AtomicU64,
 }
 
 impl Hub {
+    pub(crate) fn note_location_change(&self) {
+        self.location_revision.fetch_add(1, SeqCst);
+    }
+
+    pub(crate) fn location_revision(&self) -> u64 {
+        self.location_revision.load(SeqCst)
+    }
     async fn subscribe(
         self: &Arc<Self>,
         backend: &Backend,

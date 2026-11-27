@@ -300,6 +300,13 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
+        if !ctx.config_loaded && self.flight.is_none() && self.pending_op.take().is_some() {
+            self.pending_label = None;
+            self.failed = true;
+            self.needs_reload = true;
+            effects.changed = true;
+            effects.settled = true;
+        }
         effects
     }
 

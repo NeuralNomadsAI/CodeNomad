@@ -234,6 +234,9 @@ impl Http {
     pub(crate) fn sse_hub(&self) -> &Arc<crate::stream::Hub> {
         &self.7
     }
+    pub fn location_revision(&self) -> u64 {
+        self.7.location_revision()
+    }
     pub(crate) fn preferences_notices(&self) -> Arc<[AtomicU64; 3]> {
         self.4.clone()
     }

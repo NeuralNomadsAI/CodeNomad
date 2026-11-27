@@ -22,6 +22,7 @@ pub(in crate::settings) struct SendAuthority {
     expected_prefs_authority: u64,
     doc_epoch: Option<(Arc<AtomicU64>, u64)>,
     location_token: Option<(Arc<AtomicU64>, u64)>,
+    expected_location_revision: Option<u64>,
     drop_generation: u64,
     stream_drop_epoch: u64,
     expected_server: Option<String>,
@@ -34,6 +35,7 @@ impl SendAuthority {
         prefs_authority: Arc<AtomicU64>,
         doc_epoch: Option<(Arc<AtomicU64>, u64)>,
         location_token: Option<&Arc<AtomicU64>>,
+        expected_location_revision: Option<u64>,
         backend: &Backend,
         #[cfg(test)] pre_send_gate: Option<Receiver<()>>,
     ) -> Self {
@@ -45,6 +47,7 @@ impl SendAuthority {
             expected_prefs_authority,
             doc_epoch,
             location_token,
+            expected_location_revision,
             drop_generation: backend.client.drop_generation(),
             stream_drop_epoch: backend.client.stream_drop_epoch(),
             expected_server: backend.client.server_identity().map(str::to_owned),
@@ -63,6 +66,9 @@ impl SendAuthority {
                 .location_token
                 .as_ref()
                 .is_none_or(|(guard, expected)| guard.load(Ordering::SeqCst) == *expected)
+            && self
+                .expected_location_revision
+                .is_none_or(|rev| backend.client.location_revision() == rev)
             && backend.client.drop_generation() == self.drop_generation
             && backend.client.stream_drop_epoch() == self.stream_drop_epoch
             && ServerOwner::backend_verified(backend)
@@ -119,6 +125,7 @@ impl ConfigContext<'_> {
         SendAuthority::capture(
             self.prefs_authority.clone(),
             Some(self.doc_epoch.clone()),
+            None,
             None,
             backend,
             #[cfg(test)]
@@ -265,10 +272,11 @@ impl Shared {
                 self.location_authority = Some((workspace.to_owned(), authority));
                 changed |= invalidated | self.depth.invalidate_location();
             }
-        } else if self.location_authority.take().is_some()
-            | self.pinned_directory.take().is_some()
-            | self.location_flight.take().is_some()
-            | self.location_failed.take().is_some()
+        } else if active
+            && (self.location_authority.take().is_some()
+                | self.pinned_directory.take().is_some()
+                | self.location_flight.take().is_some()
+                | self.location_failed.take().is_some())
         {
             self.revoke_location();
             let _ = self.depth.invalidate_location();

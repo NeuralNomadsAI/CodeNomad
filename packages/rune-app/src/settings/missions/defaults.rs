@@ -409,6 +409,20 @@ impl State {
             effects.changed = true;
             effects.settled = true;
         }
+        if !ctx.config_loaded && !self.write_in_flight() {
+            if self.pending_delete.take().is_some() {
+                self.delete_failed = true;
+                effects.changed = true;
+                effects.settled = true;
+            }
+            if !self.queued.is_empty() && self.in_flight_edit.is_none() {
+                self.queued.clear();
+                self.failed = true;
+                self.needs_reload = true;
+                effects.changed = true;
+                effects.settled = true;
+            }
+        }
         effects
     }
 

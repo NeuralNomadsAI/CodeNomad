@@ -9,6 +9,7 @@ mod info;
 mod memory;
 mod missions;
 mod missions_regressions;
+mod missions_regressions_lifecycle;
 mod notifications;
 mod opencode;
 mod providers;

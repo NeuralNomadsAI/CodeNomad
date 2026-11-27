@@ -67,6 +67,8 @@ pub(super) struct State {
     opener_directory: Option<String>,
     authority: u64,
     resolved_authority: Option<u64>,
+    read_location_revision: Option<u64>,
+    read_started_location_revision: Option<u64>,
     seen_revision: Option<u64>,
     read_started_revision: Option<u64>,
     manual_epoch: u64,
@@ -93,6 +95,8 @@ impl State {
 
     pub(super) fn invalidate_location(&mut self) -> bool {
         let mut changed = self.resolved_authority.take().is_some()
+            | self.read_location_revision.take().is_some()
+            | self.read_started_location_revision.take().is_some()
             | self.queued.take().is_some()
             | std::mem::take(&mut self.pending_save)
             | std::mem::take(&mut self.dirty)
@@ -127,6 +131,7 @@ impl State {
         }
         self.read_flight = None;
         self.read_started_revision = None;
+        self.read_started_location_revision = None;
         self.seen_revision = None;
     }
 
@@ -364,6 +369,7 @@ impl State {
                 self.scope = Some(scope);
                 self.authority = authority;
                 self.resolved_authority = None;
+                self.read_location_revision = None;
                 self.suspend();
             } else {
                 *self = Self {
@@ -389,6 +395,7 @@ impl State {
             self.saved = false;
             self.error = false;
             self.resolved_authority = None;
+            self.read_location_revision = None;
             self.opener_directory = None;
             if self.phase != Phase::Uncertain {
                 self.snapshot = None;
@@ -417,6 +424,7 @@ impl State {
         changed |= save_changed;
 
         let revision = target.revision().wrapping_add(self.manual_epoch);
+        let current_location_revision = backend.client.location_revision();
         if let Some(result) = self
             .read_flight
             .as_ref()
@@ -424,7 +432,8 @@ impl State {
         {
             self.read_flight = None;
             let started = self.read_started_revision.take();
-            if started != Some(revision) {
+            let started_loc_rev = self.read_started_location_revision.take();
+            if started != Some(revision) || started_loc_rev != Some(current_location_revision) {
                 self.phase = if self.snapshot.is_some() {
                     Phase::Ready
                 } else {
@@ -443,6 +452,7 @@ impl State {
                         });
                         self.opener_directory = Some(directory.to_owned());
                         self.resolved_authority = Some(authority);
+                        self.read_location_revision = Some(current_location_revision);
                         self.snapshot = Some(snapshot);
                         self.draft = fresh;
                         self.dirty = false;
@@ -475,6 +485,7 @@ impl State {
         if self.pending_save && self.save_flight.is_none() && self.read_flight.is_none() {
             self.pending_save = false;
             if self.resolved_authority != Some(authority)
+                || self.read_location_revision != Some(current_location_revision)
                 || self
                     .opener_directory
                     .as_deref()
@@ -504,6 +515,7 @@ impl State {
                         prefs_authority.clone(),
                         None,
                         Some(location_token),
+                        self.read_location_revision,
                         backend,
                         #[cfg(test)]
                         pre_put_gate.take(),
@@ -562,6 +574,7 @@ impl State {
             let wake = wake.clone();
             self.seen_revision = Some(revision);
             self.read_started_revision = Some(revision);
+            self.read_started_location_revision = Some(current_location_revision);
             self.phase = Phase::Reading;
             self.error = false;
             self.read_flight = Some((cancel, inbox));
