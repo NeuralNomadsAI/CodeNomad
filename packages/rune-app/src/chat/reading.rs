@@ -87,6 +87,7 @@ enum FrameRestoreTarget {
         deltas: Vec<f32>,
         restored_anchor: bool,
         anchor_retargeted: bool,
+        content_clamped_retried: bool,
     },
 }
 
@@ -95,12 +96,18 @@ struct PostProbe {
     clock: f64,
 }
 
-fn replay_deltas(start: f32, max: f32, deltas: &[f32]) -> f32 {
+fn replay_deltas_checked(start: f32, max: f32, deltas: &[f32]) -> (f32, bool) {
     let mut dest = start.clamp(0.0, max);
+    let mut clamped = (dest - start).abs() > 0.5;
     for &dy in deltas {
-        dest = (dest - dy).clamp(0.0, max);
+        let raw = dest - dy;
+        let next = raw.clamp(0.0, max);
+        if (next - raw).abs() > 0.5 {
+            clamped = true;
+        }
+        dest = next;
     }
-    dest
+    (dest, clamped)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,10 +118,12 @@ struct FrameRestore {
     obs_seq: u64,
     direct_seq: u64,
     queue_layout_seq: u64,
+    content_layout_seq: u64,
     target: FrameRestoreTarget,
     probe_live: bool,
     probe_ready: Option<f32>,
-    defer_for_press: bool,
+    input_poll_clock: Option<f64>,
+    defer_for_input_clock: Option<f64>,
     handled: bool,
     post_probe: Option<PostProbe>,
     checked: Cell<Option<Option<f32>>>,
@@ -130,6 +139,7 @@ pub(crate) struct Reading {
     top_manual_seq: u64,
     min_record_revision: u64,
     queue_layout_seq: u64,
+    content_layout_seq: u64,
     resize_anchor: Option<ResizeAnchor>,
     frame_restore_epoch: u64,
     frame_restore: Option<FrameRestore>,
@@ -168,6 +178,7 @@ impl Default for Reading {
             top_manual_seq: 0,
             min_record_revision: 0,
             queue_layout_seq: 0,
+            content_layout_seq: 0,
             resize_anchor: None,
             frame_restore_epoch: 0,
             frame_restore: None,
@@ -261,13 +272,17 @@ impl Reading {
         }
     }
 
-    fn on_history_press(&mut self) -> bool {
+    pub(crate) fn note_content_layout_change(&mut self) {
+        self.content_layout_seq = self.content_layout_seq.wrapping_add(1);
+    }
+
+    fn on_history_input_pending(&mut self, clock: f64) -> bool {
         if let Some(fr) = self.frame_restore.as_mut()
             && !fr.handled
             && fr.probe_live
             && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
         {
-            fr.defer_for_press = true;
+            fr.defer_for_input_clock = Some(clock);
             return true;
         }
         false
@@ -475,15 +490,18 @@ impl Reading {
                     obs_seq: cur.seq,
                     direct_seq: cur.last_direct_seq,
                     queue_layout_seq: self.queue_layout_seq,
+                    content_layout_seq: self.content_layout_seq,
                     target: FrameRestoreTarget::ReplayDeltas {
                         anchor: bookmark.clone(),
                         deltas: Vec::new(),
                         restored_anchor: false,
                         anchor_retargeted: false,
+                        content_clamped_retried: false,
                     },
                     probe_live: false,
                     probe_ready: None,
-                    defer_for_press: false,
+                    input_poll_clock: None,
+                    defer_for_input_clock: None,
                     handled: true,
                     post_probe: None,
                     checked: Cell::new(Some(None)),
@@ -512,10 +530,12 @@ impl Reading {
                 obs_seq: cur.seq,
                 direct_seq: cur.last_direct_seq,
                 queue_layout_seq: self.queue_layout_seq,
+                content_layout_seq: self.content_layout_seq,
                 target,
                 probe_live,
                 probe_ready: None,
-                defer_for_press: false,
+                input_poll_clock: None,
+                defer_for_input_clock: None,
                 handled: false,
                 post_probe: None,
                 checked: Cell::new(None),
@@ -1222,7 +1242,11 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                     && pt.window_x <= bounds[0] + bounds[2]
                     && pt.window_y >= bounds[1]
                     && pt.window_y <= bounds[1] + bounds[3];
-                if inside && s.transcript_display.reading_mut().on_history_press() {
+                if inside
+                    && s.transcript_display
+                        .reading_mut()
+                        .on_history_input_pending(tx.clock())
+                {
                     tx.wake_after(std::time::Duration::ZERO);
                 }
             }
@@ -1280,6 +1304,29 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
         crate::timeline::observe_history_wheel(s, &wheel_input_scope, &ev, tx, !handled);
         handled
     })
+}
+
+pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) {
+    if s.screen.is_launcher() || event.mods.cmd || event.mods.alt || event.mods.ctrl {
+        return;
+    }
+    let paging = match &event.key {
+        rune::Key::PageUp
+        | rune::Key::PageDown
+        | rune::Key::Home
+        | rune::Key::End
+        | rune::Key::Up
+        | rune::Key::Down => true,
+        rune::Key::Text(text) => text == " ",
+        _ => false,
+    };
+    if paging
+        && s.transcript_display
+            .reading_mut()
+            .on_history_input_pending(tx.clock())
+    {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
 }
 
 fn replay_anchor_present(s: &State, anchor: &Bookmark) -> bool {
@@ -1430,6 +1477,7 @@ fn handle_reading_wheel(
                 deltas,
                 restored_anchor,
                 anchor_retargeted,
+                content_clamped_retried,
             } = &mut fr.target
             else {
                 return true;
@@ -1442,6 +1490,7 @@ fn handle_reading_wheel(
                 }
                 *restored_anchor = false;
                 *anchor_retargeted = false;
+                *content_clamped_retried = false;
             }
             if post_probe && !undid {
                 deltas.push(ev.dy);
@@ -1504,8 +1553,11 @@ fn handle_reading_wheel(
                 fr.obs_seq = cur_seq;
                 fr.direct_seq = cur.last_direct_seq;
                 fr.queue_layout_seq = reading.queue_layout_seq;
+                fr.content_layout_seq = reading.content_layout_seq;
                 fr.probe_ready = None;
-                fr.defer_for_press = false;
+                fr.input_poll_clock = None;
+                fr.defer_for_input_clock = None;
+                *content_clamped_retried = false;
             }
             fr.post_probe = None;
             fr.probe_live = true;
@@ -1697,10 +1749,12 @@ fn handle_reading_wheel(
                 obs_seq: cur.seq,
                 direct_seq: cur.last_direct_seq,
                 queue_layout_seq: reading.queue_layout_seq,
+                content_layout_seq: reading.content_layout_seq,
                 target: fr_target,
                 probe_live: from_bottom,
                 probe_ready: None,
-                defer_for_press: false,
+                input_poll_clock: None,
+                defer_for_input_clock: None,
                 handled: !from_bottom,
                 post_probe: None,
                 checked: Cell::new(if from_bottom {
@@ -1777,15 +1831,18 @@ fn handle_reading_wheel(
                 obs_seq: cur.seq,
                 direct_seq: cur.last_direct_seq,
                 queue_layout_seq: reading.queue_layout_seq,
+                content_layout_seq: reading.content_layout_seq,
                 target: FrameRestoreTarget::ReplayDeltas {
                     anchor,
                     deltas: Vec::new(),
                     restored_anchor: false,
                     anchor_retargeted: false,
+                    content_clamped_retried: false,
                 },
                 probe_live: false,
                 probe_ready: None,
-                defer_for_press: false,
+                input_poll_clock: None,
+                defer_for_input_clock: None,
                 handled: true,
                 post_probe: None,
                 checked: Cell::new(Some(None)),
@@ -1803,15 +1860,18 @@ fn handle_reading_wheel(
             obs_seq: cur.seq,
             direct_seq: cur.last_direct_seq,
             queue_layout_seq: reading.queue_layout_seq,
+            content_layout_seq: reading.content_layout_seq,
             target: FrameRestoreTarget::ReplayDeltas {
                 anchor: anchor.clone(),
                 deltas: vec![ev.dy],
                 restored_anchor: true,
                 anchor_retargeted: false,
+                content_clamped_retried: false,
             },
             probe_live: true,
             probe_ready: None,
-            defer_for_press: false,
+            input_poll_clock: None,
+            defer_for_input_clock: None,
             handled: false,
             post_probe: None,
             checked: Cell::new(Some(Some(0.0))),
@@ -2018,8 +2078,9 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
     if s.screen.is_launcher() {
         return false;
     }
-    let target = {
+    let (target, superseded) = {
         let reading = s.transcript_display.reading_mut();
+        let cur = reading.scroll_state.get();
         let Some(fr) = reading.frame_restore.as_mut() else {
             return false;
         };
@@ -2029,21 +2090,30 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         let Some(target) = fr.probe_ready else {
             return false;
         };
-        if fr.defer_for_press {
-            fr.defer_for_press = false;
-            tx.wake_after(std::time::Duration::ZERO);
-            return false;
+        let is_replay = matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. });
+        let superseded = is_replay && cur.last_direct_seq != fr.direct_seq;
+        if !superseded && is_replay {
+            if let Some(defer_clock) = fr.defer_for_input_clock {
+                if defer_clock == tx.clock() && tx.input_waiting() {
+                    tx.wake_after(std::time::Duration::ZERO);
+                    return false;
+                }
+                fr.defer_for_input_clock = None;
+            }
+            if tx.input_waiting() && fr.input_poll_clock != Some(tx.clock()) {
+                fr.input_poll_clock = Some(tx.clock());
+                tx.request_poll();
+                return false;
+            }
         }
-        target
+        (target, superseded)
     };
     let reading = s.transcript_display.reading_mut();
     let fr = reading.frame_restore.take().unwrap();
     let obs_offset = fr.obs_offset;
     let max = fr.obs_max;
     let cur = reading.scroll_state.get();
-    if matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
-        && cur.last_direct_seq != fr.direct_seq
-    {
+    if superseded {
         return false;
     }
     reading.resize_anchor = None;
@@ -2098,13 +2168,23 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             anchor,
             deltas,
             anchor_retargeted,
+            content_clamped_retried,
             ..
         } => {
             let queue_layout_seq = s.transcript_display.reading().queue_layout_seq;
+            let content_layout_seq = s.transcript_display.reading().content_layout_seq;
             let anchor_present = replay_anchor_present(s, &anchor);
             let queue_changed = fr.queue_layout_seq != queue_layout_seq;
+            let content_changed = fr.content_layout_seq != content_layout_seq;
+            let start = match &anchor {
+                Bookmark::Latest => cur.max,
+                Bookmark::Message { .. } => cur.offset,
+            };
+            let (dest, clamped) = replay_deltas_checked(start, cur.max, &deltas);
             let needs_rearm = anchor_retargeted || !anchor_present || queue_changed;
-            if needs_rearm {
+            let retry_for_content_clamp =
+                !needs_rearm && clamped && content_changed && !content_clamped_retried;
+            if needs_rearm || retry_for_content_clamp {
                 let next_anchor = if anchor_present {
                     Some(anchor)
                 } else {
@@ -2120,15 +2200,18 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         obs_seq: cur.seq,
                         direct_seq: cur.last_direct_seq,
                         queue_layout_seq,
+                        content_layout_seq,
                         target: FrameRestoreTarget::ReplayDeltas {
                             anchor: next_anchor.clone(),
                             deltas,
                             restored_anchor: true,
                             anchor_retargeted: false,
+                            content_clamped_retried: retry_for_content_clamp,
                         },
                         probe_live: true,
                         probe_ready: None,
-                        defer_for_press: false,
+                        input_poll_clock: None,
+                        defer_for_input_clock: None,
                         handled: false,
                         post_probe: None,
                         checked: Cell::new(Some(Some(0.0))),
@@ -2161,11 +2244,6 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 Bookmark::Latest => None,
             };
             let reading = s.transcript_display.reading_mut();
-            let start = match &anchor {
-                Bookmark::Latest => cur.max,
-                Bookmark::Message { .. } => cur.offset,
-            };
-            let dest = replay_deltas(start, cur.max, &deltas);
             let pin_bottom =
                 matches!(anchor, Bookmark::Latest) && cur.max > 0.5 && dest >= cur.max - 0.5;
             let probe = PostProbe { clock: tx.clock() };
@@ -2181,15 +2259,18 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     obs_seq: cur.seq,
                     direct_seq: cur.last_direct_seq,
                     queue_layout_seq,
+                    content_layout_seq,
                     target: FrameRestoreTarget::ReplayDeltas {
                         anchor,
                         deltas,
                         restored_anchor: false,
                         anchor_retargeted: false,
+                        content_clamped_retried: false,
                     },
                     probe_live: false,
                     probe_ready: None,
-                    defer_for_press: false,
+                    input_poll_clock: None,
+                    defer_for_input_clock: None,
                     handled: true,
                     post_probe: Some(probe),
                     checked: Cell::new(Some(None)),
@@ -2220,15 +2301,18 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 obs_seq: cur.seq,
                 direct_seq: cur.last_direct_seq,
                 queue_layout_seq,
+                content_layout_seq,
                 target: FrameRestoreTarget::ReplayDeltas {
                     anchor,
                     deltas,
                     restored_anchor: false,
                     anchor_retargeted: false,
+                    content_clamped_retried: false,
                 },
                 probe_live: false,
                 probe_ready: None,
-                defer_for_press: false,
+                input_poll_clock: None,
+                defer_for_input_clock: None,
                 handled: true,
                 post_probe: Some(probe),
                 checked: Cell::new(Some(None)),
@@ -2332,6 +2416,7 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
             anchor,
             restored_anchor,
             anchor_retargeted,
+            content_clamped_retried,
             ..
         } = &mut fr.target
         else {
@@ -2340,14 +2425,17 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
         *anchor = next_anchor;
         *restored_anchor = true;
         *anchor_retargeted = false;
+        *content_clamped_retried = false;
         reading.frame_restore_epoch += 1;
         fr.epoch = reading.frame_restore_epoch;
         fr.obs_seq = cur.seq;
         fr.direct_seq = cur.last_direct_seq;
         fr.queue_layout_seq = reading.queue_layout_seq;
+        fr.content_layout_seq = reading.content_layout_seq;
         fr.probe_live = true;
         fr.probe_ready = None;
-        fr.defer_for_press = false;
+        fr.input_poll_clock = None;
+        fr.defer_for_input_clock = None;
         fr.handled = false;
         fr.post_probe = None;
         fr.checked.set(Some(Some(0.0)));

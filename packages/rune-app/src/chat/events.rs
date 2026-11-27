@@ -630,6 +630,9 @@ fn drain_chat(
                     reader.clear_sync_undo();
                 }
                 s.messages = messages;
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
                 s.phase = Phase::Ready;
                 s.stream_offline = false;
@@ -644,6 +647,9 @@ fn drain_chat(
                 } else {
                     s.messages.push(m.into());
                 }
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
             }
             Event::Inbox {
@@ -718,6 +724,7 @@ fn drain_chat(
             }
             Event::Text(id, event) => {
                 let mut touched = false;
+                let mut applied = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
                     touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
@@ -730,6 +737,7 @@ fn drain_chat(
                             })
                             .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
+                        Ok(content::TextFit::Applied) => applied = true,
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
@@ -737,15 +745,25 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    if applied {
+                        s.transcript_display
+                            .reading_mut()
+                            .note_content_layout_change();
+                    }
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
-                if s.messages.iter().any(|m| m.id == id)
-                    && let Some(reader) = &mut s.reader
-                {
-                    reader.clear_sync_undo();
+                if s.messages.iter().any(|m| m.id == id) {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
@@ -763,8 +781,13 @@ fn drain_chat(
                     touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Tool(id, tool) => {
@@ -792,8 +815,13 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,

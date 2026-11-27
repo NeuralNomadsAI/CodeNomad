@@ -38,6 +38,10 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         s.transcript_display.reading_mut().end_wheel_gesture();
         tx.live_only();
     })
+    .on_key_preview(|s: &mut State, event, tx| {
+        chat::reading::note_history_paging_key(s, event, tx);
+        false
+    })
     .on_layout_tx(|s, bounds @ [_, _, w, h], tx| {
         let changed = chat::ToolDiffPreferences::layout(s, w)
             | crate::timeline::preview_window_layout(s, [w, h])

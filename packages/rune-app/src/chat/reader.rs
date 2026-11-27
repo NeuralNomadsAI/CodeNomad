@@ -8065,4 +8065,378 @@ mod resume_tests {
             "local queue removal settling on replay frame must replay accepted 40 px downward wheel onto B (-40 px), got {rel_y}"
         );
     }
+
+    #[test]
+    fn page_down_on_replay_probe_frame_wins_over_queued_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rpgdn-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        rt.on_key = Some(crate::shell::keys);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rpgdn-16", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rpgdn")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+
+        // Frame A: arm a small 40 px downward wheel replay from rpgdn-16.
+        rt.pointer_move(px, py);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(px, py));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // Before Frame B: press PageDown with pointer over transcript and no text field focused.
+        rt.key(rune::KeyEvent {
+            key: rune::Key::PageDown,
+            mods: rune::Mods::default(),
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_offset > offset_at_anchor + 150.0,
+            "PageDown on replay probe frame must not be overwritten by 40 px wheel replay: anchor={offset_at_anchor}, final={final_offset}"
+        );
+    }
+
+    #[test]
+    fn streaming_growth_on_replay_frame_replays_full_downward_wheel_past_old_bottom() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            let end = range.end;
+            range
+                .map(|i| {
+                    let last = i + 1 == end;
+                    let body = if last {
+                        (0..28)
+                            .map(|line| format!("{prefix} final line {line:02}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        format!("{prefix} {i:02} line one\nline two\nline three")
+                    };
+                    let parts = if last {
+                        vec![crate::content::Part::Text(crate::content::Text {
+                            part_index: Some(0),
+                            text: body.clone(),
+                            provenance: crate::content::TextProvenance::Live,
+                        })]
+                    } else {
+                        vec![]
+                    };
+                    crate::Message {
+                        usage: None,
+                        id: format!("rstgr-{i:02}"),
+                        role: "assistant".into(),
+                        completed: !last,
+                        body,
+                        parts,
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Streaming;
+        s.messages = make_rows("Full25", 0..25);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 40.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        let saved_offset = match &rt.state.reader.as_ref().unwrap().bookmark {
+            Bookmark::Message { id, offset } if id == "rstgr-24" => *offset,
+            other => panic!("expected final streaming message bookmark, got {other:?}"),
+        };
+
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_25", 15..25),
+                        older: Some(serde_json::json!("older-rstgr")),
+                        newer: None,
+                        running: true,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: wheel down 100 px (exceeds the 40 px remaining above old bottom).
+        rt.wheel_event(rune::WheelEvent::new(0.0, -100.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B: append streaming lines adding > 100 px to the final message.
+        let chunk = (0..12)
+            .map(|i| format!("\nstreamed growth line {i:02} expanding final message"))
+            .collect::<String>();
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::Text(
+                    "rstgr-24".into(),
+                    crate::content::TextEvent::Delta {
+                        ordinal: Some(0),
+                        text: chunk,
+                    },
+                ),
+            ))
+            .unwrap();
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let row_last = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rstgr-24"))
+            .expect("final streaming message must remain visible");
+        let rel_y = row_last.rect[1] - hist[1];
+        assert!(
+            (rel_y - (saved_offset - 100.0)).abs() <= 3.0,
+            "streaming growth on replay frame must apply full 100 px downward wheel (saved_offset - 100 = {}), got {rel_y}",
+            saved_offset - 100.0
+        );
+    }
+
+    #[test]
+    fn continuous_streaming_while_clamped_at_bottom_does_not_stall_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            let end = range.end;
+            range
+                .map(|i| {
+                    let last = i + 1 == end;
+                    let body = if last {
+                        (0..28)
+                            .map(|line| format!("{prefix} final line {line:02}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        format!("{prefix} {i:02} line one\nline two\nline three")
+                    };
+                    let parts = if last {
+                        vec![crate::content::Part::Text(crate::content::Text {
+                            part_index: Some(0),
+                            text: body.clone(),
+                            provenance: crate::content::TextProvenance::Live,
+                        })]
+                    } else {
+                        vec![]
+                    };
+                    crate::Message {
+                        usage: None,
+                        id: format!("rstcl-{i:02}"),
+                        role: "assistant".into(),
+                        completed: !last,
+                        body,
+                        parts,
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Streaming;
+        s.messages = make_rows("Full25", 0..25);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 40.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_25", 15..25),
+                        older: Some(serde_json::json!("older-rstcl")),
+                        newer: None,
+                        running: true,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Wheel down 600 px so replay clamps even after one streaming growth chunk.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -600.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        // Deliver a streaming delta on every single frame.
+        for tick in 0..10 {
+            lane.events
+                .try_send((
+                    g,
+                    0,
+                    Event::Text(
+                        "rstcl-24".into(),
+                        crate::content::TextEvent::Delta {
+                            ordinal: Some(0),
+                            text: format!("\nchunk {tick}"),
+                        },
+                    ),
+                ))
+                .unwrap();
+            rt.frame(0.016);
+        }
+        assert!(
+            !rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe(),
+            "bounded clamp retry must not stall indefinitely under continuous streaming"
+        );
+    }
 }

@@ -257,6 +257,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         }
         return true;
     }
+    crate::chat::reading::note_history_paging_key(s, event, tx);
     false
 }
 
