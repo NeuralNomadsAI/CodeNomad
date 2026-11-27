@@ -1,4 +1,5 @@
 pub mod document;
+mod errors;
 mod layout;
 mod markdown_images;
 mod presentation;

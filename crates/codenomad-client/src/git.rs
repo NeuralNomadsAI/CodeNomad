@@ -618,6 +618,8 @@ async fn read(request: RequestBuilder, limit: usize) -> Result<Value> {
         return read_json_limited(response, limit).await.map_err(|error| {
             if error.is::<OversizedResponse>() {
                 GitError::OversizedContent.into()
+            } else if error.is::<serde_json::Error>() {
+                GitError::UnexpectedResponse.into()
             } else {
                 error
             }
@@ -642,7 +644,17 @@ async fn read(request: RequestBuilder, limit: usize) -> Result<Value> {
 }
 
 async fn acknowledge(request: RequestBuilder) -> Result<()> {
-    if read(request, 64 * 1024).await?["ok"] == true {
+    let value = read(request, 64 * 1024).await.map_err(|error| {
+        if matches!(
+            error.downcast_ref::<GitError>(),
+            Some(GitError::OversizedContent | GitError::UnexpectedResponse)
+        ) {
+            GitError::UnconfirmedMutation.into()
+        } else {
+            error
+        }
+    })?;
+    if value["ok"] == true {
         Ok(())
     } else {
         Err(GitError::UnconfirmedMutation.into())

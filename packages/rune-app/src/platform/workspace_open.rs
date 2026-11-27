@@ -131,7 +131,6 @@ pub enum OpenError {
     Unavailable,
     CheckoutUnavailable,
     WorktreeChanged,
-    Server(String),
     ConnectionFailed,
     Failed,
 }
@@ -154,7 +153,6 @@ impl OpenError {
                 "gitPanel.error.worktreeChanged",
                 &[],
             ),
-            Self::Server(message) => message.clone(),
             Self::ConnectionFailed => {
                 rune_theme_codenomad::catalogue::format(language, "rune.failed", &[])
             }

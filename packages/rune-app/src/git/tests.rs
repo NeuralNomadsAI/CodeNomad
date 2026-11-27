@@ -1881,10 +1881,6 @@ fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks
                 OpenError::Failed.localized(lang),
                 t("settings.info.actions.failed")
             );
-            assert_eq!(
-                OpenError::Server("backend denied".into()).localized(lang),
-                "backend denied"
-            );
 
             if lang == "fr" {
                 assert_ne!(
