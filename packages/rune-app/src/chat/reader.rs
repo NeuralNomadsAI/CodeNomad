@@ -5894,12 +5894,14 @@ mod resume_tests {
                 })
                 .collect()
         };
-        let run_case = |ctrl: bool| -> (usize, Option<Target>) {
+        let run_case = |ctrl: bool| -> (usize, Option<Target>, bool, bool) {
             let mut s = init();
             s.phase = Phase::Ready;
             s.messages = make_rows("Full40", 0..40);
             let (reader, lane) = Reader::open();
             s.reader = Some(reader);
+            let (cmd_tx, cmd_rx) = codenomad_client::bounded(8);
+            s.commands = Some(cmd_tx);
             let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
             rt.poll = Some(crate::poll);
             for _ in 0..20 {
@@ -5941,6 +5943,9 @@ mod resume_tests {
             rt.frame(0.02);
             assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
             assert_eq!(rt.state.messages.len(), 4);
+            assert!(rt.state.can_older);
+            // Drain any setup commands before testing the Shift-wheel event.
+            while cmd_rx.try_recv().is_ok() {}
 
             let h_rect = rt
                 .elements()
@@ -5957,11 +5962,18 @@ mod resume_tests {
             for _ in 0..30 {
                 rt.frame(0.02);
             }
-            (rt.state.messages.len(), lane.demand.current().target)
+            let sent_page = cmd_rx.try_recv().is_ok();
+            (
+                rt.state.messages.len(),
+                lane.demand.current().target,
+                rt.state.paging,
+                sent_page,
+            )
         };
 
-        // Notched Shift+wheel (without Ctrl) turns horizontal in Rune and must NOT undo trim.
-        let (h_len, h_target) = run_case(false);
+        // Notched Shift+wheel (without Ctrl) turns horizontal in Rune and must NOT undo trim
+        // or request an older vertical page via timeline::observe_history_wheel.
+        let (h_len, h_target, h_paging, h_sent_page) = run_case(false);
         assert_eq!(
             h_len, 4,
             "notched Shift+wheel must not roll back trimmed rows"
@@ -5971,9 +5983,13 @@ mod resume_tests {
             Some(Target::Around("shft-20".into())),
             "notched Shift+wheel must not re-request an older target"
         );
+        assert!(
+            !h_paging && !h_sent_page,
+            "notched Shift+wheel turned horizontal must not request Page(Before)"
+        );
 
         // Ctrl+Shift+wheel stays vertical in Rune on every platform and MUST roll back trim.
-        let (v_len, v_target) = run_case(true);
+        let (v_len, v_target, _, _) = run_case(true);
         assert_eq!(
             v_len, 40,
             "Ctrl+Shift vertical wheel must still roll back trimmed rows"
@@ -5982,6 +5998,242 @@ mod resume_tests {
             v_target,
             Some(Target::Around("shft-20".into())),
             "Ctrl+Shift vertical wheel rollback must advance target above shft-20"
+        );
+    }
+
+    #[test]
+    fn resize_on_replay_delivery_frame_does_not_clamp_against_old_width() {
+        let long_sentence = "Wrapped transcript content that expands vertically when the viewport narrows significantly. ";
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rclamp-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(4)),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full20", 0..20);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 390.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rclamp-01", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, old_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            old_offset > 40.0 && old_offset < 260.0,
+            "expected rclamp-01 near top at 844 px so upward delta would clamp at 844 px: {old_offset}"
+        );
+        rt.set_viewport((320.0, 420.0), 1.0);
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rclamp-01", 0.0);
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim01_05", 1..5),
+                        older: Some(serde_json::json!("older-rclamp")),
+                        newer: Some(serde_json::json!("newer-rclamp")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Upward delta strictly larger than old_offset (would clamp to 0 at 844 px) but strictly
+        // smaller than rclamp-01's offset once narrowed to 480 px.
+        let upward_dy = old_offset + 40.0;
+        rt.wheel_event(rune::WheelEvent::new(0.0, upward_dy).at(wx, wy));
+        rt.frame(0.016);
+        assert_eq!(rt.state.messages.len(), 20);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Narrow before Frame B delivers the replay probe so rclamp-00 expands taller.
+        rt.set_viewport((480.0, 390.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_offset > 20.0,
+            "narrowed replay must not clamp to 0 against old 844 px geometry: offset={final_offset}"
+        );
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let anchor_row = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rclamp-01"))
+            .expect("rclamp-01 must remain visible at upward_dy below history top");
+        let anchor_rel_y = anchor_row.rect[1] - hist[1];
+        assert!(
+            (anchor_rel_y - upward_dy).abs() <= 2.0,
+            "replay must place rclamp-01 at {upward_dy} px below top in 480 px layout, got {anchor_rel_y}"
+        );
+    }
+
+    #[test]
+    fn second_wheel_delta_on_resize_probe_frame_stays_keyed_to_anchor() {
+        let long_sentence = "Wrapped transcript content that expands vertically when the viewport narrows significantly. ";
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("r2w-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(4)),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full36", 0..36);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("r2w-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_36", 16..36),
+                        older: Some(serde_json::json!("older-r2w")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + 40.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: downward wheel arms ReplayDeltas while SyncUndo stays armed.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B: narrow viewport AND queue a second downward wheel on the delivery frame.
+        rt.set_viewport((480.0, 390.0), 1.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let anchor_row = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("r2w-20"))
+            .expect("r2w-20 must stay anchored at -80 px after resize + second downward wheel");
+        let anchor_rel_y = anchor_row.rect[1] - hist[1];
+        assert!(
+            (anchor_rel_y - (-80.0)).abs() <= 2.0,
+            "second downward wheel on resize probe frame must keep r2w-20 at -80 px, got {anchor_rel_y}"
         );
     }
 }

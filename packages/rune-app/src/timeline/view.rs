@@ -116,22 +116,23 @@ pub(crate) fn observe_history_wheel(
     }
     let wheel_scroll = s.transcript_display.timeline.scroll.clone();
     let mut state = wheel_scroll.get();
+    let (dx, dy) = crate::chat::reading::effective_wheel_delta(event);
     state.rail_wheel.note_phase(event.phase, tx);
     state.transcript_wheel_momentum = false;
     state.last_hand_rail = false;
-    if event.dy != 0.0 {
+    if dy != 0.0 {
         state.wheel_last_rail = Some(false);
         state.wheel_pending_commit = Some(tx.clock());
     }
     wheel_scroll.set(state);
     super::navigation::hand_scrolled(s, false);
-    if event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
-        let direction = if event.dy > 0.0 { Before } else { After };
+    if dy != 0.0 && dy.abs() > dx.abs() {
+        let direction = if dy > 0.0 { Before } else { After };
         turn_page_gesture(s, direction);
         if allow_edge_page
             && !s.history_error
             && !event.momentum
-            && let Some(edge) = boundary(wheel_scroll.get().viewport, -event.dy)
+            && let Some(edge) = boundary(wheel_scroll.get().viewport, -dy)
             && crate::chat::reader::request_page(s, edge)
         {
             crate::chat::reader::announce_paging(tx);
