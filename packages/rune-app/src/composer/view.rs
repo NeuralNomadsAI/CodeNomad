@@ -43,7 +43,7 @@ pub fn view(
                     }),
                     s.paging
                         || s.phase == Phase::Failed
-                        || !retry && s.phase == Phase::Reconnecting,
+                        || !retry && (s.phase.reconnecting() || s.stream_offline),
                     screen::action_tx(
                         &scope,
                         if retry {
@@ -59,7 +59,7 @@ pub fn view(
             crate::components::button_tx(
                 "oldest",
                 t("messageSection.scroll.toFirstAriaLabel"),
-                s.paging || s.phase == Phase::Reconnecting || s.phase == Phase::Failed,
+                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
                 screen::action_tx(&scope, crate::chat::reader::oldest),
             )
         }))
@@ -74,7 +74,7 @@ pub fn view(
             layout::button_tx(
                 t("promptInput.overlay.send"),
                 !can_send(s),
-                screen::action_tx(&scope, |s, tx| send(s, tx, false)),
+                screen::action_tx(&scope, super::actions::send_button),
             )
             .key("send"),
         );
@@ -446,13 +446,14 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if event.mods == rune::Mods::default() && matches!(event.key, Key::Up | Key::Down | Key::Escape)
+    if event.mods == rune::Mods::default()
+        && event.key == Key::Escape
+        && s.composer.recall.is_some()
+        && !s.composer.device.busy()
     {
-        if event.key == Key::Escape && s.composer.recall.is_some() && !s.composer.device.busy() {
-            super::recall::restore(s);
-            s.composer.picker.reset();
-            return true;
-        }
+        super::recall::restore(s);
+        s.composer.picker.reset();
+        return true;
     }
     for (action, older) in [(Action::PreviousPrompt, true), (Action::NextPrompt, false)] {
         if action.matches(s, event, tx) && super::recall::step(s, older, false, tx) {

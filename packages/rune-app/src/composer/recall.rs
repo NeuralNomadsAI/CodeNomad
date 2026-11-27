@@ -12,6 +12,7 @@ const MAX_WINDOW_ENTRIES: usize = 3200;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_BYTES: usize = 80 * 1024 * 1024;
+const MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum Project {
@@ -221,6 +222,34 @@ impl History {
     fn full(&self, additional: usize) -> bool {
         self.entries.len() >= MAX_WINDOW_ENTRIES || self.bytes + additional > MAX_BYTES
     }
+
+    pub(crate) fn unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.entries
+            .iter()
+            .fold((0usize, 0usize), |(files, bytes), entry| {
+                let (f, b) = entry.draft.add_unique_inline_usage(seen);
+                (files.saturating_add(f), bytes.saturating_add(b))
+            })
+    }
+
+    fn inline_usage_with(
+        &self,
+        base_seen: &std::collections::HashSet<usize>,
+        base_files: usize,
+        base_bytes: usize,
+        draft: &Draft,
+    ) -> (usize, usize) {
+        let mut seen = base_seen.clone();
+        let (df, db) = draft.add_unique_inline_usage(&mut seen);
+        let (hf, hb) = self.unique_inline_usage(&mut seen);
+        (
+            base_files.saturating_add(df).saturating_add(hf),
+            base_bytes.saturating_add(db).saturating_add(hb),
+        )
+    }
 }
 
 pub(crate) struct Recall {
@@ -231,6 +260,20 @@ pub(crate) struct Recall {
 }
 
 impl Recall {
+    pub(crate) fn edit(&self) -> &TextEdit {
+        &self.edit
+    }
+
+    pub(crate) fn draft(&self) -> &Draft {
+        &self.draft
+    }
+
+    pub(crate) fn clear_draft(&mut self) {
+        self.edit.clear();
+        self.draft = Draft::default();
+        self.missing = false;
+    }
+
     pub(crate) fn id(&self) -> i64 {
         self.id
     }
@@ -258,7 +301,6 @@ fn entry_sole_owner_bytes(entry: &Entry) -> usize {
         .saturating_add(entry.resolved.len())
         .saturating_add(entry.draft.sole_owner_bytes())
 }
-
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     record_with_limits(
         s,
@@ -322,7 +364,17 @@ fn record_with_limits(
                 } => name.len() + mime.len() + token.as_ref().map_or(0, String::len),
             })
             .sum::<usize>();
-    if bytes > MAX_BYTES {
+    let mut base_seen = std::collections::HashSet::new();
+    let (base_inline_files, base_inline_bytes) =
+        workspace::window_inline_usage_without_history(s, &mut base_seen, false);
+    let mut with_new = base_seen.clone();
+    let (new_files, new_bytes) = draft.add_unique_inline_usage(&mut with_new);
+    let new_inline_files = base_inline_files.saturating_add(new_files);
+    let new_inline_total = base_inline_bytes.saturating_add(new_bytes);
+    if bytes > MAX_BYTES
+        || new_inline_total > MAX_INLINE_BYTES
+        || new_inline_files > workspace::MAX_WINDOW_DEVICE_FILES
+    {
         persistence::append(s, &resolved);
         return false;
     }
@@ -336,7 +388,13 @@ fn record_with_limits(
     {
         history.discard(index);
     }
-    while history.full(bytes) {
+    while !history.entries.is_empty() && {
+        let (total_files, total_bytes) =
+            history.inline_usage_with(&base_seen, base_inline_files, base_inline_bytes, &draft);
+        history.full(bytes)
+            || total_bytes > MAX_INLINE_BYTES
+            || total_files > workspace::MAX_WINDOW_DEVICE_FILES
+    } {
         history.discard(history.entries.len() - 1);
     }
     history.next += 1;
@@ -353,6 +411,32 @@ fn record_with_limits(
     });
     let _ = crate::workspace::memory_budget::enforce_with_recall(s, limits, Some(recorded_id));
     true
+}
+
+pub(crate) fn forget_tab(s: &mut State, tab_key: &str) {
+    let history = &mut s.prompt_history;
+    let mut index = 0;
+    while index < history.entries.len() {
+        let owned_by_closed_tab = history.entries[index]
+            .origin
+            .as_ref()
+            .is_some_and(|(tab, _)| tab == tab_key);
+        if !owned_by_closed_tab {
+            index += 1;
+            continue;
+        }
+        if history.entries[index].resolved.is_empty() {
+            history.discard(index);
+            continue;
+        }
+        let entry = &mut history.entries[index];
+        entry.origin = None;
+        entry.draft = Draft::default();
+        let next_bytes = entry.edit.text.len() + entry.resolved.len();
+        history.bytes = history.bytes.saturating_sub(entry.bytes) + next_bytes;
+        entry.bytes = next_bytes;
+        index += 1;
+    }
 }
 
 pub(crate) fn fresh(s: &State) -> (&TextEdit, &Draft, bool) {
@@ -451,8 +535,16 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
         }
         edit.set_caret(edit.text.len());
         replace_edit(s, edit);
+        let had_inline = draft.inline_usage().0 > 0;
         s.composer.draft = draft;
         s.composer.attachments_missing = false;
+        if had_inline && !workspace::attachment_draft_admissible(s) {
+            s.composer
+                .draft
+                .attachments
+                .retain(|part| !matches!(part, Attachment::Device { .. }));
+            s.composer.attachments_missing = true;
+        }
     } else if !older && current.is_some() {
         restore(s);
         s.draft.set_caret(s.draft.text.len());

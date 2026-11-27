@@ -41,6 +41,7 @@ pub(super) struct InputRecheck<'a> {
     pub session: Option<&'a str>,
     pub directory: &'a str,
     pub native_directory: Option<&'a str>,
+    pub bound_directory: Option<&'a str>,
     pub message_list: bool,
     pub actual: &'a Option<Value>,
     pub initial_identity: &'a Option<(PathBuf, PathBuf, String)>,
@@ -67,11 +68,25 @@ impl InputRecheck<'_> {
         {
             return Err(foreign());
         }
-        let fresh =
-            crate::opencode::session_record_at(self.app, self.endpoint, self.session.ok_or_else(upstream_error)?)
-                .await?;
+        let fresh = crate::opencode::session_record_at(
+            self.app,
+            self.endpoint,
+            self.session.ok_or_else(crate::opencode::pre_dispatch_unavailable)?,
+        )
+        .await
+        .map_err(|e| if e.0 == Status::BAD_GATEWAY { crate::opencode::pre_dispatch_unavailable() } else { e })?;
+        let fresh_dir = fresh["location"]["directory"].as_str();
+        let bound_ok = self.bound_directory.is_none_or(|bound| {
+            fresh_dir.is_some_and(|native| {
+                native == bound
+                    || crate::files::paths::canonical(&self.app.scope, native)
+                        .zip(crate::files::paths::canonical(&self.app.scope, bound))
+                        .is_some_and(|(a, b)| a == b)
+            })
+        });
         if !self.actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
-            || fresh["location"]["directory"] != self.directory
+            || fresh_dir != Some(self.directory)
+            || !bound_ok
             || !self.location_live()
         {
             return Err(foreign());
@@ -81,7 +96,7 @@ impl InputRecheck<'_> {
         }
         self.principal.live()?;
         if !self.app.native.current(self.endpoint) {
-            return Err(crate::opencode::session_environment::unavailable());
+            return Err(crate::opencode::pre_dispatch_unavailable());
         }
         Ok(fresh)
     }
@@ -414,9 +429,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
     }
     if send_input {
-        let session = session.ok_or_else(upstream_error)?;
+        let session = session.ok_or_else(crate::opencode::pre_dispatch_unavailable)?;
         let mut url = endpoint.url.clone();
-        url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend([
+        url.path_segments_mut().map_err(|_| crate::opencode::pre_dispatch_unavailable())?.clear().extend([
             "api",
             "session",
             session,
@@ -427,7 +442,13 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if command && let Some(Value::Object(input)) = &input {
             crate::opencode::prompt::validate(app, workspace, input).await?;
         }
-        recheck.verify().await?;
+        match recheck.verify().await {
+            Ok(_) => {}
+            Err(e) if e.0 == Status::UNAUTHORIZED => {
+                return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+            }
+            Err(e) => return Err(e),
+        }
         if prompt_locations.iter().any(|(raw, p, _)| {
             crate::worktrees::ownership::resolve_directory(raw).as_deref() != Some(std::path::Path::new(&p.directory))
         }) {
@@ -448,17 +469,38 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
         crate::memory::sync(app, endpoint, session, || async { recheck.verify().await.is_ok() }).await;
-        crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
+        match crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
             dir == directory && recheck.verify().await.is_ok()
         })
-        .await?;
-        let fresh = recheck.verify().await?;
+        .await
+        {
+            Ok(()) => {}
+            Err(e) if e.0 == Status::UNAUTHORIZED => {
+                return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+            }
+            Err(e) => return Err(e),
+        }
+        let fresh = match recheck.verify().await {
+            Ok(fresh) => fresh,
+            Err(e) if e.0 == Status::UNAUTHORIZED => {
+                return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+            }
+            Err(e) => return Err(e),
+        };
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "waiting for send refresh");
-        crate::sessions::permission_mode::refresh_before_send(app, endpoint, &fresh, || {
+        match crate::sessions::permission_mode::refresh_before_send(app, endpoint, &fresh, || {
             principal.live().is_ok() && app.native.current(endpoint) && recheck.location_live()
         })
-        .await?;
+        .await
+        {
+            Ok(()) => {}
+            Err(_) if principal.0.is_cancelled() => {
+                return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+            }
+            Err(e) if e.0 == Status::BAD_GATEWAY => return Err(crate::opencode::pre_dispatch_unavailable()),
+            Err(e) => return Err(e),
+        }
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
@@ -510,7 +552,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         return Err(not_found());
     }
     if !app.native.current(endpoint) {
-        return Err(upstream_error());
+        return Err(if send_input { crate::opencode::pre_dispatch_unavailable() } else { upstream_error() });
     }
     let permission_snapshot = if let Some(control) = control
         && let Some(session_id) = session

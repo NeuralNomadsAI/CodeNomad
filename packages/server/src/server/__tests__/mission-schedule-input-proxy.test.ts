@@ -6,6 +6,11 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "../../opencode/missions/native-schedule-carrier"
+import { markDispatchHookAwareFetch } from "../../opencode/compatibility/transport"
+import { rememberRuntime } from "../../opencode/compatibility/runtime"
+import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
+import { OpenCodeSharedService } from "../../workspaces/opencode-service"
+import { ROUTER_OPTIONS } from "../routed-path"
 import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 
 const apps: FastifyInstance[] = []
@@ -14,15 +19,35 @@ const prefix = "/workspaces/w/instance"
 
 function fixture() {
   const events: string[] = [], reads: Array<{ sessionID: string; directory: string }> = []
+  const uncertainSessions: string[] = []
   const state = {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
+    locationWorkspaceID: undefined as string | undefined,
+    projectID: "project-a",
+    parentID: undefined as string | null | undefined,
+    createdAt: 1,
+    fork: undefined as Record<string, unknown> | undefined,
     result: undefined as unknown, failure: undefined as unknown, current: true,
+    connectionError: undefined as unknown,
+    profileError: undefined as unknown,
+    usePlainFetch: false,
     afterRead: async () => {},
+    beforeFetchCheck: async () => {},
   }
-  const sessions = new Map<string, { id: string; location: { directory: string }; metadata?: Record<string, unknown>;
+  const sessions = new Map<string, { id: string; location: { directory: string; workspaceID?: string }; projectID?: string; parentID?: string | null; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
   const missing = new Set<string>()
-  const session = (id: string) => sessions.get(id) ?? { id, location: { directory: state.directory }, metadata: state.metadata }
+  const session = (id: string) => sessions.get(id) ?? {
+    id,
+    projectID: state.projectID,
+    ...(state.parentID !== undefined ? { parentID: state.parentID } : {}),
+    fork: state.fork,
+    time: { created: state.createdAt },
+    location: state.locationWorkspaceID !== undefined
+      ? { directory: state.directory, workspaceID: state.locationWorkspaceID }
+      : { directory: state.directory },
+    metadata: state.metadata,
+  }
   const client = {
     rpc: (definition: unknown) => {
       assert.equal(definition, CODENOMAD_MISSIONS_RPC)
@@ -42,14 +67,34 @@ function fixture() {
     },
   } as unknown as OpenCodeClient
   const endpoint = { url: "http://private-fixture.invalid" }
+  const hookAwareFetch = markDispatchHookAwareFetch(async (
+    _input: unknown,
+    _init?: unknown,
+    _media?: unknown,
+    dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void },
+  ) => {
+    await state.beforeFetchCheck()
+    await dispatchHooks?.beforeFetch?.()
+    connection.assertCurrent()
+    dispatchHooks?.onDispatch?.()
+    events.push("forward")
+    return Response.json({ ok: true })
+  })
+  const plainFetch = async () => {
+    events.push("plain-forward")
+    return Response.json({ ok: true })
+  }
   const connection = {
-    endpoint, client, profile: async () => "modern" as const,
+    endpoint, client, profile: async () => { if (state.profileError) throw state.profileError; return "modern" as const },
     assertCurrent() { if (!state.current) throw new Error("replaced connection") }, invalidate() {},
-    fetch: async () => { connection.assertCurrent(); events.push("forward"); return Response.json({ ok: true }) },
+    get fetch() {
+      return state.usePlainFetch ? plainFetch : hookAwareFetch
+    },
   }
   const workspace = { id: "w", path: "/repo" }
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => workspace as never, getSharedServiceConnection: async () => connection,
+    get: (id: string) => (id === "w" ? workspace : undefined) as never,
+    getSharedServiceConnection: async () => { if (state.connectionError) throw state.connectionError; return connection },
     getSharedServiceEndpoint: async () => { throw new Error("must keep the acquired endpoint") },
     getSharedServiceClient: async () => { throw new Error("must keep the acquired client") },
     getInstanceAuthorizationHeader: () => undefined, getServiceDirectory: () => "/repo",
@@ -58,11 +103,18 @@ function fixture() {
     ownsLocation: async (_id, location, pinned) => { assert.equal(pinned, client); return location.directory.startsWith("/repo") },
     ownsDirectory: async (_id, directory) => directory.startsWith("/repo"), ownsPath: async () => true,
   }
-  const app = Fastify(), fence = new WorktreeDeletionFence()
+  const app = Fastify({ routerOptions: ROUTER_OPTIONS }), fence = new WorktreeDeletionFence()
   apps.push(app)
-  registerInstanceProxyRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence,
-    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never })
-  return { app, state, reads, events, sessions, missing, fence, manager }
+  registerInstanceProxyRoutes(app, {
+    workspaceManager: manager,
+    worktreeDeletionFence: fence,
+    sessionCleanup: {
+      enterMutation: () => () => {},
+      markUncertain: (sessionId: string) => { uncertainSessions.push(sessionId) },
+    } as never,
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  return { app, state, reads, events, sessions, missing, fence, manager, uncertainSessions }
 }
 
 test("every ordinary session mutation rejects the real unmarked carrier before auxiliary writes or forwarding", async () => {
@@ -238,11 +290,11 @@ test("native Location ownership and a replaced connection stay fenced around the
   assert.deepEqual(f.reads, [])
   f.state.directory = "/repo/worktree"
   f.state.afterRead = async () => { f.state.current = false }
-  assert.equal((await f.app.inject({ method: "POST", url: `${prefix}/api/session/ses_carrier/prompt`, payload: { text: "blocked" } })).statusCode, 500)
+  const response = await f.app.inject({ method: "POST", url: `${prefix}/api/session/ses_carrier/prompt`, payload: { text: "blocked" } })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
   assert.deepEqual(f.events, [])
-  const release = f.fence.enter(["/repo"])
-  assert.ok(release, "a failed guard releases its physical mutation admission")
-  release()
+  assert.equal(await f.fence.run("/repo", ["/repo"], async () => "drained"), "drained", "a failed guard releases its physical mutation admission")
 })
 
 test("a session moved out of its admitted Location during the authoritative read cannot be written", async () => {
@@ -266,4 +318,344 @@ test("carrier reads and ordinary session reads remain distinct; importing a fore
   assert.deepEqual(f.events, ["forward"])
   const release = f.fence.enter(["/repo"])
   assert.ok(release); release()
+})
+
+test("late beforeFetch connection replacement rejects prompt with 502 before dispatch without markUncertain", async () => {
+  const f = fixture()
+  f.state.beforeFetchCheck = async () => { f.state.current = false }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_late_fail/prompt`,
+    payload: { text: "blocked before send" },
+  })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("service acquisition and profile negotiation failures classify as marked 502 before dispatch", async () => {
+  const f = fixture()
+  f.state.connectionError = new Error("service starting")
+  const first = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_acq_fail/prompt`,
+    payload: { text: "blocked during acquisition" },
+  })
+  assert.equal(first.statusCode, 502, first.body)
+  assert.equal(first.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(first.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, [])
+
+  f.state.connectionError = undefined
+  f.state.profileError = new Error("negotiation unavailable")
+  const second = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_neg_fail/command`,
+    payload: { name: "build", text: "blocked during negotiation" },
+  })
+  assert.equal(second.statusCode, 502, second.body)
+  assert.equal(second.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(second.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, [])
+})
+
+test("carrier metadata appearing before final dispatch check rejects prompt with 403", async () => {
+  const f = fixture()
+  f.state.beforeFetchCheck = async () => {
+    f.state.metadata = { "codenomad.schedule-carrier": true }
+  }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_late_carrier/prompt`,
+    payload: { text: "blocked on late carrier marker" },
+  })
+  assert.equal(response.statusCode, 403, response.body)
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("duplicate x-codenomad-session-directory headers are rejected with 400 before dispatch", async () => {
+  const f = fixture()
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_dup_header/prompt`,
+    headers: { "x-codenomad-session-directory": ["/repo/worktree", "/repo/worktree"] },
+    payload: { text: "duplicate header" },
+  })
+  assert.equal(response.statusCode, 400, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(f.events, [])
+})
+
+test("a plain fetch without dispatch-hook support is rejected with marked 502 before any upstream call", async () => {
+  const f = fixture()
+  f.state.usePlainFetch = true
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_plain_fetch/prompt`,
+    payload: { text: "must never reach upstream" },
+  })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, [], "plain fetch must be rejected before environment or upstream dispatch")
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("a session replaced under the same ID and location before dispatch is rejected with marked 403 while reordered fork keys stay allowed", async () => {
+  const f = fixture()
+  f.state.fork = { sessionID: "ses_parent", messageID: "msg_1" }
+  f.state.parentID = undefined
+  f.state.beforeFetchCheck = async () => {
+    f.state.fork = { messageID: "msg_1", sessionID: "ses_parent" }
+    f.state.parentID = null
+  }
+  const reordered = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_reordered_fork/prompt`,
+    payload: { text: "reordered fork keys and absent-vs-null parentID must stay allowed" },
+  })
+  assert.equal(reordered.statusCode, 200, reordered.body)
+  assert.deepEqual(f.events, ["environment", "forward"])
+  f.state.parentID = undefined
+
+  f.events.length = 0
+  f.state.beforeFetchCheck = async () => {
+    f.state.projectID = "project-replaced"
+    f.state.createdAt = 999
+  }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_replaced_identity/prompt`,
+    payload: { text: "blocked on replaced record identity" },
+  })
+  assert.equal(response.statusCode, 403, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+
+  // Changing only a non-directory field of location must also fail closed before dispatch.
+  f.events.length = 0
+  f.state.projectID = "project-a"
+  f.state.createdAt = 1
+  f.state.locationWorkspaceID = "ws-a"
+  f.state.beforeFetchCheck = async () => {
+    f.state.locationWorkspaceID = "ws-b"
+  }
+  const locationChanged = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_location_meta_changed/prompt`,
+    payload: { text: "blocked on non-directory location change" },
+  })
+  assert.equal(locationChanged.statusCode, 403, locationChanged.body)
+  assert.equal(locationChanged.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad-before-dispatch across routed variants", async () => {
+  const f = fixture()
+  for (const url of [
+    `${prefix}/api/session/ses_bad_json/prompt`,
+    `${prefix}/api/session/ses_bad_json/prompt;v=1`,
+    `${prefix}/api/session/ses_bad_json/%70rompt`,
+  ]) {
+    const badJson = await f.app.inject({
+      method: "POST",
+      url,
+      headers: { "content-type": "application/json" },
+      payload: "{invalid",
+    })
+    assert.equal(badJson.statusCode, 400, badJson.body)
+    assert.equal(badJson.headers["x-codenomad-before-dispatch"], "1")
+    const body = badJson.json() as { statusCode?: number; code?: string; error?: string; message?: string }
+    assert.equal(body.statusCode, 400)
+    assert.equal(body.error, "Bad Request")
+    assert.equal(typeof body.message, "string")
+  }
+
+  const tooLargeCommand = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_big_cmd/command`,
+    payload: { name: "build", text: "x".repeat(1024 * 1024) },
+  })
+  assert.equal(tooLargeCommand.statusCode, 413, tooLargeCommand.body)
+  assert.equal(tooLargeCommand.headers["x-codenomad-before-dispatch"], "1")
+  const tooLargeBody = tooLargeCommand.json() as { statusCode?: number; code?: string; error?: string; message?: string }
+  assert.equal(tooLargeBody.statusCode, 413)
+  assert.equal(tooLargeBody.code, "FST_ERR_CTP_BODY_TOO_LARGE")
+  assert.equal(tooLargeBody.error, "Payload Too Large")
+
+  // Single trailing slash runs attachment budget validation; double trailing slashes are rejected with 403 (parity with Rust).
+  const trailingInvalidData = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_trailing/prompt/`,
+    payload: { text: "bad attachment", files: [{ uri: "data:;base64,abc" }] },
+  })
+  assert.equal(trailingInvalidData.statusCode, 400, trailingInvalidData.body)
+  assert.equal(trailingInvalidData.headers["x-codenomad-before-dispatch"], "1")
+
+  for (const doubleSlash of [
+    `${prefix}/api/session/ses_trailing/prompt//`,
+    `${prefix}/api/session/ses_trailing/command//`,
+  ]) {
+    const refused = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      payload: { text: "double slash not allowed" },
+    })
+    assert.equal(refused.statusCode, 403, refused.body)
+    const refusedMalformed = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      headers: { "content-type": "application/json" },
+      payload: "{invalid",
+    })
+    assert.equal(refusedMalformed.statusCode, 403, refusedMalformed.body)
+    const refusedBadMediaType = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      headers: { "content-type": "not-a-media-type" },
+      payload: "{invalid",
+    })
+    assert.equal(refusedBadMediaType.statusCode, 403, refusedBadMediaType.body)
+  }
+
+  // Disallowed double-slash routes must not short-circuit workspace lookup (404) or preHandler auth (401).
+  const missingWorkspaceDoubleSlash = await f.app.inject({
+    method: "POST",
+    url: "/workspaces/missing/instance/api/session/ses_trailing/prompt//",
+    headers: { "content-type": "application/json" },
+    payload: "{invalid",
+  })
+  assert.equal(missingWorkspaceDoubleSlash.statusCode, 404, missingWorkspaceDoubleSlash.body)
+
+  const gatedApp = Fastify({ routerOptions: ROUTER_OPTIONS })
+  apps.push(gatedApp)
+  gatedApp.addHook("preHandler", (_request, reply, done) => {
+    void reply.code(401).send({ error: "Unauthorized" })
+    done()
+  })
+  registerInstanceProxyRoutes(gatedApp, {
+    workspaceManager: f.manager,
+    worktreeDeletionFence: f.fence,
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  const unauthDoubleSlash = await gatedApp.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_trailing/prompt//`,
+    headers: { "content-type": "application/json" },
+    payload: "{invalid",
+  })
+  assert.equal(unauthDoubleSlash.statusCode, 401, unauthDoubleSlash.body)
+
+  f.state.profileError = new UnsupportedOpenCodeError("2.0.0")
+  const upgrade = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_old_runtime/command/`,
+    payload: { name: "build", text: "blocked on 426" },
+  })
+  assert.equal(upgrade.statusCode, 426, upgrade.body)
+  assert.equal(upgrade.headers["x-codenomad-before-dispatch"], "1")
+  const upgradeBody = upgrade.json() as {
+    error?: string
+    message?: string
+    actualVersion?: string
+    minimumVersion?: string
+    reason?: string
+  }
+  assert.equal(upgradeBody.error, "opencode_update_required")
+  assert.equal(upgradeBody.actualVersion, "2.0.0")
+  assert.equal(typeof upgradeBody.minimumVersion, "string")
+  assert.equal(typeof upgradeBody.message, "string")
+  assert.equal(typeof upgradeBody.reason, "string")
+  assert.deepEqual(f.events, [])
+})
+
+test("a real OpenCodeSharedService connection passes dispatch-hook validation for POST prompt", async () => {
+  const upstream = Fastify()
+  apps.push(upstream)
+  const upstreamCalls: string[] = []
+  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async () => ({ output: { owned: false } }))
+  upstream.get("/api/session/:id", async (request) => ({
+    data: {
+      id: (request.params as { id: string }).id,
+      projectID: "project-live",
+      location: { directory: "/repo" },
+      time: { created: 1, updated: 1 },
+    },
+  }))
+  upstream.put("/api/session/:id/environment", async (_request, reply) => {
+    upstreamCalls.push("environment")
+    return reply.code(204).send()
+  })
+  upstream.post("/api/session/:id/prompt", async () => {
+    upstreamCalls.push("prompt")
+    return { data: { id: "msg_live_ok" } }
+  })
+  await upstream.listen({ host: "127.0.0.1", port: 0 })
+  const port = (upstream.server.address() as { port: number }).port
+  const liveEndpoint = { url: `http://127.0.0.1:${port}` }
+  rememberRuntime(liveEndpoint, { version: "2.3.2", pid: process.pid, discovery: "status" })
+  const shared = new OpenCodeSharedService()
+  await shared.endpoint({
+    kind: "lifecycle",
+    identity: "live-proxy-test",
+    lifecycle: {
+      discover: async () => liveEndpoint,
+      ensure: async () => liveEndpoint,
+    },
+  })
+  const connection = await shared.acquire()
+  const manager: InstanceProxyWorkspaceManager = {
+    get: () => ({ id: "w", path: "/repo" } as never),
+    getSharedServiceConnection: async () => connection,
+    getSharedServiceEndpoint: async () => connection.endpoint,
+    getSharedServiceClient: async () => connection.client,
+    getInstanceAuthorizationHeader: () => undefined,
+    getServiceDirectory: () => "/repo",
+    getServiceDirectoryForPath: async (_id, directory) => directory,
+    getWorktreeIdentityForPath: async () => "/repo",
+    getSessionEnvironment: async () => ({}),
+    ownsLocation: async (_id, location) => location.directory === "/repo",
+    ownsDirectory: async (_id, directory) => directory === "/repo",
+    ownsPath: async () => true,
+  }
+  const app = Fastify()
+  apps.push(app)
+  registerInstanceProxyRoutes(app, {
+    workspaceManager: manager,
+    worktreeDeletionFence: new WorktreeDeletionFence(),
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  const response = await app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_real_service/prompt`,
+    payload: { id: "msg_live_ok", text: "real service connection" },
+  })
+  assert.equal(response.statusCode, 200, response.body)
+  assert.deepEqual(upstreamCalls, ["environment", "prompt"])
+})
+
+test("session move fence blocks concurrent prompt posts with 409 before dispatch", async () => {
+  const f = fixture()
+  let releaseMove!: () => void
+  const moveEntered = new Promise<void>(resolve => {
+    void f.fence.runSession("ses_moving", async () => {
+      resolve()
+      await new Promise<void>(done => { releaseMove = done })
+    })
+  })
+  await moveEntered
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_moving/prompt`,
+    payload: { text: "blocked during move" },
+  })
+  assert.equal(response.statusCode, 409, response.body)
+  assert.deepEqual(f.events, [])
+  assert.deepEqual(f.uncertainSessions, [])
+  releaseMove()
 })

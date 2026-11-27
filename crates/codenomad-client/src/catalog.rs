@@ -138,7 +138,7 @@ impl Backend {
             .server_identity()
             .is_some_and(|current| current != id)
         {
-            self.client.revoke_server_attestation_at(generation, seq);
+            self.client.record_server_identity_mismatch(generation, seq);
             return Ok((id, Vec::new(), false, generation, seq, drop_epoch));
         }
         let capabilities: Vec<String> = meta["capabilities"]
@@ -170,6 +170,13 @@ impl Backend {
         self.client.require_attestation();
         let (id, capabilities, same_gen, generation, seq, drop_epoch) =
             self.probe_server_meta().await?;
+        if self
+            .client
+            .server_identity()
+            .is_some_and(|current| current != id)
+        {
+            return Err("Server identity changed".into());
+        }
         if !same_gen {
             return Err("Transport changed during server attestation".into());
         }

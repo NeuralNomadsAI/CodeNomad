@@ -86,6 +86,10 @@ impl Principal {
 pub fn unauthorized() -> Error {
     error(Status::UNAUTHORIZED, "Unauthorized")
 }
+pub fn unauthorized_before_dispatch() -> Response {
+    (Status::UNAUTHORIZED, [("x-codenomad-before-dispatch", "1")], Json(json!({"error":"Unauthorized"})))
+        .into_response()
+}
 struct Session {
     born: Instant,
     seen: Instant,
@@ -480,7 +484,12 @@ async fn admit_inner(app: Shared, mut req: Request, next: Next) -> Result<Respon
     }
     let path = req.uri().path().to_owned();
     if device.is_some() || req.headers().contains_key("x-codenomad-server-request") {
-        return Err(error(Status::UNAUTHORIZED, "This device is not paired"));
+        return Ok((
+            Status::UNAUTHORIZED,
+            [("x-codenomad-before-dispatch", "1")],
+            Json(json!({"error":"This device is not paired"})),
+        )
+            .into_response());
     }
     if app.devices.is_some() && path == "/api/remote-control/server-pair" {
         return Ok((
@@ -538,7 +547,7 @@ async fn admit_inner(app: Shared, mut req: Request, next: Next) -> Result<Respon
         {
             found("/login")
         } else if api {
-            unauthorized().into_response()
+            unauthorized_before_dispatch()
         } else {
             req.extensions_mut().insert(None::<Principal>);
             next.run(req).await

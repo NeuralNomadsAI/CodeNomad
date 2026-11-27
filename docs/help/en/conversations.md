@@ -128,3 +128,5 @@ In Rune, undo fills an empty composer with the original text. Use **Redo Last Me
 Forking copies conversation context through the selected point; it does not create a Git worktree or isolate files. Revert is not merely navigation. Review file effects and the undo boundary before continuing; use a fork when you want an alternative discussion without rewriting the original path.
 
 A **Retrying** status with a countdown means OpenCode is retrying a provider error on its own; wait for it or stop the session rather than sending again. A failed run may already have executed tools: inspect [Files](files.md), pending [requests](permissions.md) and native activity before retrying. **Stop session** interrupts execution, not a rollback of file or external-service changes.
+
+In Rune, disconnecting from the event stream keeps sending available for the open conversation. A rejected send leaves the draft intact with the error; an unconfirmed prompt stays held until its receipt arrives or history reconciles, an unconfirmed slash command stays held until its receipt arrives, and reconnecting never dispatches either again.

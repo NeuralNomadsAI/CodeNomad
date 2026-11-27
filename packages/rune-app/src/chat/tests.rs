@@ -154,6 +154,193 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     assert_eq!(rt.state.messages.last().unwrap().body, "été 🦀");
     assert!(rt.state.phase == Phase::Ready);
 }
+
+#[test]
+fn send_click_shares_a_frame_with_connection_loss() {
+    for revoke in [false, true] {
+        let mut state = init();
+        let (sender, commands) = bounded(1);
+        let (out, incoming) = bounded(8);
+        state.commands = Some(sender);
+        state.incoming = Some(incoming);
+        state.phase = Phase::Ready;
+        state.draft = TextEdit::new("Keep this draft");
+        let attachment = composer::draft::Attachment::Skill {
+            id: "review".into(),
+            name: "Review".into(),
+        };
+        state.composer.draft.attach(attachment.clone());
+        state.composer.picker.set_attachments_supported(true);
+        let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
+        rt.poll = Some(poll);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(composer::can_send(&rt.state));
+
+        let (x, y) = rt.find("send").expect("visible Send button");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        out.try_send(Event::ConnectionLost).unwrap();
+        if revoke {
+            out.try_send(Event::Failed).unwrap();
+        }
+        rt.frame(1.0 / 60.0);
+
+        if revoke {
+            assert!(matches!(rt.state.phase, Phase::Failed));
+            assert!(commands.is_empty());
+            let error = strings::t("promptInput.send.errorTitle");
+            assert!(
+                rt.elements()
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some(error))
+            );
+        } else {
+            assert!(rt.state.phase.reconnecting());
+            let Command::Prompt(prompt) = commands.try_recv().expect("one HTTP prompt") else {
+                panic!("expected a prompt");
+            };
+            assert_eq!(prompt.text, "Keep this draft");
+            assert_eq!(prompt.skills.len(), 1);
+            out.try_send(Event::PromptAcknowledged {
+                attempted: prompt.id.unwrap(),
+                outcome: transport::PromptOutcome::Unconfirmed,
+            })
+            .unwrap();
+            rt.frame(1.0 / 60.0);
+            assert!(rt.state.composer.unconfirmed_id().is_some());
+        }
+
+        out.try_send(Event::Sync(history::Page {
+            rows: vec![],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: true,
+        }))
+        .unwrap();
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.draft.text, "Keep this draft");
+        assert_eq!(rt.state.composer.draft.attachments, [attachment]);
+        assert!(commands.is_empty(), "recovery must not replay the click");
+        if !revoke {
+            assert!(
+                rt.state.composer.unconfirmed_id().is_some(),
+                "unconfirmed hold must stay active until the message appears in Sync"
+            );
+        }
+    }
+}
+
+#[test]
+fn stream_disconnected_keeps_device_attachments_tracks_observed_running_and_settles_auth_without_post()
+ {
+    let mut rt = runtime();
+    let (commands_out, commands) = bounded(2);
+    let (out, incoming) = bounded(16);
+    rt.state.commands = Some(commands_out);
+    rt.state.incoming = Some(incoming);
+    rt.state.composer.picker.set_attachments_supported(true);
+    rt.poll = Some(poll);
+
+    // Drop SSE while idle: attachments stay available and ObservedRunning updates the phase.
+    out.try_send(Event::ConnectionLost).unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
+    assert!(crate::composer::device::available(&rt.state));
+
+    // A failed SSE reconnect emits Event::Reconnecting without proof of HTTP authority loss.
+    out.try_send(Event::Reconnecting).unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
+    assert!(crate::composer::device::available(&rt.state));
+    rt.state.draft = rune::edit::TextEdit::new("Still admissible");
+    assert!(crate::composer::can_send(&rt.state));
+    rt.state.draft.clear();
+
+    out.try_send(Event::ObservedRunning {
+        running: true,
+        version: 1,
+    })
+    .unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: true }
+    ));
+
+    // ObservedRunning(false) clears running in StreamDisconnected without a reader barrier.
+    out.try_send(Event::ObservedRunning {
+        running: false,
+        version: 2,
+    })
+    .unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
+
+    // Queue a prompt during StreamDisconnected, then expire authentication before any receipt arrives.
+    rt.state.draft = rune::edit::TextEdit::new("Never posted");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    assert!(rt.state.composer.pending());
+    assert!(commands.try_recv().is_ok());
+
+    let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    out.try_send(Event::authentication_required(backend))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(!rt.state.composer.pending());
+    assert!(
+        rt.state.composer.unconfirmed_id().is_none(),
+        "an unsubmitted prompt on auth expiry must be rejected, not held as unconfirmed"
+    );
+    assert_eq!(rt.state.draft.text, "Never posted");
+}
+
+#[test]
+fn deferred_alternate_send_surfaces_refusal_after_authority_loss() {
+    let mut rt = runtime();
+    let (commands_out, commands) = bounded(1);
+    let (out, incoming) = bounded(4);
+    rt.state.commands = Some(commands_out);
+    rt.state.incoming = Some(incoming);
+    rt.state.phase = Phase::Streaming;
+    rt.state.draft = rune::edit::TextEdit::new("Queued draft");
+    rt.poll = Some(poll);
+    rt.frame(1.0 / 60.0);
+
+    // Open the overflow menu while streaming, click the enabled alternate-send item,
+    // and revoke authority before its deferred action executes on the next frame.
+    tap(&mut rt, "composer-more:trigger");
+    rt.frame(1.0 / 60.0);
+    let (x, y) = rt
+        .find("composer-more:item:queue")
+        .expect("alternate-send menu item");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    out.try_send(Event::Failed).unwrap();
+    rt.frame(1.0 / 60.0);
+    rt.frame(1.0 / 60.0);
+
+    assert!(commands.is_empty());
+    assert_eq!(rt.state.draft.text, "Queued draft");
+    let error = strings::t("promptInput.send.errorTitle");
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some(error))
+    );
+}
+
 #[test]
 fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
     let mut rt = runtime();
