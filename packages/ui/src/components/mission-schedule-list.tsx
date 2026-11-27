@@ -17,7 +17,7 @@ import { generateUUID } from "../lib/client-identity"
 import { convertMissionSchedule, convertibleMissionSchedule } from "../stores/mission-schedule-conversion"
 import type { useMissionCalendars } from "../stores/mission-calendars"
 
-// Schedules this window already tried to move to programmed Missions: one attempt each.
+// Schedules this window already tried to move to programmed Missions: one attempt per configuration, so an edit tries again.
 const conversions = new Set<string>()
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
@@ -54,7 +54,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     if (!calendars?.available() || !props.active() || !props.enabled() || list.error() || list.loading()) return
     const instanceId = props.instanceId, directory = props.directory
     for (const doc of schedules()) {
-      const key = JSON.stringify([instanceId, directory, doc.id])
+      const key = JSON.stringify([instanceId, directory, doc.id, doc.configuration])
       if (conversions.has(key) || !list.fresh(doc.id) || !convertibleMissionSchedule(doc)) continue
       conversions.add(key)
       void convertMissionSchedule(doc, {
