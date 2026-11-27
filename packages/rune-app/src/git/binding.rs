@@ -41,6 +41,18 @@ impl Default for Binding {
 }
 
 impl Binding {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::retained_bytes)
+    }
+
+    pub(crate) fn draft_bytes(&self) -> usize {
+        self.owner.as_ref().map_or(0, Ui::draft_bytes)
+    }
+
+    pub(crate) fn evict_inactive_caches(&mut self) -> usize {
+        self.owner.as_mut().map_or(0, Ui::evict_inactive_caches)
+    }
+
     pub(crate) fn take(binding: &mut Self) -> Self {
         let taken = std::mem::take(binding);
         binding.preferences = taken.preferences.clone();
@@ -53,10 +65,32 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
     s.git.preferences.get()
 }
 
-pub(crate) fn overlay_open(s: &State) -> bool {
+pub(crate) fn panel_overlay_open(s: &State) -> bool {
     s.git.owner.as_ref().is_some_and(|ui| {
-        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || ui.picker))
+        let picker_visible = ui.picker
+            && ui.online
+            && ui
+                .inventory
+                .as_ref()
+                .is_some_and(|list| list.trees.iter().any(|tree| !tree.missing));
+        let menu_visible = ui.open_menu.is_some() && ui.online;
+        ui.shown && (menu_visible || picker_visible)
     })
+}
+
+pub(crate) fn overlay_open(s: &State) -> bool {
+    s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.placement_picker.is_some())
+        || panel_overlay_open(s)
+}
+
+pub(crate) fn dismiss_panel_overlays(s: &mut State, tx: &mut rune::Tx) {
+    super::menu::clear(s, tx);
+    if let Some(ui) = &mut s.git.owner {
+        ui.picker = false;
+    }
 }
 
 pub(crate) enum SessionDirectory {
@@ -107,14 +141,84 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
 
 #[cfg(test)]
 pub(crate) fn fixture_open_picker(s: &mut State) {
+    if s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.inventory.is_none())
+    {
+        let shown = s.git.owner.as_ref().is_some_and(|ui| ui.shown);
+        fixture_worktrees(s);
+        if let Some(ui) = s.git.owner.as_mut() {
+            ui.shown = shown;
+        }
+    }
     if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
         ui.picker = true;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_worktrees(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.online = true;
+        ui.shown = true;
+        ui.inventory = Some(codenomad_client::git::Worktrees {
+            repository: codenomad_client::git::Repository::Git,
+            trees: vec![
+                codenomad_client::git::Worktree {
+                    slug: "root".into(),
+                    label: None,
+                    directory: "D:/repo".into(),
+                    service_directory: None,
+                    branch: Some("main".into()),
+                    head: None,
+                    missing: false,
+                },
+                codenomad_client::git::Worktree {
+                    slug: "review".into(),
+                    label: None,
+                    directory: "D:/repo-review".into(),
+                    service_directory: None,
+                    branch: Some("feature".into()),
+                    head: None,
+                    missing: false,
+                },
+            ],
+        });
     }
 }
 
 #[cfg(test)]
 pub(crate) fn fixture_online(s: &State) -> Option<bool> {
     s.git.owner.as_ref().map(|ui| ui.online)
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_unstaged_change(s: &mut State, path: &str) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.changes.replace(
+            vec![codenomad_client::git::Status {
+                path: path.into(),
+                original_path: None,
+                staged: None,
+                unstaged: Some(codenomad_client::git::Change {
+                    kind: "modified".into(),
+                    additions: 1,
+                    deletions: 0,
+                }),
+                whitespace_only: false,
+            }],
+            false,
+        );
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_open_placement_picker(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.placement_picker = Some(vec![("review".into(), "review · feature".into())]);
+    }
 }
 
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {

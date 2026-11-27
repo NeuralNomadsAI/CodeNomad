@@ -67,6 +67,7 @@ pub struct App {
     pub usage: crate::usage::Usage,
     pub provider_usage: Arc<crate::provider_usage::State>,
     pub previews: crate::previews::Previews,
+    pub integration_catalog: crate::plugin_controls::catalog::CatalogSource,
     pub temporary_workspaces: Option<crate::temporary_workspaces::TemporaryFolderRegistry>,
     pub service_activation: crate::opencode::service_action::Activation,
 }
@@ -119,6 +120,8 @@ impl App {
     ) -> Self {
         let mission_bridge = missions::run::new_token();
         let remote_control = crate::remote_control::Manager::new(&data);
+        let integration_catalog =
+            crate::plugin_controls::catalog::CatalogSource::new(Some(data.join("integrations-catalog.json")));
         let scope = if unrestricted { PathBuf::new() } else { root.clone() };
         native.attach_settings(settings.location.config.clone());
         let temporary_workspaces = crate::temporary_workspaces::TemporaryFolderRegistry::open(
@@ -134,6 +137,7 @@ impl App {
             usage: Default::default(),
             provider_usage: Default::default(),
             previews: Default::default(),
+            integration_catalog,
             temporary_workspaces,
             service_activation: Default::default(),
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),

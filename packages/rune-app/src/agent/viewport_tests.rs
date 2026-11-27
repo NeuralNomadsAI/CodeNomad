@@ -11,15 +11,10 @@ fn state() -> State {
     let (jobs, _) = bounded(1);
     let (stop, _) = bounded(1);
     let (_, results) = bounded(1);
-    let mut ui = Ui::new(Handle {
-        connection: None,
-        jobs,
-        stop,
-        results,
-    });
+    let mut ui = Ui::new(Handle::test(jobs, stop, results));
     ui.reading = false;
     ui.known = true;
-    ui.pending_known = true;
+    ui.mark_pending_known();
     ui.online = true;
     let mut state = init();
     state.phase = Phase::Ready;
@@ -1434,6 +1429,13 @@ fn ultra_short_touch_drag_cases_10_to_13() {
     // scroll_stack false -> true at unchanged stack height must auto-scroll focused composer into view.
     let mut s = state();
     seed_passages(&mut s, 20);
+    let ui = s.agent.as_mut().unwrap();
+    ui.models.push(Model {
+        reference: serde_json::json!("m-wrap-12"),
+        label: "Model · Long Name For Wrap".into(),
+        included: true,
+    });
+    ui.current = Some(serde_json::json!("m-wrap-12"));
     let mut rt = Runtime::new(s, view, (720.0, 260.0), Env::new(false, 1.0));
     settle(&mut rt);
     let stack_wide = element_rect(&rt, "session-stack");
@@ -2335,10 +2337,17 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     ui.models = (0..12)
         .map(|i| Model {
             reference: serde_json::json!(format!("m-{i}")),
-            label: format!("Model {i}"),
+            label: if i == 0 {
+                "Model · Long Name For Wrap".into()
+            } else {
+                format!("Model {i}")
+            },
             included: true,
         })
         .collect();
+    // Select a model label long enough to wrap `agent-actions` at 220px and unwrap at 600px
+    // regardless of the host OS locale (e.g., English "Model"+"Refresh"+"Stop" fits in 204px).
+    ui.current = Some(serde_json::json!("m-0"));
     let mut rt = Runtime::new(s, view, (220.0, 220.0), Env::new(false, 1.0));
     settle(&mut rt);
     let actions_narrow = element_rect(&rt, "agent-actions");
@@ -3072,9 +3081,15 @@ fn expanded_dock_with_timeline_banner_case(reduced_motion: bool) {
             "{label}: rail width {} must match {RAIL_WIDTH}",
             rail[2]
         );
+        let rtl = rune_theme_codenomad::catalogue::direction(crate::strings::locale()) == "rtl";
+        let abuts = if rtl {
+            (rail[0] + rail[2] - history[0]).abs() <= 1.0 && rail[0] >= -0.5
+        } else {
+            (rail[0] - (history[0] + history[2])).abs() <= 1.0 && rail[0] + rail[2] <= 800.5
+        };
         assert!(
-            (rail[0] - (history[0] + history[2])).abs() <= 1.0 && rail[0] + rail[2] <= 800.5,
-            "{label}: rail horizontal placement {rail:?} must abut history {history:?} inside viewport"
+            abuts,
+            "{label}: rail horizontal placement {rail:?} must abut history {history:?} inside viewport (rtl={rtl})"
         );
     };
     let assert_rail_clickable = |rt: &mut Runtime<State>, rail: [f32; 4], label: &str| {
@@ -3509,12 +3524,15 @@ fn expanded_dock_with_timeline_banner_case(reduced_motion: bool) {
 
     // Also verify a wrapped multi-line destinationFiltered alert at narrow width (240 px) reserves
     // its full height without clipping or overlapping history / expanded dock.
-    rt.update(|s, _| {
-        crate::timeline::tests::set_outline_error(s, 240.0, false);
-        crate::timeline::tests::set_filtered_notice(s, true);
+    // Scope to "en" so shorter CJK translations do not stay single-line at 240 px.
+    crate::strings::with_locale("en", || {
+        rt.update(|s, _| {
+            crate::timeline::tests::set_outline_error(s, 240.0, false);
+            crate::timeline::tests::set_filtered_notice(s, true);
+        });
+        rt.set_viewport((240.0, 260.0), 1.0);
+        settle_all(&mut rt);
     });
-    rt.set_viewport((240.0, 260.0), 1.0);
-    settle_all(&mut rt);
     let elements = rt.elements();
     let alert = elements
         .iter()

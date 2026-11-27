@@ -66,7 +66,7 @@ pub(crate) async fn root_only_with_slot(
     }
     match crate::git::run(&workspace.path, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
         Ok(output) if output.code == 0 => Ok(None),
-        Ok(output) if output.code == 128 && output.stderr_contains("not a git repository") => Ok(Some(true)),
+        Ok(output) if output.not_a_repository() => Ok(Some(true)),
         Err(err) if crate::git::is_missing_git(&err) => Ok(Some(false)),
         Ok(output) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", output.code));
@@ -138,6 +138,7 @@ pub(super) async fn strict_non_git_workspace(workspace: &Workspace) -> Result<bo
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
     match inventory::probe_root_checkout(workspace).await? {
         inventory::RootCheckout::NonGit | inventory::RootCheckout::MissingGit => Ok(true),
+        inventory::RootCheckout::FallbackNonGit => Err(probe_error()),
         inventory::RootCheckout::Git(Err(_)) => Ok(false),
         inventory::RootCheckout::Git(Ok(local)) => Ok(inventory::root_supported_with(app, workspace, *local).await),
     }
@@ -205,25 +206,47 @@ pub async fn list(
     .into_response())
 }
 
-pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventOwnership {
+    Owned,
+    NotOwned,
+    Unavailable,
+}
+
+/// Event routing ownership check distinguishing a proven non-owner (`NotOwned`) from a
+/// transiently unreadable root probe or worktree inventory (`Unavailable`), matching TS
+/// `instance-events.ts:298-315`.
+pub async fn event_ownership(
+    app: &Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> EventOwnership {
     let scope = app.scope.clone();
     let dir = directory.to_owned();
-    let Some((path, _anchor)) =
-        tokio::task::spawn_blocking(move || ownership::resolve_media_path(&scope, &dir)).await.ok().flatten()
-    else {
-        return false;
+    let path = match tokio::task::spawn_blocking(move || ownership::resolve_media_path_checked(&scope, &dir)).await {
+        Ok(Ok(Some((path, _anchor)))) => path,
+        Ok(Ok(None)) => return EventOwnership::NotOwned,
+        Ok(Err(())) | Err(_) => return EventOwnership::Unavailable,
     };
     if path == w.path {
-        return true;
+        return EventOwnership::Owned;
     }
     let external = !path.starts_with(&w.path);
-    if !external && matches!(root_only(w).await, Ok(Some(true))) {
-        return true;
+    match root_only(w).await {
+        Ok(Some(true)) => return if external { EventOwnership::NotOwned } else { EventOwnership::Owned },
+        Ok(Some(false)) => return EventOwnership::NotOwned,
+        Err(_) => return EventOwnership::Unavailable,
+        Ok(None) => {}
     }
-    let Some(catalogue) = crate::worktrees::linked::event_catalogue(app, w).await else {
-        return false;
+    let Some(catalogue) = crate::worktrees::linked::event_catalogue_at(app, w, endpoint).await else {
+        return EventOwnership::Unavailable;
     };
-    ownership::catalogue_owns_event(catalogue, path, external).await
+    if ownership::catalogue_owns_event(catalogue, path, external).await {
+        EventOwnership::Owned
+    } else {
+        EventOwnership::NotOwned
+    }
 }
 
 #[derive(Clone)]

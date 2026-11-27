@@ -98,6 +98,165 @@ impl Editor {
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
+    pub(crate) fn has_unsaved_edits(&self) -> bool {
+        self.draft.as_ref().is_some_and(|shared| {
+            let draft = lock(shared);
+            draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
+        })
+    }
+    pub(crate) fn clean_retained_bytes(
+        &self,
+        seen_drafts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let draft_bytes = self.draft.as_ref().map_or(0, |shared| {
+            // Count a shared clean Draft once across all tabs that view the same file.
+            if !seen_drafts.insert(std::sync::Arc::as_ptr(shared) as usize) {
+                return 0;
+            }
+            let draft = lock(shared);
+            draft.text.len().saturating_add(
+                draft
+                    .original
+                    .as_ref()
+                    .map_or(0, |snap| snap.text.len().saturating_add(snap.wire.len())),
+            )
+        });
+        self.edit.text.len().saturating_add(draft_bytes)
+    }
+    pub(crate) fn clean_evictable_bytes(&self) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let draft_bytes = self.draft.as_ref().map_or(0, |shared| {
+            // Only count the shared Draft buffer as evictable when no other tab shares it.
+            if std::sync::Arc::strong_count(shared) > 1 {
+                return 0;
+            }
+            let draft = lock(shared);
+            draft.text.len().saturating_add(
+                draft
+                    .original
+                    .as_ref()
+                    .map_or(0, |snap| snap.text.len().saturating_add(snap.wire.len())),
+            )
+        });
+        self.edit.text.len().saturating_add(draft_bytes)
+    }
+    pub(crate) fn evict_clean_buffers(&mut self) -> usize {
+        if self.has_unsaved_edits() {
+            return 0;
+        }
+        let freed = self.clean_evictable_bytes();
+        if freed == 0 {
+            return 0;
+        }
+        self.edit = TextEdit::new("");
+        if let Some(shared) = &self.draft {
+            if std::sync::Arc::strong_count(shared) == 1 {
+                let mut draft = lock(shared);
+                draft.original = None;
+                draft.text = String::new();
+                draft.version = None;
+                draft.revision += 1;
+                self.revision = draft.revision;
+                self.receipt = 0;
+            } else {
+                // Another tab shares this Draft: leave it intact and force `self.edit` to resync on return.
+                let revision = lock(shared).revision;
+                self.revision = revision.wrapping_sub(1);
+            }
+        } else {
+            self.receipt = 0;
+        }
+        freed
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_attach_shared(
+        &mut self,
+        store: Store,
+        directory: &str,
+        path: &str,
+        text: &str,
+    ) {
+        self.store = store;
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: directory.into(),
+            path: path.into(),
+        };
+        let saved_key = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: directory.into(),
+            path: path.into(),
+        };
+        let shared = self.store.open_saved(&key, Some(&saved_key));
+        {
+            let mut draft = lock(&shared);
+            if draft.original.is_none() {
+                draft.original = Some(Snapshot::loaded(text));
+                draft.text = text.into();
+                draft.revision += 1;
+            }
+            self.revision = draft.revision;
+        }
+        self.edit = TextEdit::new(&lock(&shared).text);
+        self.receipt = 1;
+        self.key = Some(key);
+        self.saved_key = Some(saved_key);
+        self.draft = Some(shared);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_load_clean(&mut self, text: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "clean.rs".into(),
+        };
+        let shared = self.store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded(text));
+            draft.text = text.into();
+            draft.revision += 1;
+            self.revision = draft.revision;
+        }
+        self.edit = TextEdit::new(text);
+        self.receipt = 1;
+        self.key = Some(key);
+        self.draft = Some(shared);
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_receipt(&self) -> u64 {
+        self.receipt
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_mark_dirty(&mut self, original: &str, edited: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: self.instance.clone(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "dirty.rs".into(),
+        };
+        let shared = self.store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded(original));
+            draft.text = edited.into();
+        }
+        self.store.sync(&key, &shared);
+        self.key = Some(key);
+        self.draft = Some(shared);
+    }
     #[cfg(test)]
     pub(crate) fn fixture_saved_key(&mut self, server: &str, project: &str) {
         if let Some(key) = &self.key {
@@ -196,7 +355,7 @@ impl Editor {
             && (self.project.is_none() || self.native_project.is_some())
             && self.draft.as_ref().is_some_and(|draft| {
                 let draft = lock(draft);
-                draft.original.is_some() || draft.recovered
+                self.revision == draft.revision && (draft.original.is_some() || draft.recovered)
             })
     }
     pub fn writable(&self) -> bool {
@@ -216,7 +375,7 @@ impl Editor {
             || self.project.is_some() && self.native_project.is_none()
             || self.draft.as_ref().is_none_or(|draft| {
                 let draft = lock(draft);
-                draft.original.is_none() && !draft.recovered
+                self.revision != draft.revision || (draft.original.is_none() && !draft.recovered)
             })
         {
             &mut self.rejected
@@ -299,8 +458,14 @@ impl Editor {
         self.position = Position::default();
     }
     pub fn activate(&mut self, active: bool) {
-        if active && !self.active {
-            self.restore_source_scroll();
+        if active {
+            if !self.active {
+                self.restore_source_scroll();
+            }
+            if let Some(shared) = self.draft.clone() {
+                let draft = lock(&shared);
+                self.sync_edit_from_draft(&draft);
+            }
         }
         self.active = active;
         if !active {
@@ -320,8 +485,10 @@ impl Editor {
         if let (Some(key), Some(shared)) = (&self.key, &self.draft) {
             {
                 let mut draft = lock(shared);
-                if draft.original.is_none() && !draft.recovered {
+                if self.revision != draft.revision || (draft.original.is_none() && !draft.recovered)
+                {
                     self.edit = TextEdit::new(&draft.text);
+                    self.revision = draft.revision;
                     return;
                 }
                 draft.text = lf(&self.edit.text);
@@ -421,7 +588,14 @@ impl Editor {
             }
         }
         if !self.ready(reader) {
-            return false;
+            if !self.active {
+                return false;
+            }
+            let Some(shared) = self.draft.clone() else {
+                return false;
+            };
+            let draft = lock(&shared);
+            return self.sync_edit_from_draft(&draft);
         }
         let Some(shared) = self.draft.clone() else {
             return false;
@@ -445,22 +619,7 @@ impl Editor {
             }
         }
         let draft = lock(&shared);
-        if self.revision != draft.revision {
-            self.position
-                .viewport
-                .before_text_replacement(&self.edit.text);
-            let live_selection = self
-                .position
-                .viewport
-                .mounted()
-                .then(|| SavedPosition::capture(&self.edit, Default::default()));
-            self.edit = TextEdit::new(&draft.text);
-            if let Some(saved) = live_selection {
-                saved.restore_selection(&mut self.edit);
-            }
-            self.revision = draft.revision;
-            changed = true;
-        }
+        changed |= self.sync_edit_from_draft(&draft);
         if draft.original.is_some() || draft.recovered {
             changed |= self.position.restore_selection(&mut self.edit);
         }
@@ -468,6 +627,25 @@ impl Editor {
         changed |= self.observed.as_ref() != Some(&observed);
         self.observed = Some(observed);
         changed
+    }
+    fn sync_edit_from_draft(&mut self, draft: &super::store::Draft) -> bool {
+        if self.revision == draft.revision {
+            return false;
+        }
+        self.position
+            .viewport
+            .before_text_replacement(&self.edit.text);
+        let live_selection = self
+            .position
+            .viewport
+            .mounted()
+            .then(|| SavedPosition::capture(&self.edit, Default::default()));
+        self.edit = TextEdit::new(&draft.text);
+        if let Some(saved) = live_selection {
+            saved.restore_selection(&mut self.edit);
+        }
+        self.revision = draft.revision;
+        true
     }
     fn adopt(&mut self, reader: &Reader, refreshed: bool) {
         if !reader.receipt().1 {

@@ -224,7 +224,13 @@ impl Http {
         self.fixture.as_ref().map(|_| ("fixture-client-id", "fixture-client-secret"))
     }
     pub fn open() -> Result<Self, reqwest::Error> {
-        let fixture = crate::bench::provider_fixture();
+        Self::open_with_fixture(crate::bench::provider_fixture())
+    }
+    #[cfg(test)]
+    pub fn with_fixture(fixture: Url) -> Result<Self, reqwest::Error> {
+        Self::open_with_fixture(Some(fixture))
+    }
+    fn open_with_fixture(fixture: Option<Url>) -> Result<Self, reqwest::Error> {
         let client = || Client::builder().no_proxy().timeout(Duration::from_secs(15)).user_agent("node");
         let strict = client().redirect(Policy::none()).build()?;
         let plain = client()
@@ -280,13 +286,21 @@ impl Http {
         let cap = if strict { 65_536 } else { 8 * 1024 * 1024 };
         let headers = response.headers().clone();
         let mut bytes = Vec::new();
-        while let Some(chunk) =
-            response.chunk().await.map_err(|_| Failed { status: (status >= 400).then_some(status), ..FAILED })?
-        {
-            if bytes.len() + chunk.len() > cap {
-                return Err(Failed { status: (status >= 400).then_some(status), ..INVALID });
+        let body_deadline =
+            tokio::time::Instant::now() + if status >= 400 { Duration::from_secs(2) } else { Duration::from_secs(15) };
+        loop {
+            match tokio::time::timeout_at(body_deadline, response.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    if bytes.len() + chunk.len() > cap {
+                        return Err(Failed { status: (status >= 400).then_some(status), ..INVALID });
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(_)) | Err(_) => {
+                    return Err(Failed { status: (status >= 400).then_some(status), ..FAILED });
+                }
             }
-            bytes.extend_from_slice(&chunk);
         }
         Ok(Reply { status, headers, bytes })
     }
