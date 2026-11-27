@@ -109,9 +109,23 @@ impl Files {
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| "invalid restore preference".into())
     }
-    pub(super) fn save_restore_enabled(&self, enabled: bool) -> Result<()> {
+    fn save_restore_enabled_with_sync(
+        &self,
+        enabled: bool,
+        sync_dir: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<SaveStage> {
         let bytes = serde_json::to_vec(&serde_json::json!({ "restoreEnabled": enabled }))?;
-        self.save_file("restore-enabled.json", 128, &bytes)
+        self.save_file_inner(
+            "restore-enabled.json",
+            128,
+            &bytes,
+            || true,
+            |temporary, destination| {
+                fs::rename(temporary, destination)?;
+                Ok(true)
+            },
+            sync_dir,
+        )
     }
     fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
         self.save_file_with(
@@ -134,11 +148,26 @@ impl Files {
         still_current: impl Fn() -> bool,
         publish: impl FnOnce(&Path, &Path) -> Result<bool>,
     ) -> Result<bool> {
+        match self.save_file_inner(name, limit, bytes, still_current, publish, sync_directory)? {
+            SaveStage::Published => Ok(true),
+            SaveStage::Skipped => Ok(false),
+            SaveStage::PublishedDirSyncFailed(err) => Err(err),
+        }
+    }
+    fn save_file_inner(
+        &self,
+        name: &str,
+        limit: usize,
+        bytes: &[u8],
+        still_current: impl Fn() -> bool,
+        publish: impl FnOnce(&Path, &Path) -> Result<bool>,
+        sync_dir: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<SaveStage> {
         if bytes.len() > limit {
             return Err("state too large".into());
         }
         if !still_current() {
-            return Ok(false);
+            return Ok(SaveStage::Skipped);
         }
         let destination = self.directory.join(name);
         plain(&destination, false)?;
@@ -154,21 +183,59 @@ impl Files {
             options.mode(0o600);
         }
         let mut file = options.open(&temporary)?;
-        let result = (|| {
+        let published = (|| {
             file.write_all(bytes)?;
             file.sync_all()?;
             drop(file);
-            if !publish(&temporary, &destination)? {
-                return Ok(false);
-            }
-            #[cfg(unix)]
-            File::open(&self.directory)?.sync_all()?;
-            Ok(true)
+            publish(&temporary, &destination)
         })();
-        if !matches!(result, Ok(true)) {
-            let _ = fs::remove_file(temporary);
+        match published {
+            Ok(true) => match sync_dir(&self.directory) {
+                Ok(()) => Ok(SaveStage::Published),
+                Err(err) => Ok(SaveStage::PublishedDirSyncFailed(err.into())),
+            },
+            Ok(false) => {
+                let _ = fs::remove_file(temporary);
+                Ok(SaveStage::Skipped)
+            }
+            Err(err) => {
+                let _ = fs::remove_file(temporary);
+                Err(err)
+            }
         }
-        result
+    }
+}
+
+enum SaveStage {
+    Skipped,
+    Published,
+    PublishedDirSyncFailed(Box<dyn std::error::Error + Send + Sync>),
+}
+
+fn sync_directory(directory: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        File::open(directory)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = directory;
+    Ok(())
+}
+
+fn reconcile_restore_marker(
+    stage: Result<SaveStage>,
+    actual: RestoreMode,
+    expected: RestoreMode,
+) -> Result<()> {
+    match stage {
+        Ok(SaveStage::Published | SaveStage::PublishedDirSyncFailed(_)) if actual == expected => {
+            Ok(())
+        }
+        Ok(SaveStage::PublishedDirSyncFailed(err)) => Err(err),
+        Ok(SaveStage::Published | SaveStage::Skipped) => {
+            Err("restore preference verification failed".into())
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -201,6 +268,8 @@ pub struct Store {
     files: std::sync::Arc<Files>,
     state_lock: std::sync::Arc<std::sync::Mutex<()>>,
     file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,
+    #[cfg(target_os = "windows")]
+    preferences_frame_lock: std::sync::Arc<std::sync::Mutex<()>>,
     staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     file_drafts_queue: std::sync::Arc<std::sync::Mutex<FileDraftQueue>>,
     pub(super) gate: std::sync::Arc<std::sync::Mutex<WriteGate>>,
@@ -240,14 +309,14 @@ impl Store {
     }
     #[cfg(target_os = "windows")]
     pub(crate) fn preferences_frame(&self) -> Option<Vec<u8>> {
-        let _guard = self.state_lock.lock().ok()?;
+        let _guard = self.preferences_frame_lock.lock().ok()?;
         self.files.load_file("preferences.json", 512).ok().flatten()
     }
 
     #[cfg(target_os = "windows")]
     pub(crate) fn save_preferences_frame(&self, bytes: &[u8]) -> Result<()> {
         let _guard = self
-            .state_lock
+            .preferences_frame_lock
             .lock()
             .map_err(|_| "state store unavailable")?;
         self.files.save_file("preferences.json", 512, bytes)
@@ -270,6 +339,8 @@ impl Store {
             files: std::sync::Arc::new(files),
             state_lock: Default::default(),
             file_drafts_lock: Default::default(),
+            #[cfg(target_os = "windows")]
+            preferences_frame_lock: Default::default(),
             staged: Default::default(),
             file_drafts_queue: Default::default(),
             gate: std::sync::Arc::new(std::sync::Mutex::new(WriteGate::new(restore))),
@@ -330,8 +401,8 @@ impl Store {
             }
             Err(_) => (false, false),
         };
-        // Release state_lock before waiting for file_drafts_lock so Preferences placement I/O
-        // on the UI thread is never blocked behind a slow file-draft sync.
+        // Release state_lock before waiting for file_drafts_lock so startup-state
+        // reads and writes are never blocked behind a slow file-draft sync.
         if let Ok(mut state) = queue.lock() {
             state.cancel_all();
         }
@@ -346,6 +417,14 @@ impl Store {
         }
     }
     pub async fn set_restore_enabled(&self, enabled: bool) -> Result<bool> {
+        self.set_restore_enabled_with_sync(enabled, sync_directory)
+            .await
+    }
+    async fn set_restore_enabled_with_sync(
+        &self,
+        enabled: bool,
+        sync_dir: impl FnOnce(&Path) -> std::io::Result<()> + Send + 'static,
+    ) -> Result<bool> {
         let files = self.files.clone();
         let state_lock = self.state_lock.clone();
         let file_drafts_lock = self.file_drafts_lock.clone();
@@ -363,6 +442,11 @@ impl Store {
             if let Ok(mut state) = queue.lock() {
                 state.cancel_all();
             }
+            let expected = if enabled {
+                RestoreMode::Enabled
+            } else {
+                RestoreMode::Disabled
+            };
             if enabled {
                 // Only purge leftover files when transitioning from a confirmed Disabled state;
                 // an unreadable/malformed preference must not erase user files on enable.
@@ -383,7 +467,7 @@ impl Store {
                 }
                 let saved = match state_lock.lock() {
                     Ok(_guard) => {
-                        let res = files.save_restore_enabled(true);
+                        let stage = files.save_restore_enabled_with_sync(true, sync_dir);
                         let actual = match files.restore_enabled() {
                             Ok(true) => RestoreMode::Enabled,
                             Ok(false) => RestoreMode::Disabled,
@@ -394,7 +478,7 @@ impl Store {
                             gate.generation = gate.generation.wrapping_add(1);
                             gate.frozen = false;
                         }
-                        res
+                        reconcile_restore_marker(stage, actual, expected)
                     }
                     Err(_) => {
                         if let Ok(mut gate) = gate.lock() {
@@ -408,7 +492,7 @@ impl Store {
             }
             let saved = match state_lock.lock() {
                 Ok(_guard) => {
-                    let res = files.save_restore_enabled(false);
+                    let stage = files.save_restore_enabled_with_sync(false, sync_dir);
                     let actual = match files.restore_enabled() {
                         Ok(true) => RestoreMode::Enabled,
                         Ok(false) => RestoreMode::Disabled,
@@ -418,7 +502,7 @@ impl Store {
                         gate.restore = actual;
                         gate.generation = gate.generation.wrapping_add(1);
                     }
-                    res
+                    reconcile_restore_marker(stage, actual, expected)
                 }
                 Err(_) => Err("state store unavailable".into()),
             };
@@ -585,4 +669,135 @@ fn memory_seen(files: &Files) -> Result<std::collections::BTreeMap<String, i64>>
         return Err("Invalid memory consultation state".into());
     }
     Ok(marks)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/rune-native-storage-tests");
+            fs::create_dir_all(&parent).unwrap();
+            let dir = parent.join(format!(
+                "trial-native-storage-{}",
+                codenomad_client::http::client_id().unwrap()
+            ));
+            fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn preferences_frame_does_not_block_on_state_lock() {
+        let dir = TestDir::new();
+        let store = crate::platform::block_on(Store::open(dir.0.join("rune"))).unwrap();
+        let _state_guard = store.state_lock.lock().unwrap();
+        let pref_store = store.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let saved = pref_store.save_preferences_frame(br#"{"x":10}"#).is_ok();
+            let loaded = pref_store.preferences_frame();
+            let _ = tx.send((saved, loaded));
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)),
+            Ok((true, Some(br#"{"x":10}"#.to_vec())))
+        );
+    }
+
+    #[test]
+    fn dir_sync_failure_after_marker_rename_reconciles_state_and_cleanup() {
+        let dir = TestDir::new();
+        let rune_dir = dir.0.join("rune");
+        crate::platform::block_on(async {
+            let store = Store::open(rune_dir.clone()).await.unwrap();
+            store.stage(b"workspace", &[]);
+            store.save(b"workspace".to_vec()).await.unwrap();
+            store.save_outlines(b"outlines".to_vec()).await.unwrap();
+            store.save_file_drafts(b"drafts").unwrap();
+
+            let disabled = store
+                .set_restore_enabled_with_sync(false, |_| {
+                    Err(std::io::Error::other("simulated dir sync failure"))
+                })
+                .await
+                .unwrap();
+            assert!(disabled);
+            {
+                let gate = store.gate.lock().unwrap();
+                assert!(gate.restore == RestoreMode::Disabled);
+                assert!(!gate.frozen);
+            }
+            assert!(!store.restore_enabled().await.unwrap());
+            assert_eq!(store.load().await.unwrap(), None);
+            assert_eq!(store.load_outlines().await.unwrap(), None);
+            assert_eq!(store.load_file_drafts().await.unwrap(), None);
+            store.stage(b"blocked", &[]);
+            store.save(b"blocked".to_vec()).await.unwrap();
+            assert_eq!(store.load().await.unwrap(), None);
+
+            let enabled = store
+                .set_restore_enabled_with_sync(true, |_| {
+                    Err(std::io::Error::other("simulated dir sync failure"))
+                })
+                .await
+                .unwrap();
+            assert!(enabled);
+            {
+                let gate = store.gate.lock().unwrap();
+                assert!(gate.restore == RestoreMode::Enabled);
+                assert!(!gate.frozen);
+            }
+            assert!(store.restore_enabled().await.unwrap());
+            store.stage(b"live", &[]);
+            store.save(b"live".to_vec()).await.unwrap();
+            assert_eq!(store.load().await.unwrap().as_deref(), Some(&b"live"[..]));
+        });
+        assert!(
+            fs::read_dir(&rune_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp"))
+        );
+    }
+
+    #[test]
+    fn pre_rename_marker_failure_returns_error_without_removing_startup_files() {
+        let dir = TestDir::new();
+        let rune_dir = dir.0.join("rune");
+        crate::platform::block_on(async {
+            let store = Store::open(rune_dir.clone()).await.unwrap();
+            store.stage(b"preserved", &[]);
+            store.save(b"preserved".to_vec()).await.unwrap();
+            fs::create_dir(rune_dir.join("restore-enabled.json")).unwrap();
+
+            assert!(
+                store
+                    .set_restore_enabled_with_sync(false, |_| Ok(()))
+                    .await
+                    .is_err()
+            );
+            {
+                let gate = store.gate.lock().unwrap();
+                assert!(gate.restore == RestoreMode::Unknown);
+                assert!(!gate.frozen);
+            }
+            assert_eq!(
+                store.load().await.unwrap().as_deref(),
+                Some(&b"preserved"[..])
+            );
+        });
+    }
 }
