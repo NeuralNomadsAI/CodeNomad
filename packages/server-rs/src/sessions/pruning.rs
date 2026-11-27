@@ -433,8 +433,31 @@ pub(super) async fn prove_ownership(
     let Some((path, anchor, anchor_id)) = resolved else {
         return Ok(None);
     };
-    let proof = ownership::media_directory(app, workspace, endpoint, &path, &anchor, false).await.map_err(|_| ())?;
-    Ok(proof.map(|checkout| OwnedTarget { directory: directory.to_owned(), path, anchor, anchor_id, checkout }))
+    let Some(checkout) =
+        ownership::media_directory(app, workspace, endpoint, &path, &anchor, false).await.map_err(|_| ())?
+    else {
+        return Ok(None);
+    };
+    let scope_recheck = app.scope.clone();
+    let dir_recheck = directory.to_owned();
+    let path_recheck = path.clone();
+    let anchor_recheck = anchor.clone();
+    let id_recheck = anchor_id.clone();
+    let checkout_recheck = checkout.clone();
+    let still_same = tokio::task::spawn_blocking(move || {
+        ownership::resolve_media_path_checked(&scope_recheck, &dir_recheck).ok().flatten().is_some_and(|(p, a)| {
+            p == path_recheck
+                && a == anchor_recheck
+                && crate::files::directory_identity(&a).ok().as_deref() == Some(id_recheck.as_str())
+                && checkout_recheck.live(&p)
+        })
+    })
+    .await
+    .unwrap_or(false);
+    if !still_same {
+        return Err(());
+    }
+    Ok(Some(OwnedTarget { directory: directory.to_owned(), path, anchor, anchor_id, checkout }))
 }
 
 #[allow(clippy::too_many_arguments)]

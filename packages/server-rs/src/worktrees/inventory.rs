@@ -875,15 +875,26 @@ async fn catalogue_in_at(
         crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();
     let scope_for_resolve = app.scope.clone();
     let candidates = tokio::task::spawn_blocking(move || {
+        let resolve_root = |raw: &str| -> Option<PathBuf> {
+            if scoped {
+                super::ownership::resolve_media_path_checked(&scope_for_resolve, raw)
+                    .ok()
+                    .flatten()
+                    .filter(|(p, a)| p == a)
+                    .map(|(p, _)| p)
+            } else {
+                physical(raw)
+            }
+        };
         let snapshot: HashMap<PathBuf, String> = annotations
             .split("\0\0")
-            .filter_map(|s| Some((physical(s.split('\0').next()?.strip_prefix("worktree ")?)?, s.to_owned())))
+            .filter_map(|s| Some((resolve_root(s.split('\0').next()?.strip_prefix("worktree ")?)?, s.to_owned())))
             .collect();
         let mut seen = HashSet::new();
         let mut resolved = Vec::new();
         for service_root in service_roots {
-            let Some(root) = physical(&service_root) else { continue };
-            if scoped && !root.starts_with(&scope_for_resolve) || !seen.insert(root.clone()) {
+            let Some(root) = resolve_root(&service_root) else { continue };
+            if !seen.insert(root.clone()) {
                 continue;
             }
             let Some(meta) = snapshot.get(&root).cloned() else { continue };
@@ -948,38 +959,19 @@ async fn catalogue_in_at(
                         // whole scan rather than publishing a partial inventory (TS `git-worktrees.ts:128-135`).
                         return if git_layout_gone(&root) { Ok(None) } else { Err(config_changed_error()) };
                     }
-                    let has_symlink_under = |base: &Path, target: &Path| {
-                        let Ok(rel) = target.strip_prefix(base) else {
-                            return false;
-                        };
-                        let mut cur = base.to_path_buf();
-                        for comp in rel.components() {
-                            cur.push(comp);
-                            if std::fs::read_link(&cur).is_ok() {
-                                return true;
-                            }
-                        }
-                        false
-                    };
                     let resolved_projected = if root.starts_with(&scope) {
                         match projected.to_str() {
                             Some(proj_str) => match super::ownership::resolve_media_path_checked(&scope, proj_str) {
                                 Ok(Some((real, anchor))) if real == anchor => Ok(real),
                                 Ok(Some(_)) => Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
                                 Ok(None) => {
-                                    if has_symlink_under(&root, &projected) {
-                                        // Symlink escaped `scope` or named a network path: refuse without
-                                        // touching the target (`nestedFolderMissing: false` for sibling).
-                                        return if !opened {
-                                            Ok(Some((check, projected, None, None, false)))
-                                        } else {
-                                            Err(conflict("Projected worktree directory is not physically owned"))
-                                        };
-                                    }
-                                    if !opened {
-                                        return Ok(Some((check, projected, None, None, true)));
-                                    }
-                                    return Err(conflict("Projected worktree directory is not physically owned"));
+                                    // Unresolvable, file-backed, dangling-loop, or out-of-scope/network
+                                    // projection: mark missing without touching any out-of-scope target.
+                                    return if !opened {
+                                        Ok(Some((check, projected, None, None, true)))
+                                    } else {
+                                        Err(conflict("Projected worktree directory is not physically owned"))
+                                    };
                                 }
                                 Err(()) => Err(std::io::Error::other("projected path unreadable")),
                             },
