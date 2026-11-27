@@ -17,7 +17,7 @@ cargo +1.99.1 build --locked --target x86_64-linux-android -p codenomad-rune-app
 node scripts/rune/bundle-android.mjs --lib "$env:CARGO_TARGET_DIR/x86_64-linux-android/debug/examples/libandroid.so" --abi x86_64
 ```
 
-L'APK Android est la même application, compilée en bibliothèque pour l'hôte Android natif de Rune (`aarch64-linux-android` et `--abi arm64-v8a` pour un téléphone, `x86_64` pour l'émulateur). La compilation demande le NDK (`CC_<cible>` et `CARGO_TARGET_<CIBLE>_LINKER` pointant sur son clang), l'empaquetage le SDK Android, un JDK et Gradle dans le `PATH`. Le script prend l'hôte Kotlin de Rune dans le checkout verrouillé par Cargo et écrit l'APK sous `target/rune-android`. Sur Android l'application ne lance pas de serveur : elle s'ouvre sur l'adresse du serveur du lanceur.
+L'APK Android est la même application, compilée en bibliothèque pour l'hôte Android natif de Rune (`aarch64-linux-android` et `--abi arm64-v8a` pour un téléphone, `x86_64` pour l'émulateur). La compilation demande le NDK (`CC_<cible>` et `CARGO_TARGET_<CIBLE>_LINKER` pointant sur son clang), l'empaquetage le SDK Android (plateforme 36), un JDK 17 ou plus récent et Gradle 9 dans le `PATH`. Le script prend l'hôte Kotlin de Rune dans le checkout verrouillé par Cargo et écrit l'APK sous `target/rune-android`. Sur Android l'application ne lance pas de serveur : elle s'ouvre sur l'adresse du serveur du lanceur.
 
 Le binaire natif est `$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe` sous Windows. Cargo résout Rune et ses correctifs de plateforme à la révision Git épinglée dans le manifeste du workspace. Le verrou Cargo à sa racine conserve les versions résolues ; les scripts de packaging trouvent les polices via ses métadonnées.
 
