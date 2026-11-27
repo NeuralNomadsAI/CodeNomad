@@ -1372,7 +1372,7 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
 
     let mut s = crate::init();
     let mut ws = crate::workspace::Ui::new();
-    ws.mark_ready();
+    ws.fixture_ready();
     s.workspace = Some(ws);
     s.phase = crate::Phase::Ready;
     s.messages = tab_a_rows.clone();

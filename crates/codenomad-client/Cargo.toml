@@ -23,6 +23,9 @@ getrandom = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "cookies", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "time"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

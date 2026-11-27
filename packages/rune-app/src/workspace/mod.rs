@@ -21,6 +21,8 @@ pub(crate) use state::has_wake_lock_eligible_work;
 pub(crate) use state::native_window_store;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::poll_cached_notifications;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::revoke_cached_sessions;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
@@ -29,17 +31,19 @@ pub(crate) use state::{
     switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
-    StashedTemporary, TemporaryTabInfo, Ui, active_project_title, active_session,
-    active_temporary_workspace, attachment_draft_admissible, bound, can_close_active, can_new,
-    can_switch_tabs, capture, capture_files_mode, clear_temporary_mark, close, close_after_keep,
-    close_ordinary, connected, conversation_stream_clients, detach_dead_temporary,
-    detach_stopped_temporary, draft_changed, file_draft_status, file_wrap, files_tab,
-    finish_discarded, has_conversation_stream, has_temporary_tabs, input_ready, new_tab, opened,
+    MAX_WINDOW_DEVICE_FILES, StashedTemporary, TemporaryTabInfo, Ui, active_project_title,
+    active_session, active_temporary_workspace, attachment_draft_admissible, bound,
+    can_close_active, can_new, can_switch_tabs, capture, capture_files_mode, clear_temporary_mark,
+    close, close_after_keep, close_ordinary, confirm_unconfirmed, connected,
+    conversation_stream_clients, detach_dead_temporary, detach_stopped_temporary, draft_changed,
+    file_draft_status, file_wrap, files_tab, finish_discarded, has_conversation_stream,
+    has_temporary_tabs, has_unconfirmed, input_ready, new_tab, note_unconfirmed, opened,
     panel_width, poll, poll_file_drafts, prepare_open, reconcile_temporary_folders, rename_tab,
     renew_connection, restore_files_mode, restore_stashed, resume, retry, schedule_catalogue,
     schedule_catalogue_refresh, select, select_index, select_relative, stash_for_discard,
     stashed_has_in_memory_state, status, strip, tab_rename_seed, temporary_tab_info,
     toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    window_inline_usage_without_history,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,

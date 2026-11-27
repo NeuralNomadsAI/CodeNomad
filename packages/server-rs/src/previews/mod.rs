@@ -370,13 +370,24 @@ pub async fn admit_local(State(app): State<Shared>, req: Request, next: Next) ->
     {
         // Host-based capabilities do not admit application controls or shared UI assets.
         if !safe_request(&req, Some(&format!("http://{host}")))
+            || crate::integrations::is_integrations_path(request_path)
             || ["/api", "/workspaces", "/sidecars", "/auth", "/login", "/previews"].iter().any(|prefix| {
                 request_path == *prefix || request_path.strip_prefix(prefix).is_some_and(|s| s.starts_with('/'))
             })
         {
-            return not_found();
+            let mut resp = not_found();
+            if crate::integrations::is_integrations_path(request_path) {
+                resp.headers_mut().insert(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+            }
+            return resp;
         }
-        let Some(preview) = lookup(&app, token) else { return not_found() };
+        let Some(preview) = lookup(&app, token) else {
+            let mut resp = not_found();
+            if crate::integrations::is_integrations_path(request_path) {
+                resp.headers_mut().insert(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+            }
+            return resp;
+        };
         let path = if proxy::upgrade(&req) {
             Some(request_path.to_owned())
         } else {

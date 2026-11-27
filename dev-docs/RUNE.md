@@ -239,6 +239,8 @@ The window keeps a bounded history of attempted prompts and commands by backend 
 
 Passive prompt recall loads on composer focus after the visible transcript installs its window. Instance-document changes are separate from transcript recovery and keep its in-flight window valid.
 
+An SSE disconnect keeps the bound conversation's HTTP send authority and attachment capability. A click refused in the current conversation leaves the draft intact and shows the send error. A submission without a confirmed result stays on hold for receipt or history reconciliation; reconnect never dispatches it again.
+
 Leaving a tab ends browsing and retains its fresh draft; only the window history keeps inactive recall payloads. A lost slash-command receipt holds the exact resolved input in its original conversation. Other command receipts cannot settle that hold. A matching recall shows **Delivery unconfirmed** and keeps Send disabled. Native slash commands return an empty acknowledgement and expose no exact attempt lookup.
 
 The shared **More actions** menu offers the alternate follow-up delivery, file selection, user-message jumps, prompt recall and undoable clearing. The alternate delivery inverts the confirmed preference while a conversation runs. Menu hints and composer key handling share the same bindings. Clearing during recall edits the visible prompt and ends browsing. User-message jumps leave the draft intact; the file picker opens in the selecting gesture.

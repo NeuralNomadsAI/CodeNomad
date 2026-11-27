@@ -737,7 +737,7 @@ where
         let _gate = state.gate.lock().await;
         principal.live()?;
         if !app.native.current(endpoint) {
-            return Err(crate::opencode::upstream_error());
+            return Err(crate::opencode::pre_dispatch_unavailable());
         }
         let (epoch, manual) = {
             let inner = state.inner.lock().unwrap();
@@ -865,7 +865,7 @@ where
             let _activate_lock = state.activate_gate.lock().await;
             principal.live()?;
             if !app.native.current(endpoint) {
-                return Err(crate::opencode::upstream_error());
+                return Err(crate::opencode::pre_dispatch_unavailable());
             }
             {
                 let mut inner = state.inner.lock().unwrap();
@@ -916,7 +916,7 @@ where
             if activation_dispatched.load(Ordering::SeqCst) {
                 Err(selection_failed())
             } else {
-                Err(crate::opencode::upstream_error())
+                Err(crate::opencode::pre_dispatch_unavailable())
             }
         }
         result = tokio::time::timeout(service.preflight_timeout, work) => match result {
@@ -925,7 +925,7 @@ where
                 if activation_dispatched.load(Ordering::SeqCst) {
                     Err(selection_failed())
                 } else if !app.native.current(endpoint) {
-                    Err(crate::opencode::upstream_error())
+                    Err(crate::opencode::pre_dispatch_unavailable())
                 } else {
                     Ok(())
                 }

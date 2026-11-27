@@ -34,5 +34,5 @@ export function sendUnauthorized(request: FastifyRequest, reply: FastifyReply) {
     return
   }
 
-  reply.code(401).send({ error: "Unauthorized" })
+  reply.header("x-codenomad-before-dispatch", "1").code(401).send({ error: "Unauthorized" })
 }

@@ -1,5 +1,5 @@
 use super::{can_send, device, recall, send};
-use crate::{Phase, State, platform, screen, strings::t};
+use crate::{State, platform, screen, strings::t};
 use rune::{El, Tx};
 use rune_theme_codenomad::{
     action_menu::{self, Item, Menu},
@@ -20,9 +20,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 fn can_queue(s: &State) -> bool {
-    s.phase == Phase::Streaming
-        && s.composer.picker.selected_command(&s.draft.text).is_none()
-        && can_send(s)
+    s.phase.running() && s.composer.picker.selected_command(&s.draft.text).is_none() && can_send(s)
 }
 
 pub(crate) fn can_clear(s: &State) -> bool {
@@ -64,6 +62,8 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         screen::action_tx(scope, |s, tx| {
             if can_queue(s) {
                 send(s, tx, true);
+            } else {
+                super::actions::refuse_send(s, tx);
             }
         }),
     );
@@ -157,6 +157,7 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Phase;
     use crate::transport::Command;
     use rune::{Env, Key, KeyEvent, Runtime};
 

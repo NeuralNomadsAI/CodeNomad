@@ -275,8 +275,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                 && (s.workspace.is_some()
                     || (s.draft.text.is_empty()
                         && s.composer.draft.attachments.is_empty()
-                        && s.composer.unconfirmed_id().is_none()
-                        && s.composer.command_unconfirmed.is_none()));
+                        && s.composer.unconfirmed_id().is_none()));
             items.push(static_item(
                 "close-session",
                 t("commands.closeSession.label"),

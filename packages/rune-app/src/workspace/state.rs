@@ -19,8 +19,10 @@ pub(crate) use temporary::{
     stashed_has_in_memory_state, temporary_tab_info,
 };
 
-pub use drafts::{
-    attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
+pub(crate) use drafts::{
+    MAX_WINDOW_DEVICE_FILES, attachment_draft_admissible, bound, capture, confirm_unconfirmed,
+    draft_changed, has_unconfirmed, note_unconfirmed, unconfirmed_drafts_full,
+    window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -151,6 +153,17 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn revoke_cached_sessions(s: &mut State) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    for entry in &mut ui.entries {
+        if let Some(cache) = &mut entry.cache {
+            cache.revoke_pairing();
+        }
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn has_wake_lock_eligible_work(s: &State) -> bool {
     if !s.screen.is_launcher()
@@ -184,9 +197,104 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    // Bounded in-memory lock registry across tabs (kept out of Snapshot to preserve the v1 client-state-codec schema).
+    closed_unconfirmed: Vec<ClosedUnconfirmed>,
     memory_budget: super::memory_budget::Coordinator,
 }
+pub(super) const MAX_UNCONFIRMED_LOCKS: usize = super::MAX_DRAFTS;
+struct ClosedUnconfirmed {
+    backend_id: Option<String>,
+    server_id: Option<String>,
+    session_id: String,
+    unconfirmed: crate::composer::UnconfirmedPrompt,
+}
+impl ClosedUnconfirmed {
+    fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
+        self.session_id == session_id
+            && self.backend_id == workspace.backend_id
+            && (self.backend_id.is_none() || self.server_id == workspace.server_id)
+    }
+}
 impl Ui {
+    pub(super) fn remember_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: String,
+        unconfirmed: crate::composer::UnconfirmedPrompt,
+    ) {
+        if let Some(existing) = self
+            .closed_unconfirmed
+            .iter_mut()
+            .find(|item| item.matches(workspace, &session_id))
+        {
+            if existing.unconfirmed.id() == unconfirmed.id() {
+                if existing.unconfirmed.is_edited() && !unconfirmed.is_edited() {
+                    existing.unconfirmed = unconfirmed;
+                }
+            } else {
+                existing.unconfirmed = unconfirmed;
+            }
+            return;
+        }
+        if self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS {
+            return;
+        }
+        self.closed_unconfirmed.push(ClosedUnconfirmed {
+            backend_id: workspace.backend_id.clone(),
+            server_id: workspace.server_id.clone(),
+            session_id,
+            unconfirmed,
+        });
+    }
+    pub(super) fn closed_unconfirmed_entry(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<&crate::composer::UnconfirmedPrompt> {
+        self.closed_unconfirmed
+            .iter()
+            .find(|item| item.matches(workspace, session_id))
+            .map(|item| &item.unconfirmed)
+    }
+    pub(super) fn closed_unconfirmed_id(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<&str> {
+        self.closed_unconfirmed_entry(workspace, session_id)
+            .map(crate::composer::UnconfirmedPrompt::id)
+    }
+    pub(super) fn closed_unconfirmed_count(&self) -> usize {
+        self.closed_unconfirmed.len()
+    }
+    pub(super) fn has_closed_unconfirmed_for(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> bool {
+        self.closed_unconfirmed
+            .iter()
+            .any(|item| item.matches(workspace, session_id))
+    }
+    pub(super) fn forget_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: &str,
+        attempt_id: &str,
+    ) -> Option<crate::composer::UnconfirmedPrompt> {
+        let mut removed = None;
+        self.closed_unconfirmed.retain(|item| {
+            if item.matches(workspace, session_id) && item.unconfirmed.id() == attempt_id {
+                if removed.is_none() {
+                    removed = Some(item.unconfirmed.clone());
+                }
+                false
+            } else {
+                true
+            }
+        });
+        removed
+    }
     pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
         &self.entries
     }
@@ -263,6 +371,9 @@ impl Ui {
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }
+    pub(crate) fn has_tab_key(&self, key: &str) -> bool {
+        self.entries.iter().any(|entry| entry.key == key)
+    }
     #[cfg(test)]
     pub(crate) fn fixture_ready(&mut self) {
         self.ready = true;
@@ -300,6 +411,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            closed_unconfirmed: Vec::new(),
             memory_budget: super::memory_budget::Coordinator::new(),
         }
     }
@@ -527,10 +639,11 @@ impl Ui {
         self.stage_with_stashed(stashed);
     }
 }
+fn same_backend(a: &Workspace, b: &Workspace) -> bool {
+    a.backend_id == b.backend_id && (a.backend_id.is_none() || a.server_id == b.server_id)
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
-    same_folder(&a.folder, &b.folder)
-        && a.backend_id == b.backend_id
-        && (a.backend_id.is_none() || a.server_id == b.server_id)
+    same_folder(&a.folder, &b.folder) && same_backend(a, b)
 }
 fn entry(key: String, mut saved: Tab) -> Entry {
     let mut cleared = HashSet::new();

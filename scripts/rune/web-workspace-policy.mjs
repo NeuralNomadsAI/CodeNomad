@@ -214,7 +214,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         return body?.decision==='reject'&&typeof body?.message==='string'
       if(keyboardActions&&scoped&&workspaces.size===1&&workspaces.has(scoped[1])&&method==='DELETE'&&scoped[2]==='session/ses_another/form/form-keyboard')
         return true
-      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form|inbox))?$/.test(scoped[2])
        const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
        if(!owned||!workspaces.has(owned[1]))return false
        if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId

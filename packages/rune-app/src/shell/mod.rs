@@ -165,7 +165,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
 
 fn connection(s: &State) -> &'static str {
     t(match s.phase {
-        Phase::Loading | Phase::Reconnecting => "instanceShell.connection.connecting",
+        Phase::Loading | Phase::Reconnecting | Phase::StreamDisconnected { .. } => {
+            "instanceShell.connection.connecting"
+        }
         Phase::Ready | Phase::Streaming => "instanceShell.connection.connected",
         Phase::Failed => "instanceShell.connection.disconnected",
         #[cfg(target_arch = "wasm32")]

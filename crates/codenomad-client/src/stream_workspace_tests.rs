@@ -373,7 +373,7 @@ fn workspace_events_cross_existing_http_stream_and_recovery_lane() {
                 },
             ]
         );
-        commands.send(Command::Close).await.unwrap();
+        assert!(commands.send(Command::Close).await.is_err());
         tokio::time::timeout(Duration::from_secs(2), task)
             .await
             .unwrap()
