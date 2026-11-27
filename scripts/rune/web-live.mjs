@@ -157,12 +157,13 @@ async function fetchOwnedStatus(route, origin, context, attestedGet, signal){
 }
 
 async function runWithPairTab(context, again, options, fn){
-  const tab=await context.newPage()
+  const setupDeadline=options?.setupDeadline??now()+30_000
+  const tab=await withBudget(setupDeadline,'creating pairing tab',()=>context.newPage())
   let primaryError=null
   let tabCleanupError=null
   let result
   try {
-    const pairFlow=await preparePair(tab, again, options)
+    const pairFlow=await preparePair(tab, again, {...options,setupDeadline})
     try {
       result=await fn(pairFlow)
     } catch (err) {
@@ -209,7 +210,8 @@ export function assertSse503Backoff(probes){
 async function verifySseAuthenticated503Recovery({
   page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,tap,attestedGet,
 }){
-  const again=new URL(await command('pair'))
+  const setupDeadline=now()+30_000
+  const again=new URL(await withBudget(setupDeadline,'creating pairing link before SSE 503 recovery',()=>command('pair')))
   assert.equal(again.origin,url.origin)
   assert.equal(again.pathname,'/remote-pair')
   again.searchParams.set('locale','he')
@@ -221,9 +223,9 @@ async function verifySseAuthenticated503Recovery({
   let recoveredStatuses=0
   let retryDelay1Ms=0
   let retryDelay2Ms=0
+  let episodeDeadline=0
   let forbiddenError=null
-  await runWithPairTab(context, again, {fromLink, waitUntil:'commit'}, async pairFlow=>{
-      const setupDeadline=now()+30_000
+  await runWithPairTab(context, again, {fromLink, waitUntil:'commit', setupDeadline}, async pairFlow=>{
       await withBudget(setupDeadline,'focusing original tab before SSE 503 recovery',()=>page.bringToFront())
       let injectTransient503=false
       let observeStatusEpisode=false
@@ -234,7 +236,6 @@ async function verifySseAuthenticated503Recovery({
       let metaGate='pass'
       let admittedSseRequest=null
       let sseResponseAt=null
-      let episodeDeadline=0
       let recovered=false
       let routeError=null
       const sseAbort=new AbortController()
@@ -248,6 +249,8 @@ async function verifySseAuthenticated503Recovery({
       let teardownFulfillError=null
       const secondProbeArrived=Promise.withResolvers()
       const releaseSecond503=Promise.withResolvers()
+      const thirdProbeArrived=Promise.withResolvers()
+      const releaseThird200=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
       const recoveredCaptured=Promise.withResolvers()
       const forbiddenRejected=Promise.withResolvers()
@@ -256,17 +259,21 @@ async function verifySseAuthenticated503Recovery({
       const routeFailedDone=routeFailed.promise.catch(()=>{})
       const sseStop=Promise.race([forbiddenDone,routeFailedDone])
       void secondProbeArrived.promise.catch(()=>{})
+      void thirdProbeArrived.promise.catch(()=>{})
       void recoveredCaptured.promise.catch(()=>{})
       const failForbidden=err=>{
         forbiddenError??=err
         releaseSecond503.resolve(false)
+        releaseThird200.resolve(false)
         forbiddenRejected.reject(err)
       }
       const failRoute=err=>{
         routeError??=err
         secondProbeArrived.reject(err)
+        thirdProbeArrived.reject(err)
         recoveredCaptured.reject(err)
         releaseSecond503.resolve(false)
+        releaseThird200.resolve(false)
         routeFailed.reject(err)
       }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise,routeFailed.promise])
@@ -280,12 +287,11 @@ async function verifySseAuthenticated503Recovery({
         if(err)onSseFulfillError(err)
       }
       const continueSseRoute=async route=>{
-        try {
-          await route.continue()
-        } catch (err) {
-          if(sseTeardown&&/Route is already handled/i.test(String(err?.message??err)))return
-          onSseFulfillError(err)
-        }
+        const err=await drainWithin([route.continue()],'SSE+503 route continue',5_000)
+        if(!err)return
+        if(sseTeardown&&/Route is already handled/i.test(String(err?.message??err)))return
+        onSseFulfillError(err)
+        await abortRouteOrClose(route,'SSE+503 route continue recovery')
       }
       const checkRoute=async route=>{
         try {
@@ -411,8 +417,14 @@ async function verifySseAuthenticated503Recovery({
           return
         }
         recoveryReserved=true
+        thirdProbeArrived.resolve()
         let fulfillError=null
         try {
+          const deliver=await releaseThird200.promise
+          if(!deliver||!injectTransient503){
+            await abortSseRoute(route)
+            return
+          }
           const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet,sseAbort.signal)
           if(!injectTransient503){
             await abortSseRoute(route)
@@ -499,9 +511,15 @@ async function verifySseAuthenticated503Recovery({
             assert.equal(await step(withBudget(episodeDeadline,'pairing overlay visible after first 503',
               ()=>dialog.count())),1,'Pairing overlay must stay visible after Rune processes the first transient 503')
             releaseSecond503.resolve(true)
+            await step(withBudget(episodeDeadline,'third /api/auth/status probe after second transient 503',
+              ()=>step(thirdProbeArrived.promise)))
+            assert.equal(await step(withBudget(episodeDeadline,'pairing overlay visible after second 503',
+              ()=>dialog.count())),1,'Pairing overlay must stay visible after Rune processes the second transient 503')
+            releaseThird200.resolve(true)
           } catch (err) {
             injectTransient503=false
             releaseSecond503.resolve(false)
+            releaseThird200.resolve(false)
             throw err
           }
           await step(withBudget(episodeDeadline,'bounded retry /api/auth/status 200 after transient 503s',
@@ -546,6 +564,7 @@ async function verifySseAuthenticated503Recovery({
           metaGate=recovered?'pass':'abort'
           sseAbort.abort()
           releaseSecond503.resolve(false)
+          releaseThird200.resolve(false)
           releaseHeldSse.resolve(recovered)
           const heldDrainErr=await drainSetsWithin([pendingHeldRoutes],'held SSE+503 routes',2_000)
           const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
@@ -610,7 +629,10 @@ async function verifySseAuthenticated503Recovery({
         page.off('response',onSseResponse)
       }
   })
-  assert.equal(await (await focus()).inputValue(),draft)
+  const editor=await withBudget(episodeDeadline,'focusing composer after SSE 503 recovery',()=>focus())
+  const preservedDraft=await withBudget(episodeDeadline,'reading preserved draft after SSE 503 recovery',
+    ms=>editor.inputValue({timeout:Math.max(1,Math.round(ms))}))
+  assert.equal(preservedDraft,draft)
   assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
   return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
 }
@@ -1028,9 +1050,10 @@ export async function revokedLauncher({context,url,messages}){
   }
 }
 
-export async function preparePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale'),waitUntil='load'}={}){
+export async function preparePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale'),waitUntil='load',setupDeadline}={}){
   const pairPath='/api/remote-control/pair'
   const referrer='https://rune-pair-source.test/'
+  const deadline=setupDeadline??now()+30_000
   let observedReferrer
   const routePair=async route=>{
     const req=route.request(), requested=new URL(req.url())
@@ -1048,8 +1071,9 @@ export async function preparePair(tab, url, {fromLink=false,assets,waitForRune=B
       ?route.continue():route.abort()
   }
   try {
-    await tab.route('**/*', routePair)
-    if(fromLink)await tab.goto(referrer)
+    await withBudget(deadline,'installing pairing tab route',()=>tab.route('**/*', routePair))
+    if(fromLink)await withBudget(deadline,'opening pairing source document',
+      ms=>tab.goto(referrer,{timeout:Math.max(1,Math.round(ms))}))
   } catch (err) {
     const unrouteErr=await unrouteBounded(tab,[['**/*',routePair]],'pairing tab route',2_000)
     if(unrouteErr)console.error(`Pairing route cleanup error after setup failure: ${unrouteErr.message}`)
