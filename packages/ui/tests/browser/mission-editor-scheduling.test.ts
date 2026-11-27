@@ -91,7 +91,12 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     }
     if (pathname.endsWith("/schedule") || pathname.includes("/requests/")) {
       const requestID = link.searchParams.get("requestID") ?? (pathname.includes("/requests/") ? pathname.split("/").at(-1) : undefined)
-      return route.fulfill({ json: requestID && original && proof ? receipt(original) : { ...missionScheduleView(doc), ...(requestID ? { pending: true } : {}) } })
+      if (requestID && (!original || requestID !== original.requestID)) {
+        errors.push(`unexpected receipt requestID: ${requestID} (expected ${original?.requestID ?? "none"})`)
+        return route.fulfill({ status: 400, json: { error: "foreign requestID" } })
+      }
+      return route.fulfill({ json: requestID && original && requestID === original.requestID && proof
+        ? receipt(original) : { ...missionScheduleView(doc), ...(requestID ? { pending: true } : {}) } })
     }
     return route.fulfill({ json: { available: true, projectID: "project", missions: [], cleanups: [], generatedAt: 1 } })
   })
@@ -391,7 +396,8 @@ test("conversation continuation and search failures retry their exact read insid
     assert.equal(await source.getAttribute("data-source-id"), "ses_tail")
     const continuations = reads.filter(request => request.searchParams.has("cursor"))
     assert.equal(continuations.length, 2)
-    for (const request of continuations) assert.deepEqual([...request.searchParams], [["cursor", "opaque_tail"]])
+    // A continuation keeps the page size: OpenCode otherwise falls back to 50 rows.
+    for (const request of continuations) assert.deepEqual([...request.searchParams].sort(), [["cursor", "opaque_tail"], ["limit", "200"]])
     await source.click()
     await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Recover")
     await retry.waitFor()
@@ -902,39 +908,53 @@ test("revision conflict keeps the old draft for explicit comparison and never re
   } finally { await page.close() }
 })
 
-for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its immutable identity across close/remount; Refresh reads only its exact receipt`, async () => {
-  const page = await browser.newPage(), f = await setup(page)
+for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its immutable identity across close/remount; automatic reread reads only its exact receipt`, async () => {
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page)
   try {
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     if (kind === "create") {
       await form(page).getByLabel(objective, { exact: true }).fill("Original creation")
       await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     }
-    await ready(page); f.lose = true
+    await ready(page); f.lose = true; f.proof = false
+    const receiptRequest = (url: string) => {
+      const link = new URL(url)
+      return link.searchParams.has("requestID") || link.pathname.includes("/requests/")
+    }
+    const initialRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
     await form(page).locator('button[type="submit"]').click()
-    if (kind === "create") {
-      // The hold is pending while its POST is in flight, then uncertain once the lost reply settles.
-      await page.waitForFunction(() => window.schedulingEditor.held()?.state === "uncertain")
-      assert.equal(await form(page).locator("[role=alert]").count(), 0)
-    } else await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await initialRead
+    assert.equal(await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
+    assert.equal(await form(page).locator(".window-footer").getByRole("button", { name: "Refresh", exact: true }).count(), 0)
     const held = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(held!.payload).requestID, f.posts[0].requestID)
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     await page.evaluate(() => window.schedulingEditor.mount(false))
+    const remountRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
     await page.evaluate(() => window.schedulingEditor.mount(true))
+    await remountRead
+    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), true)
     await form(page).evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(f.posts.length, 1)
-    f.proof = false
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).and(page.locator(":enabled")).waitFor()
+    const pendingTick = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
+    await page.clock.fastForward(5_000)
+    await pendingTick
     assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held)
     f.proof = true
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.clock.fastForward(5_000)
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1)
-    assert.ok(f.reads.some(read => read.searchParams.get("requestID") === f.posts[0].requestID || read.pathname.endsWith(`/requests/${f.posts[0].requestID}`)))
+    const receiptReads = f.reads.filter(read => read.searchParams.has("requestID") || read.pathname.includes("/requests/"))
+    assert.ok(receiptReads.length >= 3)
+    for (const read of receiptReads) {
+      const actual = read.searchParams.get("requestID") ?? read.pathname.split("/").at(-1)
+      assert.equal(actual, f.posts[0].requestID)
+    }
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -961,36 +981,40 @@ test("H9 locks structural fields during a passage, with reasons, while keeping i
 })
 
 for (const taskCount of [0, 75]) test(`a journal edit with ${taskCount} tasks and a lost ACK keeps the original request until its exact history receipt is read`, async () => {
-  const page = await browser.newPage(), f = await setup(page, true, "en", "dark", taskCount)
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page, true, "en", "dark", taskCount)
   try {
     await page.evaluate(() => window.schedulingEditor.journal()); await ready(page)
     await form(page).getByLabel(objective, { exact: true }).fill("Original journal edit")
-    f.lose = true
+    f.lose = true; f.proof = false
+    const firstMissing = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/workspaces/fixture/missions/msn_fixture")
     await form(page).getByRole("button", { name: "Save", exact: true }).click()
     await form(page).getByRole("alert").filter({ hasText: /change is unconfirmed/ }).waitFor()
+    await firstMissing
+    assert.equal(await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     const held = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(held!.payload).requestID, f.posts[0].requestId)
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.evaluate(() => window.schedulingEditor.journal())
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "Original journal edit")
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), true)
-    f.proof = false
     const missingHistory = page.waitForResponse(response => response.request().method() === "GET"
       && new URL(response.url()).pathname === "/api/workspaces/fixture/missions/msn_fixture")
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.evaluate(() => window.schedulingEditor.journal())
     await missingHistory
+    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "Original journal edit")
+    assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), true)
     assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held)
     f.proof = true
     f.contentProof = false
     const missingContent = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/content")
       && new URL(response.url()).searchParams.get("field") === "objective")
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.clock.fastForward(5_000)
     await missingContent
     assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held, "a descriptor without its exact content keeps the hold")
     f.contentProof = true
     const exactReceipt = page.waitForResponse(response => response.request().method() === "GET"
       && new URL(response.url()).pathname === "/api/workspaces/fixture/missions/msn_fixture")
-    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.clock.fastForward(5_000)
     await form(page).waitFor({ state: "detached" })
     const { mission } = await (await exactReceipt).json()
     assert.equal(mission.history[0].requestID, f.posts[0].requestId)

@@ -219,7 +219,17 @@ export function useWorkspaceFileEditor(options: {
       }
       invalidateFilesystemCaches(options.instanceId)
     } catch (error) {
-      if (current()) options.onError(error instanceof Error ? error.message : options.t("instanceShell.rightPanel.toast.saveError"))
+      if (current()) {
+        const status = error instanceof Error ? (error as { status?: unknown }).status : undefined
+        const code = error instanceof Error ? (error as { code?: unknown }).code : undefined
+        if (status === 409 && error instanceof Error && error.message === "File changed on disk") {
+          options.onError(options.t("filesPanel.saveConflict"))
+        } else if (code === "file_too_large" || status === 413 || (status === 400 && error instanceof Error && error.message === "Selected file is too large to attach")) {
+          options.onError(options.t("filesPanel.saveTooLarge"))
+        } else {
+          options.onError(error instanceof Error ? error.message : options.t("instanceShell.rightPanel.toast.saveError"))
+        }
+      }
     } finally {
       writing.update(previous => ({ ...previous, pending: false }))
       const latest = drafts.get(owned)

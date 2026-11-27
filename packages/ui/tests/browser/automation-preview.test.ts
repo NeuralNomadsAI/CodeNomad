@@ -81,7 +81,7 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const open = (session: string, url: string, timeout: number) => running.evaluate(
     (_electron, args) => (globalThis as any).automationPreview.open(...args), [session, url, timeout] as const)
   const slowUrl = `${guestURL}open-slow`
-  assert.deepEqual(await open("slow-session", slowUrl, 30_000), { url: `${guestURL}open-complete` })
+  assert.equal((await open("slow-session", slowUrl, 30_000) as { url: string }).url, `${guestURL}open-complete`)
   await assert.rejects(open("stalled-session", `${guestURL}open-stall`, 2500), /expired|timed out/)
   let wait: ReturnType<typeof setTimeout> | undefined
   try {

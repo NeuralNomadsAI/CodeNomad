@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "{name}を非表示",
   "transcriptFilters.expand": "{name}を展開",
   "transcriptFilters.collapse": "{name}を折りたたむ",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "セッション一覧を開く",
-  "messageListHeader.metrics.usedLabel": "使用",
-  "messageListHeader.metrics.availableLabel": "残り",
-  "messageListHeader.commandPalette.ariaLabel": "コマンドパレットを開く",
-  "messageListHeader.commandPalette.button": "コマンドパレット",
-  "messageListHeader.connection.connected": "接続済み",
-  "messageListHeader.connection.connecting": "接続中...",
-  "messageListHeader.connection.disconnected": "切断",
 
   "messageSection.empty.logoAlt": "CodeNomad ロゴ",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -263,7 +255,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "リクエストが中断されました",
   "messageItem.errors.unknownFallback": "不明なエラーが発生しました",
 
-  "attachmentChip.removeAriaLabel": "添付を削除",
 
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
 

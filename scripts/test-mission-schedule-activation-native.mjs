@@ -17,6 +17,8 @@ import { NativeScheduleSettingsActivation } from "../packages/server/src/opencod
 import { registerMissionRoutes } from "../packages/server/src/server/routes/missions.ts"
 import { WorktreeDeletionFence } from "../packages/server/src/workspaces/worktree-session-evacuation.ts"
 import { NativeMissionDocumentStore } from "../packages/server/src/missions/mission-document-store.ts"
+import { readNativeScheduleFlag } from "../packages/server/src/opencode/native-schedule-flag.ts"
+import { isBelowOpenCodeMinimum } from "../packages/server/src/opencode/runtime-support.ts"
 
 const scratch = process.argv[3]
 assert.ok(scratch && path.isAbsolute(scratch), "Pass the approved activation scratch")
@@ -30,7 +32,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
   return { update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }] }
 }, async ({ client, root, requests, connection }) => {
   const info = await client.server.info()
-  assert.equal(info.version, "2.3.2")
+  assert.ok(!isBelowOpenCodeMinimum(info.version), `This fixture qualifies a supported OpenCode, not ${info.version}`)
   rememberRuntime(connection.endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   const manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
     settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) },
@@ -67,7 +69,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
         },
       }, placed.project.id, placed.project.canonical)
       const selected = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
-      await documents.create("msn_activation_native", { title: "Prepared schedule", objective: "Fixture preparation only", template: "custom",
+      for (const id of ["msn_activation_native", "msn_activation_refused"]) await documents.create(id, { title: "Prepared schedule", objective: "Fixture preparation only", template: "custom",
         taskMode: "native", profileID: "fixture-profile", executionHost: "host", roots: [{ mode: "directory-only", directory: placed.directory }],
         profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
         launch: { timing: { kind: "every", intervalMs: 900_000 }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } },
@@ -75,34 +77,21 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     } finally { db.close() }
     const fence = new WorktreeDeletionFence(), controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: fence, logger: pino({ level: "silent" }) })
     const executor = new NativeScheduleSettingsActivation(controls, manager)
-    let lose = true
-    registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence, scheduleSettingsActivation: {
-      prepare: (...args) => executor.prepare(...args), verify: (...args) => executor.verify(...args),
-      apply: (id, loc, intent, journal) => executor.apply(id, loc, intent, {
-        ...journal, acknowledged: async (scope, digest) => {
-          await journal.acknowledged(scope, digest)
-          if (scope === "project" && lose) { lose = false; throw Error("lost native activation reply") }
-        },
-      }),
-    } })
+    registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence, scheduleSettingsActivation: executor })
     const url = `/api/workspaces/${workspace.id}/missions/msn_activation_native/schedule-settings`
     const payload = { requestID: "activate-original", expectedDocumentRevision: 0 }
-    const globalFile = path.join(paths.config, "opencode.jsonc")
-    const globalBefore = await readFile(globalFile, "utf8")
+    const globalFile = path.join(paths.config, "opencode.jsonc"), projectFile = path.join(root, ".opencode", "opencode.jsonc")
+    const globalBefore = await readFile(globalFile, "utf8"), projectBefore = await readFile(projectFile, "utf8")
+    // Automations are on unless a source turns them off: the proof records readiness and writes nothing.
     const first = await app.inject({ method: "POST", url, payload })
-    assert.equal(first.statusCode, 503, first.body)
-    const read = await app.inject({ method: "GET", url: `${url}?requestID=activate-original&expectedDocumentRevision=0` })
-    assert.equal(read.statusCode, 200, read.body)
-    receipt.partial = read.json().document
-    assert.equal(receipt.partial.state, "paused"); assert.equal(receipt.partial.scheduleActivation.state, "failed")
-    assert.equal(receipt.partial.scheduleActivation.targets[0].acknowledged, true)
-    assert.equal(receipt.partial.scheduleActivation.targets.length, 1)
-    assert.equal(receipt.partial.scheduleActivation.targets[0].scope, "project")
-    const retry = await app.inject({ method: "POST", url, payload })
-    assert.equal(retry.statusCode, 200, retry.body)
-    receipt.ready = retry.json().document
+    assert.equal(first.statusCode, 200, first.body)
+    receipt.ready = first.json().document
     assert.equal(receipt.ready.state, "paused"); assert.equal(receipt.ready.firstPlayedAt, null); assert.equal(receipt.ready.launchedCount, 0)
     assert.equal(receipt.ready.scheduleActivation.state, "ready")
+    assert.deepEqual(receipt.ready.scheduleActivation.targets, [])
+    const read = await app.inject({ method: "GET", url: `${url}?requestID=activate-original&expectedDocumentRevision=0` })
+    assert.equal(read.statusCode, 200, read.body)
+    assert.deepEqual(read.json().document, receipt.ready)
     const repeated = await app.inject({ method: "POST", url, payload })
     assert.equal(repeated.statusCode, 200, repeated.body)
     assert.equal(repeated.json().document.revision, receipt.ready.revision)
@@ -111,10 +100,27 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     assert.equal(fresh.statusCode, 200, fresh.body)
     assert.deepEqual(fresh.json().document, receipt.ready)
     assert.equal(await readFile(globalFile, "utf8"), globalBefore)
+    assert.equal(await readFile(projectFile, "utf8"), projectBefore)
+    // An explicit OFF refuses a fresh preparation, names its document and proves nothing was written.
+    await writeFile(projectFile, '{"automations":false,"experimental":{"subagent_depth":8}}\n')
+    const off = Date.now() + 15_000
+    while ((await readNativeScheduleFlag(current, location)).enabled) {
+      if (Date.now() > off) throw Error("Native watcher did not acknowledge the project OFF")
+      await delay(100)
+    }
+    const denied = await app.inject({ method: "POST", url: url.replace("msn_activation_native", "msn_activation_refused"),
+      payload: { requestID: "activate-refused", expectedDocumentRevision: 0 } })
+    assert.equal(denied.statusCode, 403, denied.body)
+    receipt.refused = denied.json()
+    assert.equal(receipt.refused.code, "schedule-activation-refused")
+    assert.deepEqual({ ...receipt.refused.refusal, configFileID: undefined, openable: undefined },
+      { reason: "explicit-off", provenance: "automations-setting", layer: "project", path: projectFile, configFileID: undefined, openable: undefined })
+    assert.deepEqual(receipt.refused.notApplied, { requestID: "activate-refused", expectedRevision: 0 })
+    assert.equal(await readFile(globalFile, "utf8"), globalBefore)
     assert.equal(requests.length, 0)
     assert.ok(!JSON.stringify(receipt).includes("DO-NOT-PERSIST"))
     receipt.status = "passed"
-    console.log("PASS native 2.3.2 production HTTP + document RPC/CAS: project-only effect, unchanged global config, lost reply observation, native Flag readiness, retained ready proof, paused throughout, zero model HTTP")
+    console.log(`PASS native ${info.version} production HTTP + document RPC/CAS: zero-write ready proof, retained across repeated and fresh requests, unchanged configuration, exact project OFF refusal with no effect, paused throughout, zero model HTTP`)
   } catch (error) { receipt.status = "failed"; receipt.error = error.message; throw error }
   finally { await plugin.stop(); await app.close(); await manager.shutdown()
     await writeFile(path.join(root, "schedule-activation-receipt.json"), JSON.stringify(receipt, null, 2)) }

@@ -160,6 +160,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "只读",
   "filesPanel.binary": "无法预览此二进制文件。",
   "filesPanel.draftConflict": "磁盘上的文件已更改。你的草稿已保留。",
+  "filesPanel.saveConflict": "保存时磁盘上的文件已更改。请刷新或重新保存。",
+  "filesPanel.saveTooLarge": "文件过大，无法保存。",
   "filesPanel.draftLimit": "无法保留草稿。请在关闭前保存或复制最新的修改。",
   "filesPanel.image.before": "之前",
   "filesPanel.image.after": "之后",

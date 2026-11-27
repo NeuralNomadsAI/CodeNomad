@@ -16,10 +16,11 @@ test("only an exact positive deletion receipt releases the retained deletion per
   hold.dispatch(); hold.dispose()
   assert.equal(hold.settle(binding, { document: null, pending: false, deleted: true }), false)
   const receipt = { id: binding.missionID, requestID: binding.requestID, expectedRevision: 4, deleteManagedSessions: false }
+  assert.equal(hold.settle(binding, { document: null, pending: false, deletionReceipt: receipt }), false)
   for (const invalid of [{ ...receipt, id: "foreign" }, { ...receipt, requestID: "different" }, { ...receipt, expectedRevision: 5 }, { ...receipt, deleteManagedSessions: true }])
-    assert.equal(hold.settle(binding, { document: null, pending: false, deletionReceipt: invalid }), false)
+    assert.equal(hold.settle(binding, { document: null, pending: false, deleted: true, deletionReceipt: invalid }), false)
   assert.equal(released, 0)
-  assert.equal(hold.settle(binding, { document: null, pending: false, deletionReceipt: receipt }), true)
+  assert.equal(hold.settle(binding, { document: null, pending: false, deleted: true, deletionReceipt: receipt }), true)
   assert.equal(released, 1)
   assert.equal(scheduledMissionHold(fence, binding.missionID), undefined)
 })

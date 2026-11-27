@@ -20,7 +20,7 @@ Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten o
 
 Agenten können aus jeder zugehörigen Unterhaltung alle Missionen des Projekts lesen, auch Ihre. Schreibgeschützte Ansichten zeigen Aufgaben, Ergebnisse, Bereinigung, geplante Durchläufe und Quellenauswahl; das Lesen startet oder wiederholt keine Arbeit.
 
-Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten, bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen und tägliche Zeitpläne erstellen oder steuern.
+Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten und bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen.
 
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
 
@@ -64,6 +64,10 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 **Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung mit den üblichen Prüfungen und automatischer Vorbereitung der Zeitplanung an.
 
+### Koordinator mit /goal aktiv halten {#coordinator-goal}
+
+**Koordinator mit /goal aktiv halten** steht für einmalige Missionen bereit und ist standardmäßig aus. Aktiviert setzt der Start OpenCode `/goal` auf dem Koordinator; Pausieren und Fortsetzen der Mission pausieren und setzen das Ziel fort, Abschluss oder Stopp entfernen es. Startet OpenCode während der Ausführung neu, setzt Missions das durch den Neustart pausierte Ziel automatisch fort (bei aktivierten OpenCode-Automationen auch bei geschlossenem CodeNomad); manuelle Pausen, Stillstand und Rundenlimits bleiben unberührt. Status und Steuerung erscheinen in der Missionsübersicht.
+
 ## Zeitplanung {#daily-schedules}
 
 ### Kriterien {#native-scheduling}
@@ -102,15 +106,9 @@ Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Ges
 
 Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
 
-### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
-
-Agenten können diese Zeitpläne aus jeder Unterhaltung desselben Projekts finden und steuern, auch aus einem anderen Worktree.
-
-Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benötigen unterbrochene tägliche Zeitpläne **Fortsetzen**. Sie holen den letzten zulässigen Tag nach, nicht alle versäumten Tage. Ergebnisse stehen beim ausgewählten Eintrag.
-
 ## Baum und Ergebnisse {#tracking}
 
-Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge.
+Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge. Einmalige und wiederkehrende Missionen stehen in einer Liste, neueste Aktivität zuerst; ein laufender geplanter Durchlauf steht ganz oben.
 
 Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unterhaltung öffnen** führt zum jeweiligen Koordinator oder zur Aufgabe. Das ⋯-Menü enthält anwendbare Aktualisierungs-, Unterbrechungs-, Konfigurations- und Bearbeitungsaktionen.
 
@@ -144,15 +142,17 @@ Bei laufendem CodeNomad können Agenten gespeicherte Projektunterhaltungen suche
 
 ## Schließen und Neustarts {#lifetime}
 
-CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne können bei verfügbarem Dienst/Host weiterlaufen; gesunde Kalender werden nach Dienstneustart fortgesetzt. Pausen, Stopps und ungewisse Ergebnisse behalten ihre Sperren. Bestehende tägliche Einträge brauchen Fortsetzen.
+CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne können bei verfügbarem Dienst/Host weiterlaufen; gesunde Kalender werden nach Dienstneustart fortgesetzt. Pausen, Stopps und ungewisse Ergebnisse behalten ihre Sperren.
 
 Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Server.
+
+Eine laufende einmalige Mission weist ihre Aufgaben weiter zu und stellt deren Berichte zu, auch wenn kein CodeNomad-Fenster das Projekt geöffnet hat. In CodeNomad geänderte Umgebungsvariablen und Berechtigungseinstellungen gelten für diese Unterhaltungen wieder, sobald das Projekt geöffnet ist.
 
 ## Pause, Stopp und unbestätigte Aktionen {#controls-recovery}
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittungsaktualisierung oder den angebotenen Wiederholungsversuch statt einer Ersatzaktion.
+Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion. Ein nativer Zeitplan bietet **Status prüfen** in seinem Menü **Weitere Aktionen** an.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 

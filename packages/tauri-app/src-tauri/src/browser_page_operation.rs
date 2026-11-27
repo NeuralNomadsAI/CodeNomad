@@ -32,6 +32,8 @@ pub(crate) enum Operation {
     Viewport,
     ReleaseHandles,
     Checkpoint,
+    /// The document's title and whether its tab can go back or forward.
+    History,
     Resolve {
         node: u64,
     },
@@ -61,6 +63,16 @@ pub(crate) enum Operation {
     },
     InsertText {
         text: String,
+    },
+    /// Served by the host's diagnostic event buffer, not by the page.
+    Diagnostics {
+        after: u64,
+    },
+    ResponseBody {
+        request: String,
+        /// The out-of-process frame's protocol session the request belongs to.
+        #[serde(default)]
+        session: Option<String>,
     },
 }
 fn keys(value: &Value, allowed: &[&str], required: &[&str]) -> Result<(), String> {
@@ -120,11 +132,25 @@ pub(crate) fn parse_in(value: Value, application: bool) -> Result<Operation, Str
         Operation::Tree
         | Operation::Viewport
         | Operation::ReleaseHandles
-        | Operation::Checkpoint => keys(&value, &["op"], &["op"])?,
+        | Operation::Checkpoint
+        | Operation::History => keys(&value, &["op"], &["op"])?,
         Operation::Resolve { node }
         | Operation::Geometry { node }
         | Operation::ScrollIntoView { node }
             if *node == 0 || *node > 9_007_199_254_740_991 =>
+        {
+            return Err(INVALID.into())
+        }
+        Operation::Diagnostics { after } if *after > 9_007_199_254_740_991 => {
+            return Err(INVALID.into())
+        }
+        Operation::ResponseBody { request, session }
+            if !handle(&json!(request))
+                || request.len() > 256
+                || session
+                    .as_ref()
+                    .is_some_and(|session| session.is_empty() || session.len() > 256)
+                || value.get("session").is_some_and(|session| !session.is_string()) =>
         {
             return Err(INVALID.into())
         }
@@ -292,6 +318,13 @@ pub(crate) fn parse_in(value: Value, application: bool) -> Result<Operation, Str
 }
 
 impl Operation {
+    /// The protocol session the command goes to; `None` is the top-level document.
+    pub(super) fn session(&self) -> Option<String> {
+        match self {
+            Self::ResponseBody { session, .. } => session.clone(),
+            _ => None,
+        }
+    }
     pub(crate) fn cdp(&self) -> Option<(&'static str, Value)> {
         self.cdp_in(false)
     }
@@ -307,6 +340,7 @@ impl Operation {
             }
             Self::Geometry { node } => ("DOM.getContentQuads", json!({"backendNodeId":node})),
             Self::Viewport => ("Page.getLayoutMetrics", json!({})),
+            Self::History => ("Page.getNavigationHistory", json!({})),
             Self::HitTest { x, y } => (
                 "DOM.getNodeForLocation",
                 json!({"x":*x as i64,"y":*y as i64,"includeUserAgentShadowDOM":false,"ignorePointerEventsNone":false}),
@@ -340,7 +374,8 @@ impl Operation {
             Self::Keyboard { event } => ("Input.dispatchKeyEvent", event.clone()),
             Self::InsertText { text } => ("Input.insertText", json!({"text":text})),
             Self::ReleaseHandles => ("Runtime.releaseObjectGroup", json!({"objectGroup":GROUP})),
-            Self::Checkpoint => return None,
+            Self::ResponseBody { request, .. } => ("Network.getResponseBody", json!({"requestId":request})),
+            Self::Checkpoint | Self::Diagnostics { .. } => return None,
         })
     }
     pub(crate) fn result(&self, raw: Value) -> Value {
@@ -360,10 +395,7 @@ impl Operation {
                 }
             }
             Self::Viewport => {
-                let viewport = raw
-                    .get("cssLayoutViewport")
-                    .filter(|value| !value.is_null())
-                    .unwrap_or(&raw["layoutViewport"]);
+                let viewport = layout_viewport(&raw);
                 let mut result = optional("width", viewport.get("clientWidth"));
                 if let Some(height) = viewport.get("clientHeight") {
                     result["height"] = height.clone();
@@ -371,8 +403,36 @@ impl Operation {
                 result
             }
             Self::HitTest { .. } => optional("node", raw.get("backendNodeId")),
+            Self::History => {
+                let entries = raw["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+                let index = raw["currentIndex"].as_i64().unwrap_or(-1);
+                let title = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| entries.get(index))
+                    .and_then(|entry| entry["title"].as_str())
+                    .unwrap_or("");
+                json!({
+                    "title": title.chars().take(2_048).collect::<String>(),
+                    "canGoBack": index > 0,
+                    "canGoForward": index >= 0 && (index as usize) + 1 < entries.len(),
+                })
+            }
             _ => raw,
         }
+    }
+}
+fn layout_viewport(metrics: &Value) -> &Value {
+    metrics
+        .get("cssLayoutViewport")
+        .filter(|value| !value.is_null())
+        .unwrap_or(&metrics["layoutViewport"])
+}
+/// `DOM.getNodeForLocation` takes document coordinates; a hit test carries viewport ones.
+pub(super) fn document_point(params: &mut Value, metrics: &Value) {
+    let viewport = layout_viewport(metrics);
+    for (key, scroll) in [("x", "pageX"), ("y", "pageY")] {
+        let offset = viewport[scroll].as_f64().unwrap_or(0.0).floor() as i64;
+        params[key] = json!(params[key].as_i64().unwrap_or(0) + offset);
     }
 }
 fn optional(key: &str, value: Option<&Value>) -> Value {
@@ -461,5 +521,11 @@ mod tests {
             .unwrap()
             .contains("evil()"));
         assert!(parse(json!({"op":"checkpoint"})).unwrap().cdp().is_none());
+    }
+    #[test]
+    fn a_hit_test_looks_where_the_scrolled_document_shows_the_point() {
+        let (_, mut params) = parse(json!({"op":"hit-test","x":25,"y":20})).unwrap().cdp().unwrap();
+        document_point(&mut params, &json!({"cssLayoutViewport":{"pageX":5,"pageY":2900.5}}));
+        assert_eq!((params["x"].as_i64(), params["y"].as_i64()), (Some(30), Some(2920)));
     }
 }

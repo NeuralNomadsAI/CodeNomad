@@ -6,7 +6,9 @@ import { Session } from "@opencode/schema/session"
 import { Context, Effect, Schema } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
-import { assertRecurrenceProofFresh, assertSchedulePrincipalAction, recurrenceSchedulePrincipal } from "../../missions/recurrence-control-proof"
+import { assertRecurrenceProofFresh, assertSchedulePrincipalAction, recurrenceControlProofSchema, recurrenceControlRequestDigest,
+  recurrenceSchedulePrincipal } from "../../missions/recurrence-control-proof"
+import { verifyRecurrenceBridge } from "../automation-plugin"
 import { missionScheduleID, missionScheduleRequestSchema, type MissionScheduleRequest } from "../../missions/mission-schedule-contract"
 import type { MissionDocument } from "../../missions/mission-document"
 import { stableToken } from "../../missions/receipt-identity"
@@ -15,10 +17,24 @@ import { validateMissionProfileCatalog } from "../../missions/playbook-profiles"
 import { physical } from "../../missions/physical-path"
 import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
 import { acquireNativeMissionDocumentStore, type NativeMissionDocumentRunner } from "./native-mission-document-storage"
-import { assertRecurrenceBridgeProof } from "./native-recurrence-control"
 import { automaticMissionStartID } from "../../missions/preparation-result"
 import { acquireNativeSourceFence } from "./native-source-fence"
 import { missionPreparationBindingSchema, readMissionPreparationBinding } from "../../missions/creation-intent"
+
+/** Transport authentication only. It does not mint a grant or authorize a model tool. */
+export async function assertRecurrenceBridgeProof(input: unknown, options: { allowAgent?: boolean } = {}) {
+  if (!input || typeof input !== "object") throw new Error("Recurrence transport authentication failed")
+  const { proof, retry: _retry, ...raw } = input as Record<string, unknown>
+  const body = recurrenceControlProofSchema.parse(raw), principal = recurrenceSchedulePrincipal(body)
+  assertSchedulePrincipalAction(principal, body.action)
+  if (principal.kind === "agent" && !options.allowAgent) throw new Error("Recurrence agent control refused")
+  assertRecurrenceProofFresh(body.issuedAt)
+  if (typeof proof !== "string" || !/^[a-f0-9]{64}$/.test(proof)
+    || principal.kind === "human" && principal.sessionID === "auth-disabled"
+    || body.digest !== recurrenceControlRequestDigest((({ digest: _digest, ...identity }) => identity)(body))
+    || !await verifyRecurrenceBridge(body, proof)) throw new Error("Recurrence transport authentication failed")
+  assertRecurrenceProofFresh(body.issuedAt)
+}
 
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 export const NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS = 95_000
@@ -112,7 +128,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
   const before = yield* Effect.promise(() => store.read(request.missionID))
   if (request.action === "create" && request.missionID !== missionScheduleID(location.project.id, location.project.canonical, request.requestID))
     throw new Error("Mission schedule creation identity differs")
-  if (request.action !== "create" && (!before || "deletedAt" in before && request.action !== "delete"))
+  if (request.action !== "create" && (!before || "deletedAt" in before && request.action !== "delete" && request.action !== "check"))
     throw new Error("Mission schedule unavailable")
   assertMissionScheduleAgentRequest(request, before && !("deletedAt" in before) ? before : undefined)
   let agentCurrent = (): void => {}
@@ -134,7 +150,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
   }
   const configuration = request.configuration ?? (before && !("deletedAt" in before) ? before.configuration : undefined)
   if (!configuration) {
-    if (request.action !== "delete" || !before || !("deletedAt" in before)) throw new Error("Mission schedule configuration unavailable")
+    if (request.action !== "delete" && request.action !== "check" || !before || !("deletedAt" in before)) throw new Error("Mission schedule configuration unavailable")
     const execution = nativeMissionScheduleControlExecution(request, () => {
       agentCurrent()
       if (!sameLocation()) throw new Error("Mission schedule Location changed")

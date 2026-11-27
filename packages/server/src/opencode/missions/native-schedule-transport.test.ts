@@ -113,12 +113,12 @@ test("missing, wrong process and changing same-URL incarnations refuse before di
   assert.equal(sends, 0)
 })
 
-test("a late discovery expires at the eight-second deadline, retains its lane, and never POSTs", async t => {
+test("a late discovery expires at the transport deadline, retains its lane, and never POSTs", async t => {
   const f = fixture(t), pending = deferred<Awaited<ReturnType<typeof Service.discover>>>()
   let probes = 0, sends = 0
   const overrides = { discover: async () => { probes++; return pending.promise }, fetch: (async () => { sends++; return f.reply() }) as typeof fetch }
   const transport = createNativeScheduleTransport(overrides)
-  assert.equal(NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS, 8000)
+  assert.equal(NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS, 15_000)
   assert.deepEqual(await transport.wake({ ...f.request, claim: async () => true }), { state: "not-dispatched", reason: "deadline" })
   // A second bundle/adapter and a moved-directory hint cannot create another lane.
   assert.deepEqual(await createNativeScheduleTransport(overrides).status({ ...f.request, directory: path.dirname(f.directory) }),

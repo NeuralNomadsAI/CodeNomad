@@ -16,6 +16,7 @@ export interface MissionEditorDraft {
   draftId?: string
   selectedModel?: UserMissionModel; savedBaselines?: UserMissionModel[]; optionsOpen: boolean; profileDetailsOpen: boolean
   startOnCreation?: boolean
+  coordinatorGoal?: boolean
   coordinatorSessionID?: string
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
   deleteAutoSubmitted?: boolean; deleteError?: string

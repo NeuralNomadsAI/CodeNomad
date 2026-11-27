@@ -7,7 +7,6 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { captureMissionView } from "./mission-view-capture"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { panelMissions } from "./mission-content-fixture"
 import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 import { fixtureEventStream } from "./fixture-event-stream"
@@ -31,7 +30,6 @@ after(async () => { try { await browser?.close() } finally { await events?.close
 const OBJECTIVE = "Objective"
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
-const emptyRecurrence = () => recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
 function created(body: Record<string, unknown>): MissionMap {
   return { version: 1, id: "msn_created", projectID: "project", projectCanonical: "/fixture", title: body.title as string, objective: body.objective as string,
     template: "custom", status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1,
@@ -67,8 +65,7 @@ async function setup(page: Page, acknowledgement: "fresh" | "recovered" | null =
     if (request.method() === "GET" && path.endsWith("/msn_created/schedule") && scheduled) return route.fulfill({ json: scheduled })
     if (request.method() === "GET" && path.endsWith("/missions/scheduled")) return route.fulfill({ json: {
       version: 1, projectID: "project", schedules: scheduled ? [scheduled.document] : [] } })
-    if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence") ? emptyRecurrence()
-      : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
+    if (request.method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/scheduled")) {
       creates.push(request.postDataJSON())
       scheduled = await pausedMissionScheduleReceipt(request.postDataJSON())

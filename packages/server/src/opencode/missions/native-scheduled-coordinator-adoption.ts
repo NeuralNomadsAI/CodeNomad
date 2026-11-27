@@ -1,13 +1,9 @@
-import { canonicalAuthority } from "../../missions/authority-protocol"
 import { missionLaunchModel, type MissionConfiguration } from "../../missions/launch-policy"
-import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
-import { MISSION_DOCUMENT_PREFIX, parseMissionDocument, missionTombstoneSchema, type MissionDocument } from "../../missions/mission-document"
+import { MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
+import { MISSION_DOCUMENT_PREFIX, type MissionDocument } from "../../missions/mission-document"
 import { stableToken } from "../../missions/receipt-identity"
-import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
-import type { NativeMissionSession } from "../../missions/control-types"
 import type { NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import type { NativeSourceFence } from "./native-source-fence"
-import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -68,7 +64,7 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   assertAgentScheduledCoordinatorSelection(config, author)
   const id = config.coordinatorSessionID
   if (!author || !id) return input.current
-  const { fence, observation, storage } = input
+  const { fence, storage } = input
   if (!fence.journal || !fence.coordinator) throw new Error("Agent coordinator validation unavailable")
   const token = stableToken(`${doc.projectID}\0${doc.projectCanonical}`, 24)
   const documents = `${MISSION_DOCUMENT_PREFIX}/project/${token}/missions/`
@@ -83,64 +79,9 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
     || session.location.directory !== input.native.location.directory || session.location.workspaceID !== input.native.location.workspaceID
     || isReservedMissionScheduleSessionID(id) || session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
     throw new ScheduledCoordinatorRefusal("coordinator-owned")
-  // An active conversation queues the passage prompt natively; only ownership is checked here.
-  const family = [id], seen = new Set(family)
-  for (let index = 0; index < family.length; index++) {
-    input.signal.throwIfAborted(); input.current()
-    for (const child of await observation.children(family[index])) {
-      if (seen.has(child) || seen.size >= MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Coordinator family coverage unavailable")
-      seen.add(child); family.push(child)
-    }
-  }
-  const journal = new MissionJournal({ ...storage, set: async () => { throw new Error("Coordinator validation is read-only") } },
-    doc.projectID, doc.projectCanonical)
-  const snapshot = await journal.snapshot()
-  if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
-    || snapshot.missions.some(mission => mission.id !== doc.pending?.missionID
-      && (mission.status === "active" || mission.control?.pending.length || mission.control?.receipts?.some(receipt => receipt.acknowledgementState === "unknown"))
-      && (seen.has(mission.coordinatorSessionId) || mission.actors.some(actor => seen.has(actor.sessionId))))) throw new ScheduledCoordinatorRefusal("coordinator-owned")
-  let after: string | undefined, count = 0
-  do {
-    const page = await storage.scan({ prefix: documents, after, limit: 100 })
-    for (const entry of page.entries) {
-      if (++count > 2036) throw new Error("Coordinator ownership coverage unavailable")
-      const identity = { projectID: doc.projectID, projectCanonical: doc.projectCanonical, id: entry.key.slice(documents.length) }
-      if (identity.id === doc.id) continue
-      const value = entry.value && typeof entry.value === "object" && "deletedAt" in entry.value
-        ? missionTombstoneSchema.parse(entry.value) : parseMissionDocument(entry.value, identity)
-      if (value.id !== identity.id || value.projectID !== doc.projectID || value.projectCanonical !== doc.projectCanonical)
-        throw new ScheduledCoordinatorRefusal("coordinator-owned")
-      if (!("deletedAt" in value) && (value.pending && seen.has(value.pending.coordinatorSessionID)
-        || value.preparation?.pending && [value.preparation.previousSessionID, value.preparation.coordinatorSessionID].some(actor => seen.has(actor))
-        || value.oneTime && seen.has(value.oneTime.coordinatorSessionID) && (!["finished", "stopped"].includes(value.state)
-          || value.oneTime.firstPlay && !value.oneTime.firstPlay.acknowledgement)))
-        throw new ScheduledCoordinatorRefusal("coordinator-owned")
-    }
-    if (page.next && (page.next === after || !page.entries.length)) throw new Error("Coordinator ownership coverage unavailable")
-    after = page.next
-  } while (after)
-  await validateMarker(session)
+  // A conversation may serve several Missions. A passage running in it when another one
+  // starts only delays that start (`adoptNativeScheduledCoordinator`).
   const current = (): true => { input.signal.throwIfAborted(); input.current(); return fence.current() }
   current()
   return current
-
-  async function validateMarker(session: NativeMissionSession) {
-    const raw = session.metadata?.["codenomad.mission"]
-    if (raw === undefined) return
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ScheduledCoordinatorRefusal("coordinator-owned")
-    const marker = raw as { missionID?: string; document?: { missionID?: string; passageID?: string; coordinatorReused?: unknown } }
-    if (doc.pending && canonicalAuthority(raw) === canonicalAuthority({ version: 1, missionID: doc.pending.missionID,
-      kind: "coordinator", role: "coordinator", document: { missionID: doc.id, passageID: doc.pending.id, coordinatorReused: true } })) return
-    if (marker.document) {
-      try {
-        const owner = await storage.get(`${documents}${marker.document.missionID}`)
-        if (!scheduledPassageOwner(owner, doc, id!, marker)) return
-      } catch { /* Unknown ownership refuses adoption. */ }
-      throw new ScheduledCoordinatorRefusal("coordinator-owned")
-    }
-    const owner = snapshot.missions.find(mission => mission.id === marker.missionID)
-    if (!owner || owner.status === "active" || owner.control?.pending.length
-      || owner.control?.receipts?.some(receipt => receipt.acknowledgementState === "unknown")
-      || !owner.actors.some(actor => actor.sessionId === id)) throw new ScheduledCoordinatorRefusal("coordinator-owned")
-  }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "codenomad-tauri"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 
@@ -59,6 +59,8 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(target_os = "macos")'.dependencies]
 # Already built through tauri; reads the bundle executable for restarts.
 plist = "1.8"
+# The vendored Wry (already built through tauri) cancels page-opened file panels during agent page leases.
+wry = { version = "0.57.1", default-features = false }
 block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle"] }

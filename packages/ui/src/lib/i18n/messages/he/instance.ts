@@ -160,6 +160,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "לקריאה בלבד",
   "filesPanel.binary": "אין תצוגה מקדימה לקובץ בינארי זה.",
   "filesPanel.draftConflict": "הקובץ השתנה בדיסק. הטיוטה נשמרה.",
+  "filesPanel.saveConflict": "הקובץ השתנה בדיסק בזמן השמירה. רענן או שמור שוב.",
+  "filesPanel.saveTooLarge": "הקובץ גדול מדי לשמירה.",
   "filesPanel.draftLimit": "לא ניתן לשמור את הטיוטה. יש לשמור או להעתיק את השינויים האחרונים לפני הסגירה.",
   "filesPanel.image.before": "לפני",
   "filesPanel.image.after": "אחרי",

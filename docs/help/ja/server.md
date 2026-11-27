@@ -8,7 +8,7 @@
 
 1. Node.js 24 LTS と npm をインストールします。
 2. **バックエンドプロセスの PATH** に Git を配置します。WSL 内だけの Git では Windows バックエンドの要件を満たしません。
-3. OpenCode をインストールまたは選択します。 必須の最低バージョンは **2.3.0** です。 [OpenCode のセットアップ](opencode.md)を参照してください。
+3. OpenCode をインストールまたは選択します。 必須の最低バージョンは **2.4.0** です。 [OpenCode のセットアップ](opencode.md)を参照してください。
 4. サーバーを起動するフォルダーを選ぶか、`--workspace-root` を明示します。
 
 Git がない場合、会話は明示的に開いた物理フォルダー内だけで利用でき、Git とワークツリー操作は失敗します。Git をインストールし、PATH 変更後にバックエンドを再起動してください。ワークスペースルートは開く／参照する範囲の制限であり、エージェント実行の制限ではありません。[セキュリティ](security.md)を参照してください。
@@ -80,7 +80,7 @@ TauriやElectronの起動には[デスクトップの起動引数](desktop.md#de
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`。ファイルシステム全体の参照を許可。エージェントのサンドボックス設定ではありません。 |
 | `--config <path>` | `CLI_CONFIG` | 解決される有効な既定値は `~/.config/codenomad/config.yaml`。明示配置にはディレクトリまたは YAML ファイルを指定可能。 |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`。文書化されたレベルは `trace`、`debug`、`info`、`warn`、`error`。 |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`。それ以外は指定ファイルに書き込み。 |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout` と、設定ファイルと同じ場所の `logs/server.log`。ファイルを指定すると、両方の代わりにそのファイルに書き込み。 |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`。実行時認証ユーザー名。実行時パスワードで上書きされなければ、保存済み認証ファイルは保存済みユーザー名を保持。 |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | 未設定。実行時のみのパスワード。管理対象の認証ファイルより優先。 |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`。英数字、`_`、`-` 以外の文字は `_` に置換。 |

@@ -8,7 +8,6 @@ import { missionPluginFixture, FIXTURE_PROJECT } from "../../../server/src/missi
 import { MissionJournal, parseMissionEvent } from "../../../server/src/missions/journal"
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import path from "node:path"
 import { showSelection } from "./mission-actions"
 
@@ -87,7 +86,6 @@ async function open(extraForms: Array<{ id: string; sessionID: string; title: st
       if (held) { marksReady(); await marksGate }
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: FIXTURE_PROJECT.id, projectCanonical: "/repo", location, schedules: [] }) })
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: [] } })
     if (path.endsWith("/schedule") && request.method() === "GET") return route.fulfill({ json: { document: null, pending: false } })
     if (path.endsWith("/content")) {
@@ -156,40 +154,34 @@ test("an unselected folded Mission propagates every unseen task result and Mark 
   } finally { await f.close() }
 })
 
-test("Mark as read covers unread task-mark windows through their snapshot when the directory row is older", async () => {
+test("Mark as read covers a Mission's unread task-mark windows through its snapshot when the directory row is older", async () => {
   const f = await open(), id = "msn_inventory_59"
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
+  const settled = (through?: number) => f.page.waitForFunction(([id, through]) => {
+    const marks = (window as any).inventoryStore.taskMarks("fixture", id)
+    return marks.loaded === 50 && !marks.loading && (through === undefined || marks.through === through)
+  }, [id, through] as const)
   try {
     for (let index = 0; index < 59; index++) await f.finish(id, `batch-${index}`, 5000 + index * 2)
     await f.page.evaluate(() => (window as any).inventoryStore.refresh("fixture"))
-    await f.page.waitForFunction(id => (window as any).inventoryStore.taskMarks("fixture", id).loaded === 59, id)
-    await f.page.route("**/missions/panel-page", async route => {
-      const input = route.request().postDataJSON()
-      if (input.source === "task-marks" && input.missionID === id && input.window.offset === 50) await gate
-      return route.fallback()
-    })
+    // One window is enough: it starts with the newest finished tasks, and one unseen already lights the row.
+    await settled()
     await f.finish(id, "batch-59", 5118)
     await f.page.evaluate(id => (window as any).inventoryStore.more("fixture", `task-marks:${id}`, true), id)
-    await f.page.waitForFunction(id => {
-      const marks = (window as any).inventoryStore.taskMarks("fixture", id)
-      return marks.loaded === 50 && marks.loading
-    }, id)
+    await settled(5119)
     assert.equal(await f.page.evaluate(id => (window as any).missionFixture.snapshot().summaries.find((row: any) => row.id === id).updatedAt, id), 5117)
-    assert.equal(await f.page.evaluate(id => (window as any).inventoryStore.taskMarks("fixture", id).through, id), 5119)
     const row = f.page.locator(`[data-mission-key="mission:${id}"]`)
     await row.locator('[data-child-activity="idle"]').waitFor()
     await row.locator(".session-item-expander").click({ button: "right" })
     await f.page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
-    release()
-    await f.page.waitForFunction(id => {
-      const marks = (window as any).inventoryStore.taskMarks("fixture", id)
-      return marks.loaded === 60 && !marks.loading
-    }, id)
-    assert.equal(await row.locator("[data-child-activity]").count(), 0, "the unread newer task does not relight the hierarchy after the original mark-all gesture")
+    await row.locator("[data-child-activity]").waitFor({ state: "detached" })
+    await f.page.waitForTimeout(300)
+    assert.equal(await row.locator("[data-child-activity]").count(), 0, "the tasks of the unread windows do not relight the hierarchy after the mark-all gesture")
+    assert.equal(await f.page.evaluate(id => (window as any).inventoryStore.taskMarks("fixture", id).more, id), true)
+    assert.equal(f.requests.filter(request => request.source === "task-marks" && request.missionID === id && request.window.offset > 0).length, 0,
+      "the windows of finished tasks the row does not need stay unread")
     assert.equal(f.requests.filter(request => request.source === "mission" || request.source === "tasks").length, 0)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-  } finally { release(); await f.close() }
+  } finally { await f.close() }
 })
 
 test("an unselected task actor outside the observation window reuses the session list's known work and question signals", async () => {
@@ -210,7 +202,8 @@ test("an unselected task actor outside the observation window reuses the session
     await f.page.evaluate(() => (window as any).missionFixture.queuePermission("ses_actor_189", "catalog_permission"))
     await row.locator('[data-child-activity="permission"]').waitFor()
     assert.notEqual(await row.locator(".mission-row-flag").getAttribute("data-mark"), "permission")
-    assert.equal(f.native.filter(value => value === "get:ses_actor_189").length, 0, "known session signals do not require another actor window")
+    // The actor's own session is read only as the ancestry of its pending native request.
+    assert.equal(f.requests.filter(request => request.source === "activity").length, 0, "known session signals do not require another actor window")
     assert.equal(f.requests.filter(request => request.source === "mission" || request.source === "tasks").length, 0)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
@@ -420,7 +413,7 @@ test("601-actor selection keeps its header small and reaches a real off-page que
   } finally { await f.close() }
 })
 
-for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geometry and nodes stable while the existing toolbar shows reads`, async () => {
+for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geometry and nodes stable, and the refresh icon still, while its reads are in flight`, async () => {
   const f = await open()
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
@@ -445,7 +438,16 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     }))
     const buttons = () => f.page.locator(".mission-control button").allTextContents()
     const actions = () => f.page.locator(".mission-control-header button,.mission-action-bar button").allTextContents()
-    const before = await geometry(), labels = await buttons()
+    // A tree just mounted measures its rows over a few frames: compare against its settled layout.
+    let before = await geometry()
+    for (let frames = 0; ; frames++) {
+      assert.ok(frames < 60, "the panel layout settles")
+      await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      const next = await geometry()
+      if (JSON.stringify(next) === JSON.stringify(before)) break
+      before = next
+    }
+    const labels = await buttons()
     const actionLabels = await actions()
     const stableNode = f.page.locator(index ? ".mission-tree-node" : ".mission-detail").first()
     const node = await stableNode.elementHandle()
@@ -457,7 +459,9 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     // Exercise the same event dispatcher as live plugin invalidations, not a
     // manually animated spinner or a substitute test component.
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    await f.page.waitForFunction(() => (window as any).inventoryStore.reading("fixture"))
+    assert.equal(await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0,
+      "only the first read and an explicit refresh spin the icon")
     assert.deepEqual(await geometry(), before)
     assert.deepEqual(await buttons(), labels)
     assert.equal(await stableNode.evaluate((current, old) => current === old, node), true)
@@ -479,20 +483,21 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
   } finally { release?.(); await f.close() }
 })
 
-test("a schedule-only background read uses the same top-right indicator after panel reads settle", async () => {
+test("a schedule-only background read leaves the refresh icon still and enabled", async () => {
   const f = await open()
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   try {
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
     await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
+    const scheduleRead = f.page.waitForRequest(request => request.url().includes("/missions/scheduled?"))
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin')
-    await spinner.waitFor()
+    await scheduleRead
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    assert.equal(await spinner.isVisible(), true)
+    const refresh = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]')
+    assert.equal(await refresh.locator(".animate-spin").count(), 0)
+    assert.equal(await refresh.isEnabled(), true)
     release()
-    await spinner.waitFor({ state: "detached" })
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.close() }
 })

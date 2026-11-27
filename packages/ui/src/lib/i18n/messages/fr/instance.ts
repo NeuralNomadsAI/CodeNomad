@@ -160,6 +160,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "Lecture seule",
   "filesPanel.binary": "Aperçu indisponible pour ce fichier binaire.",
   "filesPanel.draftConflict": "Le fichier a changé sur le disque. Votre brouillon a été conservé.",
+  "filesPanel.saveConflict": "Le fichier a changé sur le disque pendant l'enregistrement. Actualisez ou enregistrez à nouveau.",
+  "filesPanel.saveTooLarge": "Le fichier est trop volumineux pour être enregistré.",
   "filesPanel.draftLimit": "Impossible de conserver ce brouillon. Enregistrez ou copiez vos dernières modifications avant de fermer.",
   "filesPanel.image.before": "Avant",
   "filesPanel.image.after": "Après",

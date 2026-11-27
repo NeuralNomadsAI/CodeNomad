@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "隐藏{name}",
   "transcriptFilters.expand": "展开{name}",
   "transcriptFilters.collapse": "折叠{name}",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "打开会话列表",
-  "messageListHeader.metrics.usedLabel": "已用",
-  "messageListHeader.metrics.availableLabel": "可用",
-  "messageListHeader.commandPalette.ariaLabel": "打开命令面板",
-  "messageListHeader.commandPalette.button": "命令面板",
-  "messageListHeader.connection.connected": "已连接",
-  "messageListHeader.connection.connecting": "连接中...",
-  "messageListHeader.connection.disconnected": "已断开",
 
   "messageSection.empty.logoAlt": "CodeNomad 徽标",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -263,7 +255,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "请求已中止",
   "messageItem.errors.unknownFallback": "发生未知错误",
 
-  "attachmentChip.removeAriaLabel": "移除附件",
 
   "expandButton.toggleAriaLabel": "切换聊天输入框高度",
 

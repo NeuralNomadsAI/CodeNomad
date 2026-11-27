@@ -15,6 +15,7 @@ import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./p
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
+import { MINIMUM } from "../../opencode/runtime-version-fixture"
 
 const git = promisify(execFile)
 const permission = { id: "permission", sessionID: "background", action: "read", resources: ["file"] }
@@ -91,7 +92,7 @@ test("raw pending adapter retains the bound service authentication and fails clo
   const h = await harness()
   try {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "isolated-fixture" } }
-    rememberRuntime(endpoint, { version: "2.3.2", pid: 123, discovery: "info" })
+    rememberRuntime(endpoint, { version: MINIMUM, pid: 123, discovery: "info" })
     h.connection.endpoint = endpoint
     h.connection.fetch = createRuntimeFetch(endpoint, async (input, init) => {
       h.state.calls.push(new URL(String(input)))

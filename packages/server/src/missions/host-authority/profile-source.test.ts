@@ -7,7 +7,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import { canonicalScope } from "../../host-lifetime/protocol"
 import { resolveConfigLocation } from "../../config/location"
 import { readAutonomousMissionEnvironment } from "../../opencode/missions/autonomous-environment"
-import { physical } from "./private-files"
+import { physical } from "../physical-path"
 import { resolveStandingProfileSource } from "./profile-source"
 
 test("explicit Play pins the selected custom YAML and exact WSL distro, never a caller path or default", async () => {

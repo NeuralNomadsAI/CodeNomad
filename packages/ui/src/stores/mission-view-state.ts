@@ -12,7 +12,7 @@ export interface MissionReaderTarget {
   /** `playbook` only: the task-session policy whose coordinator contract is shown. */
   taskMode?: "native" | "independent"
   /** Exact isolated passage scope; never a native session selector. */
-  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string; owner?: "daily" | "scheduled" }
+  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string; owner?: "scheduled" }
   /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
   instanceId?: string
   projectID?: string
@@ -42,7 +42,7 @@ export function navigateMissionProjectView(instanceId: string, patch: Partial<Pr
 export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(instanceId)
   const value = { ...previous, ...patch }
-  if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
+  if (previous.selected === value.selected && previous.reader === value.reader
     && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
     && previous.disclosures === value.disclosures) return
   updateTabViewState(instanceId, { missions: value })
@@ -183,15 +183,14 @@ export function forgetMissionView(instanceId: string, missionId: string): void {
   })
 }
 
-export type ScheduleOwner = "daily" | "scheduled"
 const [scheduleSeenVersion, setScheduleSeenVersion] = createSignal(0)
 const scheduleSeen = new Map<string, ReadonlySet<string>>()
-function scheduleSeenKey(scope: string, owner: ScheduleOwner, id: string) {
-  return `mission-passage-seen-${key(JSON.stringify([scope, owner, id]))}`
+function scheduleSeenKey(scope: string, id: string) {
+  return `mission-passage-seen-${key(JSON.stringify([scope, "scheduled", id]))}`
 }
-function readScheduleSeen(scope: string, owner: ScheduleOwner, id: string): ReadonlySet<string> | undefined {
+function readScheduleSeen(scope: string, id: string): ReadonlySet<string> | undefined {
   scheduleSeenVersion()
-  const storageKey = scheduleSeenKey(scope, owner, id)
+  const storageKey = scheduleSeenKey(scope, id)
   if (!scheduleSeen.has(storageKey)) {
     try {
       const value: unknown = JSON.parse(readClientLayoutValue(storageKey) ?? "null")
@@ -201,8 +200,8 @@ function readScheduleSeen(scope: string, owner: ScheduleOwner, id: string): Read
   }
   return scheduleSeen.get(storageKey)
 }
-function saveScheduleSeen(scope: string, owner: ScheduleOwner, id: string, values: ReadonlySet<string>): void {
-  const storageKey = scheduleSeenKey(scope, owner, id)
+function saveScheduleSeen(scope: string, id: string, values: ReadonlySet<string>): void {
+  const storageKey = scheduleSeenKey(scope, id)
   scheduleSeen.set(storageKey, values)
   const saved: string[] = []
   for (const value of [...values].reverse()) {
@@ -214,16 +213,16 @@ function saveScheduleSeen(scope: string, owner: ScheduleOwner, id: string, value
 }
 /** As for one-time Missions, the first loaded historical success starts seen.
  * Each schedule seeds independently because the unified inventory is paged. */
-export function seedScheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID?: string): void {
-  if (readScheduleSeen(scope, owner, id)) return
-  saveScheduleSeen(scope, owner, id, new Set(passageID ? [passageID] : []))
+export function seedScheduleSuccessSeen(scope: string, id: string, passageID?: string): void {
+  if (readScheduleSeen(scope, id)) return
+  saveScheduleSeen(scope, id, new Set(passageID ? [passageID] : []))
 }
-export function scheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID: string): boolean {
-  return readScheduleSeen(scope, owner, id)?.has(passageID) ?? true
+export function scheduleSuccessSeen(scope: string, id: string, passageID: string): boolean {
+  return readScheduleSeen(scope, id)?.has(passageID) ?? true
 }
 /** Capture the displayed passage before invoking this, including for late callbacks.
  * Retain exact positive identities: acknowledging A can never acknowledge B. */
-export function markScheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID: string): void {
-  const previous = readScheduleSeen(scope, owner, id) ?? new Set<string>()
-  if (!previous.has(passageID)) saveScheduleSeen(scope, owner, id, new Set([...previous, passageID]))
+export function markScheduleSuccessSeen(scope: string, id: string, passageID: string): void {
+  const previous = readScheduleSeen(scope, id) ?? new Set<string>()
+  if (!previous.has(passageID)) saveScheduleSeen(scope, id, new Set([...previous, passageID]))
 }

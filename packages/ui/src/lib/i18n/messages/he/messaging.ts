@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "הסתרת {name}",
   "transcriptFilters.expand": "הרחבת {name}",
   "transcriptFilters.collapse": "כיווץ {name}",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "פתח רשימת סשנים",
-  "messageListHeader.metrics.usedLabel": "בשימוש",
-  "messageListHeader.metrics.availableLabel": "זמין",
-  "messageListHeader.commandPalette.ariaLabel": "פתח לוח פקודות",
-  "messageListHeader.commandPalette.button": "לוח פקודות",
-  "messageListHeader.connection.connected": "מחובר",
-  "messageListHeader.connection.connecting": "מתחבר...",
-  "messageListHeader.connection.disconnected": "מנותק",
 
   "messageSection.empty.logoAlt": "לוגו CodeNomad",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -261,7 +253,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "הבקשה בוטלה",
   "messageItem.errors.unknownFallback": "אירעה שגיאה לא ידועה",
 
-  "attachmentChip.removeAriaLabel": "הסר קובץ מצורף",
 
   "expandButton.toggleAriaLabel": "שנה גובה תיבת הקלט",
 

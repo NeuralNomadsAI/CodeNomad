@@ -73,7 +73,7 @@ import {
   getSessionListIds,
   sessionInfoByInstance,
 } from "./session-state"
-import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
+import { settleAbandonedSessionListRestoration, settleSessionListFirstPage } from "./session-list-restoration"
 import { clearAttachments, deleteSessionAttachments } from "./attachments"
 import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
@@ -343,13 +343,14 @@ async function fetchV2Sessions(
   signal.throwIfAborted()
   const instanceClient = instances().get(instanceId)?.client
   const client = getRootClient(instanceId)
+  const explicitGlobalDirectory = options.project === "global" && Boolean(options.directory)
   const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
-  const scopedProject = project === "global" ? undefined : project
+  const scopedProject = explicitGlobalDirectory ? "global" : project === "global" ? undefined : project
   const directory = options.directory ?? instances().get(instanceId)?.folder
   const listOptions: V2SessionListOptions = options.cursor
     ? { cursor: options.cursor }
     : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
-  if (scopedProject) delete listOptions.directory
+  if (scopedProject && !explicitGlobalDirectory) delete listOptions.directory
 
   const read = () => {
     signal.throwIfAborted()
@@ -396,7 +397,7 @@ async function fetchCompleteSessionInventory(
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
   // V1 sessions can remain in the global project after migration while sharing this directory.
-  if (!directoryOnly && project !== "global" && directory) scopes.push({ directory, order: "desc" })
+  if (!directoryOnly && project !== "global" && directory) scopes.push({ project: "global", directory, order: "desc" })
 
   for (const scope of scopes) {
     const seenCursors = new Set<string>()
@@ -873,6 +874,7 @@ async function fetchSessions(instanceId: string, options?: {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
       return
     }
+    settleSessionListFirstPage(instanceId)
     const hasProjectInventory = Boolean(getInstanceMetadata(instanceId)?.project?.id)
     let inventory: SDKSession[] = []
     let inventoryComplete = false

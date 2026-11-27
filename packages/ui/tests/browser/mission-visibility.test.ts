@@ -3,7 +3,14 @@ import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
+import type { MissionMap } from "../../../server/src/api-types"
+import { panelMissions } from "./mission-content-fixture"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
+
+const activeMission = (): MissionMap => ({ version: 1, id: "visibility", projectID: "fixture", projectCanonical: "/fixture",
+  objective: "Visibility mission", template: "custom", coordinatorSessionId: "visibility-actor", status: "active", runState: "running",
+  actors: [{ sessionId: "visibility-actor", kind: "coordinator", managed: false, title: "Coordinator", roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }],
+  frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks: [], reports: [] })
 
 let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -31,7 +38,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions", route => {
       if (new URL(route.request().url()).searchParams.get("panelSource") === "summaries") requests += 1
-      return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: [],
+      return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: panelMissions([activeMission()]),
         generatedAt: requests, discardedEvents: 0, activity: { generatedAt: requests, missions: [] } } })
     })
     await page.goto(url)
@@ -49,13 +56,13 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await shown
     await page.waitForFunction(() => (window as any).missionVisibility.state().status !== "loading")
     assert.equal((await call(page, "state")).status, "ready", JSON.stringify(await call(page, "state")))
-    assert.match(await page.locator(".mission-control").innerText(), /No missions yet/)
+    assert.match(await page.locator(".mission-control").innerText(), /Visibility mission/)
     assert.equal(requests, 1, "loading/ready state does not retrigger visibility demand")
     assert.deepEqual(await call(page, "demanded"), ["mission-visibility"])
     const status = waitForMissionPanelRefresh(page)
     await call(page, "event", "session.execution.started")
     await status
-    await page.getByText("No missions yet", { exact: true }).waitFor()
+    await page.getByText("Visibility mission", { exact: true }).waitFor()
     assert.equal(requests, 2)
     await call(page, "event", "session.text.delta")
     await page.waitForTimeout(120)
@@ -72,16 +79,16 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     const restored = waitForMissionPanelRefresh(page)
     await call(page, "activate", true)
     await restored
-    await page.getByText("No missions yet", { exact: true }).waitFor()
+    await page.getByText("Visibility mission", { exact: true }).waitFor()
     assert.equal(requests, 3)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 
-const missionsRoute = (page: Page, onRequest: () => number, delay = 0) => page.route("**/api/workspaces/mission-visibility/missions", async route => {
+const missionsRoute = (page: Page, onRequest: () => number, delay = 0, missions: MissionMap[] = []) => page.route("**/api/workspaces/mission-visibility/missions", async route => {
   const count = new URL(route.request().url()).searchParams.get("panelSource") === "summaries" ? onRequest() : 0
   if (delay) await new Promise(resolve => setTimeout(resolve, delay))
-  return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: [],
+  return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: panelMissions(missions),
     generatedAt: count, discardedEvents: 0, activity: { generatedAt: count, missions: [] } } })
 })
 
@@ -123,7 +130,7 @@ test("continuous native activity of a large family is revalidated at a bounded r
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     // The server projection is slow while the family is busy.
-    await missionsRoute(page, () => ++requests, 150)
+    await missionsRoute(page, () => ++requests, 150, [activeMission()])
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     await call(page, "restoration", false)

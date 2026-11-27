@@ -13,7 +13,6 @@ function unresolved(doc: MissionDocument): boolean {
   const synchronization = doc.synchronization
   return !!doc.pending || !!doc.calendars.length || doc.blocked === "unknown"
     || !!doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null
-    || !!doc.scheduleActivation?.targets.some(target => target.attempted && !target.acknowledged)
     || !!synchronization && (synchronization.kind !== "delete" || synchronization.retiredCalendars.length > 0
       || synchronization.requestID !== missionDeletionSynchronizationID(doc.deletion!.requestID))
 }

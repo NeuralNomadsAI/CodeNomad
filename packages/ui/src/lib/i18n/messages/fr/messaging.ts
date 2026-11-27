@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "Masquer {name}",
   "transcriptFilters.expand": "Développer {name}",
   "transcriptFilters.collapse": "Replier {name}",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "Ouvrir la liste des sessions",
-  "messageListHeader.metrics.usedLabel": "Utilisé",
-  "messageListHeader.metrics.availableLabel": "Dispo",
-  "messageListHeader.commandPalette.ariaLabel": "Ouvrir la palette de commandes",
-  "messageListHeader.commandPalette.button": "Palette de commandes",
-  "messageListHeader.connection.connected": "Connecté",
-  "messageListHeader.connection.connecting": "Connexion...",
-  "messageListHeader.connection.disconnected": "Déconnecté",
 
   "messageSection.empty.logoAlt": "Logo CodeNomad",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -263,7 +255,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "La requête a été annulée",
   "messageItem.errors.unknownFallback": "Une erreur inconnue est survenue",
 
-  "attachmentChip.removeAriaLabel": "Retirer la pièce jointe",
 
   "expandButton.toggleAriaLabel": "Basculer la hauteur de la zone de saisie",
 

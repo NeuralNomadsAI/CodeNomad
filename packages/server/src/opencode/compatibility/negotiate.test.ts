@@ -4,11 +4,12 @@ import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
 import { legacyContractFixture, modernContractFixture } from "./contract-fixture"
 import { UnsupportedOpenCodeError } from "../runtime-support"
+import { newerPatch } from "../runtime-version-fixture"
 
 test("unknown contracts perform authenticated bounded read negotiation before any mutation", async () => {
   for (const kind of ["unauthorized", "unrecognized", "oversized"] as const) {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "fixture" } }
-    rememberRuntime(endpoint, { version: "2.3.100", pid: 1, discovery: "status" })
+    rememberRuntime(endpoint, { version: newerPatch(99), pid: 1, discovery: "status" })
     let calls = 0, cancelled = false
     const transport = createRuntimeFetch(endpoint, async (input, init) => {
       calls++
@@ -53,7 +54,7 @@ test("unknown labels with an obsolete contract or missing environment fail for a
 
 test("shared negotiation has independent subscriber cancellation and never retries a mutation", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.3.100", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: newerPatch(99), pid: 1, discovery: "info" })
   let complete!: (response: Response) => void
   let negotiationSignal: AbortSignal | null | undefined
   const calls: string[] = []

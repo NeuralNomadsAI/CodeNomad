@@ -27,8 +27,10 @@ before(async () => {
 })
 after(async () => { await browser?.close(); if (events) { events.closeAllConnections(); await new Promise<void>(resolve => events.close(() => resolve())) } })
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current reader pages tasks, exact bodies and off-page native requests without a full-map escape`, async t => {
-  const f = await currentPassageFixture(owner), app = Fastify({ logger: false }), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+const owner = "scheduled"
+
+test(`real current reader pages tasks, exact bodies and off-page native requests without a full-map escape`, async t => {
+  const f = await currentPassageFixture(), app = Fastify({ logger: false }), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   const errors: string[] = [], writes: string[] = [], selections: any[] = [], sizes: number[] = []
   const activityRows: unknown[] = []
   let failRawPage = false
@@ -87,11 +89,8 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
         return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
       }
       if (request.method() !== "GET") writes.push(path)
-      if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: f.root, location: owned, schedules: owner === "daily" ? [{
-        id: f.scheduleID, title: "Daily current", revision: 1, state: "interrupted", interruptionReason: "service-restart", clock: { time: "23:59", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],
-        pending: { passageID: f.passage.passageID, missionID: map.id, conversationID: map.coordinatorSessionId, status: "running" }, latestResult: null, history: [] }] : [] } })
       if (path.endsWith("/missions/scheduled")) {
-        const doc = owner === "scheduled" ? await f.documents.read(f.scheduleID) : undefined
+        const doc = await f.store.read(f.scheduleID)
         return route.fulfill({ json: { version: 1, projectID: "project", schedules: doc && "configuration" in doc ? [missionScheduleView(doc).document] : [] } })
       }
       if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: [], summaries: [], generatedAt: 1, discardedEvents: 0 } })
@@ -99,7 +98,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
       return route.fulfill({ json: {} })
     })
     await page.goto(url + "?directory=" + encodeURIComponent(f.root))
-    await selectMission(page, owner === "daily" ? "Daily current" : "Scheduled current").catch(async error => {
+    await selectMission(page, "Unit passage").catch(async error => {
       throw new Error(`${error}\n${JSON.stringify({ errors, selections, sizes })}\n${(await page.locator("body").innerText()).slice(0, 4000)}`)
     })
     await page.locator(".mission-tree").waitFor()
@@ -131,7 +130,8 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await screenshot("before")
     await activityMore.click()
     await activityStarted
-    await page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    assert.equal(await page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0,
+      "only the first read and an explicit refresh spin the icon")
     assert.deepEqual(await geometry(), beforeActivity, "passage-owned background reads preserve task-tree geometry")
     assert.equal(await page.locator(".mission-control").getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
     await screenshot("during")
@@ -200,11 +200,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") !== "permission")
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
-  } finally { releaseActivity?.(); await page.context().close(); await app.close(); await f.dispose() }
+  } finally { releaseActivity?.(); await page.context().close(); await app.close() }
 })
 
-for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
-  const f = await currentPassageFixture(owner), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+test(`covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
+  const f = await currentPassageFixture(), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   let release!: () => void, entered!: () => void, heldID: string | undefined, heldOffset: number | undefined
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
   const errors: string[] = [], failures: Array<{ id?: string; url: string; error?: string }> = []
@@ -258,12 +258,8 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
         }
         return route.fulfill({ json: input.selector.source === "activity" ? { available: false, reason: "observation-unavailable" } : await f.page(input) })
       }
-      if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: f.root, location: { directory: f.root },
-        schedules: owner === "daily" ? [{ id: f.scheduleID, title: "Daily contraction", revision: 1, state: "interrupted", interruptionReason: "service-restart",
-          clock: { time: "23:59", zone: "UTC" }, nextDueAt: null, actions: [], controls: [], pending: { passageID: source.passageID, missionID: map.id,
-            conversationID: map.coordinatorSessionId, status: "running" }, latestResult: null, history: [] }] : [] } })
       if (path.endsWith("/missions/scheduled")) {
-        const doc = owner === "scheduled" ? await f.documents.read(f.scheduleID) : undefined
+        const doc = await f.store.read(f.scheduleID)
         return route.fulfill({ json: { version: 1, projectID: "project", schedules: doc && "configuration" in doc ? [missionScheduleView(doc).document] : [] } })
       }
       return route.fulfill({ json: path.endsWith("/missions") ? { available: true, version: 1, projectID: "project", missions: [], summaries: [], generatedAt: 1, discardedEvents: 0 }
@@ -278,7 +274,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
       if (!route.request().failure()) return route.fallback()
     })
     await page.goto(url + "?directory=" + encodeURIComponent(f.root))
-    await selectMission(page, owner === "daily" ? "Daily contraction" : "Scheduled current")
+    await selectMission(page, "Unit passage")
     await page.evaluate(async ({ root, missionID, taskID, scheduleID, passageID, owner }) => {
       (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
@@ -319,5 +315,5 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
     const extended = await page.evaluate(id => (window as any).__bodyReads.filter((read: any) => read.id !== id && read.body.body?.offset > 0), heldID)
     assert.ok(extended.some((read: any) => read.body.body.offset === heldOffset && read.abortedAtDispatch === false && read.at >= contractedAt + 30_000))
     assert.equal(await section.getByRole("button", { name: "Try again", exact: true }).count(), 0); assert.deepEqual(errors, [])
-  } finally { releaseMarks(); release(); await page.context().close(); await f.dispose() }
+  } finally { releaseMarks(); release(); await page.context().close() }
 })

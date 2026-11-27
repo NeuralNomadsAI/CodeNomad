@@ -149,6 +149,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "Salt okunur",
   "filesPanel.binary": "Bu ikili dosya için önizleme kullanılamıyor.",
   "filesPanel.draftConflict": "Diskteki dosya değişti. Taslağınız korundu.",
+  "filesPanel.saveConflict": "Kaydederken diskteki dosya değişti. Yenileyin veya tekrar kaydedin.",
+  "filesPanel.saveTooLarge": "Dosya kaydedilemeyecek kadar büyük.",
   "filesPanel.draftLimit": "Taslağınız korunamadı. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
   "filesPanel.image.before": "Önce",
   "filesPanel.image.after": "Sonra",

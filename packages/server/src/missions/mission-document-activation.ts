@@ -7,10 +7,10 @@ export function prepareMissionScheduleActivation(doc: MissionDocument, input: Mi
   if (doc.state !== "paused" || doc.pending || doc.preparation?.pending || doc.oneTime && !doc.dormantJournal || doc.deletion || doc.synchronization || doc.blocked
     || !requiresMissionCalendar(doc.configuration.launch)) throw new Error("Mission activation unavailable")
   if (doc.scheduleActivation) {
-    // A failed preparation with no attempted write has no config effect in
-    // flight: every writer must first CAS its attempted barrier. A fresh human
-    // request may refresh the plan; an old phase then fails the request fence.
-    if (doc.scheduleActivation.state === "failed" && doc.scheduleActivation.targets.every(target => !target.attempted)
+    // A preparation that failed, or that stored configuration targets, has no
+    // effect in flight: a fresh human request replaces it, and an old phase then
+    // fails the request fence.
+    if ((doc.scheduleActivation.state === "failed" || doc.scheduleActivation.state === "partial")
       && intent.requestID !== doc.scheduleActivation.requestID && intent.expectedRevision === doc.revision) {
       doc.scheduleActivation = null
       prepareMissionScheduleActivation(doc, intent)
@@ -24,19 +24,6 @@ export function prepareMissionScheduleActivation(doc: MissionDocument, input: Mi
   if (intent.state !== "prepared" || intent.expectedRevision !== doc.revision || intent.targets.some(target => target.acknowledged || target.attempted)
     || intent.effectiveOrigin !== undefined || intent.errorCode) throw new Error("Invalid Mission activation preparation")
   doc.scheduleActivation = intent
-}
-export function acknowledgeMissionScheduleActivation(doc: MissionDocument, requestID: string, scope: "global" | "project", resultDigest: string) {
-  const intent = exact(doc, requestID), target = intent.targets.find(target => target.scope === scope)
-  if (!target || !target.attempted || target.resultDigest !== resultDigest) throw new Error("Mission activation acknowledgement conflict")
-  target.acknowledged = true
-  if (intent.state !== "ready") intent.state = "partial"
-  delete intent.errorCode
-}
-export function attemptingMissionScheduleActivation(doc: MissionDocument, requestID: string, scope: "global" | "project", resultDigest: string) {
-  const intent = exact(doc, requestID), target = intent.targets.find(target => target.scope === scope)
-  if (!target || target.attempted || target.resultDigest !== resultDigest) throw new Error("Mission activation write already attempted or changed")
-  target.attempted = true
-  intent.state = "partial"
 }
 export function readyMissionScheduleActivation(doc: MissionDocument, requestID: string, effectiveOrigin: string | null) {
   const intent = exact(doc, requestID)
