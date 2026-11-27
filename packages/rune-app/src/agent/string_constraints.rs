@@ -704,7 +704,7 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
     if tz_raw.is_empty() {
         return Some(None);
     }
-    let tz = if let Some(paren_idx) = tz_raw.find('(') {
+    let (tz, has_paren) = if let Some(paren_idx) = tz_raw.find('(') {
         if !tz_raw.ends_with(')') {
             return None;
         }
@@ -716,11 +716,14 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
         {
             return None;
         }
-        tz_raw[..paren_idx].trim_end()
+        (tz_raw[..paren_idx].trim_end(), true)
     } else {
-        tz_raw
+        (tz_raw, false)
     };
-    if tz.is_empty() || !tz.is_ascii() {
+    if tz.is_empty() {
+        return has_paren.then_some(None);
+    }
+    if !tz.is_ascii() {
         return None;
     }
     if tz.eq_ignore_ascii_case("Z")
@@ -810,7 +813,7 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
         }
     }
     let mut has_ampm = false;
-    if allow_ampm {
+    if allow_ampm && tail.as_bytes().first().is_some_and(u8::is_ascii_whitespace) {
         let trimmed = tail.trim_start();
         let after_meridiem = if trimmed
             .as_bytes()
@@ -820,7 +823,7 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
             let rem = &trimmed[2..];
             if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
                 has_ampm = true;
-                if !(1..=12).contains(&hour) {
+                if hour > 12 {
                     return None;
                 }
                 if hour == 12 {
@@ -838,7 +841,7 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
             let rem = &trimmed[2..];
             if rem.is_empty() || rem.as_bytes()[0].is_ascii_whitespace() {
                 has_ampm = true;
-                if !(1..=12).contains(&hour) {
+                if hour > 12 {
                     return None;
                 }
                 if hour != 12 {
@@ -1173,11 +1176,22 @@ fn is_valid_date_time(value: &str) -> bool {
         return within_js_date_range(year, month, day, 0, 0);
     }
     let b = after_date.as_bytes();
-    if !matches!(b[0], b'T' | b't' | b' ') {
+    let (time_rest, allow_ampm) = if matches!(b[0], b'T' | b't') {
+        (&after_date[1..], false)
+    } else if matches!(b[0], b' ' | b',') {
+        let trimmed = after_date
+            .strip_prefix(',')
+            .unwrap_or(after_date)
+            .trim_start();
+        if trimmed.is_empty() {
+            return false;
+        }
+        (trimmed, true)
+    } else {
         return false;
-    }
+    };
     let Some((hour, minute, second, millis, tz_offset_ms)) =
-        parse_time_and_tz(&after_date[1..], false)
+        parse_time_and_tz(time_rest, allow_ampm)
     else {
         return false;
     };
@@ -1186,16 +1200,73 @@ fn is_valid_date_time(value: &str) -> bool {
     within_js_date_range(year, month, day, sod_ms, tz_offset_ms.unwrap_or(0))
 }
 
+fn has_date_time_defer_cue(s: &str) -> bool {
+    let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
+    prefix
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| {
+            parse_month_name(tok).is_some()
+                || tok.eq_ignore_ascii_case("GMT")
+                || tok.eq_ignore_ascii_case("UTC")
+                || tok.eq_ignore_ascii_case("UT")
+                || tok.eq_ignore_ascii_case("AM")
+                || tok.eq_ignore_ascii_case("PM")
+                || matches!(
+                    tok.to_ascii_uppercase().as_str(),
+                    "EST" | "EDT" | "CST" | "CDT" | "MST" | "MDT" | "PST" | "PDT"
+                )
+        })
+        || (s.contains('(') && s.ends_with(')'))
+}
+
+fn has_invalid_clock_time(s: &str) -> bool {
+    let trimmed = s.strip_prefix(',').unwrap_or(s).trim_start();
+    let Some((hour, after_hour)) = take_1_or_2_digits(trimmed) else {
+        return false;
+    };
+    let Some(after_h_colon) = after_hour.strip_prefix(':') else {
+        return false;
+    };
+    let Some((minute, mut tail)) = take_1_or_2_digits(after_h_colon) else {
+        return true;
+    };
+    let mut second = 0u32;
+    if let Some(after_colon) = tail.strip_prefix(':') {
+        let Some((sec, after_sec)) = take_1_or_2_digits(after_colon) else {
+            return true;
+        };
+        if sec > 59 {
+            return true;
+        }
+        second = sec;
+        tail = after_sec;
+    }
+    if minute > 59 || hour > 24 || (hour == 24 && (minute != 0 || second != 0)) {
+        return true;
+    }
+    if tail.as_bytes().first().is_some_and(u8::is_ascii_whitespace) {
+        let rem = tail.trim_start();
+        let is_ampm = rem.as_bytes().get(..2).is_some_and(|p| {
+            (p.eq_ignore_ascii_case(b"AM") || p.eq_ignore_ascii_case(b"PM"))
+                && rem.as_bytes().get(2).is_none_or(u8::is_ascii_whitespace)
+        });
+        if is_ampm && hour > 12 {
+            return true;
+        }
+    }
+    false
+}
+
 fn looks_like_rejected_known_date_shape(s: &str) -> bool {
     if s.starts_with("-000000") {
         return true;
     }
-    // Reject invalid ISO dates (invalid month/day/range/time), except ISO valid dates with a
-    // trailing space + timezone marker (`1970-01-01 GMT+0100`) which V8 accepts.
+    // Reject invalid ISO dates (invalid month/day/range/time), except valid ISO dates with a
+    // space/comma tail carrying timezone/meridiem/parenthesized cues that JS `Date` can accept.
     if let Some((year, ylen)) = parse_iso_year_prefix(s) {
         let tail = &s.as_bytes()[ylen..];
         if tail.is_empty() || tail[0] == b'-' {
-            let valid_date_with_tz_tail = s[ylen..]
+            let deferrable_iso_tail = s[ylen..]
                 .strip_prefix('-')
                 .and_then(take_1_or_2_digits)
                 .filter(|&(m, _)| (1..=12).contains(&m))
@@ -1206,9 +1277,15 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
                         .map(|(_, after_d)| after_d)
                 })
                 .is_some_and(|after_d| {
-                    after_d.starts_with(' ') && parse_tz_offset_ms(after_d.trim_start()).is_some()
+                    let sep_ok = after_d.starts_with(' ') || after_d.starts_with(',');
+                    if !sep_ok {
+                        return false;
+                    }
+                    let trimmed = after_d.strip_prefix(',').unwrap_or(after_d).trim_start();
+                    parse_tz_offset_ms(trimmed).is_some()
+                        || (!has_invalid_clock_time(trimmed) && has_date_time_defer_cue(trimmed))
                 });
-            return !valid_date_with_tz_tail;
+            return !deferrable_iso_tail;
         }
     }
     // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/30/2026`, `13-01-2026`).
@@ -1277,16 +1354,7 @@ fn classify_date_time(value: &str) -> MatchOutcome {
     }
     // Defer unclassified JS Date-like formats (e.g. `Jan 1970`, `1970-01-01 GMT+0100`, or exotic
     // parenthesized timezone annotations) to OpenCode rather than falsely rejecting valid defaults.
-    let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
-    let has_month_or_tz = prefix
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|tok| {
-            parse_month_name(tok).is_some()
-                || tok.eq_ignore_ascii_case("GMT")
-                || tok.eq_ignore_ascii_case("UTC")
-        })
-        || (s.contains('(') && s.ends_with(')'));
-    if has_month_or_tz {
+    if has_date_time_defer_cue(s) {
         MatchOutcome::Deferred
     } else {
         MatchOutcome::NoMatch

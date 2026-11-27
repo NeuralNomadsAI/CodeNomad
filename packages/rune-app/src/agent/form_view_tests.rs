@@ -8237,3 +8237,322 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         }
     });
 }
+
+#[test]
+fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime_defaults() {
+    crate::strings::with_locale("en", || {
+        // 1. Pasting `"ab\r\n".repeat(7000)` (21,000 normalized UTF-16 units) must cap on the
+        // post-CRLF-folded stream so the resulting text stays above 20,000 units and blocks Answer
+        // instead of silently truncating to 15,360 valid units.
+        let crlf_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r30-crlf".into(),
+            title: "CRLF paste".into(),
+            fields: vec![json!({
+                "key": "body",
+                "title": "Body",
+                "type": "string",
+                "required": true
+            })],
+        };
+        let (state, _rx) = state_with_form(crlf_form.clone());
+        let mut rt = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        let (ix, iy) = rt.find("field-body").expect("free-text editor must mount");
+        rt.pointer_down(ix, iy);
+        rt.pointer_up(ix, iy);
+        rt.frame(0.0);
+        rt.paste("ab\r\n".repeat(7_000));
+        rt.frame(0.0);
+        let body_utf16 = rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r30-crlf".into(), "body".into()))
+            .unwrap()
+            .edit
+            .text
+            .encode_utf16()
+            .count();
+        assert!(
+            body_utf16 > 20_000
+                && body_utf16 <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "CRLF paste of 21,000 normalized units must stay in (20000..=20480] so Answer stays blocked, got {body_utf16}"
+        );
+        assert!(
+            agent_forms::answer(&crlf_form, &rt.state.agent.as_ref().unwrap().drafts).is_err(),
+            "oversized CRLF paste must fail validation instead of silently truncating into a valid answer"
+        );
+        let crlf_tree = rt.accessibility_json();
+        assert!(
+            has_state(
+                find_node(&crlf_tree, "answer-question").expect("Answer button must mount"),
+                "disabled"
+            ),
+            "Answer button must stay disabled after oversized CRLF paste"
+        );
+
+        // 2. Uncommitted IME preedit of 50,000 chars is bounded both in layout on the uncommitted
+        // frame (even without poll) and in stored state via Agent::poll, as well as after commit.
+        let ime_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r30-ime".into(),
+            title: "IME preedit".into(),
+            fields: vec![json!({
+                "key": "body",
+                "title": "Body",
+                "type": "string",
+                "required": true
+            })],
+        };
+        let (ime_state, _irx) = state_with_form(ime_form.clone());
+        let mut ime_rt = Runtime::new(ime_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        ime_rt.frame(0.0);
+        let (ix, iy) = ime_rt.find("field-body").expect("IME editor must mount");
+        ime_rt.pointer_down(ix, iy);
+        ime_rt.pointer_up(ix, iy);
+        ime_rt.frame(0.0);
+        ime_rt.ime(rune::Ime::Preedit("x".repeat(50_000), None, Vec::new()));
+        ime_rt.frame(0.0);
+        let els = ime_rt.elements();
+        let laid_out_len = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("input"))
+            .and_then(|e| e.text.as_deref())
+            .map_or(0, |v| v.encode_utf16().count());
+        assert!(
+            laid_out_len > 20_000
+                && laid_out_len <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "uncommitted IME preedit laid out in input must stay bounded in (20000..=20480], got {laid_out_len}"
+        );
+        assert!(
+            ime_rt.state.agent.as_mut().unwrap().poll(),
+            "Agent::poll must clamp oversized uncommitted preedit in state"
+        );
+        let stored_preedit_len = ime_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r30-ime".into(), "body".into()))
+            .unwrap()
+            .edit
+            .preedit()
+            .map_or(0, |(p, _)| p.encode_utf16().count());
+        assert!(
+            stored_preedit_len > 20_000
+                && stored_preedit_len <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "uncommitted IME preedit must be bounded in stored draft state, got {stored_preedit_len}"
+        );
+        ime_rt.ime(rune::Ime::Commit("y".repeat(50_000)));
+        ime_rt.frame(0.0);
+        let committed_len = ime_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r30-ime".into(), "body".into()))
+            .unwrap()
+            .edit
+            .text
+            .encode_utf16()
+            .count();
+        assert!(
+            committed_len > 20_000
+                && committed_len <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "committed IME text must also stay bounded in (20000..=20480], got {committed_len}"
+        );
+        assert!(
+            has_state(
+                find_node(&ime_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must stay disabled after oversized IME commit"
+        );
+
+        // 3. A server-rejected explicit empty answer on an optional deferred-pattern string field
+        // stays invalid and keeps conditional `when: eq ""` siblings visible and Answer disabled
+        // until the user explicitly clicks Clear to omit the field.
+        let rej_empty_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r30-rej-empty".into(),
+            title: "Rejected empty".into(),
+            fields: vec![
+                json!({
+                    "key": "opt",
+                    "title": "Optional",
+                    "type": "string",
+                    "required": false,
+                    "pattern": "^(?=a{257})"
+                }),
+                json!({
+                    "key": "note",
+                    "title": "Note",
+                    "type": "string",
+                    "required": false,
+                    "default": "hi",
+                    "when": [{ "key": "opt", "op": "eq", "value": "" }]
+                }),
+            ],
+        };
+        let (mut rej_state, _rrx) = state_with_form(rej_empty_form.clone());
+        {
+            let opt_d = rej_state
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r30-rej-empty".into(), "opt".into()))
+                .unwrap();
+            opt_d.edit.text = "x".into();
+            assert!(opt_d.is_dirty());
+            opt_d.edit.text.clear();
+        }
+        assert_eq!(
+            agent_forms::answer(&rej_empty_form, &rej_state.agent.as_ref().unwrap().drafts)
+                .unwrap(),
+            json!({ "opt": "", "note": "hi" })
+        );
+        // Simulate server 400 rejecting `opt: ""`:
+        {
+            let opt_d = rej_state
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r30-rej-empty".into(), "opt".into()))
+                .unwrap();
+            opt_d.set_server_rejected(rej_empty_form.fields[0].clone(), json!(""));
+        }
+        let mut rej_rt = Runtime::new(rej_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        rej_rt.frame(0.0);
+        assert!(
+            agent_forms::answer(
+                &rej_empty_form,
+                &rej_rt.state.agent.as_ref().unwrap().drafts
+            )
+            .is_err(),
+            "server-rejected explicit empty string must stay invalid instead of silently omitting"
+        );
+        let rej_tree = rej_rt.accessibility_json();
+        assert!(
+            has_state(
+                find_node(&rej_tree, "answer-question").expect("Answer button"),
+                "disabled"
+            ),
+            "Answer must stay disabled after server rejects explicit empty answer"
+        );
+        assert!(
+            find_node(&rej_tree, &agent_forms::field_editor_key("note")).is_some(),
+            "conditional `when: eq \"\"` sibling must stay visible while rejected empty answer is active"
+        );
+        let (cx, cy) = rej_rt
+            .find(&agent_forms::clear_option_key("opt"))
+            .expect("optional free-text field with rejected empty answer must expose Clear");
+        rej_rt.pointer_down(cx, cy);
+        rej_rt.pointer_up(cx, cy);
+        rej_rt.frame(0.0);
+        assert_eq!(
+            agent_forms::answer(
+                &rej_empty_form,
+                &rej_rt.state.agent.as_ref().unwrap().drafts
+            )
+            .unwrap(),
+            json!({}),
+            "explicit Clear action must omit the optional field and allow submitting {{}}"
+        );
+        let cleared_tree = rej_rt.accessibility_json();
+        assert!(
+            find_node(&cleared_tree, &agent_forms::field_editor_key("note")).is_none(),
+            "conditional sibling must hide once user explicitly clears the empty answer"
+        );
+        assert!(
+            !has_state(
+                find_node(&cleared_tree, "answer-question").expect("Answer button"),
+                "disabled"
+            ),
+            "Answer must become enabled after user explicitly clears the rejected empty answer"
+        );
+
+        // 4. Required hidden `date-time` field with V8/OpenCode-valid defaults like
+        // `"2026-11-26 2:30 PM GMT"` and `"2026-11-26 14:30 (Paris)"` must remain valid and
+        // submit verbatim, while impossible shapes like `"2026-11-26T2:30 PM GMT"` and
+        // `"2026-11-26 13:00 PM GMT"` are still rejected.
+        let ampm_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r30-ampm".into(),
+            title: "AM/PM date-time".into(),
+            fields: vec![
+                json!({
+                    "key": "when_gmt",
+                    "title": "When GMT",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "2026-11-26 2:30 PM GMT"
+                }),
+                json!({
+                    "key": "when_paren",
+                    "title": "When Paren",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "2026-11-26 14:30 (Paris)"
+                }),
+                json!({
+                    "key": "when_defer",
+                    "title": "When Deferred",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "2026-11-26 2 PM GMT"
+                }),
+            ],
+        };
+        let (ampm_state, _arx) = state_with_form(ampm_form.clone());
+        assert_eq!(
+            agent_forms::answer(&ampm_form, &ampm_state.agent.as_ref().unwrap().drafts)
+                .expect("valid OpenCode AM/PM and parenthesized date-time defaults must pass"),
+            json!({
+                "when_gmt": "2026-11-26 2:30 PM GMT",
+                "when_paren": "2026-11-26 14:30 (Paris)",
+                "when_defer": "2026-11-26 2 PM GMT"
+            })
+        );
+        let dt_field = json!({
+            "key": "when",
+            "title": "When",
+            "type": "string",
+            "format": "date-time",
+            "required": true
+        });
+        let mut dt_budget = crate::agent::string_constraints::MatchBudget::new();
+        for bad in [
+            "2026-11-26T2:30 PM GMT",
+            "2026-11-26 13:00 PM GMT",
+            "2026-11-26 25:00 GMT",
+            "2026-11-26 garbage",
+        ] {
+            assert_eq!(
+                crate::agent::string_constraints::matches_string_constraints_budgeted(
+                    &dt_field,
+                    bad,
+                    &mut dt_budget
+                ),
+                Ok(crate::agent::string_constraints::MatchOutcome::NoMatch),
+                "invalid date-time `{bad}` must remain rejected"
+            );
+        }
+    });
+}

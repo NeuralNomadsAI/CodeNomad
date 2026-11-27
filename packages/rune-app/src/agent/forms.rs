@@ -674,6 +674,7 @@ pub struct Draft {
     pub multiselect_order: Option<Vec<MultiselectOrderEntry>>,
     pub oversized_multiselect_default: bool,
     pub has_string_value: bool,
+    pub explicitly_cleared_empty: bool,
     pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
@@ -713,7 +714,19 @@ impl Draft {
     }
     pub fn choose(&mut self, value: &str) {
         self.edit = TextEdit::new(value);
+        if !value.is_empty() {
+            self.explicitly_cleared_empty = false;
+        }
         self.dirty = true;
+    }
+    pub fn clear_free_string(&mut self) {
+        self.edit = TextEdit::new("");
+        self.edit_baseline.clear();
+        self.has_string_value = false;
+        self.explicitly_cleared_empty = true;
+        self.clear_server_rejected();
+        self.dirty = true;
+        self.text_dirty.set(true);
     }
     pub fn choose_option(&mut self, value: &str) {
         self.choice = Some(value.into());
@@ -826,6 +839,9 @@ impl Draft {
     pub fn editor(&mut self) -> &mut TextEdit {
         if self.edit.text != self.edit_baseline {
             self.text_dirty.set(true);
+        }
+        if !self.edit.text.is_empty() {
+            self.explicitly_cleared_empty = false;
         }
         &mut self.edit
     }
@@ -993,6 +1009,7 @@ impl Default for Draft {
             multiselect_order: None,
             oversized_multiselect_default: false,
             has_string_value: false,
+            explicitly_cleared_empty: false,
             hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
@@ -1626,6 +1643,31 @@ pub fn supported_budgeted(form: &Form, budget: &mut string_constraints::MatchBud
                 && !field_unanswerable_budgeted(f, budget)))
     })
 }
+pub fn free_string_has_explicit_empty(field: &Value, d: &Draft) -> bool {
+    if field["type"] != "string"
+        || has_declared_options(field)
+        || field["required"] == true
+        || field["hidden"] == true
+        || !d.edit.text.is_empty()
+        || d.explicitly_cleared_empty
+    {
+        return false;
+    }
+    if d.is_dirty() {
+        let Ok(min_len) = parse_u64_bound(field, "minLength") else {
+            return false;
+        };
+        if !min_len.is_none_or(|m| m == 0) {
+            return false;
+        }
+        let mut budget = string_constraints::MatchBudget::new();
+        string_constraints::matches_string_constraints_budgeted(field, "", &mut budget)
+            .is_ok_and(|outcome| outcome != string_constraints::MatchOutcome::NoMatch)
+    } else {
+        d.has_string_value
+    }
+}
+
 pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationError> {
     let mut budget = string_constraints::MatchBudget::new();
     validate_budgeted(field, d, &mut budget)
@@ -1636,13 +1678,22 @@ pub fn validate_budgeted(
     d: &Draft,
     budget: &mut string_constraints::MatchBudget,
 ) -> Result<Option<Value>, ValidationError> {
-    validate_budgeted_with_deferred(field, d, budget).map(|(value, _)| value)
+    validate_budgeted_with_deferred_inner(field, d, budget, None).map(|(value, _)| value)
 }
 
 fn validate_budgeted_with_deferred(
     field: &Value,
     d: &Draft,
     budget: &mut string_constraints::MatchBudget,
+) -> Result<(Option<Value>, bool), ValidationError> {
+    validate_budgeted_with_deferred_inner(field, d, budget, None)
+}
+
+fn validate_budgeted_with_deferred_inner(
+    field: &Value,
+    d: &Draft,
+    budget: &mut string_constraints::MatchBudget,
+    rejected_when: Option<&mut Option<Value>>,
 ) -> Result<(Option<Value>, bool), ValidationError> {
     if !valid_options_shape(field)
         || !valid_bounds(field)
@@ -1756,6 +1807,9 @@ fn validate_budgeted_with_deferred(
                     }
                     string_constraints::MatchOutcome::Deferred => {
                         if d.is_server_rejected(field, effective) {
+                            if let Some(slot) = rejected_when {
+                                *slot = Some(json!(effective));
+                            }
                             return Err(ValidationError::InvalidFormat);
                         }
                         return Ok((Some(json!(effective)), true));
@@ -1764,11 +1818,11 @@ fn validate_budgeted_with_deferred(
             }
             let hidden_present =
                 field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
-            let empty_present = if text.is_empty() && !hidden_present {
+            let empty_present = if text.is_empty() && !hidden_present && !d.explicitly_cleared_empty
+            {
                 if d.is_dirty() {
                     field["required"] != true
                         && min_len.is_none_or(|m| m == 0)
-                        && !d.is_server_rejected(field, "")
                         && string_constraints::matches_string_constraints_budgeted(
                             field, "", budget,
                         )
@@ -1829,6 +1883,9 @@ fn validate_budgeted_with_deferred(
                 string_constraints::MatchOutcome::NoMatch => Err(ValidationError::InvalidFormat),
                 string_constraints::MatchOutcome::Deferred => {
                     if d.is_server_rejected(field, effective) {
+                        if let Some(slot) = rejected_when {
+                            *slot = Some(json!(effective));
+                        }
                         return Err(ValidationError::InvalidFormat);
                     }
                     Ok((Some(json!(effective)), true))
@@ -2170,13 +2227,19 @@ pub fn evaluate_active_fields<'a>(
         if !active(field, &out) {
             continue;
         }
+        let mut rejected_when = None;
         let result = field["key"]
             .as_str()
             .and_then(|k| drafts.get(&(form.id.clone(), k.into())))
             .map_or(Err(ValidationError::Unsupported), |d| {
-                validate_budgeted(field, d, budget)
+                validate_budgeted_with_deferred_inner(field, d, budget, Some(&mut rejected_when))
+                    .map(|(value, _)| value)
             });
-        if let Ok(Some(v)) = &result
+        if let Some(v) = result
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .or(rejected_when.as_ref())
             && let Some(key) = field["key"].as_str()
         {
             out.insert(key.into(), v.clone());
@@ -2203,8 +2266,17 @@ pub fn active_fields<'a>(
         let Some(d) = drafts.get(&(form.id.clone(), key.into())) else {
             continue;
         };
-        if let Ok(Some(v)) = validate_budgeted(field, d, &mut budget) {
-            out.insert(key.into(), v);
+        let mut rejected_when = None;
+        let result =
+            validate_budgeted_with_deferred_inner(field, d, &mut budget, Some(&mut rejected_when))
+                .map(|(value, _)| value);
+        if let Some(v) = result
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .or(rejected_when.as_ref())
+        {
+            out.insert(key.into(), v.clone());
         }
     }
     (active_list, out)

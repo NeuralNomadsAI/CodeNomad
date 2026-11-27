@@ -516,23 +516,151 @@ fn utf16_prefix_byte_len(s: &str, max_units: usize) -> usize {
     s.len()
 }
 
-pub fn clamp_form_text_edit(edit: &mut rune::TextEdit) -> bool {
-    if edit.text.len() <= MAX_FORM_EDITOR_UTF16 {
+/// Byte prefix of `s` whose post-`TextEdit::sanitize` (`\r\n` -> `\n`) UTF-16 length stays within
+/// `max_units`, stopping before a `\r\n` pair if the `\n` itself would cross the limit.
+fn utf16_normalized_paste_prefix_byte_len(s: &str, max_units: usize) -> usize {
+    let mut units = 0usize;
+    let mut chars = s.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '\r' && chars.peek().is_some_and(|&(_, next)| next == '\n') {
+            if units + 1 > max_units {
+                return idx;
+            }
+            continue;
+        }
+        let len = ch.len_utf16();
+        if units + len > max_units {
+            return idx;
+        }
+        units += len;
+    }
+    s.len()
+}
+
+fn normalize_and_cap_utf16(s: &str, max_units: usize) -> String {
+    let mut out = String::new();
+    let mut units = 0usize;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' && chars.peek() == Some(&'\n') {
+            if units + 1 > max_units {
+                break;
+            }
+            continue;
+        }
+        let len = ch.len_utf16();
+        if units + len > max_units {
+            break;
+        }
+        out.push(ch);
+        units += len;
+    }
+    out
+}
+
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut end = idx.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+fn safe_edit_range(edit: &rune::TextEdit) -> (usize, usize) {
+    let (a, b) = edit.range();
+    let start = floor_char_boundary(&edit.text, a);
+    let end = floor_char_boundary(&edit.text, b).max(start);
+    (start, end)
+}
+
+fn edit_exceeds_form_cap(edit: &rune::TextEdit) -> bool {
+    let preedit_len = edit.preedit().map_or(0, |(p, _)| p.len());
+    if edit.text.len().saturating_add(preedit_len) <= MAX_FORM_EDITOR_UTF16 {
         return false;
     }
-    let end = utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16);
-    if end == edit.text.len() {
-        return false;
+    if edit.text.len() > MAX_FORM_EDITOR_UTF16
+        && utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16) < edit.text.len()
+    {
+        return true;
     }
-    let focused = edit.focused;
-    let anchor = edit.anchor.min(end);
-    let focus = edit.focus.min(end);
-    let mut bounded = rune::TextEdit::new(&edit.text[..end]);
+    let Some((preedit, _)) = edit.preedit() else {
+        return false;
+    };
+    let (sel_start, sel_end) = safe_edit_range(edit);
+    let kept_utf16 =
+        edit.text[..sel_start].encode_utf16().count() + edit.text[sel_end..].encode_utf16().count();
+    let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
+    utf16_prefix_byte_len(preedit, remaining) < preedit.len()
+}
+
+fn build_bounded_form_text_edit(edit: &rune::TextEdit, force_unfocus: bool) -> rune::TextEdit {
+    let text_end = utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16);
+    let focused = if force_unfocus { false } else { edit.focused };
+    let anchor = floor_char_boundary(&edit.text[..text_end], edit.anchor.min(text_end));
+    let focus = floor_char_boundary(&edit.text[..text_end], edit.focus.min(text_end));
+    let mut bounded = rune::TextEdit::new(&edit.text[..text_end]);
     bounded.focused = focused;
     bounded.anchor = anchor;
     bounded.focus = focus;
     bounded.sync_invariants();
-    *edit = bounded;
+    if let Some((preedit, cursor)) = edit.preedit() {
+        let (sel_start, sel_end) = safe_edit_range(&bounded);
+        let kept_utf16 = bounded.text[..sel_start].encode_utf16().count()
+            + bounded.text[sel_end..].encode_utf16().count();
+        let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
+        if remaining > 0 {
+            if utf16_prefix_byte_len(preedit, remaining) == preedit.len() {
+                bounded.ime(&rune::Ime::Preedit(
+                    preedit.to_string(),
+                    cursor,
+                    edit.preedit_clauses(),
+                ));
+            } else {
+                let clamped = normalize_and_cap_utf16(preedit, remaining);
+                if !clamped.is_empty() {
+                    let clamped_cursor = cursor.map(|(a, b)| {
+                        let ca = floor_char_boundary(&clamped, a);
+                        let cb = floor_char_boundary(&clamped, b);
+                        (ca, cb)
+                    });
+                    bounded.ime(&rune::Ime::Preedit(clamped, clamped_cursor, Vec::new()));
+                }
+            }
+        }
+    }
+    bounded
+}
+
+pub fn clamp_form_text_edit(edit: &mut rune::TextEdit) -> bool {
+    if !edit_exceeds_form_cap(edit) {
+        return false;
+    }
+    let text_exceeds = edit.text.len() > MAX_FORM_EDITOR_UTF16
+        && utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16) < edit.text.len();
+    if text_exceeds {
+        *edit = build_bounded_form_text_edit(edit, false);
+        return true;
+    }
+    let (sel_start, sel_end) = safe_edit_range(edit);
+    let kept_utf16 =
+        edit.text[..sel_start].encode_utf16().count() + edit.text[sel_end..].encode_utf16().count();
+    let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
+    let Some((clamped, clamped_cursor)) = edit.preedit().map(|(preedit, cursor)| {
+        let clamped = normalize_and_cap_utf16(preedit, remaining);
+        let clamped_cursor = cursor.map(|(a, b)| {
+            let ca = floor_char_boundary(&clamped, a);
+            let cb = floor_char_boundary(&clamped, b);
+            (ca, cb)
+        });
+        (clamped, clamped_cursor)
+    }) else {
+        return false;
+    };
+    if clamped.is_empty() {
+        edit.cancel_composition();
+    } else {
+        edit.ime(&rune::Ime::Preedit(clamped, clamped_cursor, Vec::new()));
+    }
     true
 }
 
@@ -657,16 +785,13 @@ pub fn form_textarea<S: 'static>(
         .text_area
         .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(&k));
     let mut bounded_edit;
-    let needs_clamp = edit.text.len() > MAX_FORM_EDITOR_UTF16
-        && utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16) < edit.text.len();
-    let shown_edit = if (disabled && edit.focused) || needs_clamp {
+    let needs_clamp = edit_exceeds_form_cap(edit);
+    let shown_edit = if needs_clamp {
+        bounded_edit = build_bounded_form_text_edit(edit, disabled);
+        &bounded_edit
+    } else if disabled && edit.focused {
         bounded_edit = edit.clone();
-        if disabled {
-            bounded_edit.focused = false;
-        }
-        if needs_clamp {
-            clamp_form_text_edit(&mut bounded_edit);
-        }
+        bounded_edit.focused = false;
         &bounded_edit
     } else {
         edit
@@ -706,7 +831,7 @@ pub fn form_textarea<S: 'static>(
                 let kept_utf16 = edit.text[..sel_start].encode_utf16().count()
                     + edit.text[sel_end..].encode_utf16().count();
                 let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
-                let prefix_len = utf16_prefix_byte_len(raw, remaining);
+                let prefix_len = utf16_normalized_paste_prefix_byte_len(raw, remaining);
                 if prefix_len == raw.len() {
                     return false;
                 }

@@ -180,7 +180,6 @@ pub(crate) fn focused_control_key(
                                 && agent_forms::option_desc_reveal_key(field_key, option.value)
                                     == key)
                     }) || (field["required"] != true
-                        && !options.is_empty()
                         && key == agent_forms::clear_option_key(field_key))
                 }
                 Some("multiselect") => {
@@ -1471,6 +1470,10 @@ impl Ui {
             {
                 self.dispatch_catalog_read(directory, self.catalog_generation);
             }
+        }
+        for draft in self.drafts.values_mut() {
+            changed |= rune_theme_codenomad::form_controls::clamp_form_text_edit(&mut draft.edit);
+            changed |= rune_theme_codenomad::form_controls::clamp_form_text_edit(&mut draft.custom);
         }
         changed
     }

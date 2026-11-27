@@ -525,6 +525,35 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         custom_invalid,
                         crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),
                     ));
+                    if valid.is_empty()
+                        && field["required"] != true
+                        && d.custom.text.is_empty()
+                        && !d.is_dirty()
+                        && d.has_string_value
+                    {
+                        let id = identity.clone();
+                        let editor_key = agent_forms::custom_editor_key(key);
+                        let clear_label = t("sessionList.selection.clearLabel");
+                        let clear_accessible = format!("{field_name} · {clear_label}");
+                        children.push(form_controls::clear_choice_button(
+                            &agent_forms::clear_option_key(key),
+                            clear_label,
+                            &clear_accessible,
+                            locked,
+                            crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                                if let Some(d) = s
+                                    .agent
+                                    .as_mut()
+                                    .filter(|a| !a.forms_mutating())
+                                    .and_then(|a| a.drafts.get_mut(&id))
+                                {
+                                    d.clear_choice();
+                                    d.clear_server_rejected();
+                                    tx.focus(editor_key.clone(), tx.focus_visible());
+                                }
+                            }),
+                        ));
+                    }
                 }
                 if let Some(msg) = &error_text {
                     children.push(form_controls::field_error(&error_key, msg));
@@ -551,6 +580,29 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     is_invalid,
                     crate::screen::edit(&scope, crate::screen::Editor::Form(id)),
                 ));
+                if agent_forms::free_string_has_explicit_empty(field, d) {
+                    let id = identity.clone();
+                    let editor_key = agent_forms::field_editor_key(key);
+                    let clear_label = t("sessionList.selection.clearLabel");
+                    let clear_accessible = format!("{field_name} · {clear_label}");
+                    body = body.child(form_controls::clear_choice_button(
+                        &agent_forms::clear_option_key(key),
+                        clear_label,
+                        &clear_accessible,
+                        locked,
+                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                            if let Some(d) = s
+                                .agent
+                                .as_mut()
+                                .filter(|a| !a.forms_mutating())
+                                .and_then(|a| a.drafts.get_mut(&id))
+                            {
+                                d.clear_free_string();
+                                tx.focus(editor_key.clone(), tx.focus_visible());
+                            }
+                        }),
+                    ));
+                }
                 if let Some(msg) = &error_text {
                     body = body.child(form_controls::field_error(&error_key, msg));
                 }
