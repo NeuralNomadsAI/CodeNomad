@@ -37,14 +37,14 @@ test("a calendar is the Automations that name it in the Location's carrier conve
   assert.deepEqual(f.sessions.get(f.calendars.carrier).metadata, { [MISSION_CALENDAR_CARRIER]: { version: 1 } })
   // Somebody else's Automation in the same conversation is not a calendar.
   f.rows.push({ id: "aut_other", name: "Other", sessionID: f.calendars.carrier, tz: "UTC", status: "active", runCount: 0, trigger: { type: "every", every: "1 hour" }, action: { type: "prompt", prompt: "Hello" } })
-  f.rows[1].lastRunAt = 50; f.rows[1].state = { last: JSON.stringify({ outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1", history: [{ at: 10, outcome: "completed" }] }) }
+  f.rows[1].lastRunAt = 50; f.rows[1].state = { last: JSON.stringify({ outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1", history: [{ at: 10, outcome: "completed" }], launches: 24 }) }
   f.rows[0].lastRunAt = 40; f.rows[0].state = { last: JSON.stringify({ outcome: "launched", missionID: "msn_running", status: "active", history: [] }) }
   const [calendar, ...others] = await f.calendars.list()
   assert.equal(others.length, 0)
   assert.deepEqual([calendar!.id, calendar!.title, calendar!.paused, calendar!.rules.map(rule => rule.automationID)], ["cal_sync", "Sync", false, ["aut_1", "aut_2"]])
   assert.deepEqual([calendar!.mission, calendar!.launch, calendar!.missionID], [{ objective: "Review", template: "custom" }, { when: [] }, "msn_running"])
   assert.deepEqual(calendar!.last, { outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1",
-    history: [{ at: 10, outcome: "completed" }], at: 50 }, "the latest run of any rule")
+    history: [{ at: 10, outcome: "completed" }], launches: 24, at: 50 }, "the latest run of any rule")
 })
 
 test("saving again replaces the rules under the same identity, and a paused calendar stays paused", async () => {

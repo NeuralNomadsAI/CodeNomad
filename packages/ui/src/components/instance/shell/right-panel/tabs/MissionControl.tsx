@@ -42,6 +42,9 @@ import { useMissionCurrentPassage } from "../../../../../stores/mission-recurren
 import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
+import { useMissionCalendars } from "../../../../../stores/mission-calendars"
+import { MissionProgramming } from "../../../../mission-programming"
+import { missionProgramming, missionProgrammingSuccessor } from "../../../../mission-programming-model"
 import { MissionPanelScope, MissionViewScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
 import { projectScope } from "../../../../../lib/backend-identity"
@@ -179,6 +182,31 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     untrack(() => activateMissionDemand(instanceId))
     onCleanup(() => deactivateMissionDemand(instanceId))
   })
+
+  // A programmed Mission is the ordinary Mission of its current launch; its programming is read beside a list that
+  // has Missions, again whenever one of them appears, goes or changes state.
+  const calendars = useMissionCalendars({ instanceId: () => props.instanceId, directory, active: () => visible() && rows().length > 0,
+    refresh: () => `${recurrenceRefresh()}|${rows().map(row => `${row.id}:${row.status}:${row.runState}`).join()}` })
+  const programmingOf = (id: string | undefined) => calendars.rows().find(calendar => calendar.missionID === id)
+  const [programmingFailed, setProgrammingFailed] = createSignal(false)
+  // The selection follows a programmed Mission to the launch that replaced the selected one.
+  let followed = calendars.rows()
+  createEffect(() => {
+    const next = missionProgrammingSuccessor(followed, calendars.rows(), untrack(selectedMissionId))
+    followed = calendars.rows()
+    if (next) untrack(() => selectMission(next))
+  })
+  // Its programming goes first, so no launch follows the deletion.
+  const deleteMission = async (mission: MissionPanelMap) => {
+    const calendar = programmingOf(mission.id), current = captureView()
+    setProgrammingFailed(false)
+    if (calendar) {
+      try { await calendars.act(calendar.id, { action: "delete" }) }
+      catch { if (current()) setProgrammingFailed(true); return }
+      if (!current() || editor()) return
+    }
+    openEditor({ kind: "delete", mission })
+  }
 
   // A late recovery acknowledgement refreshes only a still-visible view: hidden
   // views keep their cached snapshot for activation revalidation.
@@ -555,6 +583,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
       activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
+        ...(programmingOf(value.id) ? missionProgramming(programmingOf(value.id)!, props.t, locale()).row : []),
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
   // The saved Mission ID survives ownership conversion in another window, including
@@ -810,12 +839,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onOpenCoordinator={() => void onOpenActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry} onRevealDetail={() => revealDetail?.()}
-            editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
+            editDisabled={Boolean(editor()) || selected().status !== "active" || Boolean(programmingOf(id))} deleteDisabled={Boolean(editor())}
             onEdit={() => openEditor({ kind: "edit", mission: selected() })}
-            onDelete={() => openEditor({ kind: "delete", mission: selected() })}
+            onDelete={() => void deleteMission(selected())}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
             onOpenTask={sessionId => void onOpenActor(sessionId)} />
+          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} disabled={Boolean(editor())} failed={programmingFailed()}
+            onAct={action => calendars.act(calendar().id, { action })} />}</Show>
           {tracking()}
         </section>
       }}</Show>
