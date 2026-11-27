@@ -872,3 +872,72 @@ fn shell_reconciliation_clears_stashed_and_recalled_restores_and_held_enter_neve
         mods: Mods::default(),
     });
 }
+
+#[test]
+fn in_flight_shell_holds_unconfirmed_when_auth_expires_before_receipt() {
+    let (mut rt, rx) = chat_runtime();
+    let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    let (event_tx, event_rx) = codenomad_client::bounded(8);
+    rt.update(|s, _| {
+        crate::settings::connected(s, &backend);
+        s.incoming = Some(event_rx);
+        s.composer.shell_mode = true;
+        s.draft.replace_text("echo auth-expiry-race");
+    });
+    rt.update(|s, tx| send(s, tx, false));
+    let Command::Shell { attempt, command } = rx.try_recv().expect("dispatched shell command")
+    else {
+        panic!("expected Command::Shell");
+    };
+    assert_eq!(command, "echo auth-expiry-race");
+    assert!(rt.state.composer.pending_shell());
+
+    // Transport exits on a concurrent 401 (e.g. SSE or history) before ShellSettled arrives.
+    event_tx
+        .try_send(codenomad_client::transport::Event::AuthenticationRequired(
+            codenomad_client::transport::Authentication {
+                backend,
+                confirmed: false,
+            },
+        ))
+        .unwrap();
+    rt.frame(0.02);
+
+    assert!(!rt.state.composer.pending());
+    assert!(rt.state.composer.shell_mode);
+    assert_eq!(rt.state.draft.text, "echo auth-expiry-race");
+    assert!(!rt.state.composer.send_error);
+    assert!(super::actions::command_held(&rt.state));
+    assert!(
+        rt.elements().iter().any(|el| {
+            el.role == "alert"
+                && el.text.as_deref() == Some(t("missionsPanel.action.requestUpdateUncertain"))
+        }),
+        "unconfirmed command alert must be visible"
+    );
+
+    // Even after reconnecting, the exact command stays held against replay until history confirms it.
+    let (reconnected_tx, _reconnected_rx) = codenomad_client::bounded(4);
+    rt.update(|s, _| {
+        s.phase = Phase::Ready;
+        s.stream_offline = false;
+        s.commands = Some(reconnected_tx);
+    });
+    assert!(super::actions::command_held(&rt.state));
+    assert!(!can_send(&rt.state));
+
+    rt.update(|s, _| {
+        s.messages.push(std::sync::Arc::new(crate::Message {
+            id: attempt.clone(),
+            role: "shell".into(),
+            completed: true,
+            body: "$ echo auth-expiry-race\nok".into(),
+            usage: None,
+            parts: Vec::new(),
+        }));
+        super::actions::reconcile(s);
+    });
+    assert!(!super::actions::command_held(&rt.state));
+    assert!(rt.state.draft.text.is_empty());
+    assert!(!rt.state.composer.shell_mode);
+}

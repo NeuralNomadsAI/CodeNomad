@@ -37,6 +37,20 @@ async fn reject_command(command: Command, out: &Sender<Event>, wake: &crate::Wak
     }
 }
 
+async fn settle_on_close(input: Input, out: &Sender<Event>, wake: &crate::Wake) {
+    match input {
+        Input::Command(command) => reject_command(command, out, wake).await,
+        Input::ShellSettled(_, attempted, settlement) => {
+            let outcome = match settlement {
+                receipts::ShellSettlement::Outcome(outcome)
+                | receipts::ShellSettlement::AuthExpired { outcome } => outcome,
+            };
+            publish(out, wake, Event::PromptAcknowledged { attempted, outcome }).await;
+        }
+        _ => {}
+    }
+}
+
 async fn close_and_reject_queued(
     commands: &Receiver<Command>,
     rx: &Receiver<Input>,
@@ -48,23 +62,17 @@ async fn close_and_reject_queued(
     commands.close();
     loop {
         while let Ok(queued) = rx.try_recv() {
-            if let Input::Command(command) = queued {
-                reject_command(command, out, wake).await;
-            }
+            settle_on_close(queued, out, wake).await;
         }
         if forward_done.is_closed() {
             break;
         }
-        if let Some(Input::Command(command)) =
-            runtime::recv_timeout(rx, Duration::from_millis(5)).await
-        {
-            reject_command(command, out, wake).await;
+        if let Some(queued) = runtime::recv_timeout(rx, Duration::from_millis(5)).await {
+            settle_on_close(queued, out, wake).await;
         }
     }
     while let Ok(queued) = rx.try_recv() {
-        if let Input::Command(command) = queued {
-            reject_command(command, out, wake).await;
-        }
+        settle_on_close(queued, out, wake).await;
     }
     while let Ok(command) = commands.try_recv() {
         reject_command(command, out, wake).await;

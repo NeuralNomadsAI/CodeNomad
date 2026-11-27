@@ -25,7 +25,6 @@ pub struct Owner {
     optimistic_ids: Vec<String>,
     unconfirmed: Option<UnconfirmedPrompt>,
     restored_shell: Option<RestoredShell>,
-    pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
@@ -46,7 +45,6 @@ impl Default for Owner {
             optimistic_ids: Vec::new(),
             unconfirmed: None,
             restored_shell: None,
-            command_unconfirmed: None,
             restored: false,
             attachments_missing: false,
             recall: None,
@@ -56,6 +54,14 @@ impl Default for Owner {
 impl Owner {
     pub fn pending(&self) -> bool {
         self.sending.is_some()
+    }
+    pub fn pending_shell(&self) -> bool {
+        self.sending.as_ref().is_some_and(|send| {
+            matches!(
+                send.command.as_ref().map(|cmd| &cmd.kind),
+                Some(CommandKind::Shell { .. })
+            )
+        })
     }
     pub fn blocks_navigation(&self) -> bool {
         self.sending.is_some()
@@ -379,60 +385,6 @@ fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -
     count.hash(&mut hasher);
     (count, hasher.finish())
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum UnconfirmedCommand {
-    Slash {
-        name_len: usize,
-        name_hash: u64,
-        args_len: usize,
-        args_hash: u64,
-    },
-    Shell {
-        command_len: usize,
-        command_hash: u64,
-    },
-}
-impl UnconfirmedCommand {
-    pub(crate) fn new(name: &str, args: &str) -> Self {
-        let (name_len, name_hash) = hash_text(name);
-        let (args_len, args_hash) = hash_text(args);
-        Self::Slash {
-            name_len,
-            name_hash,
-            args_len,
-            args_hash,
-        }
-    }
-    #[cfg(test)]
-    pub(crate) fn shell(command: &str) -> Self {
-        let (command_len, command_hash) = hash_text(command);
-        Self::Shell {
-            command_len,
-            command_hash,
-        }
-    }
-    fn matches_slash(&self, name: &str, args: &str) -> bool {
-        matches!(
-            self,
-            Self::Slash {
-                name_len,
-                name_hash,
-                args_len,
-                args_hash,
-            } if (*name_len, *name_hash) == hash_text(name)
-                && (*args_len, *args_hash) == hash_text(args)
-        )
-    }
-    fn matches_shell(&self, command: &str) -> bool {
-        matches!(
-            self,
-            Self::Shell {
-                command_len,
-                command_hash,
-            } if (*command_len, *command_hash) == hash_text(command)
-        )
-    }
-}
 struct RestoredShell {
     id: String,
     target: command_receipts::Target,
@@ -460,30 +412,8 @@ impl PendingSend {
     }
 }
 
-fn repeats_uncertain_command(s: &State) -> bool {
-    s.composer
-        .command_unconfirmed
-        .as_ref()
-        .is_some_and(|unconfirmed| {
-            if s.composer.shell_mode {
-                s.composer
-                    .draft
-                    .resolve_shell(&s.draft)
-                    .is_some_and(|command| unconfirmed.matches_shell(&command))
-            } else {
-                super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                    s.composer
-                        .draft
-                        .resolve_args(&s.draft, args)
-                        .is_some_and(|resolved| unconfirmed.matches_slash(candidate, &resolved))
-                })
-            }
-        })
-}
-
 pub(crate) fn command_held(s: &State) -> bool {
     command_receipts::repeats_unconfirmed(s)
-        || repeats_uncertain_command(s)
         || s.command_receipts.full()
             && (s.composer.shell_mode
                 || s.composer.picker.selected_command(&s.draft.text).is_some())
