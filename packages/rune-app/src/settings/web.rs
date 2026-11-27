@@ -757,7 +757,8 @@ pub(super) fn view(
                     .backend
                     .as_ref()
                     .is_some_and(|b| !super::ServerOwner::backend_verified(b));
-            col()
+            let wake = Some(s.wake.clone());
+            let mut body = col()
                 .full_width()
                 .children(
                     (!local && (transport_issue || panel.scope.local_failed(prefs))).then(|| {
@@ -794,14 +795,39 @@ pub(super) fn view(
                         }
                     },
                     |s| &mut s.settings.web.opencode,
-                ))
-                .child(
-                    panel
-                        .logging
-                        .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                            &mut s.settings.web.logging
-                        }),
-                )
+                ));
+            if local {
+                let logs_action = opencode::logs_action_view(
+                    &panel.opencode,
+                    prefs,
+                    &s.settings.shared,
+                    wake.clone(),
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.opencode,
+                );
+                body = body
+                    .child(opencode::executable_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake.clone(),
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(opencode::login_start_view(
+                        &panel.opencode,
+                        prefs,
+                        &s.settings.shared,
+                        wake,
+                        |s: &mut State| &mut s.settings.web.opencode,
+                    ))
+                    .child(panel.logging.view(
+                        &s.settings.shared,
+                        &mut layers,
+                        logs_action,
+                        |s: &mut State| &mut s.settings.web.logging,
+                    ));
+            }
+            body
         }
         Section::Remote
             if local || (prefs.backend.is_some() && !panel.scope.local_unsupported(prefs)) =>
