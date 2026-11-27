@@ -14,7 +14,6 @@ import {seedHistory,historyResponse,historyPreview} from './launcher-history.mjs
 import {responseFor,textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
-import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
@@ -1026,7 +1025,34 @@ try{
     client=webState.client
     if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
   }else if(pendingOpen){
-    await pendingOpenFixture({origin,serverPid,backendPassword,profile,project,env,clientBinary});result=0
+    if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
+    const pendingUrl=new URL('./pending-open-fixture.mjs',import.meta.url).href
+    const helperCode=`
+      import {readFileSync} from 'node:fs'
+      import {pendingOpenFixture} from ${JSON.stringify(pendingUrl)}
+      const opts=JSON.parse(readFileSync(0,'utf8'))
+      await pendingOpenFixture(opts)
+    `
+    client=spawnFixtureChild(process.execPath,['--input-type=module','-e',helperCode],{
+      cwd:root,
+      windowsHide:true,
+      stdio:['pipe','inherit','inherit'],
+      env:stripFixtureServerSecrets(process.env),
+    })
+    webState.clientStartedBy=new Date()
+    const pendingClosedOnly=trackClientClose(client)
+    let pendingError
+    const onPendingError=error=>{pendingError??=error}
+    client.once('error',onPendingError)
+    client.stdin?.on('error',()=>{})
+    client.stdin?.end(JSON.stringify({origin,serverPid,backendPassword,profile,project,env,clientBinary}))
+    const outcome=await waitClientExit(client,pendingClosedOnly,300000,()=>pendingError)
+    client.off('error',onPendingError)
+    if(outcome.timedOut||outcome.interrupted)await stopClientOnce(client)
+    if(outcome.error)throw outcome.error
+    if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
+    assert(!outcome.timedOut,'Pending-open fixture exceeded 300000ms')
+    result=outcome.code
   }else if(restoreState){
     if(restoreFileDrafts)await signIn(origin)
     if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
