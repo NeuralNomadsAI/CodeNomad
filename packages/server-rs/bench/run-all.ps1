@@ -2,6 +2,16 @@
 param([Parameter(Mandatory)][string]$OpenCode, [string[]]$Only)
 $ErrorActionPreference = 'Stop'
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CNBenchDos {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern uint QueryDosDevice(string lpDeviceName, StringBuilder lpTargetPath, uint ucchMax);
+}
+'@
+
 function Test-WithinPath([string]$Root, [string]$Candidate) {
   $r = $Root.TrimEnd('\', '/')
   $c = $Candidate.TrimEnd('\', '/')
@@ -9,10 +19,14 @@ function Test-WithinPath([string]$Root, [string]$Candidate) {
   return $c.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $c.StartsWith($r + '/', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Assert-LocalDrive([string]$PathValue, [string]$MessagePrefix) {
+function Assert-DriveQualified([string]$PathValue, [string]$MessagePrefix) {
   if ($PathValue -notmatch '^[A-Za-z]:[\\/]') {
     throw "$MessagePrefix ($PathValue)"
   }
+}
+
+function Assert-LocalDrive([string]$PathValue, [string]$MessagePrefix) {
+  Assert-DriveQualified $PathValue $MessagePrefix
   $letter = $PathValue.Substring(0, 1).ToUpperInvariant()
   $driveType = [System.IO.DriveInfo]::new($letter).DriveType.ToString()
   if ($driveType -notin @('Fixed', 'Ram')) {
@@ -20,9 +34,32 @@ function Assert-LocalDrive([string]$PathValue, [string]$MessagePrefix) {
   }
 }
 
+function Resolve-SubstPath([string]$FullPath) {
+  if ($FullPath -notmatch '^([A-Za-z]:)([\\/].*)?$') { return $FullPath }
+  $drive = $Matches[1].ToUpperInvariant()
+  $rest = if ($Matches[2]) { $Matches[2].TrimStart('\', '/') } else { '' }
+  $sb = [System.Text.StringBuilder]::new(32768)
+  $n = [CNBenchDos]::QueryDosDevice($drive, $sb, [uint32]$sb.Capacity)
+  if ($n -eq 0) { return $FullPath }
+  $target = ($sb.ToString() -split "`0")[0]
+  if ($target.StartsWith('\??\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $base = '\\' + $target.Substring(8)
+    return $(if ($rest) { [System.IO.Path]::Combine($base, $rest) } else { $base })
+  }
+  if ($target.StartsWith('\??\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $base = $target.Substring(4)
+    return $(if ($rest) { [System.IO.Path]::Combine($base, $rest) } else { $base })
+  }
+  return $FullPath
+}
+
 function Resolve-CanonicalPath([string]$Target, [int]$Hops = 0) {
   if ($Hops -ge 64) { throw "Refused: OpenCode executable path could not be resolved ($Target)" }
   $full = [System.IO.Path]::GetFullPath($Target)
+  $unsubsted = Resolve-SubstPath $full
+  if (-not $unsubsted.Equals($full, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return Resolve-CanonicalPath $unsubsted ($Hops + 1)
+  }
   $root = [System.IO.Path]::GetPathRoot($full)
   if (-not $root) { return $full }
   $segments = @($full.Substring($root.Length) -split '[\\/]+' | Where-Object { $_ -ne '' })
@@ -54,7 +91,7 @@ function Resolve-CanonicalPath([string]$Target, [int]$Hops = 0) {
   return $full
 }
 
-Assert-LocalDrive $OpenCode 'Refused: OpenCode executable must be a drive-qualified local path'
+Assert-DriveQualified $OpenCode 'Refused: OpenCode executable must be a drive-qualified local path'
 $normalizedOpenCode = [System.IO.Path]::GetFullPath($OpenCode)
 $rawHomes = @(
   [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile),
@@ -77,12 +114,14 @@ foreach ($homeDir in $forbiddenHomes) {
 }
 
 $resolvedOpenCode = Resolve-CanonicalPath $normalizedOpenCode
-Assert-LocalDrive $resolvedOpenCode 'Refused: OpenCode executable resolves to a non-local path'
+Assert-DriveQualified $resolvedOpenCode 'Refused: OpenCode executable resolves to a non-local path'
 foreach ($homeDir in $forbiddenHomes) {
   if (Test-WithinPath $homeDir $resolvedOpenCode) {
     throw "Refused: OpenCode executable resolves inside the user's home ($resolvedOpenCode)"
   }
 }
+Assert-LocalDrive $normalizedOpenCode 'Refused: OpenCode executable must be a drive-qualified local path'
+Assert-LocalDrive $resolvedOpenCode 'Refused: OpenCode executable resolves to a non-local path'
 
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 Push-Location $PSScriptRoot

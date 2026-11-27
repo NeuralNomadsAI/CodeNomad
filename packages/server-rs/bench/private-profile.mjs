@@ -91,17 +91,27 @@ export async function resolveSystemPowerShell(env = process.env, options = {}) {
   }
 
   // `realpath.native` already resolves mapped network drives and SUBST targets to UNC/backing paths.
-  // Verify foreign/removable SystemRoot drives via the trusted OS drive derived from `os.userInfo().homedir`.
+  // Verify foreign/removable SystemRoot drives via a kernel-verified OS Windows directory.
+  const verifyKernelRoot = async root => {
+    const kernelPath = path.join(root, "System32", "ntoskrnl.exe")
+    const resolvedKernel = await canonical(kernelPath).catch(() => null)
+    const kernelStat = resolvedKernel ? await stat(resolvedKernel).catch(() => null) : null
+    return Boolean(resolvedKernel && within(root, resolvedKernel) && kernelStat?.isFile())
+  }
   const canonicalAccount = await canonical(accountHome).catch(() => null)
   const trustedDrive = canonicalAccount && isDriveQualifiedWindowsPath(canonicalAccount)
     ? canonicalAccount[0].toUpperCase()
     : null
-  if (trustedDrive && letter !== trustedDrive) {
-    const trustedPs = await validatePowerShellCandidate(`${trustedDrive}:\\Windows`, forbidden).catch(() => null)
-    assert(
-      trustedPs,
-      `Refused: PowerShell volume locality cannot be verified for ${resolvedExe} (outside OS drive ${trustedDrive}:)`,
-    )
+  const trustedDrives = [...new Set([trustedDrive, "C"].filter(Boolean))]
+  let trustedPs = null
+  for (const drive of trustedDrives) {
+    const candidate = await validatePowerShellCandidate(`${drive}:\\Windows`, forbidden).catch(() => null)
+    if (candidate && await verifyKernelRoot(candidate.resolvedRoot)) {
+      trustedPs = candidate
+      break
+    }
+  }
+  if (trustedPs && letter !== trustedPs.resolvedExe[0].toUpperCase()) {
     const probed = await queryDriveTypeWithPowerShell(trustedPs.resolvedExe, [letter])
     const driveType = probed[letter] ?? "Unknown"
     windowsDriveTypeCache.set(letter, driveType)
@@ -111,13 +121,9 @@ export async function resolveSystemPowerShell(env = process.env, options = {}) {
     )
     return resolvedExe
   }
-
-  const kernelPath = path.join(resolvedRoot, "System32", "ntoskrnl.exe")
-  const resolvedKernel = await canonical(kernelPath).catch(() => null)
-  const kernelStat = resolvedKernel ? await stat(resolvedKernel).catch(() => null) : null
   assert(
-    resolvedKernel && within(resolvedRoot, resolvedKernel) && kernelStat?.isFile(),
-    `Refused: SystemRoot does not point to a local Windows installation (${resolvedRoot})`,
+    trustedPs && letter === trustedPs.resolvedExe[0].toUpperCase() && await verifyKernelRoot(resolvedRoot),
+    `Refused: SystemRoot does not point to a verified local Windows installation (${resolvedRoot})`,
   )
   return resolvedExe
 }
@@ -468,19 +474,32 @@ export function assertOutsideAccount(env, ...configFolders) {
 }
 
 function extractConfigArg(argv, env) {
+  let seen = false
   let cliConfig
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
-    if ((arg === "--config" || arg === "-c") && i + 1 < argv.length) {
+    if (arg === "--") break
+    if (arg === "--config" || arg === "-c") {
+      assert(!seen, "Refused: duplicate --config option for TS server")
+      assert(i + 1 < argv.length, "Refused: --config option requires a value")
       cliConfig = argv[i + 1]
+      seen = true
       i += 1
     } else if (arg.startsWith("--config=")) {
+      assert(!seen, "Refused: duplicate --config option for TS server")
       cliConfig = arg.slice("--config=".length)
+      seen = true
     } else if (arg.startsWith("-c=")) {
+      assert(!seen, "Refused: duplicate --config option for TS server")
       cliConfig = arg.slice("-c=".length)
+      seen = true
     }
   }
-  return cliConfig || env?.CLI_CONFIG
+  if (seen) {
+    assert(typeof cliConfig === "string" && cliConfig.trim().length > 0, "Refused: TS server --config must not be empty")
+    return cliConfig
+  }
+  return env?.CLI_CONFIG
 }
 
 /** Guard for direct or harness launches of `ts-server.mjs`: enforces private profile paths,

@@ -150,16 +150,34 @@ test("every OpenCode bench script refuses home, linked-home and non-local execut
 
     if (process.platform === "win32") {
       const runAll = path.join(import.meta.dirname, "run-all.ps1")
-      for (const [targetExe, expectedPattern] of cases) {
-        await assert.rejects(
-          execFileAsync("pwsh", ["-NoProfile", "-File", runAll, "-OpenCode", targetExe, "-Only", "http"], {
-            cwd: scratch,
-            windowsHide: true,
-            timeout: 15_000,
-          }),
-          error => error.code !== 0 && expectedPattern.test(`${error.stderr}\n${error.stdout}`),
-          `run-all.ps1 must refuse ${targetExe} with ${expectedPattern}`,
-        )
+      let substDrive = null
+      try {
+        for (const letter of ["Z", "Y", "X", "W", "V", "U", "T", "S", "R", "Q"]) {
+          if (!existsSync(`${letter}:\\`)) {
+            await execFileAsync("subst", [`${letter}:`, os.homedir()], { windowsHide: true, timeout: 10_000 })
+            substDrive = letter
+            break
+          }
+        }
+        const psCases = [
+          ...cases,
+          ...(substDrive ? [[`${substDrive}:\\.codenomad-bench-guard-nonexistent\\opencode.exe`, /resolves inside the user's home/]] : []),
+        ]
+        for (const [targetExe, expectedPattern] of psCases) {
+          await assert.rejects(
+            execFileAsync("pwsh", ["-NoProfile", "-File", runAll, "-OpenCode", targetExe, "-Only", "http"], {
+              cwd: scratch,
+              windowsHide: true,
+              timeout: 15_000,
+            }),
+            error => error.code !== 0 && expectedPattern.test(`${error.stderr}\n${error.stdout}`),
+            `run-all.ps1 must refuse ${targetExe} with ${expectedPattern}`,
+          )
+        }
+      } finally {
+        if (substDrive) {
+          await execFileAsync("subst", [`${substDrive}:`, "/D"], { windowsHide: true, timeout: 10_000 }).catch(() => {})
+        }
       }
       assert.equal(existsSync(benchOutDir), outExistedBefore, "refused run-all.ps1 must not create out/")
       assert.deepEqual(await snapshotTree(benchOutDir), treeBefore, "refused run-all.ps1 must not modify out/")
@@ -593,6 +611,14 @@ test("assertPrivateTsServerLaunch validates private profile, configured binary, 
     }
     await assertPrivateTsServerLaunch(["--config", configYaml], env, { probeDriveType: () => "Fixed" })
     assert.equal(env.PATH, safeBin)
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", ""], { ...env, CLI_CONFIG: configYaml }, { probeDriveType: () => "Fixed" }),
+      /--config must not be empty/,
+    )
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", configYaml, "--config", configYaml], { ...env }, { probeDriveType: () => "Fixed" }),
+      /duplicate --config/,
+    )
 
     const badConfig = path.join(profile, "bad.yaml")
     await writeFile(badConfig, `server:\n  opencodeBinary: ${JSON.stringify(path.join(os.homedir(), "opencode.exe"))}\n`)
