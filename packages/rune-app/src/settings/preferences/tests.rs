@@ -3,6 +3,7 @@ mod advanced;
 mod appearance;
 mod behavior;
 mod conversation;
+mod custom_palettes;
 mod events;
 mod info;
 mod memory;
@@ -20,13 +21,24 @@ use tokio::{
     time::timeout,
 };
 
+fn is_inbox_read(first: &str) -> bool {
+    first.starts_with("GET /workspaces/") && first.ends_with("/inbox HTTP/1.1")
+}
+
 async fn poll_next_request(prefs: &mut Preferences, listener: &TcpListener) -> Request {
     timeout(Duration::from_secs(5), async {
         loop {
             prefs.poll();
             if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
                 let (socket, _) = accepted.unwrap();
-                return read_request(socket, Duration::from_secs(3)).await;
+                let Some(req) = try_read_request(socket, Duration::from_secs(3)).await else {
+                    continue;
+                };
+                if is_inbox_read(&req.first) {
+                    req.reply(200, json!({"data":[]})).await;
+                    continue;
+                }
+                return req;
             }
         }
     })
@@ -760,16 +772,64 @@ async fn request(listener: &TcpListener) -> Request {
     request_with_timeout(listener, Duration::from_secs(3)).await
 }
 
-async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Request {
-    let (socket, _) = timeout(deadline, listener.accept()).await.unwrap().unwrap();
-    read_request(socket, deadline).await
+async fn request_raw(listener: &TcpListener) -> Request {
+    let deadline = Duration::from_secs(3);
+    timeout(deadline, async {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            if let Some(req) = try_read_request(socket, deadline).await {
+                return req;
+            }
+        }
+    })
+    .await
+    .unwrap()
 }
 
-async fn read_request(mut socket: tokio::net::TcpStream, deadline: Duration) -> Request {
+async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Request {
+    timeout(deadline, async {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let Some(req) = try_read_request(socket, deadline).await else {
+                continue;
+            };
+            if is_inbox_read(&req.first) {
+                req.reply(200, json!({"data":[]})).await;
+                continue;
+            }
+            return req;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+async fn read_request(socket: tokio::net::TcpStream, deadline: Duration) -> Request {
+    try_read_request(socket, deadline)
+        .await
+        .expect("unexpected EOF reading request")
+}
+
+async fn try_read_request(
+    mut socket: tokio::net::TcpStream,
+    deadline: Duration,
+) -> Option<Request> {
     timeout(deadline, async {
         let mut header = Vec::new();
         while !header.ends_with(b"\r\n\r\n") {
-            header.push(socket.read_u8().await.unwrap());
+            match socket.read_u8().await {
+                Ok(byte) => header.push(byte),
+                Err(error)
+                    if header.is_empty()
+                        && matches!(
+                            error.kind(),
+                            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    return None;
+                }
+                Err(error) => panic!("read_request header failed: {error}"),
+            }
             assert!(header.len() < 8192);
         }
         let header = String::from_utf8(header).unwrap();
@@ -784,7 +844,7 @@ async fn read_request(mut socket: tokio::net::TcpStream, deadline: Duration) -> 
         assert!(length <= 4096);
         let mut body = vec![0; length];
         socket.read_exact(&mut body).await.unwrap();
-        Request {
+        Some(Request {
             socket,
             first: header.lines().next().unwrap().into(),
             headers: header,
@@ -793,7 +853,7 @@ async fn read_request(mut socket: tokio::net::TcpStream, deadline: Duration) -> 
             } else {
                 serde_json::from_slice(&body).unwrap()
             },
-        }
+        })
     })
     .await
     .unwrap()

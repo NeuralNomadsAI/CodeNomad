@@ -1,13 +1,16 @@
 //! Owned Rust static server and browser smoke fixture; upstream service discovery is closed.
 import assert from 'node:assert/strict'
-import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
+import {fixtureAttestationEnv,stripFixtureServerSecrets} from '../native-fixture-http.mjs'
 import {createHash} from 'node:crypto'
-import {access, mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
+import {access, chmod, mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {setTimeout as sleep} from 'node:timers/promises'
-import {chromium, request} from 'playwright'
+import {chromium} from 'playwright'
+import {signInFixture} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {privateEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
+import {assertWorktreeTestRoot} from './web-workspace-policy.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const binary = process.env.RUNE_SERVER_EXE
@@ -17,8 +20,8 @@ const ui = path.join(root, 'target/rune-web')
 const manifest = JSON.parse(await readFile(path.join(ui, 'bundle-manifest.json'), 'utf8'))
 assert.equal(manifest.generator, 'scripts/rune/bundle-web.mjs')
 assert.equal(manifest.testSupport,true,'Build WASM with --features test-support and bundle with --test-support before this synthetic fixture')
-await mkdir(path.join(root, 'target/rune-web-tests'), {recursive: true})
-const profile = await mkdtemp(path.join(root, 'target/rune-web-tests/trial-'))
+const {testsReal} = await assertWorktreeTestRoot(root)
+const profile = await mkdtemp(path.join(testsReal, 'trial-'))
 const workspace = path.join(profile, 'workspace'), forbidden = path.join(profile, 'forbidden')
 await mkdir(workspace); await mkdir(forbidden)
 await writeFile(path.join(forbidden, 'private-marker.txt'), 'This synthetic directory stays outside workspace authority.\n')
@@ -57,11 +60,12 @@ try {
     assert(Date.now() < deadline && server.exitCode === null && !spawnError && !overflow, 'Isolated Rust server startup failed')
     await sleep(30)
   }
-  http = await request.newContext({baseURL: origin})
-  const login = await http.post('/api/auth/login', {data: {username: 'codenomad', password: 'testfixture'}})
-  assert.equal(login.status(), 200, 'Private fixture authentication must succeed')
+  const serverPid = await fixtureChildPid(server)
+  assert(Number.isSafeInteger(serverPid) && serverPid > 0, 'Owned Rust server PID unavailable')
+  http = await signInFixture(origin, 'testfixture', serverPid)
   const storage = path.join(profile, 'browser-storage.json')
   await http.storageState({path: storage})
+  await chmod(storage, 0o600).catch(() => {})
   const index = await http.get('/')
   assert.equal(index.status(), 200)
   assert(index.headers()['content-type'].startsWith('text/html'))
@@ -74,9 +78,10 @@ try {
   proof.static = {html: true, wasmMime: wasm.headers()['content-type'], wasmBytes: bytes.length, wasmHashMatchesBundle: true}
   const pasteOnly = process.argv.includes('--paste-only')
   const smoke = spawn(process.execPath, [path.join(root, 'scripts/rune/web-smoke.mjs'), '--url', `${origin}/`,
+    '--target-pid', String(serverPid), '--launcher-pid', String(process.pid), '--profile', profile,
     '--storage-state', storage, '--out', path.join(profile, 'browser'), '--executable', chromium.executablePath(),
     ...(pasteOnly ? ['--paste-only'] : [])], {cwd: root, windowsHide: true,
-      env, stdio: ['ignore', 'pipe', 'pipe']})
+      env: {...stripFixtureServerSecrets(env), ...fixtureAttestationEnv(process.env, {includeServerRoots: true})}, stdio: ['ignore', 'pipe', 'pipe']})
   let diagnostic = ''
   for (const stream of [smoke.stdout, smoke.stderr]) stream.on('data', chunk => {if (diagnostic.length < 65536) diagnostic += chunk})
   const timer = setTimeout(() => smoke.kill(), 240_000)

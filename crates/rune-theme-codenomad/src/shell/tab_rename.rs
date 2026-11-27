@@ -23,7 +23,7 @@ pub fn trigger<S: 'static>(
         .help(help)
         .expanded(open)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(layout::enter_action(invoke))
         .key(TRIGGER)
 }
@@ -71,7 +71,7 @@ pub fn dialog<S: 'static>(
     let confirm_btn = rune_kit::Button::new(confirm_label)
         .variant(rune_kit::ButtonVariant::Submit)
         .on_press_tx(move |s, tx| confirm_press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(layout::enter_action(on_confirm))
         .key("tab-rename-confirm");
     let body = col()

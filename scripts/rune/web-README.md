@@ -43,7 +43,7 @@ Avec le même bundle produit et `RUNE_SERVER_EXE` pointant vers le serveur Rust 
 node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
 ```
 
-Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; « Anciens » est signalé comme écart connu si le miroir accessible le présente comme actif ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
+Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; le bouton « Messages précédents » est vérifié désactivé dans le miroir accessible pendant la reconnexion.
 
 Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page référente ; son rapport distingue ce contrôle du parcours complet avec `Referer`.
 
@@ -95,7 +95,7 @@ $env:RUNE_SERVER_EXE = '<chemin-absolu-vers-codenomad-rs.exe>'
 node scripts/rune/web-fixture.mjs
 ```
 
-`bundle-manifest.json` recense les empreintes SHA-256 des fichiers et du module d'entrée, les versions des outils et les tailles brutes, gzip niveau 9 et Brotli qualité 5. Les totaux portent sur les fichiers empaquetés, hors manifeste. Les tailles compressées sont mesurées ; leur service avec négociation HTTP dépend de l'hôte. Le profil du fichier WASM d'entrée détermine les optimisations présentes dans le bundle.
+`bundle-manifest.json` recense les empreintes SHA-256 des fichiers publics et du module d'entrée, les versions des outils et les tailles brutes, gzip niveau 9 et Brotli qualité 5. Les totaux portent sur les fichiers publics empaquetés, hors manifeste. Un fichier compagnon `.br` est écrit à côté de chaque ressource plus petite en Brotli et répertorié séparément sous `compressed` / `compressedTotals` (avec son empreinte SHA-256 et sa taille) afin que l'hôte puisse le servir en `Content-Encoding: br` sans exposer le chemin `.br` dans la liste publique. Le profil du fichier WASM d'entrée détermine les optimisations présentes dans le bundle.
 
 ```text
 node scripts/rune/web-smoke.mjs --url http://127.0.0.1:<port-fixture>/

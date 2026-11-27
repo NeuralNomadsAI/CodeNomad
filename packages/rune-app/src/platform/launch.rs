@@ -4,7 +4,6 @@
 //! its window (`FOCUS <pid>`) or open independently (`OPEN`). Every live desktop window in the
 //! scope—including `--new-window` windows—runs a zero-CPU takeover coordinator after `on_ready`
 //! so a surviving window takes over focus ownership if the primary window closes.
-#[cfg(any(target_os = "windows", test))]
 use crate::State;
 #[cfg(target_os = "windows")]
 use std::sync::{
@@ -256,7 +255,7 @@ pub(crate) fn sync(s: &mut State) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = s;
+        let _ = &s.launch;
     }
 }
 
@@ -268,7 +267,7 @@ pub(crate) fn release(s: &mut State) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = s;
+        let _ = &s.launch;
     }
 }
 

@@ -1602,3 +1602,204 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
     assert_eq!(rebound_id, tab_a_before_id);
     assert!((rebound_off - tab_a_before_off).abs() <= 1.0);
 }
+
+#[test]
+fn git_read_mutation_and_open_errors_are_localized_without_raw_english_fallbacks() {
+    use crate::{
+        platform::workspace_open::OpenError,
+        strings::{t, with_locale},
+    };
+    use codenomad_client::git::{GitError, Refusal};
+
+    for lang in ["fr", "en"] {
+        with_locale(lang, || {
+            let mut owner = ui();
+            let tree = owner.tree().unwrap().clone();
+            let epoch = owner.tree_epoch;
+
+            owner.read_failed(Lane::Changes, GitError::CheckoutUnavailable.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("gitPanel.error.checkoutUnavailable"))
+            );
+
+            owner.read_failed(Lane::Changes, GitError::UnconfirmedMutation.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("gitPanel.error.unconfirmedMutation"))
+            );
+
+            owner.read_failed(Lane::Preview, GitError::OversizedContent.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Preview).error.as_deref(),
+                Some(t("toolCall.output.tooLarge"))
+            );
+
+            owner.read_failed(Lane::Preview, GitError::UnsupportedImageType.into());
+            assert_eq!(
+                owner.requests.slot(Lane::Preview).error.as_deref(),
+                Some(t("filesPanel.binary"))
+            );
+
+            owner.read_failed(Lane::Changes, "raw English transport failure".into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("rune.failed"))
+            );
+
+            owner.read_failed(
+                Lane::Changes,
+                Refusal::new(503, Some("git_required".into()), Some("Git missing".into())).into(),
+            );
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("filesPanel.gitInit.gitRequired"))
+            );
+
+            owner.read_failed(
+                Lane::Changes,
+                Refusal::new(403, None, Some("Custom backend refusal".into())).into(),
+            );
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some("Custom backend refusal")
+            );
+
+            owner.read_failed(Lane::Changes, Refusal::new(502, None, None).into());
+            assert_eq!(
+                owner.requests.slot(Lane::Changes).error.as_deref(),
+                Some(t("rune.failed"))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("gitPanel.error.unconfirmedMutation").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err("raw English commit failure".into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("instanceShell.gitChanges.commit.error").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Commit {
+                    message: "feat: test".into(),
+                    draft: "feat: test".into(),
+                },
+                Err(Refusal::new(422, None, Some("pre-commit hook rejected".into())).into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, "pre-commit hook rejected".into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Paths(Section::Unstaged, vec!["a.rs".into()], 1),
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("gitPanel.error.unconfirmedMutation").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err(
+                    Refusal::new(503, Some("git_required".into()), Some("Git missing".into()))
+                        .into(),
+                ),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((false, t("filesPanel.gitInit.gitRequired").into()))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err(GitError::UnconfirmedMutation.into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((
+                    false,
+                    t("filesPanel.gitInit.error")
+                        .replace("{message}", t("gitPanel.error.unconfirmedMutation"))
+                ))
+            );
+
+            owner.settle_mutation(
+                epoch,
+                &tree,
+                Mutation::Init("D:/repo".into()),
+                Err("raw English init transport error".into()),
+            );
+            assert_eq!(
+                owner.mutation_message,
+                Some((
+                    false,
+                    t("filesPanel.gitInit.error").replace("{message}", t("rune.failed"))
+                ))
+            );
+
+            assert_eq!(
+                OpenError::CheckoutUnavailable.localized(lang),
+                t("gitPanel.error.checkoutUnavailable")
+            );
+            assert_eq!(
+                OpenError::WorktreeChanged.localized(lang),
+                t("gitPanel.error.worktreeChanged")
+            );
+            assert_eq!(
+                OpenError::Unavailable.localized(lang),
+                t("gitPanel.error.nativeActionsUnavailable")
+            );
+            assert_eq!(OpenError::Failed.localized(lang), t("rune.failed"));
+            assert_eq!(
+                OpenError::Server("backend denied".into()).localized(lang),
+                "backend denied"
+            );
+
+            if lang == "fr" {
+                assert_ne!(
+                    t("gitPanel.error.checkoutUnavailable"),
+                    "Selected checkout is unavailable"
+                );
+                assert_ne!(
+                    t("gitPanel.error.unconfirmedMutation"),
+                    "Git change was not confirmed"
+                );
+                assert_ne!(t("gitPanel.error.worktreeChanged"), "Worktree changed");
+                assert_ne!(
+                    t("gitPanel.error.nativeActionsUnavailable"),
+                    "Native workspace actions are unavailable"
+                );
+            }
+        });
+    }
+}

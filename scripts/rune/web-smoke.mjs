@@ -1,13 +1,14 @@
 // Attach only to an explicitly supplied isolated loopback server. Never starts a server.
 import assert from 'node:assert/strict'
-import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
+import {lstat, mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {activateControl,launchChromium} from './web-chromium.mjs'
+import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,privateChromiumEnv,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
+import {activateControl,launchOwnedChromium} from './web-chromium.mjs'
+import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,stripFixtureServerSecrets,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
@@ -19,9 +20,9 @@ import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, 'launcher-pid': {type: 'string'}, profile: {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
 const url = new URL(values.url)
-assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
+assert(url.hostname === '127.0.0.1', 'Use an isolated 127.0.0.1 server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
@@ -40,26 +41,132 @@ const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-th
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
 const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-codenomad/assets/catalogues/${values.locale}.json`), 'utf8'))
 const out = path.resolve(root, values.out)
-const relativeOut = path.relative(path.join(root, 'target'), out)
-assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
-let privateScope
-if(values.connected){
-  privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+const rootReal = await realpath(root)
+const insideRoot = (parent, value) => {
+  const rel = path.relative(parent, value)
+  return Boolean(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
 }
-await mkdir(out, {recursive: true})
-if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-const browser = await launchChromium(values.executable)
+const targetReal = await realpath(path.join(rootReal, 'target'))
+assert(insideRoot(rootReal, targetReal), 'Target directory must stay inside canonical worktree')
+let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, realCookieMap = new Map(), currentTargetPid, launcherPid, outputAuthorized = false, outputRootReal = null
+const cookieHeaderFor = async context => url.protocol === 'http:'
+  ? realCookieHeader
+  : (await context.cookies(url.origin)).map(c => `${c.name}=${c.value}`).join('; ')
+const fulfillWorkspaceCreation=async(route,policy,context)=>{
+  if(!attestedFetch)return defaultFulfillWorkspaceCreation(route,policy)
+  const req=route.request()
+  const headers={...(await req.allHeaders())}
+  delete headers['host'];delete headers['content-length']
+  if(url.protocol==='http:'&&headers['cookie']){
+    headers['cookie']=ownedBrowser
+      ?ownedBrowser.substituteCookies(headers['cookie'])
+      :(realCookieMap.size?substitutePlaceholderCookies(headers['cookie'],realCookieMap):headers['cookie'])
+  }
+  const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+  const bytes=Buffer.from(await res.arrayBuffer())
+  assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+  if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
+  const outHeaders=Object.fromEntries(res.headers.entries())
+  const rawSetCookies=res.headers.getSetCookie?.()??(outHeaders['set-cookie']?[outHeaders['set-cookie']]:[])
+  if(rawSetCookies.length){
+    outHeaders['set-cookie']=(url.protocol==='http:'
+      ?(ownedBrowser?ownedBrowser.maskSetCookies(rawSetCookies):(realCookieMap.size?maskSetCookieHeaders(rawSetCookies,realCookieMap):rawSetCookies))
+      :rawSetCookies).join('\n')
+  }
+  await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
+  return {status:res.status,admitted:res.ok}
+}
 const records = []
-const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
 // The authenticated fixture returns an empty UI state, selecting the product's default palettes.
 const connectedPalettes = values.connected
   ? JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/palettes.json'), 'utf8'))
   : null
-  const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
-  if(values.mobile)assets.add('/remote-pair')
+const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
+if(values.mobile)assets.add('/remote-pair')
 let primaryError=null
 try {
+  currentTargetPid=Number(values['target-pid'])
+  assert(Number.isSafeInteger(currentTargetPid)&&currentTargetPid>0,'Web smoke requires --target-pid <owned server PID>')
+  launcherPid=Number(values['launcher-pid'])
+  assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Web smoke requires --launcher-pid <private launcher PID>')
+  let browserProfile
+  if(values.connected){
+    privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+    browserProfile=privateScope.profile
+    outputRootReal=privateScope.profile
+  }else{
+    assert(values.profile,'Synthetic web smoke requires --profile <private fixture profile>')
+    const testsReal=await realpath(path.join(rootReal,'target/rune-web-tests'))
+    assert(insideRoot(rootReal,testsReal),'Fixture test root must stay inside canonical worktree')
+    browserProfile=await realpath(values.profile)
+    assert(insideRoot(testsReal,browserProfile)&&/^(?:trial|launcher)-/.test(path.basename(browserProfile)),'Synthetic profile must stay inside target/rune-web-tests')
+    const outParent=await realpath(path.dirname(out))
+    const outLeaf=await lstat(out).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+    assert((outParent===browserProfile||insideRoot(browserProfile,outParent))&&(!outLeaf||(outLeaf.isDirectory()&&!outLeaf.isSymbolicLink())),'Synthetic output must stay in the private fixture profile')
+    if(values['storage-state']){
+      const storageReal=await realpath(values['storage-state'])
+      assert(insideRoot(browserProfile,storageReal),'Synthetic storage state must come from this private fixture profile')
+      const auth=JSON.parse(await readFile(storageReal,'utf8'))
+      const seenNames=new Set()
+      assert(Array.isArray(auth.cookies)&&auth.cookies.length>0,'Private 127.0.0.1 cookie state required')
+      for(const c of auth.cookies){
+        assert(c.domain==='127.0.0.1'&&(!c.path||c.path==='/'),'Private 127.0.0.1 root-scoped cookie state only')
+        assert(typeof c.name==='string'&&c.name.length>0&&!seenNames.has(c.name),'Ambiguous duplicate cookie name')
+        seenNames.add(c.name)
+      }
+    }
+    outputRootReal=browserProfile
+  }
+  await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
+  let currentTargetStartId=(await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:browserProfile,root})).targetStartId
+  await createPrivateOutputDir(out,outputRootReal)
+  outputAuthorized=true
+  if(values['storage-state']){
+    const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
+    realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+    realCookieMap=parseCookiePairs(realCookieHeader)
+    if(url.protocol==='http:'){
+      browserStorageState={
+        ...rawStorage,
+        cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
+      }
+    }else{
+      browserStorageState=rawStorage
+    }
+  }
+  const caCert=url.protocol==='https:'?await readFile(path.join(browserProfile,'identity.data/tls/ca-cert.pem')).catch(()=>undefined):undefined
+  const chromiumEnv=await privateChromiumEnv(browserProfile)
+  attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,{...(caCert?{ca:caCert}:{allowSelfSigned:url.protocol==='https:'}),targetStartId:currentTargetStartId})
+  ownedBrowser=await launchOwnedChromium({
+    executablePath:values.executable,
+    profile:browserProfile,
+    env:chromiumEnv,
+    origin:url.origin,
+    targetPid:currentTargetPid,
+    targetStartId:currentTargetStartId,
+    ...(url.protocol==='http:'&&realCookieHeader?{injectCookie:realCookieHeader}:{}),
+  })
+  browser=ownedBrowser.browser
+  const imagePage = await browser.newPage()
+  const onRestart = async nextPid => {
+    assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Restarted fixture must report owned server PID')
+    await verifyLoopbackListenerOwner(Number(url.port),nextPid)
+    const nextStartId=(await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:browserProfile,root})).targetStartId
+    const previousFetch = attestedFetch
+    currentTargetPid = nextPid
+    currentTargetStartId = nextStartId
+    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, {...(caCert ? {ca: caCert} : {allowSelfSigned: url.protocol === 'https:'}), targetStartId: currentTargetStartId})
+    ownedBrowser?.setTargetPid(nextPid, currentTargetStartId)
+    await previousFetch?.close().catch(() => {})
+  }
+  const attestedGet = async (pathname, ctx) => {
+    const cookie = await cookieHeaderFor(ctx)
+    return attestedFetch(new URL(pathname, url).href, {
+      headers: cookie ? {cookie} : undefined,
+      signal: AbortSignal.timeout(15000),
+    })
+  }
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
@@ -69,7 +176,7 @@ try {
     for (const colorScheme of control||searchOnly||moreActionsOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
-        ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
+        ...(values['storage-state'] ? {storageState: browserStorageState ?? values['storage-state']} : {})})
       const touches = touch ? [] : undefined
       const flushTouches = touch ? await recordTouches(context, touches) : async () => {}
       const page = await context.newPage()
@@ -137,7 +244,7 @@ try {
           assert(routes.length<4000,'Protected browser request bound')
           const entry={at:performance.now(),method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
           if(req.method()==='POST'&&p==='/api/workspaces'){
-            try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
+            try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy,context));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
           if(missions&&await missions.route(route,p))return
@@ -164,12 +271,19 @@ try {
           await held.promise
         }
         if(holdRecall&&req.method()==='GET'&&p.startsWith('/api/storage/instances/')){
-          const response = await route.fetch({maxRedirects:0})
-          markRecall(response.status())
+          assert(typeof attestedFetch==='function','Attested fetch required for holdRecall')
+          const headers={...(await req.allHeaders())}
+          delete headers['host'];delete headers['content-length']
+          const cookie=await cookieHeaderFor(context)
+          if(cookie)headers['cookie']=cookie
+          const res=await attestedFetch(req.url(),{method:req.method(),headers,signal:AbortSignal.timeout(15000)})
+          const bytes=Buffer.from(await res.arrayBuffer())
+          markRecall(res.status)
           await recallGate
-          return moreActionsOnly&&response.ok()
-            ? route.fulfill({response,json:{messageHistory:[menuPrompt],agentModelSelections:{}}})
-            : route.fulfill({response})
+          const outHeaders=Object.fromEntries(res.headers.entries())
+          return moreActionsOnly&&res.ok
+            ? route.fulfill({status:res.status,headers:outHeaders,json:{messageHistory:[menuPrompt],agentModelSelections:{}}})
+            : route.fulfill({status:res.status,headers:outHeaders,body:bytes})
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -327,18 +441,23 @@ try {
             if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
             await drawer.waitFor()
             const sourceHeight = palette.metrics[colorScheme].tabActive.height
+            const rightTablist = drawer.getByRole('tablist', {name:right, exact:true})
+            await rightTablist.waitFor()
             const tabHeights = []
             for (const key of ['status', 'files']) {
-              const tab = drawer.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
+              const tab = rightTablist.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
               await tab.waitFor()
               const box = await tab.boundingBox()
               assert(box && Math.abs(box.height - sourceHeight) <= 1, `${key}: height ${box?.height}, Solid ${sourceHeight}`)
               tabHeights.push({key, height:box.height})
             }
             await page.screenshot({path:path.join(out, `${name}-${colorScheme}-right-panel.png`), scale:'css'})
-            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights}))
+            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights,tablistGrouped:true}))
             await press(right)
             await drawer.waitFor({state:'hidden'})
+            const projectTablist = page.getByRole('tablist', {name:messages['instanceShell.rightPanel.customize.tabs'], exact:true})
+            await projectTablist.waitFor()
+            await projectTablist.getByRole('tab', {name:values.project, exact:true, selected:true}).waitFor()
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
               messages['toastHistory.title'],
@@ -695,7 +814,9 @@ try {
         const captureFocus = async state => {
           // The editing proxy can receive DOM focus before the canvas presents that frame.
           await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-          return page.screenshot({path:path.join(out, `${name}-${colorScheme}-${state}.png`),scale:'css'})
+          const buf = await page.screenshot({scale:'css'})
+          await writePrivateFile(path.join(out, `${name}-${colorScheme}-${state}.png`), buf, outputRootReal)
+          return buf
         }
         const focused = values['paste-only'] ? await captureFocus('focus') : null
         await page.keyboard.press('Tab')
@@ -722,9 +843,10 @@ try {
         assert(canvas.width <= width + 1 && canvas.height <= height + 1, 'Canvas must follow the supplied viewport')
         const snapshot = await page.locator('body').ariaSnapshot()
         assert(snapshot.includes(messages['rune.latest']), 'Latest control must appear in the real accessibility mirror')
-        await writeFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot)
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot, outputRootReal)
         if(!values.connected)await page.waitForLoadState('networkidle', {timeout: 30_000})
-        const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`),scale:'css'})
+        const png = await page.screenshot({scale:'css'})
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}.png`), png, outputRootReal)
         const textRegions = await page.evaluate(title => {
           const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2, [data-rune-a11y] [role=heading]')]
           const crop = (name, predicate, surface='surface-canvas', text='text-primary') => {
@@ -767,7 +889,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,policy,fromLink:!values['same-origin-pairing'],tap,onRestart,attestedGet})
          }
          assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -797,7 +919,7 @@ try {
                return ()=>{held.resolve();holdPreview=undefined}
              },
            })
-          const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
+          const inventory=async()=>{const response=await attestedGet('/api/workspaces',context);assert(response.ok,`Inventory request failed with status ${response.status}`);const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
           // Closing a browser context skips pagehide; use the product's ordinary departure first.
@@ -825,18 +947,19 @@ try {
         }
         await flushTouches()
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,touches,...measured,
-          ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
-            ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
-          ]}:{pass:true})})
+          ...(values.mobile?{requiredChecksPassed:true,knownGaps:[]}:{pass:true})})
       } catch (error) {
         primaryError = error
         const bestEffort=(label,fn)=>withBudget(now()+2000,label,fn).catch(()=>null)
         await bestEffort('failure flushTouches',()=>flushTouches())
-        await bestEffort('failure screenshot',ms=>page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`),timeout:Math.max(1,ms)}))
+        await bestEffort('failure screenshot',async ms=>{
+          const buf=await page.screenshot({timeout:Math.max(1,ms)})
+          if(outputAuthorized&&outputRootReal)await writePrivateFile(path.join(out, `${name}-${colorScheme}-failure.png`), buf, outputRootReal)
+        })
         const mirror=await bestEffort('failure mirror',ms=>page.locator('body').ariaSnapshot({timeout:Math.max(1,ms)}))
         const marks=await bestEffort('failure marks',()=>page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))) ?? []
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,
-          mirror,touches,lastPress,marks}, null, 2)).catch(writeError => console.error(`Failed to write failure artifact: ${writeError.message}`))
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,
+          mirror,touches,lastPress,marks}, null, 2), outputRootReal).catch(writeError => console.error(`Failed to write failure artifact: ${writeError.message}`))
         throw error
        } finally {
          missions?.release();releaseRecall();releaseLinked?.()
@@ -851,16 +974,22 @@ try {
   if (!primaryError) primaryError = error
   throw error
 } finally {
-  try { await browser.close() } catch (closeError) {
+  await attestedFetch?.close().catch(() => {})
+  try {
+    if (ownedBrowser) await ownedBrowser.close()
+    else if (browser) await browser.close()
+  } catch (closeError) {
     console.error(`Failed to close browser: ${closeError.message}`)
     if (!primaryError) throw closeError
   }
-  try {
-    await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-      scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
-  } catch (writeError) {
-    console.error(`Failed to write smoke-report.json: ${writeError.message}`)
-    if (!primaryError) throw writeError
+  if (outputAuthorized && outputRootReal) {
+    try {
+      await writePrivateFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
+        scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n', outputRootReal)
+    } catch (writeError) {
+      console.error(`Failed to write smoke-report.json: ${writeError.message}`)
+      if (!primaryError) throw writeError
+    }
   }
 }
 console.log(`Rune web smoke evidence: ${out}`)

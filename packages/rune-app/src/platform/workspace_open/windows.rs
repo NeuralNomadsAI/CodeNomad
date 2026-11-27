@@ -1,5 +1,6 @@
-use super::{DefaultMode, Editor, Target, WorkspaceTarget, windows_default_mode};
+use super::{DefaultMode, Editor, OpenError, Target, WorkspaceTarget, windows_default_mode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use codenomad_client::git::{GitError, Refusal};
 use std::{
     io,
     os::windows::process::CommandExt,
@@ -16,13 +17,18 @@ pub async fn open(
     path: String,
     target: Target,
     owner: Weak<()>,
-) -> Result<(), String> {
-    let checkout = backend
-        .workspace_checkout(&slug)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<(), OpenError> {
+    let checkout = backend.workspace_checkout(&slug).await.map_err(|error| {
+        if error.downcast_ref::<GitError>() == Some(&GitError::CheckoutUnavailable) {
+            OpenError::CheckoutUnavailable
+        } else if let Some(message) = error.downcast_ref::<Refusal>().and_then(Refusal::message) {
+            OpenError::Server(message.to_owned())
+        } else {
+            OpenError::Failed
+        }
+    })?;
     if !codenomad_client::same_server_path(&checkout, &directory) {
-        return Err("Worktree changed".into());
+        return Err(OpenError::WorktreeChanged);
     }
     tokio::task::spawn_blocking(move || {
         let selected = resolve(Path::new(&checkout), &path)?;
@@ -32,8 +38,8 @@ pub async fn open(
         launch(&selected, target)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|_| OpenError::Failed)?
+    .map_err(|_| OpenError::Failed)
 }
 
 pub async fn open_workspace(

@@ -18,6 +18,7 @@ import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, createAttestedRelay, RELAY_PLACEHOLDER_PASSWORD, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
@@ -38,7 +39,7 @@ for (const name of ["DATA", "CONFIG", "STATE", "CACHE", "RUNTIME"]) env[`XDG_${n
 env.XDG_RUNTIME_DIR = path.join(root, "runtime")
 for (const directory of [project, env.TEMP, env.ProgramData, env.OPENCODE_CONFIG_DIR, ...Object.entries(env).filter(([k]) => k.startsWith("XDG_")).map(([,v]) => v)]) await mkdir(directory, { recursive: true })
 // Imported backend modules must see the same private roots as the child service.
-for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_|WSL_)/i.test(key)) delete process.env[key]
+for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_|WSL_)/i.test(key) && !/^CODENOMAD_FIXTURE_JOB_EXE$/i.test(key)) delete process.env[key]
 Object.assign(process.env, env)
 execFileSync("git", ["init", "-q", project], { env })
 await writeFile(path.join(project, "input.txt"), "deterministic native useful-work input\n")
@@ -126,25 +127,44 @@ async function waitForMissions() {
     return missions?.state.status === "active"
   })
 }
+let attestedFetch, managerRelay, managerEndpoint
 async function start() {
   output = ""
+  let stdout = ""
+  await managerRelay?.close().catch(() => {})
+  managerRelay = undefined; managerEndpoint = undefined
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { env, cwd: root, windowsHide: true })
   closed = new Promise(resolve => child.once("close", resolve))
-  child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
-  await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
-  endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
-  const info = await (await fetch(`${endpoint.url}/api/info`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })).json()
-  assert.equal(info.pid, await fixtureChildPid(child))
-  rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
+  child.stdout.on("data", data => { stdout += data; output += data }); child.stderr.on("data", data => { output += data })
+  await until(() => /^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m.test(stdout))
+  endpoint = { url: stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)[1], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
+  const pid = await fixtureChildPid(child)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
+  const port = Number(new URL(endpoint.url).port)
+  await verifyLoopbackListenerOwner(port, pid)
+  attestedFetch = createAttestedFetch(endpoint.url, port, pid)
+  const authHeader = `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+  const info = await (await attestedFetch(`${endpoint.url}/api/info`, { headers: { authorization: authHeader }, signal: AbortSignal.timeout(15_000) })).json()
+  assert.equal(info.pid, pid)
+  managerRelay = await createAttestedRelay(endpoint.url, pid, { requireClientAttestation: true, injectAuthorization: authHeader })
+  managerRelay.allowClientPid(process.pid)
+  managerEndpoint = { url: managerRelay.origin, auth: { type: "basic", username: "opencode", password: RELAY_PLACEHOLDER_PASSWORD } }
+  rememberRuntime(managerEndpoint, { version: info.version, pid: info.pid, discovery: "info" })
   // Fixture-owned read-only observer bound to this exact service; independent of the backend.
-  client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })
+  client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: authHeader }, fetch: attestedFetch })
   evidence.serviceStarts ??= []; evidence.serviceStarts.push({ pid: info.pid, version: info.version })
   if (evidence.serviceStarts.length > 1) await waitForMissions()
 }
 async function stop() {
   const pid = await fixtureChildPid(child)
   assert.equal((await client.server.info()).pid, pid, "Exact owned PID before stop")
-  child.kill(); await Promise.race([closed, delay(10_000).then(() => { throw new Error("Owned service stop timeout") })])
+  await managerRelay?.close().catch(() => {})
+  managerRelay = undefined; managerEndpoint = undefined
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
+  await stopFixtureChild(child, closed, 1_000, 10_000)
   evidence.stoppedPIDs ??= []; evidence.stoppedPIDs.push(pid)
 }
 const yaml = path.join(root, "profile.yaml")
@@ -159,7 +179,7 @@ const auth = { isAuthEnabled: () => true, isLoopbackRequest: () => true, getCook
 async function openBackend() {
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(), settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated recurring" }) },
-    hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }) })
+    hostServiceLifecycleFactory: () => ({ discover: async () => managerEndpoint, ensure: async () => managerEndpoint }) })
   workspace = (await manager.create(project)).workspace
   const connection = await manager.getSharedServiceConnection(workspace.id)
   const paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
@@ -184,7 +204,7 @@ async function closeBackend() {
   await plugin?.stop(); plugin = undefined
   await removeBridge?.(); removeBridge = undefined
   await bridge?.close(); bridge = undefined
-  await manager?.shutdown(); manager = undefined // Drops connections only; never stops the owned service.
+  await manager?.shutdown(); manager = undefined // Drops connections only; never stops the owned service or its relay.
 }
 const location = { directory: project }
 const rpc = () => client.rpc(CODENOMAD_MISSIONS_RPC)
@@ -414,9 +434,11 @@ try {
   }
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
-  if (child && child.exitCode === null && child.signalCode === null) {
-    const pid = await fixtureChildPid(child)
-    await stopFixtureChild(child, closed).then(() => { evidence.stoppedPIDs.push(pid) })
+  await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
+  await attestedFetch?.close().catch(() => {})
+  if (child) {
+    const pid = await fixtureChildPid(child, 2000).catch(() => undefined)
+    await stopFixtureChild(child, closed).then(() => { if (pid) evidence.stoppedPIDs.push(pid) })
       .catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
   }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))

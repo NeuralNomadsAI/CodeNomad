@@ -266,7 +266,10 @@ fn a_matching_move_cancels_the_body_before_waiting_for_queue_space() {
             );
             assert!(matches!(inbox.try_recv().unwrap(), Input::Opened(1)));
             dispatch_move.await.unwrap();
-            assert!(matches!(inbox.try_recv().unwrap(), Input::Native(1, _, _)));
+            assert!(matches!(
+                inbox.try_recv().unwrap(),
+                Input::Native(1, _, _, _)
+            ));
         });
 }
 

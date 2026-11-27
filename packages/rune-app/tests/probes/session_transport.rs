@@ -146,6 +146,7 @@ pub fn contract() {
             | Event::Connected(_)
             | Event::ProviderUsageWatch(_)
             | Event::AgentHint(_)
+            | Event::AgentControl(_)
             | Event::ObservedRunning { .. }
             | Event::Workspace(_)
             | Event::Preferences(_)
@@ -155,6 +156,9 @@ pub fn contract() {
             | Event::FamilyUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
+            | Event::Inbox { .. }
+            | Event::InboxDelta(_)
+            | Event::InboxFailed
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

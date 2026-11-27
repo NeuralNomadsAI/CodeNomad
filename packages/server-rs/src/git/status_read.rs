@@ -105,16 +105,24 @@ fn add_stats(map: &mut BTreeMap<String, Entry>, text: &str, staged: bool) {
 }
 /// Every diff read: no external diff or text conversion, submodule commits only.
 const SAFE: [&str; 3] = ["--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty"];
-fn diff_args<'a>(flags: &[&'a str], tail: &[&'a str]) -> Vec<&'a str> {
-    [&["diff"][..], flags, &SAFE, tail].concat()
+fn diff_args<'a>(filter_flags: &'a [String], flags: &[&'a str], tail: &[&'a str]) -> Vec<&'a str> {
+    filter_flags
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("diff"))
+        .chain(flags.iter().copied())
+        .chain(SAFE.iter().copied())
+        .chain(tail.iter().copied())
+        .collect()
 }
 async fn metadata(dir: &Path, args: &[&str]) -> Result<String, Error> {
     Ok(run(dir, args, TWO_MIB).await?.ok()?.text())
 }
-async fn new_file(dir: &Path, p: &str) -> Result<Counts, Error> {
+async fn new_file(dir: &Path, filter_flags: &[String], p: &str) -> Result<Counts, Error> {
     let full = dir.join(p);
     let full = full.to_str().ok_or_else(|| bad("Invalid path"))?;
-    let output = run(dir, &diff_args(&["--numstat"], &["--no-index", "--", "/dev/null", full]), 4096).await?;
+    let output =
+        run(dir, &diff_args(filter_flags, &["--numstat"], &["--no-index", "--", "/dev/null", full]), 4096).await?;
     if !matches!(output.code, 0 | 1) {
         return Err(bad("Unable to read untracked file"));
     }
@@ -133,8 +141,9 @@ pub async fn status(
     let w = repo(&app, &id, &slug).await?;
     files::root(&w)?;
     let p = w.path.as_path();
+    let filter_flags = super::config_guard::filter_disables(p).await?;
     let read = |flags: &[&'static str]| {
-        let args = diff_args(flags, &[]);
+        let args = diff_args(&filter_flags, flags, &[]);
         async move { metadata(p, &args).await }
     };
     let s = read(&["--name-status", "-z", "--cached", "--find-renames", "--find-copies"]);
@@ -172,7 +181,7 @@ pub async fn status(
     // Keep large untracked inventories usable without queuing a process per row.
     for e in map.values_mut().filter(|e| e.unstaged_status == Some("untracked")).take(128) {
         if crate::files::links::guard(p, &e.path).is_ok()
-            && let Ok((a, d, _)) = new_file(p, &e.path).await
+            && let Ok((a, d, _)) = new_file(p, &filter_flags, &e.path).await
         {
             e.unstaged_additions = a;
             e.unstaged_deletions = d;
@@ -228,7 +237,8 @@ pub async fn diff(
     if let Some(old) = &old {
         crate::files::links::guard(&w.path, old)?;
     }
-    let mut args = diff_args(&["--numstat", "--find-renames", "--find-copies"], &[]);
+    let filter_flags = super::config_guard::filter_disables(&w.path).await?;
+    let mut args = diff_args(&filter_flags, &["--numstat", "--find-renames", "--find-copies"], &[]);
     if stage {
         args.push("--cached");
     }
@@ -240,7 +250,7 @@ pub async fn diff(
     }
     let mut binary = simple(&metadata(&w.path, &args).await?);
     if binary.is_none() && !stage && crate::files::links::target(&w.path, &p).is_file() {
-        binary = Some(new_file(&w.path, &p).await?);
+        binary = Some(new_file(&w.path, &filter_flags, &p).await?);
     }
     let mut output = json!({"path":p,"originalPath":old,"scope":q.scope,"before":"","after":"","isBinary":false});
     let image = mime(&p);

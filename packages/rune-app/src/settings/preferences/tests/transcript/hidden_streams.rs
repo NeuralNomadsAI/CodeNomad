@@ -178,8 +178,9 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
     );
     server_thread.join().unwrap();
 
-    // 3. With a live active Tab A SSE stream, dropping hidden Tab B must NOT bump global
-    // drop_gen; once /api/meta confirms the same server, Tab A saves even while Tab B stays down.
+    // 3. With a live active Tab A SSE stream, Tab B shares that single /api/events stream;
+    // closing hidden Tab B voluntarily keeps Tab A's shared SSE open without bumping global
+    // drop_gen, and Tab A saves cleanly.
     let (listener3, mut prefs3) = platform::block_on(fixture_atomic());
     let mut tab_a = prefs3.backend.clone().unwrap();
     tab_a.client_id.push_str("-active-a");
@@ -190,7 +191,6 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
     tab_b.workspace = "project".into();
     tab_b.session = "session-b".into();
     let tab_a_id = tab_a.client_id.clone();
-    let tab_b_id = tab_b.client_id.clone();
     prefs3.observe_conversation_clients(&[(tab_a_id.clone(), true)]);
     let (out_a, events_a) = bounded(16);
     let (commands_a, input_a) = bounded(4);
@@ -210,6 +210,11 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
             )
             .await;
         let mut sse_a = request(&listener3).await;
+        assert!(
+            sse_a.first.starts_with("GET /api/events?"),
+            "expected initial shared SSE open, got {}",
+            sse_a.first
+        );
         sse_a
             .socket
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
@@ -248,14 +253,14 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
                 json!({"apiContract":1,"serverId":"fixture-b3","capabilities":["settings-atomic-patches"]}),
             )
             .await;
-        let mut sse_b = request(&listener3).await;
-        sse_b
-            .socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-            .await
-            .unwrap();
-        request(&listener3)
-            .await
+        // Tab B reuses Tab A's physical /api/events stream and proceeds directly to HTTP sync.
+        let history_b = request(&listener3).await;
+        assert!(
+            !history_b.first.starts_with("GET /api/events?"),
+            "second tab must share existing /api/events stream, got {}",
+            history_b.first
+        );
+        history_b
             .reply(
                 200,
                 json!({"status":"window","messages":[{"id":"b","type":"user","text":"b"}],"older":null,"newer":null,"latest":true}),
@@ -276,27 +281,24 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
                 break;
             }
         }
-        drop(sse_b);
+        let _ = commands_b.send(Command::Close).await;
         timeout(Duration::from_secs(4), async {
-            while client3.transport_drops(&tab_b_id) == 0 {
-                platform::sleep(Duration::from_millis(5)).await;
-            }
+            while events_b.recv().await.is_ok() {}
         })
         .await
         .unwrap();
         assert!(
             !client3.needs_capability_recheck(),
-            "dropping hidden Tab B while active Tab A SSE is open must not trigger global capability recheck"
+            "closing hidden Tab B while active Tab A SSE is open must not trigger global capability recheck"
         );
         prefs3.set_transcript(Some(Row::Groups), "hidden");
         assert!(prefs3.poll());
-        let mut _reconnects = Vec::new();
         let mut saved = false;
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
         while !saved {
             assert!(
                 std::time::Instant::now() < deadline,
-                "active Tab A must save after /api/meta confirms same server while hidden Tab B stays down"
+                "active Tab A must save cleanly while shared SSE remains open"
             );
             let req = poll_next_request(&mut prefs3, &listener3).await;
             if req.first == "GET /api/meta HTTP/1.1" {
@@ -305,8 +307,6 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
                     json!({"apiContract":1,"serverId":"fixture-b3","capabilities":["settings-atomic-patches"]}),
                 )
                 .await;
-            } else if req.first.starts_with("GET /api/events?") {
-                _reconnects.push(req);
             } else if req.first == "PATCH /api/storage/config/ui HTTP/1.1" {
                 assert_eq!(
                     req.body,
@@ -318,6 +318,11 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
                 )
                 .await;
                 saved = true;
+            } else {
+                panic!(
+                    "unexpected request while shared SSE stays open: {}",
+                    req.first
+                );
             }
         }
         wait_until(|| {
@@ -326,7 +331,6 @@ fn independent_row_sends_after_row_failure_flush_revalidates_held_patch_and_hidd
         })
         .await;
         let _ = commands_a.send(Command::Close).await;
-        let _ = commands_b.send(Command::Close).await;
         drop(sse_a);
     });
 }
@@ -401,14 +405,13 @@ fn tab_switch_after_active_sse_drop_still_reattests_server_before_revalidation()
         meta_b
             .reply(200, json!({"apiContract":1,"serverId":"server-a"}))
             .await;
-        let mut sse_b = request(&listener).await;
-        sse_b
-            .socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-            .await
-            .unwrap();
-        request(&listener)
-            .await
+        let history_b = request(&listener).await;
+        assert!(
+            !history_b.first.starts_with("GET /api/events?"),
+            "sibling tab must share existing /api/events stream, got {}",
+            history_b.first
+        );
+        history_b
             .reply(
                 200,
                 json!({"status":"window","messages":[{"id":"b","type":"user","text":"b"}],"older":null,"newer":null,"latest":true}),
@@ -430,8 +433,9 @@ fn tab_switch_after_active_sse_drop_still_reattests_server_before_revalidation()
             }
         }
 
-        // Drop active tab A while sibling tab B's SSE stays open (global drop generation unchanged),
-        // then switch directly to sibling tab B BEFORE calling prefs.poll().
+        // Drop the shared SSE stream, then switch directly to sibling tab B BEFORE calling
+        // prefs.poll(): it must still observe the drop, disable Chat, and force /api/meta
+        // re-attestation before any GET or PATCH.
         drop(sse_a);
         timeout(Duration::from_secs(4), async {
             while client.transport_drops(&tab_a_id) == 0 {
@@ -440,13 +444,7 @@ fn tab_switch_after_active_sse_drop_still_reattests_server_before_revalidation()
         })
         .await
         .unwrap();
-        assert!(
-            !client.needs_capability_recheck(),
-            "sibling open SSE keeps global drop generation unchanged"
-        );
 
-        // Switching to sibling tab B before polling must still observe tab A's drop, disable Chat,
-        // and force /api/meta re-attestation before any GET or PATCH.
         prefs.observe_conversation_clients(&[(tab_b_id.clone(), true)]);
         assert!(
             !prefs.transcript_ready(),
@@ -500,7 +498,6 @@ fn tab_switch_after_active_sse_drop_still_reattests_server_before_revalidation()
         );
         let _ = commands_a.send(Command::Close).await;
         let _ = commands_b.send(Command::Close).await;
-        drop(sse_b);
     });
 }
 
@@ -633,14 +630,13 @@ fn hidden_connected_event_does_not_overwrite_healthy_active_tab_or_custom_preset
         meta_b
             .reply(200, json!({"apiContract":1,"serverId":"server-a"}))
             .await;
-        let mut sse_b = request(&listener).await;
-        sse_b
-            .socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-            .await
-            .unwrap();
-        request(&listener)
-            .await
+        let history_b = request(&listener).await;
+        assert!(
+            !history_b.first.starts_with("GET /api/events?"),
+            "second tab must share existing /api/events stream, got {}",
+            history_b.first
+        );
+        history_b
             .reply(
                 200,
                 json!({"status":"window","messages":[{"id":"b","type":"user","text":"b"}],"older":null,"newer":null,"latest":true}),
@@ -661,19 +657,23 @@ fn hidden_connected_event_does_not_overwrite_healthy_active_tab_or_custom_preset
                 break;
             }
         }
-        // Drop ONLY hidden tab B while active tab A's SSE stays open; tab B's reconnect must
-        // probe /api/meta before opening SSE, detect foreign Server B, and revoke shared attestation.
-        drop(sse_b);
-        let reconnect_meta = timeout(Duration::from_secs(4), request(&listener))
+        // 3a. While the shared SSE socket is STILL OPEN (no global transport drop), a foreign
+        // /api/meta mismatch ("server-b") must revoke shared attestation immediately so no
+        // Preferences PATCH reaches Server B.
+        let probe_backend = base.clone();
+        platform::spawn(async move {
+            let _ = probe_backend.attest_server().await;
+        });
+        let mismatch_meta = timeout(Duration::from_secs(4), request(&listener))
             .await
-            .expect("hidden tab reconnect must attest /api/meta before reopening SSE");
-        assert_eq!(reconnect_meta.first, "GET /api/meta HTTP/1.1");
-        reconnect_meta
+            .expect("probe must request /api/meta");
+        assert_eq!(mismatch_meta.first, "GET /api/meta HTTP/1.1");
+        mismatch_meta
             .reply(200, json!({"apiContract":1,"serverId":"server-b"}))
             .await;
         wait_until(|| client.needs_capability_recheck()).await;
-        // Now attempt a Preferences write while tab A's old SSE socket is still open:
-        // it must NOT send PATCH to Server B, only /api/meta.
+        // Now attempt a Preferences write while the old SSE socket is still open:
+        // it must NOT send SSE or PATCH to Server B, only /api/meta.
         prefs.set_transcript(None, "minimal");
         assert!(prefs.poll());
         let deadline = std::time::Instant::now() + Duration::from_millis(120);
@@ -685,15 +685,23 @@ fn hidden_connected_event_does_not_overwrite_healthy_active_tab_or_custom_preset
                         .await;
                 } else {
                     panic!(
-                        "foreign server must not receive SSE or settings PATCH after hidden reconnect mismatch, got: {}",
+                        "foreign server must not receive SSE or settings PATCH after foreign attestation while SSE is open, got: {}",
                         req.first
                     );
                 }
             }
         }
+        // 3b. Dropping the shared SSE stream must also attest /api/meta before reopening SSE.
+        drop(sse_a);
+        let reconnect_meta = timeout(Duration::from_secs(4), request(&listener))
+            .await
+            .expect("reconnect must attest /api/meta before reopening SSE");
+        assert_eq!(reconnect_meta.first, "GET /api/meta HTTP/1.1");
+        reconnect_meta
+            .reply(200, json!({"apiContract":1,"serverId":"server-b"}))
+            .await;
         let _ = commands_a.send(Command::Close).await;
         let _ = commands_b.send(Command::Close).await;
-        drop(sse_a);
     });
 
     // 4. An in-flight GET whose server attestation is revoked mid-flight must be discarded and

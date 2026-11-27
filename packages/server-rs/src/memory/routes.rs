@@ -55,10 +55,10 @@ fn finish(remote: bool, result: Result<Value, MemoryError>, principal: &Principa
     response
 }
 
-/// `gate.ts`: memory reaches remote browsers only; a server-device request through the
-/// ingress gets 404 (the direct listener already refuses server-device requests).
-fn server_device(remote: bool, headers: &HeaderMap) -> Result<(), Response> {
-    if remote && headers.contains_key("x-codenomad-server-request") {
+/// `gate.ts`: on ingress, memory reaches remote browsers only (when `multiBackend` is enabled);
+/// direct HTTPS server-device requests retain their authenticated transport.
+fn server_device(channel: Option<&crate::auth::tls::Channel>, headers: &HeaderMap) -> Result<(), Response> {
+    if channel.is_some_and(|c| c.ingress) && headers.contains_key("x-codenomad-server-request") {
         return Err(
             (Status::NOT_FOUND, [(header::CONNECTION, "close")], Json(json!({"error": "Not found"}))).into_response()
         );
@@ -75,7 +75,7 @@ pub async fn settings(
     bytes: Bytes,
 ) -> Result<Response, Response> {
     let remote = channel.is_some();
-    server_device(remote, &headers)?;
+    server_device(channel.as_deref(), &headers)?;
     if method != Method::PUT {
         return Ok(finish(remote, service::enabled(&app).map(|e| json!({"enabled": e})), &principal));
     }
@@ -101,7 +101,7 @@ pub async fn operation(
     bytes: Bytes,
 ) -> Result<Response, Response> {
     let remote = channel.is_some();
-    server_device(remote, &headers)?;
+    server_device(channel.as_deref(), &headers)?;
     let parsed = body(&headers, &bytes, 32 * 1024)?;
     let request =
         parsed.as_ref().and_then(Value::as_object).filter(|o| o.keys().all(|k| k == "operation" || k == "context"));

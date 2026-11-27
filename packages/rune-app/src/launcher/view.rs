@@ -30,7 +30,7 @@ pub fn view(s: &State) -> El {
                     .disabled(l.authentication_required)
                     .label(t("rune.server"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("server-address"),
             );
         if password {
@@ -40,7 +40,7 @@ pub fn view(s: &State) -> El {
                     .secure()
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Password))
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("server-password"),
             );
         }
@@ -97,7 +97,7 @@ pub fn view(s: &State) -> El {
                     .label(t("instanceInfo.labels.folder"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Folder))
                     .on_submit(crate::screen::action_tx(&scope, launcher::open))
-                    .build(field_kit(layout::dark()))
+                    .build(&field_kit(layout::dark()))
                     .key("folder-path"),
             )
             .child(actions);
