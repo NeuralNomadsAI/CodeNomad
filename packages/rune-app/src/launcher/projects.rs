@@ -146,6 +146,9 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
     let Some(backend) = l.connection.clone() else {
         return;
     };
+    if l.server_id.is_none() && backend.client.needs_capability_recheck() {
+        return;
+    }
     let local = l.local_connection();
     let identity = if local {
         saved.backend_id.is_none()

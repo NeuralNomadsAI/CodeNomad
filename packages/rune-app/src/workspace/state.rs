@@ -758,6 +758,11 @@ pub fn connected(s: &mut State) {
         l.openings = ui.openings.clone();
     }
     #[cfg(not(target_arch = "wasm32"))]
+    let booting = s
+        .screen
+        .launcher()
+        .is_some_and(crate::launcher::Launcher::booting);
+    #[cfg(not(target_arch = "wasm32"))]
     let directory = s
         .screen
         .launcher()
@@ -771,7 +776,15 @@ pub fn connected(s: &mut State) {
         ui.ready = false;
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if !ui.persistence.loading && ui.persistence.store.is_none() && !ui.persistence.read_error {
+    if booting && !ui.persistence.loading && ui.persistence.store.is_none() {
+        ui.ready = false;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if !booting
+        && !ui.persistence.loading
+        && ui.persistence.store.is_none()
+        && !ui.persistence.read_error
+    {
         ui.ready = true;
     }
 }
@@ -812,6 +825,11 @@ impl Drop for Ui {
     }
 }
 pub fn resume(s: &mut State, tx: &mut Tx) {
+    if s.screen.launcher().is_some_and(|l| {
+        l.project.is_none() && l.server_id.is_none() && (l.pending || l.error.is_some())
+    }) {
+        return;
+    }
     if s.workspace
         .as_ref()
         .is_some_and(|ui| ui.ready && ui.entries[ui.active].project.is_none())
