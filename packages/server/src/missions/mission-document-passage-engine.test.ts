@@ -456,3 +456,47 @@ test("overlapping wake with unreadable source still closes fan-in after not-star
   assert.ok(actions.includes("configure"))
   assert.ok(actions.includes("resume"))
 })
+
+test("prepared wake after old fan-in cutoff is consumed on not-started settlement and unlocks Edit and Resume", async () => {
+  const f = await fixture(2)
+  const condition = { kind: "conversation-message" as const, conversationID: "ses_watched" }
+  const digest = "b".repeat(64)
+  await f.mutate(doc => {
+    doc.configuration.launch = { when: [condition] }
+    doc.checkpoints = [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_0", count: 0 } }]
+  })
+  const first0 = f.wake(0, 1, start + 1000)
+  f.wake(1, 1, start + 1000)
+  f.ports.snapshot = async () => ({
+    news: { triggers: true, conditions: false, changed: [missionSourceKey(condition)] },
+    checkpoints: [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_1", count: 1 } }],
+    current,
+  })
+  f.ports.admit = async () => ({ kind: "unknown" })
+  assert.equal(await f.engine.wake({ missionID: "review", wake: first0 }), "unknown")
+  assert.ok((await f.read()).pending)
+  // First principal overlaps while the watched source is unreadable, leaving the suppressed window open at start + 2000.
+  f.tick()
+  const overlap0 = f.wake(0, 2, start + 2000)
+  f.ports.snapshot = async () => { throw new Error("Watched conversation deleted") }
+  assert.equal(await f.engine.wake({ missionID: "review", wake: overlap0 }), "unknown")
+  assert.equal((await f.read()).fanIn?.completed, false)
+  // Second principal prepares a wake AFTER that window's cutoff before admission settles as not-started.
+  f.tick()
+  const prepared1 = f.wake(1, 2, start + 3000)
+  await f.mutate(doc => changes.prepareWake(doc, { scheduleID: prepared1.scheduleID, run: prepared1.run, messageID: prepared1.messageID, dueAt: prepared1.dueAt! }))
+  assert.ok((await f.read()).calendars[1].wakePreparing)
+  f.ports.admit = async () => ({ kind: "not-started", current })
+  assert.equal(await f.engine.reconcile({ missionID: "review" }), "settled")
+  const settled = await f.read()
+  assert.equal(settled.pending, null)
+  assert.equal(settled.blocked, "failed")
+  assert.equal(settled.fanIn?.completed, true)
+  assert.equal(settled.calendars[0].highWater, 2)
+  assert.equal(settled.calendars[1].highWater, 2)
+  assert.equal(settled.calendars[1].wakePreparing, null)
+  assert.equal(projectMissionDocument(settled).edit.structural, true)
+  const actions = missionScheduleAvailableActions(settled)
+  assert.ok(actions.includes("configure"))
+  assert.ok(actions.includes("resume"))
+})

@@ -235,7 +235,12 @@ export class MissionDocumentPassageEngine {
     if (!doc?.pending || doc.pending.id !== passageID) throw new Error("Passage changed during admission")
     if (admission.kind === "not-started") {
       if (doc.pending.admittedAt !== null || doc.pending.admissionAttempted) return "unknown"
-      const settled = await this.change(locked, doc, next => changes.settle(next, doc!.pending!.id, "failed", this.ports.now(), true), admission.current)
+      const at = Math.max(this.ports.now(), doc.pending.createdAt, doc.history.at(-1)?.settledAt ?? 0)
+      const settled = await this.change(locked, doc, next => {
+        const cutoff = Math.max(at, ...next.calendars.map(item => item.wakePreparing?.dueAt ?? 0))
+        changes.settle(next, doc!.pending!.id, "failed", at, true)
+        if (next.calendars.some(item => item.role === "principal")) next.fanIn = this.windowValue(next, cutoff, true)
+      }, admission.current)
       await this.closeSuppressedWindow(locked, settled)
       await this.ports.retired?.(doc)
       await this.ports.cleanup?.(settled, locked)
