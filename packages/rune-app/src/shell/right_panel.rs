@@ -64,7 +64,8 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
                         .child(text(connection(s)))
                         .children(crate::chat::usage::session(s))
                         .children(super::status_permissions::view(s))
-                        .children(super::status_usage::section(s)),
+                        .children(super::status_usage::section(s))
+                        .children(super::status_services::view(s)),
                 ),
         })
 }

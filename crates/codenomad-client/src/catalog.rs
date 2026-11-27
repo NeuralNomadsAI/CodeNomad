@@ -80,6 +80,7 @@ async fn creation_response(response: reqwest::Response) -> Result<Value> {
 pub struct Project {
     pub id: String,
     pub path: String,
+    pub temporary: bool,
 }
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -138,7 +139,7 @@ impl Backend {
             .server_identity()
             .is_some_and(|current| current != id)
         {
-            self.client.revoke_server_attestation_at(generation, seq);
+            self.client.record_server_identity_mismatch(generation, seq);
             return Ok((id, Vec::new(), false, generation, seq, drop_epoch));
         }
         let capabilities: Vec<String> = meta["capabilities"]
@@ -170,6 +171,13 @@ impl Backend {
         self.client.require_attestation();
         let (id, capabilities, same_gen, generation, seq, drop_epoch) =
             self.probe_server_meta().await?;
+        if self
+            .client
+            .server_identity()
+            .is_some_and(|current| current != id)
+        {
+            return Err("Server identity changed".into());
+        }
         if !same_gen {
             return Err("Transport changed during server attestation".into());
         }
@@ -510,6 +518,7 @@ fn project(data: &Value) -> Result<Project> {
     Ok(Project {
         id: id.into(),
         path: path.into(),
+        temporary: data["temporary"].as_bool().unwrap_or(false),
     })
 }
 fn session(data: &Value, project: &Project) -> Result<Session> {
@@ -555,6 +564,7 @@ mod tests {
         let project = Project {
             id: "workspace".into(),
             path: r"D:\Project".into(),
+            temporary: false,
         };
         assert!(
             session(
@@ -569,6 +579,7 @@ mod tests {
         let project = Project {
             id: "workspace".into(),
             path: "/Project".into(),
+            temporary: false,
         };
         for path in [
             "/project",
@@ -594,5 +605,29 @@ mod tests {
             super::project(&json!({"id":"workspace", "location":{"directory":"relative"}}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn project_decodes_temporary_flag_with_false_default() {
+        let temp = project(&json!({
+            "id": "ws-temp",
+            "location": {"directory": "/tmp/ws"},
+            "temporary": true
+        }))
+        .unwrap();
+        assert!(temp.temporary);
+        let normal = project(&json!({
+            "id": "ws-normal",
+            "location": {"directory": "/tmp/ws"}
+        }))
+        .unwrap();
+        assert!(!normal.temporary);
+        let malformed = project(&json!({
+            "id": "ws-bad",
+            "location": {"directory": "/tmp/ws"},
+            "temporary": "yes"
+        }))
+        .unwrap();
+        assert!(!malformed.temporary);
     }
 }

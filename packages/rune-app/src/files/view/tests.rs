@@ -37,6 +37,7 @@ fn shell_runtime(mut ui: crate::files::Ui) -> Runtime<State> {
     let project = crate::catalog::Project {
         id: backend.workspace.clone(),
         path: ui.tree.directory().into(),
+        temporary: false,
     };
     s.screen.launcher_mut().unwrap().project = Some(project.clone());
     s.workspace = Some(crate::workspace::Ui::new());

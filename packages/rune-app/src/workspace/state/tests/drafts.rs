@@ -288,6 +288,7 @@ fn reopen(s: &mut State) {
         &Project {
             id: "reopened".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
 }
@@ -316,6 +317,7 @@ fn closed_occurrences_merge_each_session_with_latest_clear_authority() {
         &Project {
             id: "successor".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
@@ -353,6 +355,7 @@ fn clearing_or_sending_an_inherited_draft_retires_older_closed_text() {
             &Project {
                 id: "successor".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
@@ -435,6 +438,7 @@ fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
             &Project {
                 id: "successor".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         assert_eq!(
@@ -481,6 +485,7 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 &Project {
                     id: "third".into(),
                     path: "/fixture".into(),
+                    temporary: false,
                 },
             );
             rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -495,6 +500,7 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 &Project {
                     id: "fourth".into(),
                     path: "/fixture".into(),
+                    temporary: false,
                 },
             );
             rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -538,6 +544,7 @@ fn an_unbound_or_failed_open_keeps_its_source_and_binding_revalidates_pending_te
             &Project {
                 id: "retry".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -558,6 +565,7 @@ fn delivery_retires_pending_copies_but_preserves_independent_occurrence_authorit
         &Project {
             id: "pending".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let ui = rt.state.workspace.as_mut().unwrap();
@@ -690,6 +698,7 @@ fn delivery_folder_spelling_preserves_only_the_same_server_project_scope() {
             &Project {
                 id: "fresh-record".into(),
                 path: path.into(),
+                temporary: false,
             },
         );
         assert_eq!(

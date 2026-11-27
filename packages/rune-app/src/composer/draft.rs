@@ -74,6 +74,109 @@ pub struct Draft {
     pub(crate) literal_spans: Vec<Range<usize>>,
 }
 impl Draft {
+    pub(crate) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.attachments.iter().fold(0usize, |total, attachment| {
+            let weight = match attachment {
+                Attachment::Pasted { text, .. } => {
+                    if seen.insert(Arc::as_ptr(text) as *const u8 as usize) {
+                        text.len()
+                    } else {
+                        0
+                    }
+                }
+                Attachment::Device {
+                    name,
+                    mime,
+                    bytes,
+                    token,
+                } => {
+                    let payload = if seen.insert(Arc::as_ptr(bytes) as *const u8 as usize) {
+                        bytes.len()
+                    } else {
+                        0
+                    };
+                    payload
+                        .saturating_add(name.len())
+                        .saturating_add(mime.len())
+                        .saturating_add(token.as_ref().map_or(0, String::len))
+                }
+                Attachment::Project {
+                    name, path, uri, ..
+                } => name
+                    .len()
+                    .saturating_add(path.len())
+                    .saturating_add(uri.len()),
+                Attachment::Path(path) | Attachment::Agent(path) => path.len(),
+                Attachment::Skill { id, name } => id.len().saturating_add(name.len()),
+            };
+            total.saturating_add(weight)
+        })
+    }
+
+    /// Bytes that dropping this `Draft` will actually release right now (counting shared `Arc`
+    /// payloads only when this `Draft` holds every remaining strong reference to them).
+    pub(crate) fn sole_owner_bytes(&self) -> usize {
+        let mut counts = std::collections::HashMap::<usize, usize>::new();
+        for attachment in &self.attachments {
+            match attachment {
+                Attachment::Pasted { text, .. } => {
+                    *counts
+                        .entry(Arc::as_ptr(text) as *const u8 as usize)
+                        .or_insert(0) += 1;
+                }
+                Attachment::Device { bytes, .. } => {
+                    *counts
+                        .entry(Arc::as_ptr(bytes) as *const u8 as usize)
+                        .or_insert(0) += 1;
+                }
+                _ => {}
+            }
+        }
+        let mut credited = std::collections::HashSet::new();
+        self.attachments.iter().fold(0usize, |total, attachment| {
+            let weight = match attachment {
+                Attachment::Pasted { text, .. } => {
+                    let ptr = Arc::as_ptr(text) as *const u8 as usize;
+                    if credited.insert(ptr)
+                        && Arc::strong_count(text) == counts.get(&ptr).copied().unwrap_or(0)
+                    {
+                        text.len()
+                    } else {
+                        0
+                    }
+                }
+                Attachment::Device {
+                    name,
+                    mime,
+                    bytes,
+                    token,
+                } => {
+                    let ptr = Arc::as_ptr(bytes) as *const u8 as usize;
+                    let payload = if credited.insert(ptr)
+                        && Arc::strong_count(bytes) == counts.get(&ptr).copied().unwrap_or(0)
+                    {
+                        bytes.len()
+                    } else {
+                        0
+                    };
+                    payload
+                        .saturating_add(name.len())
+                        .saturating_add(mime.len())
+                        .saturating_add(token.as_ref().map_or(0, String::len))
+                }
+                Attachment::Project {
+                    name, path, uri, ..
+                } => name
+                    .len()
+                    .saturating_add(path.len())
+                    .saturating_add(uri.len()),
+                Attachment::Path(path) | Attachment::Agent(path) => path.len(),
+                Attachment::Skill { id, name } => id.len().saturating_add(name.len()),
+            };
+            total.saturating_add(weight)
+        })
+    }
+
     pub fn remove(&mut self, edit: &mut TextEdit, index: usize) {
         if let Attachment::Pasted { id, .. } = &self.attachments[index] {
             let ranges: Vec<_> = super::long_paste::active_tokens(edit)
@@ -139,6 +242,25 @@ impl Draft {
         self.attachments
             .iter()
             .any(|part| !matches!(part, Attachment::Pasted { .. }))
+    }
+
+    pub(crate) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.attachments
+            .iter()
+            .fold((0, 0), |(count, total), item| match item {
+                Attachment::Device { bytes, .. } => {
+                    let key = Arc::as_ptr(bytes) as *const u8 as usize;
+                    if bytes.is_empty() || seen.insert(key) {
+                        (count + 1, total.saturating_add(bytes.len()))
+                    } else {
+                        (count, total)
+                    }
+                }
+                _ => (count, total),
+            })
     }
 
     pub fn inline_usage(&self) -> (usize, usize) {

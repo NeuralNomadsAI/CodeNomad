@@ -74,7 +74,12 @@ struct State {
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
+    command_palette: shell::command_palette::Palette,
+    tab_rename: shell::tab_rename::Rename,
+    temporary: shell::temporary::Host,
+    workspace_open: shell::workspace_open::Host,
     status_permissions: shell::status_permissions::Permissions,
+    status_services: shell::status_services::Services,
     status_usage: shell::status_usage::Panel,
     chat_title: String,
     messages: Vec<history::Row>,
@@ -93,6 +98,7 @@ struct State {
     paging: bool,
     history_error: bool,
     history_detached: bool,
+    stream_offline: bool,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
@@ -101,10 +107,25 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    StreamDisconnected {
+        running: bool,
+    },
     #[cfg(target_arch = "wasm32")]
     WorkspaceMissing,
     #[cfg(target_arch = "wasm32")]
     RestoreFailed,
+}
+impl Phase {
+    fn reconnecting(&self) -> bool {
+        matches!(self, Self::Reconnecting | Self::StreamDisconnected { .. })
+    }
+
+    fn running(&self) -> bool {
+        matches!(
+            self,
+            Self::Streaming | Self::StreamDisconnected { running: true }
+        )
+    }
 }
 fn init() -> State {
     State {
@@ -141,7 +162,12 @@ fn init() -> State {
         rejected_edit: TextEdit::new(""),
         workspace: None,
         shell: Default::default(),
+        command_palette: Default::default(),
+        tab_rename: Default::default(),
+        temporary: Default::default(),
+        workspace_open: Default::default(),
         status_permissions: Default::default(),
+        status_services: Default::default(),
         status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
@@ -160,6 +186,7 @@ fn init() -> State {
         paging: false,
         history_error: false,
         history_detached: false,
+        stream_offline: false,
     }
 }
 #[cfg(feature = "test-support")]
@@ -225,6 +252,7 @@ fn local_stress() -> bool {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
@@ -251,7 +279,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    chat::reader::expire_sync_undo(s);
+    chat::reader::expire_sync_undo(s, tx.clock());
     let gesture = timeline::poll_edge(s, tx);
     let conversation_visible = !s.screen.is_launcher()
         && !git::has_preview(s)
@@ -259,7 +287,16 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         && !workspace::mission_has_reader(s);
     let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
-        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
+        && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
+    if std::mem::take(&mut s.composer.announce_send_error) {
+        rune_theme_codenomad::layout::announce_alert(tx, strings::t("promptInput.send.errorTitle"));
+    }
+    if std::mem::take(&mut s.composer.announce_unconfirmed) {
+        rune_theme_codenomad::layout::announce_alert(
+            tx,
+            strings::t("missionsPanel.action.requestUpdateUncertain"),
+        );
+    }
     shell::notifications::collect(s, workspace::notification_target);
     if s.reader
         .as_ref()
@@ -267,10 +304,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         tx.wake_after(std::time::Duration::ZERO);
     }
-    let wait_manual_probe = conversation_visible
-        && s.reader
-            .as_mut()
-            .is_some_and(chat::reader::Reader::take_manual_probe_wait);
+    let wait_manual_probe = conversation_visible && chat::reader::take_manual_probe_wait(s, tx);
     if wait_manual_probe {
         tx.wake_after(std::time::Duration::ZERO);
     }
@@ -296,6 +330,10 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= platform::pairing::poll(s, tx);
+    }
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= composer::recall::poll(s);
@@ -303,10 +341,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
-    #[cfg(target_arch = "wasm32")]
-    {
-        changed |= platform::pairing::poll(s, tx);
-    }
+    changed |= chat::queue::poll(s, tx);
     changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
@@ -321,7 +356,10 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= settings::poll_stats(s, now, tx);
     }
     changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_services::poll(s, now, tx);
     changed |= shell::status_usage::poll(s, now, tx);
+    changed |= shell::temporary::poll(s, tx);
+    changed |= shell::workspace_open::poll(s);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
@@ -339,6 +377,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     platform::launch::sync(s);
     workspace::capture_files_mode(s);
+    if changed {
+        workspace::enforce_memory_budget(s);
+    }
     timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();

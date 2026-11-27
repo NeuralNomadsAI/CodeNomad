@@ -37,20 +37,20 @@ const BODY_LIMIT: usize = 1024 * 1024;
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Scope {
+pub(crate) enum Scope {
     Global,
     Project,
 }
 
 impl Scope {
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Global => "global",
             Self::Project => "project",
         }
     }
 
-    pub(super) fn is_project(self) -> bool {
+    pub(crate) fn is_project(self) -> bool {
         matches!(self, Self::Project)
     }
 }
@@ -65,11 +65,11 @@ async fn not_found() -> Response {
     (Status::NOT_FOUND, Json(json!({ "message": "Not Found" }))).into_response()
 }
 
-pub(super) const fn fail(status: Status, message: &'static str) -> Fail {
+pub(crate) const fn fail(status: Status, message: &'static str) -> Fail {
     Fail::Status(status, message)
 }
 
-pub(super) fn mapped(error: DocError) -> Fail {
+pub(crate) fn mapped(error: DocError) -> Fail {
     match error {
         DocError::Invalid(message) => fail(Status::UNPROCESSABLE_ENTITY, message),
         DocError::Conflict(message) => fail(Status::CONFLICT, message),
@@ -78,7 +78,7 @@ pub(super) fn mapped(error: DocError) -> Fail {
     }
 }
 
-pub(super) fn raw(_: DocError) -> Fail {
+pub(crate) fn raw(_: DocError) -> Fail {
     Fail::Generic
 }
 
@@ -89,25 +89,25 @@ pub(super) fn fail_response(error: Fail, generic_message: &'static str) -> Respo
     }
 }
 
-pub(super) fn bad_request(message: &'static str) -> Response {
+pub(crate) fn bad_request(message: &'static str) -> Response {
     (Status::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
 }
 
-pub(super) fn principal_token(principal: Option<axum::Extension<Principal>>) -> Option<CancellationToken> {
+pub(crate) fn principal_token(principal: Option<axum::Extension<Principal>>) -> Option<CancellationToken> {
     principal.map(|axum::Extension(p)| p.0)
 }
 
-pub(super) fn has_control_chars(value: &str) -> bool {
+pub(crate) fn has_control_chars(value: &str) -> bool {
     value.chars().any(|c| (c as u32) <= 0x1f || c == '\x7f')
 }
 
-fn decode_query(raw: &str) -> String {
+pub(crate) fn decode_query(raw: &str) -> String {
     let plus = raw.replace('+', " ");
     percent_encoding::percent_decode_str(&plus).decode_utf8().map(|c| c.into_owned()).unwrap_or(plus)
 }
 
 /// Strict Zod `z.string().trim().min(1).max(32_768)` using JS trim & UTF-16 code units.
-pub(super) fn location_directory(raw: &str) -> Option<String> {
+pub(crate) fn location_directory(raw: &str) -> Option<String> {
     let trimmed = crate::shared::js_trim(raw).to_owned();
     (1..=32_768).contains(&trimmed.encode_utf16().count()).then_some(trimmed)
 }
@@ -130,7 +130,7 @@ pub(super) fn parse_location_object(value: &Value) -> Option<String> {
     location_directory(map.get("directory")?.as_str()?)
 }
 
-fn close_response(mut response: Response) -> Response {
+pub(crate) fn close_response(mut response: Response) -> Response {
     response.headers_mut().insert(header::CONNECTION, HeaderValue::from_static("close"));
     response
 }
@@ -142,12 +142,12 @@ fn body_too_large() -> Response {
     )
 }
 
-/// Reads and parses a Fastify 5 JSON body within the 1 MiB default body limit.
-pub(super) async fn read_json_body(
+/// Reads the raw request body bytes enforcing Fastify 5 content-type framing and 1 MiB limit.
+pub(crate) async fn read_body_bytes(
     headers: &HeaderMap,
     body: Body,
     invalid_message: &'static str,
-) -> Result<Value, Box<Response>> {
+) -> Result<Vec<u8>, Box<Response>> {
     let media_error = || {
         Box::new(
             fastify::error(Status::UNSUPPORTED_MEDIA_TYPE, "FST_ERR_CTP_INVALID_MEDIA_TYPE", "Unsupported Media Type")
@@ -198,7 +198,16 @@ pub(super) async fn read_json_body(
         }
         bytes.extend_from_slice(&chunk);
     }
+    Ok(bytes)
+}
 
+/// Reads and parses a Fastify 5 JSON body within the 1 MiB default body limit.
+pub(crate) async fn read_json_body(
+    headers: &HeaderMap,
+    body: Body,
+    invalid_message: &'static str,
+) -> Result<Value, Box<Response>> {
+    let bytes = read_body_bytes(headers, body, invalid_message).await?;
     match fastify::body(headers, &bytes) {
         Ok(Some(fastify::Body::Json(value))) => Ok(value),
         Ok(_) => Err(Box::new(bad_request(invalid_message))),
@@ -210,14 +219,14 @@ pub(super) async fn read_json_body(
     }
 }
 
-pub(super) struct CommitGuard<'a> {
+pub(crate) struct CommitGuard<'a> {
     _connection: crate::opencode::ConnectionGuard<'a>,
     _workspaces: std::sync::MutexGuard<'a, crate::app::Inventory>,
 }
 
 /// Acquires workspace and connection locks in canonical order (`app.inner` -> `native.endpoint` ->
 /// `native.validated`) and confirms both remain live for the duration of the returned guard.
-pub(super) fn guard_current<'a>(
+pub(crate) fn guard_current<'a>(
     app: &'a App,
     endpoint: &Arc<Endpoint>,
     pinned_endpoint: Option<&Arc<Endpoint>>,
@@ -249,7 +258,7 @@ pub(super) fn guard_current<'a>(
     Ok(CommitGuard { _connection: connection, _workspaces: workspaces })
 }
 
-pub(super) fn assert_current(
+pub(crate) fn assert_current(
     app: &App,
     endpoint: &Arc<Endpoint>,
     workspace: &Workspace,
@@ -279,7 +288,7 @@ pub(super) async fn acquire_ready_connection(
     Ok((workspace, endpoint))
 }
 
-pub(super) async fn native_get(
+pub(crate) async fn native_get(
     app: &App,
     endpoint: &Endpoint,
     path: &str,

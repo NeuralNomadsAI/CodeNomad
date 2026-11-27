@@ -1,17 +1,40 @@
 import assert from 'node:assert/strict'
-import {appendFile,writeFile} from 'node:fs/promises'
-import path from 'node:path'
-import {chromium} from 'playwright'
+import {maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies} from '../native-fixture-http.mjs'
 
-export async function pendingBrowser({values,m,out,storage}) {
-  const origin=new URL(values.url).origin,results=[]
-  const browser=await chromium.launch({headless:true,executablePath:values.executable,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
+export async function pendingBrowser({values,m,browser,ownedBrowser,storageState,realCookieHeader,attestedFetch,writeOutput,appendOutput,recordCleanupError}) {
+  assert(browser&&typeof attestedFetch==='function'&&typeof writeOutput==='function'&&typeof appendOutput==='function','Attested browser, attestedFetch, writeOutput, and appendOutput required for pendingBrowser')
+  const parsedUrl=new URL(values.url)
+  const origin=parsedUrl.origin,isHttp=parsedUrl.protocol==='http:',results=[]
+  const authHeaders=realCookieHeader?{cookie:realCookieHeader}:{}
+  const realCookieMap=parseCookiePairs(realCookieHeader)
+  const forwardRoute=async route=>{
+    const req=route.request()
+    const headers={...(await req.allHeaders())}
+    delete headers['host'];delete headers['content-length']
+    if(isHttp&&headers['cookie']){
+      headers['cookie']=ownedBrowser
+        ?ownedBrowser.substituteCookies(headers['cookie'])
+        :(realCookieMap.size?substitutePlaceholderCookies(headers['cookie'],realCookieMap):headers['cookie'])
+    }
+    const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+    const body=Buffer.from(await res.arrayBuffer())
+    const outHeaders=Object.fromEntries(res.headers.entries())
+    const rawSetCookies=res.headers.getSetCookie?.()??(outHeaders['set-cookie']?[outHeaders['set-cookie']]:[])
+    if(rawSetCookies.length){
+      outHeaders['set-cookie']=(isHttp
+        ?(ownedBrowser?ownedBrowser.maskSetCookies(rawSetCookies):(realCookieMap.size?maskSetCookieHeaders(rawSetCookies,realCookieMap):rawSetCookies))
+        :rawSetCookies).join('\n')
+    }
+    return {status:res.status,headers:outHeaders,body,json:()=>JSON.parse(body.toString('utf8'))}
+  }
+  let primaryError=null
   try {for(const mode of ['post','ack','quota','corrupt']) {
-    let held,oldClaim,oldRecord,created=0,heldRoute,heldResponse,heldBody,latePostStatus
-    const owned=new Set(),network=[]
-    const stage=async value=>writeFile(path.join(out,`pending-${mode}-stage.json`),JSON.stringify({stage:value,network},null,2))
+    let context,page,held,oldClaim,oldRecord,created=0,heldRoute,heldResponse,heldBody,latePostStatus,errors=0
+    const owned=new Set(),network=[],pendingAppends=new Set()
+    const stage=async value=>writeOutput(`pending-${mode}-stage.json`,JSON.stringify({stage:value,network},null,2),{overwrite:true})
     const base=origin+'/'
-    const context=await browser.newContext({viewport:{width:1100,height:900},storageState:storage})
+    try {
+    context=await browser.newContext({viewport:{width:1100,height:900},storageState})
     await context.route(`${origin}/api/workspaces`,async route=>{
       const req=route.request();if(req.method()!=='POST')return route.continue()
       const body=req.postDataJSON();assert.equal(body.path,values.project);assert.equal(typeof body.requestId,'string')
@@ -19,15 +42,20 @@ export async function pendingBrowser({values,m,out,storage}) {
       if(created===2){
         oldClaim=body.requestId;heldRoute=route;heldBody=body
         if(mode==='post'){held=true;return}
-        heldResponse=await route.fetch({maxRedirects:0});assert.equal(heldResponse.status(),201)
-        oldRecord=(await heldResponse.json()).id;owned.add(oldRecord);held=true;return
+        heldResponse=await forwardRoute(route);assert.equal(heldResponse.status,201)
+        oldRecord=heldResponse.json().id;owned.add(oldRecord);held=true;return
       }
-      const response=await route.fetch({maxRedirects:0});assert.equal(response.status(),201)
-      owned.add((await response.json()).id);await route.fulfill({response})
+      const response=await forwardRoute(route);assert.equal(response.status,201)
+      owned.add(response.json().id);await route.fulfill({status:response.status,headers:response.headers,body:response.body})
     })
-    const page=await context.newPage();page.setDefaultTimeout(20000)
-    let errors=0
-    const error=message=>{if(errors++<64)appendFile(path.join(out,`pending-${mode}-errors.log`),`${String(message).slice(0,512)}\n`)}
+    page=await context.newPage();page.setDefaultTimeout(20000)
+    const error=message=>{
+      if(errors++<64){
+        const task=appendOutput(`pending-${mode}-errors.log`,`${String(message).slice(0,512)}\n`).catch(()=>{})
+        pendingAppends.add(task)
+        task.then(()=>pendingAppends.delete(task))
+      }
+    }
     page.on('pageerror',error);page.on('console',message=>{if(message.type()==='error')error(message.text())})
     const KEY='codenomad.rune.alpha.client-state.v1',PROOF='codenomad.fixture.rune.pending.v1'
     await page.addInitScript(({KEY,PROOF,corrupt})=>{
@@ -43,8 +71,7 @@ export async function pendingBrowser({values,m,out,storage}) {
     const press=async locator=>{await locator.waitFor({state:'attached'});for(const end=Date.now()+20000;await locator.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){assert(Date.now()<end,'control disabled');await page.waitForTimeout(20)}await locator.click({force:true})}
     const boot=()=>page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
     const type=async(label,text)=>{for(let i=0;i<64;i++){const field=page.locator('textarea:focus');if(await field.count()&&await field.getAttribute('aria-label')===label){await field.fill(text);return}await page.keyboard.press('Tab');await page.waitForTimeout(20)}throw Error('Missing product field')}
-    const inventory=async()=>{const r=await context.request.get(`${origin}/api/workspaces`);assert(r.ok());return (await r.json()).map(r=>r.id)}
-    try {
+    const inventory=async()=>{const r=await attestedFetch(`${origin}/api/workspaces`,{headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok);return (await r.json()).map(row=>row.id)}
       await stage('boot');await page.goto(base+'?locale=fr',{waitUntil:'domcontentloaded',timeout:60000});await boot()
       await stage('connect');await press(button(m['folderSelection.servers.dialog.connect']))
       await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button(m['window.menu.leftPanel']).waitFor()
@@ -56,8 +83,8 @@ export async function pendingBrowser({values,m,out,storage}) {
       if(mode==='quota')await page.evaluate(()=>globalThis.__pendingQuota=true)
       await stage('reload-held');await page.reload({waitUntil:'domcontentloaded'});await boot();await stage('reloaded')
       if(mode==='post'){
-        const late=await context.request.post(`${origin}/api/workspaces`,{data:heldBody})
-        latePostStatus=late.status();assert.equal(latePostStatus,400,'early cancellation fences the delayed exact POST')
+        const late=await attestedFetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify(heldBody),signal:AbortSignal.timeout(15000)})
+        latePostStatus=late.status;assert.equal(latePostStatus,400,'early cancellation fences the delayed exact POST')
       }
       await heldRoute.abort().catch(()=>{})
       let after;for(const end=Date.now()+5000;;){after=await inventory();if(!after.includes(oldRecord)&&after.length===(['quota','corrupt'].includes(mode)?1:0))break;assert(Date.now()<end,'departure cleanup inventory');await page.waitForTimeout(30)}
@@ -78,12 +105,23 @@ export async function pendingBrowser({values,m,out,storage}) {
       const successor=(await inventory()).filter(id=>!before.includes(id));assert.equal(successor.length,1)
       await page.waitForTimeout(200);assert((await inventory()).includes(successor[0]),'old claim preserves new occurrence')
       results.push({mode,before:before.length,after:after.length,successorProtected:true,oldClaimDispatched:true,receiptUnavailableAtDeparture:true,departedDocumentReceiptDelivered:false,latePostStatus,proof,network})
-    }catch(error){await writeFile(path.join(out,`pending-${mode}-failure.yml`),await page.locator('body').ariaSnapshot().catch(()=>''));await stage(String(error));throw error}finally {
-      await context.close()
-      const cleanup=await browser.newContext({storageState:storage})
-      for(const id of owned){const r=await cleanup.request.delete(`${origin}/api/workspaces/${id}`);assert(r.ok())}
-      await cleanup.close()
+    }catch(error){primaryError??=error;if(page)await writeOutput(`pending-${mode}-failure.yml`,await page.locator('body').ariaSnapshot().catch(()=>'')).catch(()=>{});await stage(String(error)).catch(()=>{});throw error}finally {
+      let modeCleanupError=null
+      if(context){try{await context.close()}catch(closeError){recordCleanupError?.(`pending-open ${mode} context.close`,closeError);modeCleanupError??=closeError}}
+      while(pendingAppends.size){await Promise.allSettled([...pendingAppends])}
+      for(const id of owned){
+        try{const r=await attestedFetch(`${origin}/api/workspaces/${id}`,{method:'DELETE',headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok)}catch(deleteError){
+          recordCleanupError?.(`pending-open ${mode} workspace delete ${id}`,deleteError)
+          modeCleanupError??=deleteError
+        }
+      }
+      if(!primaryError&&modeCleanupError)throw modeCleanupError
     }
-  }}finally{await browser.close();await writeFile(path.join(out,'pending-open-proof.json'),JSON.stringify(results,null,2))}
+  }}catch(error){primaryError=error;throw error}finally{
+    try{await writeOutput('pending-open-proof.json',JSON.stringify(results,null,2))}catch(writeError){
+      recordCleanupError?.('pending-open proof write',writeError)
+      if(!primaryError)throw writeError
+    }
+  }
   console.log(JSON.stringify({pendingBrowser:true,cases:results.length,success:true}))
 }

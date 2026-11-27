@@ -7,6 +7,43 @@ pub enum Target {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Editor {
+    VsCode,
+    Cursor,
+    Zed,
+    VsCodium,
+}
+
+impl Editor {
+    pub const ALL: [Self; 4] = [Self::VsCode, Self::Cursor, Self::Zed, Self::VsCodium];
+
+    pub const fn command_id(self) -> &'static str {
+        match self {
+            Self::VsCode => "open-workspace-editor-vscode",
+            Self::Cursor => "open-workspace-editor-cursor",
+            Self::Zed => "open-workspace-editor-zed",
+            Self::VsCodium => "open-workspace-editor-vscodium",
+        }
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::VsCode => "VS Code",
+            Self::Cursor => "Cursor",
+            Self::Zed => "Zed",
+            Self::VsCodium => "VSCodium",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceTarget {
+    Folder,
+    Terminal,
+    Editor(Editor),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DefaultMode {
     Open,
     Edit,
@@ -89,10 +126,43 @@ pub fn windows_default_mode(path: &str) -> DefaultMode {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenError {
+    Unavailable,
+    CheckoutUnavailable,
+    WorktreeChanged,
+    Server(String),
+    Failed,
+}
+
+impl OpenError {
+    pub fn localized(&self, language: &str) -> String {
+        match self {
+            Self::Unavailable => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.nativeActionsUnavailable",
+                &[],
+            ),
+            Self::CheckoutUnavailable => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.checkoutUnavailable",
+                &[],
+            ),
+            Self::WorktreeChanged => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.worktreeChanged",
+                &[],
+            ),
+            Self::Server(message) => message.clone(),
+            Self::Failed => rune_theme_codenomad::catalogue::format(language, "rune.failed", &[]),
+        }
+    }
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::open;
+pub use windows::{open, open_workspace};
 
 #[cfg(not(windows))]
 pub async fn open(
@@ -101,6 +171,17 @@ pub async fn open(
     _: String,
     _: String,
     _: Target,
+    _: std::sync::Weak<()>,
+) -> Result<(), OpenError> {
+    Err(OpenError::Unavailable)
+}
+
+#[cfg(not(windows))]
+pub async fn open_workspace(
+    _: crate::backend::Backend,
+    _: String,
+    _: Option<String>,
+    _: WorkspaceTarget,
     _: std::sync::Weak<()>,
 ) -> Result<(), String> {
     Err("Native workspace actions are unavailable".into())

@@ -7,6 +7,7 @@ mod conversation;
 mod general;
 mod host_support;
 mod info;
+mod integrations;
 mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;
@@ -52,18 +53,101 @@ use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
-pub(crate) use window::{close, close_request, direct_entry, entries, open_providers};
+pub(crate) use window::{
+    close, close_request, direct_entry, entries, open_preferences, open_providers,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
-use crate::{State, strings};
+use crate::{State, backend::Backend, strings};
 use preferences::Preferences;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ServerOwner {
+    client_id: String,
+    base: String,
+    server: Option<String>,
+}
+
+impl ServerOwner {
+    pub fn from_backend(backend: &Backend) -> Self {
+        Self {
+            client_id: backend.client_id.clone(),
+            base: backend.base.clone(),
+            server: (!backend.client.attestation_revoked())
+                .then(|| backend.client.server_identity().map(str::to_owned))
+                .flatten(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fixture() -> Self {
+        Self {
+            client_id: "fixture".into(),
+            base: "http://127.0.0.1/".into(),
+            server: Some("fixture".into()),
+        }
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn server(&self) -> Option<&str> {
+        self.server.as_deref()
+    }
+
+    pub fn seen_key(&self) -> &str {
+        self.server.as_deref().unwrap_or(&self.base)
+    }
+
+    pub fn backend_verified(backend: &Backend) -> bool {
+        !backend.client.attestation_revoked()
+            && !backend.client.needs_capability_recheck()
+            && !(backend.client.tracks_server_attestation()
+                && backend.client.has_unattested_stream_drop())
+    }
+
+    pub fn same_server(&self, other: &Self) -> bool {
+        (self.client_id == other.client_id
+            && (self.server.is_none() || other.server.is_none() || self.server == other.server))
+            || (self.base == other.base && self.server.is_some() && self.server == other.server)
+    }
+
+    pub fn same_backend_server(&self, backend: &Backend) -> bool {
+        let backend_id = backend.client.server_identity();
+        if self.client_id == backend.client_id {
+            self.server.is_none() || backend_id.is_none() || self.server.as_deref() == backend_id
+        } else {
+            self.base == backend.base
+                && self.server.is_some()
+                && !backend.client.attestation_revoked()
+                && self.server.as_deref() == backend_id
+        }
+    }
+
+    pub fn verified_for_write(&self, backend: &Backend) -> bool {
+        self.same_backend_server(backend) && Self::backend_verified(backend)
+    }
+
+    pub fn adopt_same_server(&mut self, backend: &Backend) -> bool {
+        if self.server.is_none() && !backend.client.attestation_revoked() {
+            self.server = backend.client.server_identity().map(str::to_owned);
+        }
+        if self.client_id != backend.client_id {
+            self.client_id = backend.client_id.clone();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Host {
@@ -212,10 +296,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         } else {
             crate::Phase::Failed
         };
+        s.workspace_open.cancel();
+        s.command_palette.dismiss();
+        s.tab_rename.dismiss();
+        s.temporary.cancel_for_auth();
     }
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
         let observation = watch.map(|watch| watch.take_provider_changes());
+        let moves = watch
+            .map(|watch| watch.take_provider_moves())
+            .unwrap_or_default();
         let stats_changes = watch.map(|watch| {
             watch.take_stats_changes(
                 shared
@@ -224,6 +315,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .map(|target| target.location().0),
             )
         });
+        let integration_changes = watch.map(|watch| watch.take_integration_changes());
         let (changes, stopped, generation) = observation.map_or_else(
             || (Default::default(), Default::default(), None),
             |(changes, stopped, generation)| (changes, stopped, Some(generation)),
@@ -235,7 +327,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .as_ref()
                 .map(|target| target.revision());
             if let Some(target) = &mut shared.provider_target
-                && !target.validate(s, backend.as_ref(), &changes, &stopped, generation)
+                && !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation)
             {
                 shared.provider_target = None;
             }
@@ -246,6 +338,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .is_some_and(|(target, (changes, status))| {
                     target.stats_catalogue(changes, *status)
                 });
+            let integrations_changed = shared
+                .provider_target
+                .as_mut()
+                .zip(integration_changes.as_ref())
+                .is_some_and(|(target, (changes, session_changes))| {
+                    target.integrations_catalogue(changes, session_changes)
+                });
             if (old
                 != shared
                     .provider_target
@@ -253,7 +352,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
                 || bound
-                || stats_changed)
+                || stats_changed
+                || integrations_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();

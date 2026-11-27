@@ -1,9 +1,12 @@
 //! Geometry shared by the application bar and conversation panels.
+pub mod command_palette;
 pub mod icons;
 pub mod notices;
+pub mod tab_rename;
+pub mod temporary_close;
 use crate::{
     Length, Space, TextRole, kit,
-    layout::{self, enter_action},
+    layout::{self, Layout, enter_action},
     tokens,
 };
 use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
@@ -432,6 +435,79 @@ pub fn panel_title(title: &str) -> El {
 
 pub fn spacer() -> El {
     el().grow(1.0).min_w(0.0)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceDot {
+    Ready,
+    Pending,
+    Error,
+    Stopped,
+}
+
+pub fn status_dot(state: ServiceDot) -> El {
+    let t = tokens(layout::dark());
+    let size = t.space(Space::Sm).px();
+    let color = match state {
+        ServiceDot::Ready => t.color("status-ready-fg"),
+        ServiceDot::Pending => t.color("status-starting-fg"),
+        ServiceDot::Error => t.color("status-error-fg"),
+        ServiceDot::Stopped => t.color("text-muted"),
+    };
+    el().size(size, size)
+        .radius(size * 0.5)
+        .fill(color)
+        .a11y_hidden()
+}
+
+pub fn compact_switch<S: 'static>(
+    label: &str,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Switch::new(checked)
+        .control_size(ControlSize::Small)
+        .label(label)
+        .hide_label()
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(&kit(layout::dark()))
+}
+
+pub fn service_row(leading: Option<El>, title: &str, trailing: impl IntoIterator<Item = El>) -> El {
+    let mut line = row().full_width().center_y().separate(Space::Xs);
+    if let Some(lead) = leading {
+        line = line.child(lead);
+    }
+    line.child(text(title).truncate().min_w(0.0).grow(1.0).shrink())
+        .children(trailing)
+}
+
+pub fn service_header(trailing: impl IntoIterator<Item = El>) -> El {
+    row()
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .child(spacer())
+        .children(trailing)
+}
+
+pub fn service_heading_row(title: &str, trailing: impl IntoIterator<Item = El>) -> El {
+    row()
+        .full_width()
+        .center_y()
+        .separate(Space::Xs)
+        .child(
+            text(title)
+                .text_role(TextRole::Button)
+                .role("heading")
+                .truncate()
+                .min_w(0.0)
+                .grow(1.0)
+                .shrink(),
+        )
+        .children(trailing)
 }
 
 #[cfg(test)]

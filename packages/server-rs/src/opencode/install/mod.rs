@@ -4,19 +4,27 @@
 //! atomic swap under the reference's lock that keeps the previous package for a rollback, and
 //! `POST /api/opencode/update`.
 pub mod layout;
+pub mod legacy;
 pub mod npmrc;
 pub mod package;
 pub mod plan;
 
 use std::{path::Path, time::Duration};
 
-use axum::{Json, Router, extract::State, http::StatusCode as Status, response::IntoResponse, routing::post};
+use axum::{
+    Json, Router,
+    extract::{Request, State},
+    http::StatusCode as Status,
+    response::IntoResponse,
+    routing::post,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{admission, launch};
-use crate::{Shared, bench, settings::Kind};
+use crate::{Shared, bench, shared::fastify};
 use layout::Prefix;
+use legacy::LegacyConsent;
 
 /// A refusal with the reference's code and HTTP status (`requestError`, `statusCode`).
 #[derive(Debug)]
@@ -40,7 +48,11 @@ impl Error {
                 Status::CONFLICT
             }
             "binary_unavailable" => Status::UNPROCESSABLE_ENTITY,
-            "upgrade_failed" | "update_check_failed" | "upgrade_verification_failed" => Status::BAD_GATEWAY,
+            "upgrade_failed"
+            | "update_check_failed"
+            | "upgrade_verification_failed"
+            | "legacy_removed_install_failed"
+            | "legacy_partially_removed" => Status::BAD_GATEWAY,
             _ => Status::INTERNAL_SERVER_ERROR,
         }
     }
@@ -166,7 +178,7 @@ pub async fn probe(binary: &str) -> Result<Option<String>, ()> {
 }
 
 /// `assertExecutableWritable`: Windows cannot replace a mapped executable through npm.
-fn assert_writable(binary: &Path) -> Result<(), Error> {
+pub(crate) fn assert_writable(binary: &Path) -> Result<(), Error> {
     if !cfg!(windows) {
         return Ok(());
     }
@@ -193,6 +205,12 @@ pub async fn latest(prefix: &Prefix) -> Result<String, Error> {
 
 /// `installSharedOpenCode(version)`: at least `version` (never a downgrade) in the planned prefix.
 pub async fn install(version: &str) -> Result<Installed, Error> {
+    install_with_options(version, None).await
+}
+
+/// `installSharedOpenCode(version, { replaceLegacy })`: enforces consent before and under the
+/// installation lock, preflights and removes a verified 1.x `opencode-ai` package, then installs.
+pub async fn install_with_options(version: &str, replace_legacy: Option<&LegacyConsent>) -> Result<Installed, Error> {
     if !package::exact(version) {
         return Err(Error::failed("Installation requires an exact stable OpenCode version"));
     }
@@ -201,11 +219,44 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
             admission::Refusal::Unsupported { actual: version.into(), reason: "native_contract" }.to_string(),
         ));
     }
-    let prefix = plan::plan(false).await.prefix()?;
+    let consent_required = || {
+        Error::new(
+            "legacy_replacement_required",
+            "Replacing OpenCode 1.x requires explicit confirmation of the current installation",
+        )
+    };
+    let initial = plan::plan(false).await;
+    if let Some(found) = &initial.legacy
+        && initial.prefix.is_some()
+        && !legacy::matches_consent(found, replace_legacy)
+    {
+        return Err(consent_required());
+    }
+    let prefix = initial.prefix()?;
     let _lock = layout::lock(&prefix)?;
-    if plan::plan(false).await.prefix.is_none_or(|p| p.root != prefix.root) {
+    let current = plan::plan(false).await;
+    if current.prefix.is_none_or(|p| p.root != prefix.root) {
         return Err(Error::failed("The OpenCode installation changed; check its status again"));
     }
+    if let Some(found) = current.legacy {
+        // Consent covers only the installation the user saw, rechecked under the lock.
+        if !legacy::matches_consent(&found, replace_legacy) {
+            return Err(consent_required());
+        }
+        legacy::remove_legacy(&prefix, &found)?;
+        return match install_in_prefix(&prefix, version).await {
+            Ok(installed) => Ok(installed),
+            Err(err) if matches!(err.code, "installation_busy" | "installation_in_use") => Err(err),
+            Err(err) => Err(Error::new(
+                "legacy_removed_install_failed",
+                format!("OpenCode 1.x was removed, but installing OpenCode 2 failed: {}", err.message),
+            )),
+        };
+    }
+    install_in_prefix(&prefix, version).await
+}
+
+async fn install_in_prefix(prefix: &Prefix, version: &str) -> Result<Installed, Error> {
     let binary = prefix.binary();
     let existing = probe(&binary.to_string_lossy()).await.ok().flatten();
     if let Some(existing) = &existing
@@ -218,7 +269,7 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
         Some(existing) if package::exact(existing) && newer(existing, version) => existing.clone(),
         _ => version.to_owned(),
     };
-    let published = plan::npm_command(&prefix).is_some();
+    let published = plan::npm_command(prefix).is_some();
     if existing.as_deref() != Some(target.as_str()) || !published {
         // 2.0.15+ replaces its own running image (`opencode upgrade`); otherwise the reference's
         // npm reinstall needs a writable executable on Windows.
@@ -231,13 +282,12 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
         bin_names(&prefix.package())?
     } else {
         let staging = prefix.staging()?;
-        let staged = stage(&prefix, &target, &staging).await;
-        let swapped =
-            staged.and_then(|names| Ok(layout::swap(&prefix, &staging.join("cli"), &staging).map(|_| names)?));
+        let staged = stage(prefix, &target, &staging).await;
+        let swapped = staged.and_then(|names| Ok(layout::swap(prefix, &staging.join("cli"), &staging).map(|_| names)?));
         let _ = std::fs::remove_dir_all(&staging);
         swapped?
     };
-    layout::publish_commands(&prefix, &names)?;
+    layout::publish_commands(prefix, &names)?;
     let verified = probe(&binary.to_string_lossy()).await.ok().flatten();
     if !verified.as_deref().is_some_and(|v| package::exact(v) && !newer(&target, v)) {
         return Err(Error::failed("Installed OpenCode version verification failed"));
@@ -245,7 +295,7 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
     if !bench::skip_user_path() {
         layout::register_path(&prefix.commands())?;
     }
-    Ok(installed(&prefix))
+    Ok(installed(prefix))
 }
 
 /// The previous package back in place (reversible: the replaced one becomes the previous).
@@ -339,22 +389,32 @@ async fn stage(prefix: &Prefix, version: &str, staging: &Path) -> Result<Vec<Str
 /// One update at a time in this process (`inFlightUpgrades`); the lock fences other processes.
 static UPDATING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// `OpenCodeUpdateService.upgrade` for the default selection.
-pub async fn upgrade(app: &Shared) -> Result<String, Error> {
+fn parse_replace_legacy(body: &Value) -> Option<LegacyConsent> {
+    let consent = body.get("replaceLegacy")?.as_object()?;
+    if consent.len() != 2 {
+        return None;
+    }
+    let path = consent.get("path")?.as_str()?;
+    let version = consent.get("version")?.as_str()?;
+    if path.is_empty() || path.encode_utf16().count() > 4096 || !package::exact(version) {
+        return None;
+    }
+    Some(LegacyConsent { path: path.to_owned(), version: version.to_owned() })
+}
+
+/// `OpenCodeUpdateService.upgrade` for the currently selected binary.
+pub async fn upgrade(app: &Shared, replace_legacy: Option<LegacyConsent>) -> Result<String, Error> {
     let _serial = UPDATING.lock().await;
-    let configured =
-        app.settings.owner(Kind::Config, "server").get("opencodeBinary").and_then(Value::as_str).map(str::to_owned);
-    let default =
-        configured.as_deref().is_none_or(|c| c.is_empty() || c == "opencode" || c == "opencode2" || launch::retired(c));
-    let (selected, source) = plan::resolve_default().await;
-    let binary = launch::resolve(&selected);
+    let (binary, source, default) = super::update::selected_binary(app).await;
     let current_plan = plan::plan(false).await;
-    // A foreign command that cannot run is installed beside, never repaired.
-    let foreign = current_plan.foreign.as_ref().is_some_and(|f| f.command == binary);
+    // A foreign command or verified 1.x npm shim that cannot run is never repaired in place.
+    let replaceable_or_foreign = default
+        && (current_plan.foreign.as_ref().is_some_and(|f| f.command == binary)
+            || (current_plan.prefix.is_some() && current_plan.legacy.as_ref().is_some_and(|l| l.command == binary)));
     let current = match probe_version(&binary, Duration::from_secs(5)).await {
         Probed::Version(v) => Some(if v.is_empty() { "unknown".into() } else { v }),
         Probed::Missing => None,
-        _ if foreign => None,
+        _ if replaceable_or_foreign => None,
         _ => return Err(Error::new("binary_unavailable", "Unable to read OpenCode version")),
     };
     let prefix = current_plan.prefix;
@@ -385,24 +445,39 @@ pub async fn upgrade(app: &Shared) -> Result<String, Error> {
             "Automatic updates require the default command and a writable npm installation",
         ));
     }
+    if let Some(legacy) = &current_plan.legacy
+        && replace_legacy.as_ref().is_none_or(|c| c.path != legacy.command || c.version != legacy.version)
+    {
+        return Err(Error::new(
+            "legacy_replacement_required",
+            "Replacing OpenCode 1.x requires confirmation of the current installation",
+        ));
+    }
     let target = match &current {
         Some(current) if package::exact(current) && newer(current, &latest) => current.clone(),
         _ => latest.clone(),
     };
-    install(&target).await?;
+    install_with_options(&target, current_plan.legacy.is_some().then_some(replace_legacy.as_ref()).flatten()).await?;
     let installed = probe(&launch::resolve(&plan::resolve_default().await.0)).await.ok().flatten().unwrap_or_default();
-    if !package::exact(&installed) || newer(&target, &installed) {
+    if admission::below_minimum(&installed) || !package::exact(&installed) || newer(&target, &installed) {
         return Err(Error::new(
             "upgrade_verification_failed",
             format!("OpenCode reported {target}, but the configured binary is {installed} instead of {latest}"),
         ));
     }
+    super::adopt_configured_binary(app).await;
     super::login_start::refresh(app);
     Ok(installed)
 }
 
-async fn update(State(app): State<Shared>) -> axum::response::Response {
-    match upgrade(&app).await {
+async fn update(State(app): State<Shared>, request: Request) -> axum::response::Response {
+    let body = match super::read_fastify_body(request).await {
+        Ok(Some(fastify::Body::Json(value))) => value,
+        Ok(_) => Value::Null,
+        Err(err) => return err.into_response(),
+    };
+    let replace_legacy = parse_replace_legacy(&body);
+    match upgrade(&app, replace_legacy).await {
         Ok(version) => Json(json!({"success": true, "version": version})).into_response(),
         Err(e) => {
             eprintln!("Failed to update OpenCode: {}", e.message);

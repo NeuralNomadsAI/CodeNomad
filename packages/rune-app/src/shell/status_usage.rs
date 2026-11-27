@@ -6,7 +6,7 @@ use codenomad_client::{
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{Space, layout::Layout, settings};
 
-mod date;
+pub(crate) mod date;
 mod view;
 
 #[derive(Default)]

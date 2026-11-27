@@ -39,7 +39,25 @@ pub enum WorkspaceEvent {
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
+    PluginsChanged {
+        workspace_id: Option<String>,
+        directory: Option<String>,
+    },
+    McpStatusChanged {
+        workspace_id: Option<String>,
+    },
+    ServicesConfigChanged {
+        workspace_id: String,
+    },
+    NativeStreamStatus {
+        workspace_id: String,
+        connected: bool,
+    },
     MemoryChanged,
+    IntegrationsChanged {
+        workspace_id: String,
+        session_id: Option<String>,
+    },
     ProvidersChanged {
         workspace_id: String,
     },
@@ -73,8 +91,13 @@ pub enum WorkspaceEvent {
         workspace_id: String,
         session_id: String,
     },
+    TemporaryChanged {
+        folders: Vec<String>,
+    },
     Stopped {
         workspace_id: String,
+        deleted: bool,
+        temporary_retained: bool,
     },
 }
 #[derive(Debug)]
@@ -88,6 +111,7 @@ pub enum Command {
     Older,
     Page(HistoryEdge, Receiver<()>),
     Anchor(crate::timeline::Jump),
+    SyncInbox(u64),
     Latest,
     Retry,
     Close,
@@ -123,6 +147,7 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    UpstreamReady,
     AgentControl(AgentLane),
     SessionUsage(crate::content::Usage),
     FamilyUsage(crate::content::FamilyChange),
@@ -150,6 +175,13 @@ pub enum Event {
     },
     AnchorFailed(u64),
     Message(Message),
+    Inbox {
+        items: Vec<crate::inbox::QueuedPrompt>,
+        authoritative: bool,
+        fence: Option<crate::inbox::InboxFence>,
+    },
+    InboxDelta(crate::inbox::InboxDelta),
+    InboxFailed,
     PromptAcknowledged {
         attempted: String,
         outcome: PromptOutcome,

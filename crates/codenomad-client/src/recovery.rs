@@ -2,7 +2,7 @@
 mod authentication;
 pub mod demand;
 mod reader;
-mod receipts;
+pub(crate) mod receipts;
 mod transport;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod wake_tests;
@@ -21,12 +21,12 @@ use serde_json::Value;
 pub enum Input {
     Command(Command),
     Opened(u64),
-    Native(u64, u64, Value),
+    Native(u64, u64, u64, Value),
     Workspace(u64, crate::transport::WorkspaceEvent),
     Preferences(crate::settings::Owner),
-    Hint(u64, u64),
-    Available(u64, u64),
-    Unavailable(u64),
+    Hint(u64, u64, u64),
+    Available(u64, u64, u64),
+    Unavailable(u64, u64),
     AuthenticationRequired(u64),
     Closed(u64),
 }

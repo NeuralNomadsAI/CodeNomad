@@ -51,6 +51,7 @@ fn workspace_state(tabs: usize) -> State {
             let next = Project {
                 id: format!("project-{i}"),
                 path: format!("/repo-{i}"),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(next.clone());
@@ -191,6 +192,7 @@ fn session_new_creates_and_binds_session_immediately_and_honors_guards_and_overr
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());
@@ -345,10 +347,26 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         files.document.changed(scope);
     }
 
-    // Unconfirmed prompt and slash command do NOT trap closing/switching, and both locks survive reopen.
+    // Unconfirmed slash command and prompt do NOT trap closing/switching, and both locks survive reopen.
     let (cmd_tx, cmd_rx) = codenomad_client::bounded(2);
     rt.state.commands = Some(cmd_tx);
     rt.state.phase = Phase::Ready;
+    rt.state.composer.picker.add_test_command("compact");
+    rt.state.draft = TextEdit::new("/compact ");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Slash {
+        attempt: slash_id, ..
+    } = cmd_rx.try_recv().unwrap()
+    else {
+        panic!("expected slash command");
+    };
+    crate::composer::acknowledge(
+        &mut rt.state,
+        &slash_id,
+        crate::transport::PromptOutcome::Unconfirmed,
+    );
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
+
     rt.state.draft = TextEdit::new("unsent draft");
     rt.update(|s, tx| crate::composer::send(s, tx, false));
     let crate::transport::Command::Prompt(sent) = cmd_rx.try_recv().unwrap() else {
@@ -365,8 +383,7 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         Some(unconfirmed_id.as_str())
     );
     rt.state.phase = Phase::Ready;
-    rt.state.composer.command_unconfirmed =
-        Some(crate::composer::UnconfirmedCommand::new("compact", ""));
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
     assert!(crate::launcher::can_change_session(&rt.state));
 
     // Streaming blocks close-session.
@@ -405,10 +422,9 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         rt.state.composer.unconfirmed_id(),
         Some(unconfirmed_id.as_str())
     );
-    assert_eq!(
-        rt.state.composer.command_unconfirmed,
-        Some(crate::composer::UnconfirmedCommand::new("compact", ""))
-    );
+    assert!(rt.state.command_receipts.has_for_state(&rt.state));
+    rt.state.draft = rune::edit::TextEdit::new("/compact ");
+    assert!(crate::composer::command_held(&rt.state));
 }
 
 #[test]
@@ -421,6 +437,7 @@ fn session_prev_and_next_select_visible_sessions_and_respect_overrides() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());

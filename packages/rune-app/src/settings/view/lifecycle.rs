@@ -64,6 +64,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.memory_help.clear();
                         s.remote.close();
                         s.info.close();
+                        s.integrations.suspend();
                     }
                 }
                 let environment = s
@@ -129,16 +130,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if !prefs.transcript_ready() {
                     s.transcript_picker.set(None);
                 }
-                let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
+                let editor_changed = prefs
+                    .memory
+                    .poll_editor(prefs.backend.as_ref(), &mut s.memory_editor);
                 let mut config_changed = false;
                 if let Some(wake) = prefs.window_wake.clone() {
                     config_changed = s.host_support.poll(&prefs, &wake, !s.closing);
                     let capable = s.host_support.config_files(&prefs);
-                    if s.section == Section::ConfigFiles && !capable && !s.config_files.dirty() {
-                        s.section = Section::General;
-                        prefs.memory.show(true);
-                        config_changed = true;
-                    }
                     config_changed |= s.config_files.poll(
                         &prefs,
                         &wake,
@@ -147,6 +145,15 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             && s.confirm_close.is_none()
                             && !s.closing,
                     );
+                    if s.section == Section::ConfigFiles
+                        && (s.host_support.config_files_unsupported(&prefs)
+                            || prefs.backend.is_none())
+                        && !s.config_files.dirty()
+                    {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                        config_changed = true;
+                    }
                 }
                 if updated {
                     tx.set_title(crate::strings::with_locale(
@@ -189,20 +196,40 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         tx,
                     ) | leave
                 });
+                let integrations_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    s.integrations.poll(
+                        prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                        s.section == Section::Integrations
+                            && s.confirm_close.is_none()
+                            && !s.closing,
+                        &wake,
+                        now,
+                        tx,
+                    )
+                });
                 drop(prefs);
-                let providers_changed = if s.section == Section::Providers {
-                    let prefs = s.shared.borrow();
-                    let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-                    s.providers.poll(target, prefs.window_wake.as_ref())
-                } else {
-                    false
-                };
+                let providers_changed =
+                    if s.section == Section::Providers && s.confirm_close.is_none() && !s.closing {
+                        let prefs = s.shared.borrow();
+                        let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
+                        s.providers.poll(
+                            target,
+                            now,
+                            prefs.window_wake.as_ref(),
+                            tx,
+                            true,
+                            |s: &mut Window| &mut s.providers,
+                        )
+                    } else {
+                        s.providers.cancel_on_hide()
+                    };
                 jump | updated
                     | palette_settled
                     | status_changed
                     | remote_changed
                     | info_changed
                     | stats_changed
+                    | integrations_changed
                     | providers_changed
                     | editor_changed
                     | environment
@@ -217,8 +244,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             if s.confirm_close.take().is_some() {
                 s.cancel_close_main();
             } else if s.pending_section.take().is_some() || s.general.dismiss_overlay() {
+            } else if s.section == Section::Providers && s.providers.dismiss_modal(tx) {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
+            } else if s.section == Section::Integrations && s.integrations.dismiss_overlay() {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {

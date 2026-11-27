@@ -17,6 +17,8 @@ pub(in crate::settings::preferences) enum Choice {
     TranscriptPreset,
     TranscriptRow(Row),
     LogLevel,
+    OpenCodeBinary,
+    OpenCodeBinaries,
     UpdateFeed,
     Advanced(crate::settings::advanced::Toggle),
     Environment,
@@ -92,6 +94,14 @@ impl Choice {
             }
             return;
         }
+        if let (Self::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path)) = (self, value) {
+            patch["opencodeBinary"] = json!(path);
+            return;
+        }
+        if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
+            patch["opencodeBinaries"] = apply_opencode_binaries_patch(snapshot, op);
+            return;
+        }
         if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
             mutation.put(patch, snapshot);
             return;
@@ -129,8 +139,12 @@ impl Choice {
                 row.put(&mut patch["settings"], &snapshot["settings"], value, atomic)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
-            }
+            Self::Shortcut(_)
+            | Self::ShortcutReset
+            | Self::Environment
+            | Self::OpenCodeBinary
+            | Self::OpenCodeBinaries
+            | Self::PaletteMutation => (),
             Self::Palette(dark) => {
                 let legacy = crate::settings::palettes::legacy_scheme(snapshot, &Value::Null);
                 crate::settings::palettes::migrate_active_builtin_override(
@@ -181,6 +195,33 @@ impl Choice {
             };
             return value_ok && mask_ok;
         }
+        if let (Self::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path)) = (self, value) {
+            return normalize_opencode_binary(snapshot) == *path;
+        }
+        if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
+            let raw = &snapshot["opencodeBinaries"];
+            let entries = parse_opencode_binaries(snapshot);
+            return match op {
+                OpenCodeBinariesOp::Upsert {
+                    path,
+                    version,
+                    last_used,
+                } => {
+                    path == "opencode"
+                        || path == "opencode2"
+                        || entries.iter().any(|entry| {
+                            entry.path == *path
+                                && version
+                                    .as_ref()
+                                    .is_none_or(|v| entry.version.as_ref() == Some(v))
+                                && entry.last_used.is_some_and(|seen| seen >= *last_used)
+                        })
+                }
+                OpenCodeBinariesOp::Remove { path } => {
+                    (raw.is_null() || raw.is_array()) && !entries.iter().any(|e| e.path == *path)
+                }
+            };
+        }
         if let (Self::PaletteMutation, ChoiceValue::Palette(mutation)) = (self, value) {
             return mutation.confirmed(snapshot);
         }
@@ -210,9 +251,12 @@ impl Choice {
             Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
             Self::TranscriptRow(row) => row.confirmed(value, &snapshot["settings"]),
             Self::Mode => appearance["mode"] == value,
-            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment | Self::PaletteMutation => {
-                false
-            }
+            Self::Shortcut(_)
+            | Self::ShortcutReset
+            | Self::Environment
+            | Self::OpenCodeBinary
+            | Self::OpenCodeBinaries
+            | Self::PaletteMutation => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -238,6 +282,134 @@ impl Choice {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::settings) struct OpenCodeBinaryEntry {
+    pub path: String,
+    pub version: Option<String>,
+    pub last_used: Option<u64>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(in crate::settings) enum OpenCodeBinariesOp {
+    Upsert {
+        path: String,
+        version: Option<String>,
+        last_used: u64,
+    },
+    Remove {
+        path: String,
+    },
+}
+
+pub(in crate::settings) fn normalize_opencode_binary(snapshot: &Value) -> String {
+    snapshot["opencodeBinary"]
+        .as_str()
+        .map(str::trim)
+        .filter(|path| !path.is_empty() && *path != "opencode")
+        .unwrap_or("opencode2")
+        .to_owned()
+}
+
+pub(in crate::settings) fn parse_opencode_binaries(snapshot: &Value) -> Vec<OpenCodeBinaryEntry> {
+    let Some(items) = snapshot["opencodeBinaries"].as_array() else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    for item in items {
+        let Some(path) = item["path"]
+            .as_str()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        else {
+            continue;
+        };
+        if entries
+            .iter()
+            .any(|existing: &OpenCodeBinaryEntry| existing.path == path)
+        {
+            continue;
+        }
+        let version = item["version"]
+            .as_str()
+            .filter(|v| !v.is_empty() && v.len() <= 256 && !v.contains(char::is_control))
+            .map(str::to_owned);
+        let last_used = item["lastUsed"].as_u64();
+        entries.push(OpenCodeBinaryEntry {
+            path: path.to_owned(),
+            version,
+            last_used,
+        });
+    }
+    entries
+}
+
+fn apply_opencode_binaries_patch(snapshot: &Value, op: &OpenCodeBinariesOp) -> Value {
+    let mut existing_objects: Vec<(String, serde_json::Map<String, Value>)> = Vec::new();
+    if let Some(items) = snapshot["opencodeBinaries"].as_array() {
+        for item in items {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let Some(path) = obj
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            else {
+                continue;
+            };
+            if existing_objects.iter().any(|(seen, _)| seen == path) {
+                continue;
+            }
+            let mut preserved = obj.clone();
+            preserved.insert("path".into(), json!(path));
+            existing_objects.push((path.to_owned(), preserved));
+        }
+    }
+    let next: Vec<Value> = match op {
+        OpenCodeBinariesOp::Upsert {
+            path,
+            version,
+            last_used,
+        } => {
+            if path == "opencode" || path == "opencode2" {
+                existing_objects
+                    .into_iter()
+                    .map(|(_, obj)| Value::Object(obj))
+                    .collect()
+            } else {
+                let mut updated = existing_objects
+                    .iter()
+                    .find(|(seen, _)| seen == path)
+                    .map(|(_, obj)| obj.clone())
+                    .unwrap_or_default();
+                updated.insert("path".into(), json!(path));
+                if let Some(version) = version {
+                    updated.insert("version".into(), json!(version));
+                }
+                updated.insert("lastUsed".into(), json!(*last_used));
+                let mut out = Vec::with_capacity(existing_objects.len().min(10) + 1);
+                out.push(Value::Object(updated));
+                for (seen, obj) in existing_objects {
+                    if seen != *path {
+                        out.push(Value::Object(obj));
+                    }
+                    if out.len() >= 10 {
+                        break;
+                    }
+                }
+                out
+            }
+        }
+        OpenCodeBinariesOp::Remove { path } => existing_objects
+            .into_iter()
+            .filter(|(seen, _)| seen != path)
+            .map(|(_, obj)| Value::Object(obj))
+            .collect(),
+    };
+    Value::Array(next)
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) enum ChoiceValue {
     Text(&'static str),
@@ -248,6 +420,8 @@ pub(super) enum ChoiceValue {
         value: Option<String>,
         secret: Option<bool>,
     },
+    OpenCodeBinary(String),
+    OpenCodeBinaries(OpenCodeBinariesOp),
 }
 
 impl ChoiceValue {

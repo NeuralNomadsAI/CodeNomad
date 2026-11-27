@@ -120,6 +120,7 @@ pub struct ProjectTab<'a> {
     pub title: &'a str,
     pub status: Option<Status>,
     pub closable: bool,
+    pub temporary: bool,
 }
 fn focus_layers(element: El, key: &str, metric: &str) -> El {
     let t = tokens(layout::dark());
@@ -186,6 +187,7 @@ fn tab_with_help<S: 'static>(
     let action = select.clone();
     let title = tab.title.to_owned();
     let rtl = catalogue::direction(locale) == "rtl";
+    let temporary = tab.temporary;
     let mut select_button = Button::new(tab.title)
         .variant(ButtonVariant::Ghost)
         .label_with(move |_, _| {
@@ -200,13 +202,18 @@ fn tab_with_help<S: 'static>(
             } else {
                 title.truncate()
             };
+            let glyph = if temporary {
+                &crate::shell::icons::HOURGLASS
+            } else {
+                &FOLDER
+            };
             rune::row()
                 .w_full()
                 .min_w(0.0)
                 .items_center()
                 .gap(metric("columnGap"))
                 .child(
-                    rune::icon(&FOLDER, t.metric("tabGlyph", "width").px())
+                    rune::icon(glyph, t.metric("tabGlyph", "width").px())
                         .color(ink)
                         .a11y_hidden(),
                 )
@@ -229,12 +236,31 @@ fn tab_with_help<S: 'static>(
         let (id, action) = (tab.id.to_owned(), close.clone());
         select_button = select_button.on_middle_press(move |s, tx| action(s, &id, tx));
     }
-    if let Some(status) = tab.status {
-        select_button = select_button.description(catalogue::format(
+    if tab.temporary {
+        select_button =
+            select_button.help(catalogue::message(locale, "instanceTab.temporary.title").unwrap());
+    }
+    let temporary_aria = tab
+        .temporary
+        .then(|| catalogue::message(locale, "instanceTab.temporary.ariaLabel").unwrap());
+    let status_aria = tab.status.map(|status| {
+        catalogue::format(
             locale,
             "instanceTab.status.ariaLabel",
             &[("status", catalogue::message(locale, status.key()).unwrap())],
-        ));
+        )
+    });
+    match (temporary_aria, status_aria) {
+        (Some(temp), Some(status)) => {
+            select_button = select_button.description(format!("{temp}, {status}"));
+        }
+        (Some(temp), None) => {
+            select_button = select_button.description(temp);
+        }
+        (None, Some(status)) => {
+            select_button = select_button.description(status);
+        }
+        (None, None) => {}
     }
     let border = metric("borderTopWidth");
     let end = metric("borderRightWidth");
@@ -503,12 +529,14 @@ mod tests {
                     title: "Alpha",
                     status: Some(Status::Working),
                     closable: true,
+                    temporary: false,
                 },
                 ProjectTab {
                     id: "b",
                     title: "Beta",
                     status: Some(Status::Permission),
                     closable: true,
+                    temporary: false,
                 },
             ],
             Some(&s.active),
@@ -662,6 +690,7 @@ mod tests {
                         title: TITLE,
                         status: None,
                         closable: true,
+                        temporary: false,
                     },
                     s.active == "a",
                     true,
@@ -829,6 +858,43 @@ mod tests {
                 assert_eq!(rt.state.closed, ["settings", "chat", "bell"]);
             }
         }
+    }
+
+    #[test]
+    fn temporary_tab_uses_hourglass_and_localized_temporary_description() {
+        let mut rt = rune::Runtime::new(
+            App {
+                active: "temp".into(),
+                closed: vec![],
+                new: 0,
+                locale: "fr",
+            },
+            |s, cx| {
+                layout::render(cx, |_| {
+                    tab::<App>(
+                        s.locale,
+                        &ProjectTab {
+                            id: "temp",
+                            title: "Temporaire · 12:30",
+                            status: None,
+                            closable: true,
+                            temporary: true,
+                        },
+                        true,
+                        true,
+                        |_, _, _| {},
+                        |_, _, _| {},
+                    )
+                })
+            },
+            (400.0, 80.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tab_node = items.iter().find(|e| e["o"] == "tab").unwrap();
+        let expected_desc = catalogue::message("fr", "instanceTab.temporary.ariaLabel").unwrap();
+        assert_eq!(tab_node["d"], expected_desc);
     }
     #[test]
     fn direction_and_words_follow_the_catalogue() {

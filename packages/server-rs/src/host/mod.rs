@@ -19,7 +19,7 @@ pub const SHUTDOWN_COMMAND: &str = "codenomad:shutdown";
 /// One way to start: `serve` (the reference's contract) or the positional bench launch.
 pub struct Launch {
     pub root: PathBuf,
-    pub identity: PathBuf,
+    pub identity: Option<PathBuf>,
     pub data: PathBuf,
     /// `--config`: where `config.yaml` and `state.yaml` live.
     pub settings: crate::settings::document::Location,

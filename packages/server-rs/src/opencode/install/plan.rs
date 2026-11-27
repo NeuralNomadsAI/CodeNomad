@@ -1,9 +1,10 @@
 //! Where OpenCode may be installed and which one runs (`sharedInstallationPlan`,
 //! `resolveDefaultInstallation`, `foreign-probe.ts`): a verified `@opencode/cli` npm launcher is
-//! updated in its prefix; a foreign PATH command that cannot run or reports a release below the
-//! minimum is never modified, OpenCode 2 is installed beside it in the user npm prefix (the user's
-//! explicit install action) and then preferred; any other foreign command keeps its authority.
-//! OpenCode 1.x npm replacement is not ported: such a prefix is refused.
+//! updated in its prefix; an OpenCode 1.x `opencode-ai` npm shim in the same prefix may be
+//! replaced only with explicit consent; a foreign PATH command that cannot run or reports a
+//! release below the minimum is never modified, OpenCode 2 is installed beside it in the user
+//! npm prefix (the user's explicit install action) and then preferred; any other foreign command
+//! keeps its authority.
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -13,7 +14,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{Error, layout, layout::Prefix};
+use super::{Error, layout, layout::Prefix, legacy, legacy::Legacy};
 use crate::opencode::{admission, launch};
 
 pub struct Foreign {
@@ -28,6 +29,7 @@ pub struct Foreign {
 #[derive(Default)]
 pub struct Plan {
     pub prefix: Option<Prefix>,
+    pub legacy: Option<Legacy>,
     pub foreign: Option<Foreign>,
 }
 
@@ -97,6 +99,17 @@ fn command_in(prefix: &Prefix) -> Option<String> {
 }
 
 fn writable(path: &Path, allow_missing: bool) -> bool {
+    #[cfg(unix)]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let Ok(cstr) = CString::new(path.as_os_str().as_bytes()) else { return false };
+        // SAFETY: `cstr` is a valid NUL-terminated path passed to POSIX `access(2)`.
+        if unsafe { libc::access(cstr.as_ptr(), libc::W_OK) } == 0 {
+            return true;
+        }
+        allow_missing && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)
+    }
+    #[cfg(not(unix))]
     match std::fs::metadata(path) {
         Ok(meta) => !meta.permissions().readonly(),
         Err(e) => allow_missing && e.kind() == std::io::ErrorKind::NotFound,
@@ -104,14 +117,18 @@ fn writable(path: &Path, allow_missing: bool) -> bool {
 }
 
 enum Target {
-    Writable(Prefix),
+    Writable(Prefix, Option<Legacy>),
     Unwritable,
 }
 
-/// `npmTarget`: an `@opencode/cli` launcher (or an incomplete user shim) may be updated in place.
+/// `npmTarget`: an `@opencode/cli` launcher (or an incomplete user shim) may be updated in place;
+/// a verified `opencode-ai` 1.x shim in a writable prefix may be replaced with explicit consent.
 fn npm_target(command: &str, prefix: Prefix, user: &Prefix) -> Option<Target> {
-    (launcher(command, &prefix) || incomplete_shim(command, user))
-        .then(|| if writable(&prefix.root, false) { Target::Writable(prefix) } else { Target::Unwritable })
+    if launcher(command, &prefix) || incomplete_shim(command, user) {
+        return Some(if writable(&prefix.root, false) { Target::Writable(prefix, None) } else { Target::Unwritable });
+    }
+    let found = legacy::legacy_npm_installation(command, &prefix)?;
+    writable(&prefix.root, false).then_some(Target::Writable(prefix, Some(found)))
 }
 
 type Probe = Option<(bool, Option<String>)>;
@@ -219,33 +236,46 @@ pub async fn plan(force: bool) -> Plan {
     };
     let command = launch::path_command();
     let user_command = command_in(&user);
-    let target = |t: Option<Target>| match t {
-        Some(Target::Writable(prefix)) => Some(prefix),
-        _ => None,
+    let from_target = |t: Option<Target>| match t {
+        Some(Target::Writable(prefix, legacy)) => (Some(prefix), legacy),
+        _ => (None, None),
     };
     let Some(command) = command else {
         return match &user_command {
-            Some(c) => Plan { prefix: target(npm_target(c, Prefix { root: user.root.clone() }, &user)), foreign: None },
-            None => Plan { prefix: Some(user), foreign: None },
+            Some(c) => {
+                let (prefix, legacy) = from_target(npm_target(c, Prefix { root: user.root.clone() }, &user));
+                Plan { prefix, legacy, foreign: None }
+            }
+            None => Plan { prefix: Some(user), legacy: None, foreign: None },
         };
     };
     if let Some(found) = npm_target(&command, command_prefix(&command), &user) {
-        return Plan { prefix: target(Some(found)), foreign: None };
+        let (prefix, legacy) = from_target(Some(found));
+        return Plan { prefix, legacy, foreign: None };
     }
     let Some(mut foreign) = superseded_foreign(&command, force).await else { return Plan::default() };
     let unwritable = Some(("unwritable", user.root.to_string_lossy().into_owned()));
     let Some(user_command) = user_command else {
         if writable(&user.root, true) {
-            return Plan { prefix: Some(user), foreign: Some(foreign) };
+            return Plan { prefix: Some(user), legacy: None, foreign: Some(foreign) };
         }
         foreign.blocked = unwritable;
-        return Plan { prefix: None, foreign: Some(foreign) };
+        return Plan { prefix: None, legacy: None, foreign: Some(foreign) };
     };
     match npm_target(&user_command, Prefix { root: user.root.clone() }, &user) {
-        Some(Target::Writable(prefix)) => Plan { prefix: Some(prefix), foreign: Some(foreign) },
+        Some(Target::Writable(prefix, legacy)) => Plan { prefix: Some(prefix), legacy, foreign: Some(foreign) },
         // A recognized npm installation there only lacks write access; anything else holds the name.
-        Some(Target::Unwritable) => Plan { prefix: None, foreign: Some(Foreign { blocked: unwritable, ..foreign }) },
-        None => Plan { prefix: None, foreign: Some(Foreign { blocked: Some(("occupied", user_command)), ..foreign }) },
+        Some(Target::Unwritable) => {
+            Plan { prefix: None, legacy: None, foreign: Some(Foreign { blocked: unwritable, ..foreign }) }
+        }
+        None => {
+            let blocked = if legacy::legacy_npm_installation(&user_command, &user).is_some() {
+                unwritable
+            } else {
+                Some(("occupied", user_command))
+            };
+            Plan { prefix: None, legacy: None, foreign: Some(Foreign { blocked, ..foreign }) }
+        }
     }
 }
 
@@ -261,9 +291,11 @@ pub async fn resolve_default() -> (String, Option<&'static str>) {
         {
             return (user.binary().to_string_lossy().into_owned(), Some("user"));
         }
+        let prefix = command_prefix(&command);
         if let Some(managed) = &managed
-            && !launcher(&command, &command_prefix(&command))
-            && superseded_foreign(&command, false).await.is_some()
+            && !launcher(&command, &prefix)
+            && (legacy::legacy_npm_installation(&command, &prefix).is_some()
+                || superseded_foreign(&command, false).await.is_some())
         {
             return (managed.to_string_lossy().into_owned(), Some("managed"));
         }
@@ -275,20 +307,28 @@ pub async fn resolve_default() -> (String, Option<&'static str>) {
     }
 }
 
-/// The `foreignInstallation` of the status read (`inspectInstallation`).
+/// `legacyReplacement` and `foreignInstallation` of the status read (`inspectInstallation`).
 pub fn notice(plan: &Plan) -> Value {
-    let Some(f) = &plan.foreign else { return json!({}) };
-    let mut foreign = json!({"path": f.command, "source": f.source});
-    if let Some(v) = &f.version {
-        foreign["version"] = json!(v);
+    let mut out = serde_json::Map::new();
+    if plan.prefix.is_some()
+        && let Some(l) = &plan.legacy
+    {
+        out.insert("legacyReplacement".into(), json!({"path": l.command, "version": l.version}));
     }
-    if let Some(id) = &f.package_id {
-        foreign["packageId"] = json!(id);
+    if let Some(f) = &plan.foreign {
+        let mut foreign = json!({"path": f.command, "source": f.source});
+        if let Some(v) = &f.version {
+            foreign["version"] = json!(v);
+        }
+        if let Some(id) = &f.package_id {
+            foreign["packageId"] = json!(id);
+        }
+        if let Some((reason, path)) = &f.blocked {
+            foreign["blocked"] = json!({"reason": reason, "path": path});
+        }
+        out.insert("foreignInstallation".into(), foreign);
     }
-    if let Some((reason, path)) = &f.blocked {
-        foreign["blocked"] = json!({"reason": reason, "path": path});
-    }
-    json!({"foreignInstallation": foreign})
+    Value::Object(out)
 }
 
 impl Plan {

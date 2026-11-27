@@ -217,6 +217,7 @@ fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
         demand: observer,
         events,
         connection: Default::default(),
+        revoked: Default::default(),
     };
 
     // Idle wait notifies the waker synchronously when demand changes.
@@ -323,13 +324,14 @@ fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    revoked: Default::default(),
                 },
             ));
 
             let (socket, _) = listener.accept().await.unwrap();
             let mut sse = BufReader::new(socket);
             let req = read_request_line(&mut sse).await;
-            assert!(req.contains("connectionId=stream-1"), "got {req}");
+            assert!(req.contains("connectionId=hub-1"), "got {req}");
             sse.get_mut()
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
                 .await
@@ -398,6 +400,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    revoked: Default::default(),
                 },
             ));
 
@@ -405,7 +408,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
             let (socket, _) = listener.accept().await.unwrap();
             let mut sse1 = BufReader::new(socket);
             let req = read_request_line(&mut sse1).await;
-            assert!(req.contains("connectionId=stream-1"), "got {req}");
+            assert!(req.contains("connectionId=hub-1"), "got {req}");
             sse1.get_mut()
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
                 .await
@@ -455,11 +458,38 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 .unwrap();
             let (_, _, ev) = snapshots.recv().await.unwrap();
             assert!(matches!(ev, Event::ReaderSync { .. }));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut inbox = BufReader::new(socket);
+            let req = read_request_line(&mut inbox).await;
+            assert!(
+                req.starts_with("GET /workspaces/workspace/instance/api/session/session/inbox"),
+                "unexpected inbox request: {req}"
+            );
+            let inbox_body = r#"{"data":[]}"#;
+            inbox
+                .get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{inbox_body}",
+                        inbox_body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let (_, _, ev) = snapshots.recv().await.unwrap();
+            assert!(matches!(
+                ev,
+                Event::Inbox {
+                    authoritative: true,
+                    ..
+                }
+            ));
 
             // 3. Drop SSE twice so automatic backoff is 1000 ms; Command::Retry must wake
             // reconnect well before that automatic backoff.
             drop(sse1);
-            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
             let (socket, _) = listener.accept().await.unwrap();
             drop(socket);
             while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
@@ -470,7 +500,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                 .unwrap();
             let mut sse3 = BufReader::new(socket);
             let req = read_request_line(&mut sse3).await;
-            assert!(req.contains("connectionId=stream-3"), "got {req}");
+            assert!(req.contains("connectionId=hub-3"), "got {req}");
 
             // 4. Close exits cleanly.
             commands.send(Command::Close).await.unwrap();

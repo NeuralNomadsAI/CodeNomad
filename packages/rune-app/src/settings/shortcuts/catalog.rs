@@ -28,6 +28,7 @@ pub(in crate::settings) fn active(id: &str) -> bool {
     matches!(
         id,
         "new-instance"
+            | "new-temporary-instance"
             | "close-instance"
             | "instance-prev"
             | "instance-next"
@@ -45,8 +46,19 @@ pub(in crate::settings) fn active(id: &str) -> bool {
             | "session-next"
             | "session-search"
             | "close-session"
+            | "open-command-palette"
+            | "instance-rename"
             | FILE_SAVE
-    ) || id == "browse-folder" && crate::platform::folder_picker_available()
+    ) || (id == "browse-folder" && crate::platform::folder_picker_available())
+        || (matches!(
+            id,
+            "open-workspace-folder"
+                | "open-workspace-terminal"
+                | "open-workspace-editor-vscode"
+                | "open-workspace-editor-cursor"
+                | "open-workspace-editor-zed"
+                | "open-workspace-editor-vscodium"
+        ) && crate::platform::workspace_open::AVAILABLE)
 }
 
 fn default_index(prefs: &Preferences, platform: KeyPlatform) -> usize {
@@ -219,7 +231,8 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     assert_eq!(keys.len(), 75);
     assert_eq!(
         keys.iter().filter(|id| active(id)).count(),
-        19 + usize::from(crate::platform::folder_picker_available())
+        22 + usize::from(crate::platform::folder_picker_available())
+            + 6 * usize::from(crate::platform::workspace_open::AVAILABLE)
     );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {

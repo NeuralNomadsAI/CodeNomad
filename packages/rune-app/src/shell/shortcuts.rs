@@ -24,9 +24,13 @@ pub(super) fn modal_open(s: &State) -> bool {
         return true;
     }
     settings::blocks_shell_shortcuts(s)
+        || super::temporary::is_open(s)
+        || super::tab_rename::is_open(s)
+        || super::command_palette::is_open(s)
         || notifications::history_open(s)
         || crate::files::modal_open(s)
         || workspace::mission_confirmation(s).is_some()
+        || s.status_services.confirm_open()
         || (!s.screen.is_launcher()
             && (s
                 .transcript_display
@@ -45,6 +49,8 @@ fn overlay_open(s: &State) -> bool {
 
 fn any_editor_composing(s: &State) -> bool {
     s.draft.is_composing()
+        || super::tab_rename::is_composing(s)
+        || super::command_palette::is_composing(s)
         || s.files
             .as_ref()
             .is_some_and(|ui| ui.document.edit().is_composing())
@@ -95,17 +101,17 @@ pub(super) fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     no_command_mod && (is_field_nav || is_context_menu) && focused_text_field(s, tx)
 }
 
-fn authentication_required(s: &State) -> bool {
+pub(super) fn authentication_required(s: &State) -> bool {
     s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)
 }
 
-fn has_project(s: &State) -> bool {
+pub(super) fn has_project(s: &State) -> bool {
     !launcher_replaces_project(s) && s.screen.launcher().is_some_and(|l| l.project.is_some())
 }
 
-fn has_active_session(s: &State) -> bool {
+pub(super) fn has_active_session(s: &State) -> bool {
     !s.screen.is_launcher()
         && has_project(s)
         && (s.workspace.is_none() || workspace::active_session(s).is_some())
@@ -114,7 +120,7 @@ fn has_active_session(s: &State) -> bool {
 fn home_focus_allows_browse(tx: &Tx) -> bool {
     match tx.focused() {
         None => true,
-        Some("browse" | "open-folder") => true,
+        Some("browse" | "open-folder" | "new-temporary-tab") => true,
         Some(key) => key.starts_with("project-") && !key.starts_with("project-tabs-"),
     }
 }
@@ -130,8 +136,12 @@ fn can_browse_home(s: &State, tx: &Tx) -> bool {
 }
 
 enum Action {
+    OpenCommandPalette,
     BrowseFolder,
+    RenameInstance(String),
+    OpenWorkspace(crate::platform::workspace_open::WorkspaceTarget),
     NewInstance,
+    NewTemporaryInstance,
     CloseInstance,
     InstancePrev,
     InstanceNext,
@@ -160,12 +170,40 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     let browse_home = can_browse_home(s, tx);
+    let rename_tab = tx
+        .focused()
+        .and_then(|key| key.strip_prefix("t-"))
+        .filter(|tab_key| workspace::tab_rename_seed(s, tab_key).is_some())
+        .map(str::to_owned);
+    let can_open_workspace = super::workspace_open::can_open(s);
     let has_workspace = s.workspace.is_some();
     let project_open = has_project(s);
     let session_open = project_open && has_active_session(s);
     let Some(action) = settings::match_shortcut(s, event, tx, |matches| {
+        if matches("open-command-palette") {
+            return Some(Action::OpenCommandPalette);
+        }
         if browse_home && matches("browse-folder") {
             return Some(Action::BrowseFolder);
+        }
+        if let Some(tab_key) = rename_tab.as_ref()
+            && matches("instance-rename")
+        {
+            return Some(Action::RenameInstance(tab_key.clone()));
+        }
+        if can_open_workspace {
+            use crate::platform::workspace_open::{Editor, WorkspaceTarget};
+            if matches("open-workspace-folder") {
+                return Some(Action::OpenWorkspace(WorkspaceTarget::Folder));
+            }
+            if matches("open-workspace-terminal") {
+                return Some(Action::OpenWorkspace(WorkspaceTarget::Terminal));
+            }
+            for editor in Editor::ALL {
+                if matches(editor.command_id()) {
+                    return Some(Action::OpenWorkspace(WorkspaceTarget::Editor(editor)));
+                }
+            }
         }
         // Match Solid's registration priority: setupTabKeyboardShortcuts, then registerNavigationShortcuts.
         if project_open && matches("session-new") {
@@ -174,6 +212,9 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if has_workspace {
             if matches("new-instance") {
                 return Some(Action::NewInstance);
+            }
+            if matches("new-temporary-instance") {
+                return Some(Action::NewTemporaryInstance);
             }
             if matches("close-instance") {
                 return Some(Action::CloseInstance);
@@ -214,6 +255,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     match action {
+        Action::OpenCommandPalette => super::command_palette::open(s, tx),
         Action::BrowseFolder => {
             let ready =
                 workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
@@ -221,10 +263,19 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
                 crate::platform::browse(s, tx);
             }
         }
+        Action::RenameInstance(tab_key) => {
+            super::tab_rename::open_for_tab(s, &tab_key, tx);
+        }
+        Action::OpenWorkspace(target) => {
+            super::workspace_open::open(s, target);
+        }
         Action::NewInstance => {
             if workspace::can_new(s) {
                 workspace::new_tab(s, tx);
             }
+        }
+        Action::NewTemporaryInstance => {
+            super::temporary::create(s, tx);
         }
         Action::CloseInstance => {
             if let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) {
@@ -244,7 +295,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     true
 }
 
-fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
+pub(super) fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
     if !launcher::can_change_session(s) || s.screen.launcher().is_none_or(|l| l.pending) {
         return;
     }
