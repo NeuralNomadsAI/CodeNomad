@@ -235,7 +235,6 @@ async function verifySseAuthenticated503Recovery({
       let sseGate='pass'
       let metaGate='pass'
       let admittedMetaRequest=null
-      let metaRearmTimer=null
       let admittedSseRequest=null
       let sseResponseAt=null
       let recovered=false
@@ -332,21 +331,17 @@ async function verifySseAuthenticated503Recovery({
         if(!observeStatusEpisode||req.method()!=='GET')return
         if(isAuthStatusUrl(req.url()))observedStatusRequests.push(performance.now())
       }
-      const clearMetaRearm=()=>{
-        if(metaRearmTimer!==null){ clearTimeout(metaRearmTimer); metaRearmTimer=null }
-      }
       const releaseMetaAdmission=req=>{
         if(sseScenarioActive&&sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
-          clearMetaRearm()
           admittedMetaRequest=null
           if(metaGate==='block'&&sseGate==='admit-one')metaGate='admit-one'
         }
       }
       const releaseSseAdmission=req=>{
         if(sseScenarioActive&&sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
-          clearMetaRearm()
           admittedSseRequest=null
-          if(sseGate==='hold')sseGate='admit-one'
+          admittedMetaRequest=null
+          if(sseGate==='block')sseGate='admit-one'
           if(metaGate==='block')metaGate='admit-one'
         }
       }
@@ -360,26 +355,17 @@ async function verifySseAuthenticated503Recovery({
         const req=res.request()
         if(sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
           if(res.status()===200){
-            clearMetaRearm()
             sseResponseAt=performance.now()
+            admittedMetaRequest=null
             if(metaGate==='admit-one')metaGate='block'
-            if(sseGate==='admit-one')sseGate='hold'
+            if(sseGate==='admit-one'||sseGate==='block')sseGate='hold'
           } else {
             releaseSseAdmission(req)
           }
           return
         }
         if(sseResponseAt===null&&admittedMetaRequest&&req===admittedMetaRequest){
-          if(res.status()!==200){
-            releaseMetaAdmission(req)
-          } else {
-            clearMetaRearm()
-            metaRearmTimer=setTimeout(()=>{
-              metaRearmTimer=null
-              releaseMetaAdmission(req)
-            },3_000)
-            metaRearmTimer.unref?.()
-          }
+          if(res.status()!==200)releaseMetaAdmission(req)
           return
         }
         if(req.method()!=='GET')return
@@ -393,13 +379,12 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||metaGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
           const req=route.request()
-          clearMetaRearm()
           admittedMetaRequest=req
           metaGate='block'
           if(!await continueSseRoute(route))releaseMetaAdmission(req)
           return
         }
-        if(entryGate==='hold'||metaGate==='hold')return holdRoute(route)
+        if(entryGate!=='block'&&metaGate==='hold')return holdRoute(route)
         await fulfillOrAbort(pendingSseFulfills,route,
           {status:503,contentType:'application/json',body:'{}'},onSseFulfillError)
       })())
@@ -411,8 +396,7 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||sseGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
           const req=route.request()
-          clearMetaRearm()
-          sseGate='hold'
+          sseGate='block'
           metaGate='block'
           admittedSseRequest=req
           if(!await continueSseRoute(route))releaseSseAdmission(req)
@@ -615,7 +599,6 @@ async function verifySseAuthenticated503Recovery({
           sseTeardown=true
           sseScenarioActive=false
           injectTransient503=false
-          clearMetaRearm()
           sseGate=recovered?'pass':'abort'
           metaGate=recovered?'pass':'abort'
           sseAbort.abort()
