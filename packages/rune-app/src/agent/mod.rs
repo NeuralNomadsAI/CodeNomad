@@ -301,16 +301,18 @@ pub struct Ui {
     models_directory: Option<String>,
     permissions_lane: RequestLane,
     forms_lane: RequestLane,
-    pending_deferred_submission: Option<(
-        String,
-        Vec<serde_json::Value>,
-        Vec<(String, serde_json::Value)>,
-    )>,
-    pending_field_rejection: Option<PendingFieldRejection>,
+    pending_deferred_submission: Option<Box<PendingDeferredSubmission>>,
+    pending_field_rejection: Option<Box<PendingFieldRejection>>,
     activity_during_job: bool,
     usage_during_job: bool,
     trailing: Option<bool>,
     catalog_trailing: Option<String>,
+}
+
+struct PendingDeferredSubmission {
+    form_id: String,
+    submitted_fields: Vec<serde_json::Value>,
+    deferred_fields: Vec<(String, serde_json::Value)>,
 }
 
 struct PendingFieldRejection {
@@ -710,8 +712,13 @@ impl Ui {
                 let fields = form.fields.clone();
                 if !self.forms_locked() {
                     self.pending_field_rejection = None;
-                    self.pending_deferred_submission =
-                        (!deferred.is_empty()).then(|| (id.to_string(), fields.clone(), deferred));
+                    self.pending_deferred_submission = (!deferred.is_empty()).then(|| {
+                        Box::new(PendingDeferredSubmission {
+                            form_id: id.to_string(),
+                            submitted_fields: fields.clone(),
+                            deferred_fields: deferred,
+                        })
+                    });
                 }
                 self.act(Action::Answer(id.into(), answer, fields))
             }
@@ -1290,9 +1297,13 @@ impl Ui {
                     } else {
                         if let crate::agent_api::FormReplyOutcome::ValidationRejected(ref detail) =
                             outcome
-                            && let Some((form_id, submitted_fields, deferred_fields)) =
-                                submitted_deferred
+                            && let Some(submitted) = submitted_deferred
                         {
+                            let PendingDeferredSubmission {
+                                form_id,
+                                submitted_fields,
+                                deferred_fields,
+                            } = *submitted;
                             let all_keys: Vec<&str> = submitted_fields
                                 .iter()
                                 .filter_map(|f| f["key"].as_str())
@@ -1311,11 +1322,12 @@ impl Ui {
                                     Vec::new()
                                 };
                             if !to_mark.is_empty() {
-                                self.pending_field_rejection = Some(PendingFieldRejection {
-                                    form_id,
-                                    submitted_fields,
-                                    to_mark,
-                                });
+                                self.pending_field_rejection =
+                                    Some(Box::new(PendingFieldRejection {
+                                        form_id,
+                                        submitted_fields,
+                                        to_mark,
+                                    }));
                             }
                         }
                         let fresh = generation == self.forms_lane.generation;

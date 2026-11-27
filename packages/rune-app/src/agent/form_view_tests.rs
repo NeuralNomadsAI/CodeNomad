@@ -2835,6 +2835,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
             let proj1 = crate::catalog::Project {
                 id: "project-1".into(),
                 path: "/repo-1".into(),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(proj1.clone());
