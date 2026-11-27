@@ -324,17 +324,35 @@ fn read_gitfile_in(scope: &Path, path: &Path) -> Result<Vec<u8>, Error> {
 }
 
 fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
-    let Some(a) = resolve_file_in(scope, path) else {
+    let Some(parent) = path.parent() else {
         return false;
     };
-    let Some(b) = resolve_file_in(scope, expected) else {
+    let Some(exp_parent) = expected.parent() else {
         return false;
     };
-    a == b
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    let Some(exp_name) = expected.file_name() else {
+        return false;
+    };
+    let Some(real_exp_parent) = resolve_dir_in(scope, exp_parent) else {
+        return false;
+    };
+    if !canonical_dir_in(scope, parent, &real_exp_parent) {
+        return false;
+    }
+    let joined = real_exp_parent.join(name);
+    let exp_joined = real_exp_parent.join(exp_name);
+    if resolve_file_in(scope, &joined).is_none() {
+        return false;
+    }
+    // Verify the entry itself (not only its symlink target) belongs to `expected`'s checkout.
+    name == exp_name
         || (cfg!(windows)
-            && a.parent() == b.parent()
-            && a.file_name().zip(b.file_name()).is_some_and(|(x, y)| x.eq_ignore_ascii_case(y))
-            && file_identity_stamp(&a).is_some_and(|id| file_identity_stamp(&b).as_deref() == Some(id.as_str())))
+            && name.eq_ignore_ascii_case(exp_name)
+            && file_identity_stamp(&joined)
+                .is_some_and(|id| file_identity_stamp(&exp_joined).as_deref() == Some(id.as_str())))
 }
 
 impl Physical {
@@ -399,9 +417,12 @@ fn git_layout_gone_in(scope: &Path, root: &Path) -> bool {
     }
     let marker = root.join(".git");
     let check_gitfile_gone = |bytes: Vec<u8>| -> bool {
-        String::from_utf8(bytes).ok().is_some_and(|text| {
-            text.lines().find_map(|line| line.strip_prefix("gitdir:")).is_some_and(|dir| {
-                let dir = Path::new(dir.trim());
+        std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| strip_git_eol(text).strip_prefix("gitdir: "))
+            .filter(|dir| !dir.is_empty())
+            .is_some_and(|dir| {
+                let dir = Path::new(dir);
                 let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
                 let checked_dir = if !scope.as_os_str().is_empty() {
                     let Some(dir_str) = dir.to_str() else {
@@ -427,7 +448,6 @@ fn git_layout_gone_in(scope: &Path, root: &Path) -> bool {
                         || std::fs::symlink_metadata(checked_dir.join("commondir"))
                             .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound))
             })
-        })
     };
     match std::fs::symlink_metadata(&marker) {
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
