@@ -22,7 +22,8 @@ import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { CODENOMAD_MISSIONS_RPC } from "../packages/server/src/missions/rpc.ts"
-import { MISSION_CALENDAR_CARRIER, MISSION_CALENDAR_CODE, MISSION_CALENDAR_PERMISSIONS } from "../packages/server/src/missions/calendar-run.ts"
+import { MISSION_CALENDAR_CODE } from "../packages/server/src/missions/calendar-run.ts"
+import { missionCalendars } from "../packages/server/src/opencode/mission-calendars.ts"
 import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
@@ -162,11 +163,12 @@ try {
   await assert.rejects(daemon.snapshot(), "Missions is unregistered without CodeNomad and without work")
   console.log("PASS 1 (no CodeNomad, no work: Missions unregistered)")
 
-  const carrier = await daemon.client.session.create({ location, title: "Mission calendars",
-    metadata: { [MISSION_CALENDAR_CARRIER]: { version: 1 } }, permissions: MISSION_CALENDAR_PERMISSIONS.map(rule => ({ ...rule })) })
-  const automation = await daemon.client.experimental.automation.create({ sessionID: carrier.id, name: "calendar-e2e",
-    trigger: { type: "every", every: "15 seconds" },
-    action: { type: "code", code: MISSION_CALENDAR_CODE, args: { objective: OBJECTIVE, title: "Calendar E2E", template: "custom", coordinatorGoal: true } } })
+  // The server's own adapter creates the carrier conversation and the Automations.
+  const projectID = (await daemon.client.location.get({ location })).project.id
+  const calendars = () => missionCalendars(daemon.client, location, projectID)
+  const rule = (calendar, args) => ({ name: args.title, trigger: { type: "every", every: "15 seconds" }, action: { type: "code", code: MISSION_CALENDAR_CODE, args: { calendar, ...args } } })
+  await calendars().save("cal_e2e", [rule("cal_e2e", { objective: OBJECTIVE, title: "Calendar E2E", template: "custom", coordinatorGoal: true })])
+  const automation = { id: (await calendars().list())[0].rules[0].automationID }
   const row = () => daemon.client.experimental.automation.get({ automationID: automation.id })
 
   const first = (await until("first Mission", () => missions(daemon), list => list.length === 1, 60_000).catch(async error => {
@@ -180,7 +182,8 @@ try {
   const launchedAt = (await row()).runCount
   const later = await until("a later run", row, info => info.runCount >= launchedAt + 1, 45_000)
   assert.notEqual(later.lastOutcome, "failed", later.lastOutput)
-  assert.deepEqual(JSON.parse(later.state.last), { waiting: first.id }, "the Automation's state tells what the calendar last did")
+  const listed = (await calendars().list())[0]
+  assert.deepEqual([listed.id, listed.title, listed.paused, listed.last?.waiting], ["cal_e2e", "Calendar E2E", false, first.id], "the list tells what the calendar last did")
   assert.deepEqual((await missions(daemon)).map(mission => [mission.id, mission.status]), [[first.id, "active"]], "a run launches nothing while the previous Mission is active")
   console.log("PASS 3 (later runs wait for the active Mission)")
 
@@ -200,7 +203,7 @@ try {
 
   const second = (await until("second Mission", () => missions(daemon), list => list.length === 2, 60_000)).find(mission => mission.id !== first.id)
   await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 20_000)
-  await daemon.client.experimental.automation.pause({ automationID: automation.id })
+  await calendars().pause("cal_e2e")
   await daemon.stop()
   script.holdMs = 0; script.service++
   daemon = await startDaemon("2")
@@ -212,14 +215,14 @@ try {
     status => status === "completed" || status === "unregistered", 120_000)
   assert.ok(seen.finals > finals, "the coordinator sent its final report after the restart")
   console.log("PASS 5 (after an OpenCode restart Missions registers again and the Mission finishes)")
-  await daemon.client.experimental.automation.delete({ automationID: automation.id })
+  assert.equal((await calendars().list())[0].paused, true)
+  await calendars().delete("cal_e2e")
 
   // Held long enough to be read: once its Mission completes, Missions unregisters again.
   script.holdMs = 10_000
-  const watching = await daemon.client.experimental.automation.create({ sessionID: carrier.id, name: "calendar-commits-e2e",
-    trigger: { type: "every", every: "15 seconds" }, action: { type: "code", code: MISSION_CALENDAR_CODE,
-      args: { objective: OBJECTIVE, title: "Commits E2E", template: "custom", coordinatorSessionID: first.coordinatorSessionId,
-        when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] } } })
+  await calendars().save("cal_commits", [rule("cal_commits", { objective: OBJECTIVE, title: "Commits E2E", template: "custom", coordinatorSessionID: first.coordinatorSessionId,
+    when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] })])
+  const watching = { id: (await calendars().list())[0].rules[0].automationID }
   const watch = () => daemon.client.experimental.automation.get({ automationID: watching.id })
   // Beside an Automation that existed at startup, OpenCode can take a minute to run a new one for the first time.
   const quiet = await until("two runs without a commit", watch, info => info.runCount >= 2 || info.lastOutcome === "failed", 150_000)
@@ -231,7 +234,8 @@ try {
   })).find(mission => mission.title === "Commits E2E")
   assert.equal(reused.coordinatorSessionId, first.coordinatorSessionId, "the calendar's Missions share the conversation it names")
   console.log("PASS 6 (a calendar waiting for commits launches only once one lands, in the conversation it names)")
-  await daemon.client.experimental.automation.delete({ automationID: watching.id })
+  await calendars().delete("cal_commits")
+  assert.deepEqual(await calendars().list(), [])
 } finally {
   console.log("seen:", JSON.stringify({ ...seen, delegated: [...seen.delegated] }))
   if (daemon) await daemon.stop().catch(() => {})
