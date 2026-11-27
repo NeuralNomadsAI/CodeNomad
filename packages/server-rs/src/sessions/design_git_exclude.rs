@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
     io::{Read, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -130,16 +130,16 @@ fn format_append(existing: &[u8], rule: &str) -> Option<String> {
     Some(format!("{separator}{header}{rule}\n"))
 }
 
-fn parse_rev_parse(bytes: &[u8]) -> Option<(String, PathBuf, PathBuf)> {
+fn parse_rev_parse(bytes: &[u8]) -> Option<(String, PathBuf)> {
     let text = std::str::from_utf8(bytes).ok()?;
     let trimmed = text.strip_suffix('\n').unwrap_or(text);
     let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
     let lines: Vec<&str> = trimmed.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
-    if lines.len() != 3 || lines.iter().any(|l| l.bytes().any(|b| b < 0x20 || b == 0x7f)) {
+    if lines.len() != 2 || lines.iter().any(|l| l.bytes().any(|b| b < 0x20 || b == 0x7f)) {
         return None;
     }
-    let (prefix, common_raw, exclude_raw) = (lines[0], lines[1], lines[2]);
-    if common_raw.is_empty() || exclude_raw.is_empty() {
+    let (prefix, common_raw) = (lines[0], lines[1]);
+    if common_raw.is_empty() {
         return None;
     }
     if !prefix.is_empty() {
@@ -148,7 +148,7 @@ fn parse_rev_parse(bytes: &[u8]) -> Option<(String, PathBuf, PathBuf)> {
             return None;
         }
     }
-    Some((prefix.to_owned(), PathBuf::from(common_raw), PathBuf::from(exclude_raw)))
+    Some((prefix.to_owned(), PathBuf::from(common_raw)))
 }
 
 struct DropCancel(Arc<AtomicBool>);
@@ -248,27 +248,16 @@ fn open_verified_exclude(
     Ok(file)
 }
 
-fn validate_exclude_target(scope: &Path, common_path: &Path, exclude_path: &Path) -> Option<PathBuf> {
-    let common_canon = if !scope.as_os_str().is_empty() {
+fn validate_exclude_target(scope: &Path, common_path: &Path) -> Option<PathBuf> {
+    if !scope.as_os_str().is_empty() {
         let raw = common_path.to_str()?;
         crate::worktrees::ownership::resolve_media_path_checked(scope, raw)
             .ok()
             .flatten()
-            .and_then(|(p, a)| (p == a).then_some(p))?
+            .and_then(|(p, a)| (p == a).then_some(p))
     } else {
-        dunce::canonicalize(common_path).ok()?
-    };
-    let rel = exclude_path.strip_prefix(common_path).or_else(|_| exclude_path.strip_prefix(&common_canon)).ok()?;
-    let mut comps = rel.components();
-    let (Some(Component::Normal(info_comp)), Some(Component::Normal(file_comp)), None) =
-        (comps.next(), comps.next(), comps.next())
-    else {
-        return None;
-    };
-    if info_comp != OsStr::new("info") || file_comp != OsStr::new("exclude") {
-        return None;
+        dunce::canonicalize(common_path).ok()
     }
-    Some(common_canon)
 }
 
 fn dir_live_in_scope(scope: &Path, path: &Path) -> bool {
@@ -312,7 +301,7 @@ fn append_verified(
     let Ok(info_meta) = common_dir.symlink_metadata(info_comp) else {
         return GitExclusion::Unavailable;
     };
-    if !info_meta.is_dir() || info_meta.is_symlink() {
+    if !info_meta.is_dir() || info_meta.is_symlink() || std::fs::read_link(&expected_info_path).is_ok() {
         return GitExclusion::Unavailable;
     }
     let Ok(info) = common_dir.open_dir(info_comp) else {
@@ -321,7 +310,7 @@ fn append_verified(
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt;
-        if dunce::canonicalize(&expected_info_path).ok().as_deref() != Some(expected_info_path.as_path()) {
+        if !dir_live_in_scope(scope, &expected_info_path) {
             return GitExclusion::Unavailable;
         }
         let Ok(opened_meta) = info.dir_metadata() else {
@@ -422,7 +411,7 @@ pub(super) async fn exclude_design_folder_cancellable(
         git::run_in_scope(
             dir,
             scope,
-            &["rev-parse", "--show-prefix", "--path-format=absolute", "--git-common-dir", "--git-path", "info/exclude"],
+            &["rev-parse", "--show-prefix", "--path-format=absolute", "--git-common-dir"],
             64 * 1024,
         ),
     )
@@ -441,12 +430,12 @@ pub(super) async fn exclude_design_folder_cancellable(
             GitExclusion::Unavailable
         };
     }
-    let Some((prefix, common_path, exclude_path)) = parse_rev_parse(&output.bytes) else {
+    let Some((prefix, common_path)) = parse_rev_parse(&output.bytes) else {
         return GitExclusion::Unavailable;
     };
     let scope_validate = scope.to_path_buf();
     let Some(common_canon) =
-        tokio::task::spawn_blocking(move || validate_exclude_target(&scope_validate, &common_path, &exclude_path))
+        tokio::task::spawn_blocking(move || validate_exclude_target(&scope_validate, &common_path))
             .await
             .ok()
             .flatten()

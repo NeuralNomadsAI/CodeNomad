@@ -48,25 +48,46 @@ pub(super) fn probe_error() -> Error {
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
-    root_only_with_slot(workspace, None).await
+    root_only_with_slot(std::path::Path::new(""), workspace, None).await
+}
+
+pub(crate) async fn root_only_in_scope(scope: &std::path::Path, workspace: &Workspace) -> Result<Option<bool>, Error> {
+    root_only_with_slot(scope, workspace, None).await
 }
 
 pub(crate) async fn root_only_with_slot(
+    scope: &std::path::Path,
     workspace: &Workspace,
     slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Result<Option<bool>, Error> {
     let path = workspace.path.clone();
-    let canonical_ok = tokio::task::spawn_blocking(move || {
+    let scope_owned = scope.to_path_buf();
+    let (canonical_ok, layout_ok) = tokio::task::spawn_blocking(move || {
         let _slot = slot;
-        dunce::canonicalize(&path).ok().as_ref() == Some(&path)
+        let ok = if !scope_owned.as_os_str().is_empty() {
+            path.to_str().is_some_and(|s| {
+                ownership::resolve_media_path_checked(&scope_owned, s)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|(p, a)| p == a && p == path)
+            })
+        } else {
+            dunce::canonicalize(&path).ok().as_ref() == Some(&path)
+        };
+        let layout_ok = ok && (scope_owned.as_os_str().is_empty() || precheck_git_layout_in_scope(&scope_owned, &path));
+        (ok, layout_ok)
     })
     .await
-    .unwrap_or(false);
+    .unwrap_or((false, false));
     if !canonical_ok {
         crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(probe_error());
     }
-    match crate::git::run(&workspace.path, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
+    if !layout_ok {
+        crate::bench::route_trace(format_args!("root-proof git layout refused"));
+        return Err(probe_error());
+    }
+    match crate::git::run_in_scope(&workspace.path, scope, &["rev-parse", "--show-toplevel"], 16 * 1024).await {
         Ok(output) if output.code == 0 => Ok(None),
         Ok(output) if output.not_a_repository() => Ok(Some(true)),
         Err(err) if crate::git::is_missing_git(&err) => Ok(Some(false)),
@@ -235,7 +256,7 @@ pub async fn event_ownership(
         return EventOwnership::Owned;
     }
     let external = !path.starts_with(&w.path);
-    match root_only(w).await {
+    match root_only_in_scope(&app.scope, w).await {
         Ok(Some(true)) => return if external { EventOwnership::NotOwned } else { EventOwnership::Owned },
         Ok(Some(false)) => return EventOwnership::NotOwned,
         Err(_) => return EventOwnership::Unavailable,

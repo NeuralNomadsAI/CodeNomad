@@ -751,7 +751,7 @@ fn resolve_config_include_in(
     let expanded = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).ok_or(())?;
         PathBuf::from(home).join(rest)
-    } else if raw == "~" {
+    } else if raw.starts_with('~') || raw.starts_with("%(") {
         return Err(());
     } else {
         PathBuf::from(raw)

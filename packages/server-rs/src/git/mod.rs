@@ -480,7 +480,7 @@ pub async fn init(
     let identity = files::host_identity(&w.path).map_err(|_| mismatch())?;
     let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
     let exists = || coded(Status::CONFLICT, "Folder already belongs to a Git repository", "git_init_repository_exists");
-    match worktrees::root_only(&w).await? {
+    match worktrees::root_only_in_scope(&app.scope, &w).await? {
         None => return Err(exists()),
         Some(false) => return Err(missing_git()),
         Some(true) => {}

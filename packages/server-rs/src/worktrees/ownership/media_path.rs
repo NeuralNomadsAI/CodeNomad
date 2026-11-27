@@ -396,7 +396,9 @@ pub(crate) async fn media_directory_with_slot(
         };
         return Ok(proof_live_async(proof, path.to_path_buf(), slot).await);
     }
-    if !external && let Some(subfolders) = crate::worktrees::root_only_with_slot(workspace, slot.clone()).await? {
+    if !external
+        && let Some(subfolders) = crate::worktrees::root_only_with_slot(&app.scope, workspace, slot.clone()).await?
+    {
         if !current() {
             return Err(native_error());
         }

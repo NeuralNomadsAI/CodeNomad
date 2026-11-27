@@ -180,7 +180,7 @@ pub(crate) async fn receipt_location(
                 revision = Some((stamp, inventory.project.clone()));
                 registered_proof(&inventory, &path, external)?
             }
-            None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
+            None if !external && matches!(super::root_only_in_scope(&app.scope, w).await, Ok(Some(true))) => {
                 DirectoryProof { tree: None, source: None, root: None, external, media: false }
             }
             None => return None,
@@ -229,7 +229,9 @@ pub(crate) async fn capture_event_directory(
         return None;
     }
     let external = !physical.starts_with(&workspace.path);
-    if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+    if physical == workspace.path
+        || !external && matches!(super::root_only_in_scope(&app.scope, workspace).await, Ok(Some(true)))
+    {
         return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
@@ -266,7 +268,9 @@ pub(crate) async fn capture_directory_with_refresh(
         return None;
     }
     let external = !physical.starts_with(&workspace.path);
-    if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+    if physical == workspace.path
+        || !external && matches!(super::root_only_in_scope(&app.scope, workspace).await, Ok(Some(true)))
+    {
         return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
@@ -382,7 +386,8 @@ impl LoadedOwnership {
     ) -> Self {
         let revision = app.linked_events.lock().unwrap().stamp();
         let inventory = super::inventory::receipt_catalogue(app, w, endpoint).await;
-        let directory_only = inventory.is_none() && matches!(super::root_only(w).await, Ok(Some(true)));
+        let directory_only =
+            inventory.is_none() && matches!(super::root_only_in_scope(&app.scope, w).await, Ok(Some(true)));
         Self { inventory, directory_only, revision }
     }
 
@@ -448,7 +453,7 @@ impl HistoryInventory {
         workspace: &Workspace,
         endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     ) -> Option<Self> {
-        if let Some(allow_subfolders) = super::root_only(workspace).await.ok()? {
+        if let Some(allow_subfolders) = super::root_only_in_scope(&app.scope, workspace).await.ok()? {
             return Some(Self { catalogue: None, allow_subfolders });
         }
         Some(Self {
