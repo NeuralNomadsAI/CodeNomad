@@ -39,7 +39,7 @@ pub fn dialog<S: 'static>(
     let confirm_btn = rune_kit::Button::new(confirm_label)
         .variant(rune_kit::ButtonVariant::Submit)
         .on_press_tx(move |s, tx| confirm_press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .key(CONFIRM)
         .on_key(layout::enter_action(on_confirm));
     let header = row()

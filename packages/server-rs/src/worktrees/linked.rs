@@ -1,6 +1,6 @@
 //! Linked worktrees: creation, removal with session evacuation and session placement.
 pub use super::inventory::{
-    Catalogue, EventCache, Tree, blocking_invalidation, catalogue, event_catalogue, forget, invalidate,
+    Catalogue, EventCache, Tree, blocking_invalidation, catalogue, event_catalogue_at, forget, invalidate,
     invalidate_blocking, readable_checkout, scope,
 };
 pub(crate) use super::inventory::{HttpSnapshot, ReadMode, emit_worktrees_changed, http_read};
@@ -76,20 +76,60 @@ pub(super) async fn send_with_timeout(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
-/// `DELETE /api/worktree` without force, pinned to an acquired endpoint.
+enum DeleteError {
+    /// Failed before dispatching `DELETE /api/worktree` or OpenCode returned a confirmed 4xx refusal.
+    ConfirmedNoDelete(Error),
+    /// Dispatched `DELETE /api/worktree` and timed out, lost transport, or received 5xx: deletion
+    /// may still be running in OpenCode, so evacuated sessions must remain at the main checkout.
+    Uncertain(Error),
+}
+
+impl DeleteError {
+    fn into_error(self) -> Error {
+        match self {
+            Self::ConfirmedNoDelete(err) | Self::Uncertain(err) => err,
+        }
+    }
+}
+
+/// `DELETE /api/worktree` without force, pinned to an acquired endpoint and shared deadline.
 async fn delete_worktree_at(
     app: &App,
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     project: &str,
     directory: &str,
-) -> Result<(), Error> {
+    deadline: tokio::time::Instant,
+) -> Result<(), DeleteError> {
     if !app.native.current(endpoint) {
-        return Err(native_error());
+        return Err(DeleteError::ConfirmedNoDelete(native_error()));
+    }
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return Err(DeleteError::ConfirmedNoDelete(native_error()));
     }
     let body = json!({"projectID": project, "directory": directory, "force": false});
-    let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
-    let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
-    send(request, &[], Some(body), 16384).await.map(drop)
+    let url = endpoint.url.join("/api/worktree").map_err(|_| DeleteError::ConfirmedNoDelete(native_error()))?;
+    let response = app
+        .native
+        .client
+        .request(Method::DELETE, url)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .json(&body)
+        .timeout(remaining)
+        .send()
+        .await
+        .map_err(|_| DeleteError::Uncertain(native_error()))?;
+    let status = response.status();
+    if status.is_success() {
+        if status == Status::NO_CONTENT {
+            return Ok(());
+        }
+        crate::opencode::read_json(response, 16384).await.map(drop).map_err(|_| DeleteError::Uncertain(native_error()))
+    } else if status.is_client_error() {
+        Err(DeleteError::ConfirmedNoDelete(native_error()))
+    } else {
+        Err(DeleteError::Uncertain(native_error()))
+    }
 }
 
 async fn native_at(
@@ -101,18 +141,39 @@ async fn native_at(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
+    native_at_deadline(
+        app,
+        endpoint,
+        method,
+        path,
+        query,
+        body,
+        max,
+        tokio::time::Instant::now() + Duration::from_secs(60),
+    )
+    .await
+}
+
+async fn native_at_deadline(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+    deadline: tokio::time::Instant,
+) -> Result<Value, Error> {
     if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
         return Err(native_error());
     }
     let url = endpoint.url.join(path).map_err(|_| native_error())?;
     let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
-    send(request, query, body, max).await
-}
-
-/// `DELETE /api/worktree` without force.
-async fn delete_worktree(app: &App, project: &str, directory: &str) -> Result<(), Error> {
-    let body = json!({"projectID": project, "directory": directory, "force": false});
-    native(app, Method::DELETE, "/api/worktree", &[], Some(body), 16384).await.map(drop)
+    send_with_timeout(request, query, body, max, remaining).await
 }
 fn row_id(row: &Value) -> Result<&str, Error> {
     row["id"].as_str().ok_or_else(native_error)
@@ -187,7 +248,6 @@ pub async fn create(
         app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await.map_err(|_| native_error())?;
     let from_slug = input.from_slug.as_deref().unwrap_or("root");
     let catalogue = super::inventory::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12)).await?;
-    git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(from_slug)?;
     if !from.creatable_source() {
         return Err(invalid("Source worktree not found"));
@@ -428,7 +488,10 @@ pub async fn create(
         .ok_or_else(native_error)?;
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
-        delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;
+        let rollback_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service, rollback_deadline)
+            .await
+            .map_err(DeleteError::into_error)?;
         return Err(conflict("Unable to attach the branch"));
     }
     // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
@@ -444,6 +507,16 @@ pub async fn create(
 }
 
 pub async fn sessions(app: &App, project: &str) -> Result<Vec<Value>, Error> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    sessions_at(app, &endpoint, project, deadline).await
+}
+async fn sessions_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    project: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<Value>, Error> {
     let mut result = Vec::new();
     let mut cursor = None::<String>;
     let mut seen = HashSet::new();
@@ -453,7 +526,9 @@ pub async fn sessions(app: &App, project: &str) -> Result<Vec<Value>, Error> {
         let first = [("project", project), ("limit", "100"), ("order", "asc")];
         let next = [("cursor", cursor.as_deref().unwrap_or_default())];
         let query = if cursor.is_some() { &next[..] } else { &first[..] };
-        let page = native(app, Method::GET, "/api/session", query, None, 2 * 1024 * 1024).await?;
+        let page =
+            native_at_deadline(app, endpoint, Method::GET, "/api/session", query, None, 2 * 1024 * 1024, deadline)
+                .await?;
         let rows = page["data"].as_array().filter(|r| r.len() <= 100).ok_or_else(native_error)?;
         for row in rows {
             let id = row["id"].as_str().filter(|s| crate::opencode::valid_id(s)).ok_or_else(native_error)?;
@@ -525,19 +600,48 @@ async fn native_move(app: &App, id: &str, where_to: &str) -> Result<(), Error> {
     let body = Some(json!({"directory": where_to}));
     native(app, Method::POST, &format!("/api/session/{id}/move"), &[], body, 16384).await.map(drop)
 }
+enum MoveOutcome {
+    Moved(String, Vec<Value>),
+    Retry,
+}
+
+fn family_signature(members: &[Value]) -> Result<Vec<(String, Option<String>, String)>, Error> {
+    let mut sig = members
+        .iter()
+        .map(|row| {
+            Ok((row_id(row)?.to_owned(), row["parentID"].as_str().map(str::to_owned), directory(row)?.to_owned()))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    sig.sort();
+    Ok(sig)
+}
+
 async fn move_members(
     app: &App,
     w: &Workspace,
     cat: &Catalogue,
     evacuating: Option<&Tree>,
+    requested_session: Option<&str>,
     members: &[Value],
     target: &Tree,
     principal: &crate::auth::Principal,
-) -> Result<(), Error> {
+) -> Result<MoveOutcome, Error> {
     let keys = members.iter().map(|row| row_id(row).map(super::fence::session)).collect::<Result<Vec<_>, _>>()?;
     let _placing = super::fence::try_block(&keys).ok_or_else(|| conflict("A session request is in progress"))?;
     inactive(app, members).await?;
-    for member in members {
+    let (verified_root, active_members) = if evacuating.is_none() {
+        let expected = family_signature(members)?;
+        let fresh_rows = sessions(app, &cat.project).await?;
+        let anchor = requested_session.unwrap_or(row_id(&members[0])?);
+        let (fresh_root, fresh_members) = family(&fresh_rows, anchor)?;
+        if family_signature(&fresh_members)? != expected {
+            return Ok(MoveOutcome::Retry);
+        }
+        (fresh_root, fresh_members)
+    } else {
+        (row_id(&members[0])?.to_owned(), members.to_vec())
+    };
+    for member in &active_members {
         let from = directory(member)?;
         if member_owner(cat, evacuating, from).is_none() {
             return Err(conflict("Session worktree is not owned"));
@@ -549,8 +653,9 @@ async fn move_members(
         return Err(conflict("Worktree changed before the session move"));
     }
     let mut attempted = Vec::new();
+    let mut invalidation = None;
     let operation = async {
-        for member in members {
+        for member in &active_members {
             let id = row_id(member)?;
             inactive(app, std::slice::from_ref(member)).await?;
             principal.live()?;
@@ -560,6 +665,7 @@ async fn move_members(
             if directory(member)? == target.service {
                 continue;
             }
+            invalidation.get_or_insert_with(|| blocking_invalidation(app));
             attempted.push(member);
             native_move(app, id, &target.service).await?;
             let now = crate::opencode::session_record(app, id).await?;
@@ -568,8 +674,14 @@ async fn move_members(
             }
         }
         let current = sessions(app, &cat.project).await?;
-        let (_, now) = family(&current, members[0]["id"].as_str().ok_or_else(native_error)?)?;
-        if now.len() != members.len() || now.iter().any(|r| directory(r).ok() != Some(target.service.as_str())) {
+        let anchor = requested_session.unwrap_or(row_id(&active_members[0])?);
+        let (now_root, now) = family(&current, anchor)?;
+        let now_ids: HashSet<&str> = now.iter().filter_map(|row| row["id"].as_str()).collect();
+        if now_root != verified_root
+            || now.len() != active_members.len()
+            || !active_members.iter().all(|member| member["id"].as_str().is_some_and(|id| now_ids.contains(id)))
+            || now.iter().any(|r| directory(r).ok() != Some(target.service.as_str()))
+        {
             return Err(conflict("Session family changed during the move"));
         }
         Ok(())
@@ -597,7 +709,10 @@ async fn move_members(
         }
         return Err(e);
     }
-    Ok(())
+    if let Some(guard) = invalidation {
+        guard.disarm();
+    }
+    Ok(MoveOutcome::Moved(verified_root, active_members))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -625,66 +740,108 @@ async fn place_owned(
     principal.live()?;
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
-    let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
-    let mut paths = vec![super::fence::identity(target.registered())];
-    for member in &members {
-        let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
-        paths.push(super::fence::identity(tree.registered()));
+    for _ in 0..3 {
+        let (_, members) = family(&sessions(&app, &cat.project).await?, &session)?;
+        let mut paths = vec![super::fence::identity(target.registered())];
+        for member in &members {
+            let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
+            paths.push(super::fence::identity(tree.registered()));
+        }
+        let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
+        if let MoveOutcome::Moved(root, moved_members) =
+            move_members(&app, &w, &cat, None, Some(&session), &members, target, &principal).await?
+        {
+            announce(&app, &w);
+            let ids: Vec<_> = moved_members.iter().map(|m| &m["id"]).collect();
+            return Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})));
+        }
     }
-    let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
-    let _invalidate = blocking_invalidation(&app);
-    move_members(&app, &w, &cat, None, &members, target, &principal).await?;
-    announce(&app, &w);
-    let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
-    Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})))
+    Err(conflict("Session family changed before the session move"))
 }
 
 async fn no_blockers(app: &App, target: &Tree, catalogue: &Catalogue, allow_owned: bool) -> Result<(), Error> {
-    // The daemon is private to the prototype. Check every known location and
-    // project, including other repositories that may reference this directory.
-    let locations = native_get(app, "/api/debug/location", 256 * 1024).await?;
-    let rows = locations.as_array().filter(|a| a.len() <= 96).ok_or_else(native_error)?;
-    let mut directories = HashSet::from([target.service.as_str()]);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    no_blockers_at(app, &endpoint, target, catalogue, allow_owned, deadline).await
+}
+
+async fn no_blockers_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    target: &Tree,
+    catalogue: &Catalogue,
+    allow_owned: bool,
+    deadline: tokio::time::Instant,
+) -> Result<(), Error> {
+    // Check every native location and project without artificial daemon-wide count caps,
+    // matching TS `routes/worktrees.ts:309-354`, pinned to one daemon endpoint and one overall deadline.
+    let locations =
+        native_at_deadline(app, endpoint, Method::GET, "/api/debug/location", &[], None, 4 * 1024 * 1024, deadline)
+            .await?;
+    let rows = locations.as_array().ok_or_else(native_error)?;
+    let mut seen_directories = HashSet::new();
+    let mut directories: Vec<String> = Vec::with_capacity(rows.len() + 1);
+    if seen_directories.insert(target.service.clone()) {
+        directories.push(target.service.clone());
+    }
     for row in rows {
-        if row.get("workspaceID").is_some() {
+        // Match TS `location.ts:25` (`Unsupported workspace selector`): refuse deletion when
+        // a remote workspace selector is present rather than sending an unqualified query.
+        if matches!(row.get("workspaceID"), Some(v) if !v.is_null()) {
             return Err(conflict("Unsupported native location"));
         }
-        directories.insert(row["directory"].as_str().ok_or_else(native_error)?);
-    }
-    for directory in directories {
-        for resource in ["/api/shell", "/api/pty"] {
-            let list =
-                native(app, Method::GET, resource, &[("location[directory]", directory)], None, 128 * 1024).await?;
-            let list = list["data"].as_array().ok_or_else(native_error)?;
-            for row in list {
-                if row["status"] == "running" && within(target, row["cwd"].as_str().ok_or_else(native_error)?) {
-                    return Err(conflict("A running terminal blocks deletion"));
-                }
-            }
+        let dir = row["directory"].as_str().ok_or_else(native_error)?.to_owned();
+        if seen_directories.insert(dir.clone()) {
+            directories.push(dir);
         }
     }
-    let projects = native_get(app, "/api/project", 256 * 1024).await?;
-    let projects = projects.as_array().filter(|a| a.len() <= 32).ok_or_else(native_error)?;
+    for chunk in directories.chunks(16) {
+        let checks = chunk.iter().map(|directory| async move {
+            let query = [("location[directory]", directory.as_str())];
+            for resource in ["/api/shell", "/api/pty"] {
+                let list =
+                    native_at_deadline(app, endpoint, Method::GET, resource, &query, None, 1024 * 1024, deadline)
+                        .await?;
+                let list = list["data"].as_array().ok_or_else(native_error)?;
+                for row in list {
+                    if row["status"] == "running" && within(target, row["cwd"].as_str().ok_or_else(native_error)?) {
+                        return Err(conflict("A running terminal blocks deletion"));
+                    }
+                }
+            }
+            Ok::<(), Error>(())
+        });
+        futures_util::future::try_join_all(checks).await?;
+    }
+    let projects =
+        native_at_deadline(app, endpoint, Method::GET, "/api/project", &[], None, 4 * 1024 * 1024, deadline).await?;
+    let projects = projects.as_array().ok_or_else(native_error)?;
     let mut project_ids = HashSet::from([catalogue.project.as_str()]);
     for row in projects {
         project_ids.insert(row["id"].as_str().filter(|r| crate::opencode::valid_id(r)).ok_or_else(native_error)?);
     }
-    let mut remaining = 512usize;
+    let mut session_ids = Vec::new();
     for project in project_ids {
-        for row in sessions(app, project).await? {
-            remaining =
-                remaining.checked_sub(1).ok_or_else(|| conflict("Terminal inventory exceeds the deletion limit"))?;
-            if within(target, directory(&row)?) && !(allow_owned && project == catalogue.project) {
+        for row in sessions_at(app, endpoint, project, deadline).await? {
+            let dir = row["location"]["directory"].as_str().ok_or_else(native_error)?;
+            if within(target, dir) && !(allow_owned && project == catalogue.project) {
                 return Err(conflict("A session still owns the checkout"));
             }
-            let id = row_id(&row)?;
-            let ptys = native_get(app, &format!("/api/experimental/session/{id}/terminal"), 128 * 1024).await?;
+            session_ids.push(row_id(&row)?.to_owned());
+        }
+    }
+    for chunk in session_ids.chunks(16) {
+        let checks = chunk.iter().map(|id| async move {
+            let path = format!("/api/experimental/session/{id}/terminal");
+            let ptys = native_at_deadline(app, endpoint, Method::GET, &path, &[], None, 1024 * 1024, deadline).await?;
             for pty in ptys["data"].as_array().ok_or_else(native_error)? {
                 if pty["status"] == "running" && within(target, pty["cwd"].as_str().ok_or_else(native_error)?) {
                     return Err(conflict("A running persistent terminal blocks deletion"));
                 }
             }
-        }
+            Ok::<(), Error>(())
+        });
+        futures_util::future::try_join_all(checks).await?;
     }
     Ok(())
 }
@@ -728,7 +885,6 @@ async fn remove_owned(
     trace("read catalogue");
     principal.live()?;
     let mut cat = catalogue(&app, &w, true).await?;
-    git::guard_config(&cat.main).await?;
     let preliminary_root = {
         let target = cat.get(&slug)?;
         if target.locked || !target.removable {
@@ -842,25 +998,51 @@ async fn remove_owned(
     }
     no_blockers(&app, target, &cat, true).await?;
     let mut moved = Vec::new();
+    let mut final_endpoint = None;
+    let mut delete_uncertain = false;
     let removal = async {
         for members in &families {
             principal.live()?;
-            move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
+            let _ = move_members(&app, &w, &cat, Some(target), None, members, root, &principal).await?;
             moved.extend(members.iter());
         }
-        no_blockers(&app, target, &cat, false).await?;
-        let now = catalogue(&app, &w, false).await?;
+        let final_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let endpoint = app.native.acquire(final_deadline).await.map_err(|_| native_error())?;
+        no_blockers_at(&app, &endpoint, target, &cat, false, final_deadline).await?;
+        let remaining = final_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(native_error());
+        }
+        let now = tokio::time::timeout_at(
+            final_deadline,
+            super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), remaining),
+        )
+        .await
+        .map_err(|_| native_error())??;
         if now.get(&slug).ok() != Some(target) {
             return Err(conflict("Worktree changed before deletion"));
         }
-        clean(target).await?;
+        tokio::time::timeout_at(final_deadline, clean(target)).await.map_err(|_| native_error())??;
         principal.live()?;
         trace("issue native deletion");
-        delete_worktree(&app, &cat.project, &target.service_root).await
+        match delete_worktree_at(&app, &endpoint, &cat.project, &target.service_root, final_deadline).await {
+            Ok(()) => {
+                final_endpoint = Some(endpoint);
+                Ok(())
+            }
+            Err(DeleteError::ConfirmedNoDelete(err)) => Err(err),
+            Err(DeleteError::Uncertain(err)) => {
+                delete_uncertain = true;
+                Err(err)
+            }
+        }
     }
     .await;
     if let Err(err) = removal {
         if !moved.is_empty() {
+            if delete_uncertain {
+                return Err(conflict("Deletion unconfirmed; sessions remain at the main checkout"));
+            }
             let verified = catalogue(&app, &w, false)
                 .await
                 .map_err(|_| conflict("Deletion unconfirmed; sessions remain at the main checkout"))?;
@@ -891,7 +1073,9 @@ async fn remove_owned(
         }
         return Err(err);
     }
-    if target.registered().exists() || catalogue(&app, &w, false).await?.get(&slug).is_ok() {
+    let post =
+        super::inventory::catalogue_at(&app, &w, false, final_endpoint.as_ref(), Duration::from_secs(12)).await?;
+    if target.registered().exists() || post.get(&slug).is_ok() {
         return Err(native_error());
     }
     app.file_watches.lock().unwrap().forget_under(target.registered());
@@ -937,7 +1121,10 @@ fn evacuation_paths(cat: &Catalogue, target: &Tree, families: &[Vec<Value>]) -> 
         .collect()
 }
 async fn clean(target: &Tree) -> Result<(), Error> {
-    let status = git(target.registered(), &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
+    let filter_flags = crate::git::filter_disables(target.registered()).await?;
+    let mut args: Vec<&str> = filter_flags.iter().map(String::as_str).collect();
+    args.extend(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=dirty"]);
+    let status = git(target.registered(), &args).await?;
     if status.is_empty() { Ok(()) } else { Err(conflict("Worktree has uncommitted changes")) }
 }
 
@@ -955,6 +1142,212 @@ mod tests {
         assert!(family(&[child], "child").is_err());
         let cycle = [json!({"id":"root","parentID":"child"}), json!({"id":"child","parentID":"root"})];
         assert!(family(&cycle, "child").is_err());
+    }
+
+    #[tokio::test]
+    async fn no_blockers_handles_large_daemon_inventory_above_legacy_caps() {
+        use axum::{Router, extract::Request, response::IntoResponse, routing::any};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        #[derive(Clone)]
+        struct State {
+            target_dir: String,
+            mode: Arc<AtomicUsize>, // 0 = clean, 1 = session #550 owns target, 2 = session #550 has running pty in target
+        }
+
+        async fn fake_native(
+            axum::extract::State(st): axum::extract::State<State>,
+            req: Request,
+        ) -> axum::response::Response {
+            let path = req.uri().path();
+            match path {
+                "/api/debug/location" => {
+                    let mode = st.mode.load(Ordering::Relaxed);
+                    let rows: Vec<Value> = (0..110)
+                        .map(|i| {
+                            if mode == 4 && i == 109 {
+                                json!({"directory": format!("/remote/loc-{i}"), "workspaceID": "ws_remote"})
+                            } else {
+                                json!({"directory": format!("/other/loc-{i}")})
+                            }
+                        })
+                        .collect();
+                    Json(json!(rows)).into_response()
+                }
+                "/api/shell" | "/api/pty" => Json(json!({"data": []})).into_response(),
+                "/api/project" => {
+                    let rows: Vec<Value> = (0..40).map(|i| json!({"id": format!("prj_{i:02}")})).collect();
+                    Json(json!(rows)).into_response()
+                }
+                "/api/session" => {
+                    let query = req.uri().query().unwrap_or_default();
+                    let project = reqwest::Url::parse(&format!("http://localhost/?{query}"))
+                        .ok()
+                        .and_then(|u| u.query_pairs().find(|(k, _)| k == "project").map(|(_, v)| v.into_owned()))
+                        .unwrap_or_default();
+                    let idx: usize = project.strip_prefix("prj_").and_then(|s| s.parse().ok()).unwrap_or(0);
+                    // 40 projects * 14 sessions = 560 sessions (> 512 legacy cap).
+                    let mode = st.mode.load(Ordering::Relaxed);
+                    let data: Vec<Value> = (0..14)
+                        .map(|j| {
+                            let sid = format!("ses_{idx:02}_{j:02}");
+                            let dir = if matches!(mode, 1 | 3) && idx == 39 && j == 13 {
+                                st.target_dir.clone()
+                            } else {
+                                format!("/other/prj-{idx}")
+                            };
+                            let location = if mode == 3 && idx == 39 && j == 13 {
+                                json!({"directory": dir, "workspaceID": "ws_remote"})
+                            } else {
+                                json!({"directory": dir})
+                            };
+                            json!({
+                                "id": sid,
+                                "projectID": project,
+                                "location": location
+                            })
+                        })
+                        .collect();
+                    Json(json!({"data": data, "cursor": {"next": null}})).into_response()
+                }
+                p if p.starts_with("/api/experimental/session/") && p.ends_with("/terminal") => {
+                    let mode = st.mode.load(Ordering::Relaxed);
+                    if mode == 2 && p == "/api/experimental/session/ses_39_13/terminal" {
+                        Json(json!({"data": [{"id": "pty_block", "status": "running", "cwd": st.target_dir}]}))
+                            .into_response()
+                    } else {
+                        Json(json!({"data": []})).into_response()
+                    }
+                }
+                _ => Status::NOT_FOUND.into_response(),
+            }
+        }
+
+        let dir = crate::shared::test_dir("linked-m5-large-inventory");
+        let main_dir = dir.join("main");
+        let target_dir = dir.join("feature");
+        std::fs::create_dir_all(&main_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let main_dir = dunce::canonicalize(&main_dir).unwrap();
+        let target_dir = dunce::canonicalize(&target_dir).unwrap();
+        let target_str = target_dir.to_string_lossy().into_owned();
+
+        let mode = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native = crate::opencode::Native::test_connection(listener.local_addr().unwrap());
+        let st = State { target_dir: target_str.clone(), mode: Arc::clone(&mode) };
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(fake_native)).with_state(st)).await.unwrap()
+        });
+
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            dir.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            crate::files::watch::Watches::new(tx),
+            None,
+        ));
+        let target = Tree::test_stub(target_dir.clone(), main_dir.join(".git"), "worktree-feature", Some("feature"));
+        let cat =
+            Catalogue { project: "prj_00".into(), trees: vec![target.clone()], parent: dir.clone(), main: main_dir };
+
+        // 1. 110 locations, 40 projects, 560 sessions with no blockers -> Ok(())
+        no_blockers(&app, &target, &cat, false).await.unwrap();
+
+        // 2. Session #560 in project #39 owns target -> 409 Conflict
+        mode.store(1, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
+        // 3. Session #560 has a running persistent terminal in target -> 409 Conflict
+        mode.store(2, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
+        // 4. Session #560 in project #39 carries workspaceID AND directory in target -> still 409 Conflict
+        mode.store(3, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
+        // 5. Remote location with workspaceID in /api/debug/location -> fails closed (409 Conflict)
+        mode.store(4, Ordering::Relaxed);
+        let err = no_blockers(&app, &target, &cat, false).await.unwrap_err();
+        assert_eq!(err.0, Status::CONFLICT);
+
+        http.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn clean_never_runs_submodule_filter_driver() {
+        let _serial = crate::git::test_git_serial().await;
+        let dir = crate::shared::test_dir("linked-m4-submodule-clean");
+        let sub_origin = dir.join("sub-origin");
+        let parent = dir.join("parent");
+        let marker = dir.join("submodule-filter-ran");
+        std::fs::create_dir_all(&sub_origin).unwrap();
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let run_git = |cwd: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(cwd).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+
+        run_git(&sub_origin, &["init", "-q"]);
+        run_git(&sub_origin, &["config", "user.name", "test"]);
+        run_git(&sub_origin, &["config", "user.email", "test@example.com"]);
+        std::fs::write(sub_origin.join("data.txt"), "v1\n").unwrap();
+        std::fs::write(sub_origin.join(".gitattributes"), "*.txt filter=subf -text\n").unwrap();
+        run_git(&sub_origin, &["add", "."]);
+        run_git(&sub_origin, &["commit", "-q", "-m", "sub init"]);
+
+        run_git(&parent, &["init", "-q"]);
+        run_git(&parent, &["config", "user.name", "test"]);
+        run_git(&parent, &["config", "user.email", "test@example.com"]);
+        run_git(
+            &parent,
+            &["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub_origin.to_str().unwrap(), "sub"],
+        );
+        run_git(&parent, &["commit", "-q", "-m", "add submodule"]);
+
+        // Configure filter ONLY inside the submodule and modify its tracked file.
+        let sub_dir = parent.join("sub");
+        let marker_posix = marker.to_string_lossy().replace('\\', "/");
+        run_git(&sub_dir, &["config", "filter.subf.clean", &format!("sh -c 'touch \"{marker_posix}\" && cat'")]);
+        std::fs::write(sub_dir.join("data.txt"), "v2\n").unwrap();
+
+        let parent_canon = dunce::canonicalize(&parent).unwrap();
+        let target = Tree::test_stub(parent_canon.clone(), parent_canon.join(".git"), "root", Some("main"));
+        clean(&target).await.unwrap();
+        assert!(!marker.exists(), "clean() must never execute a submodule-local filter driver");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

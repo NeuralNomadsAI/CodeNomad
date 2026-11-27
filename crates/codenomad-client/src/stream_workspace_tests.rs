@@ -76,7 +76,10 @@ fn an_upstream_reconnect_invalidates_picker_catalogues_without_a_new_sse_connect
             )
             .await;
         }
-        assert!(matches!(input.try_recv().unwrap(), Input::Unavailable(7)));
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Unavailable(7, _)
+        ));
         assert!(matches!(
             input.try_recv().unwrap(),
             Input::Workspace(7, WorkspaceEvent::ComposerCataloguesChanged)
@@ -85,8 +88,14 @@ fn an_upstream_reconnect_invalidates_picker_catalogues_without_a_new_sse_connect
             input.try_recv().unwrap(),
             Input::Workspace(7, WorkspaceEvent::ProvidersChanged { workspace_id }) if workspace_id == "owner"
         ));
-        assert!(matches!(input.try_recv().unwrap(), Input::Available(7, _)));
-        assert!(matches!(input.try_recv().unwrap(), Input::Available(7, _)));
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Available(7, _, _)
+        ));
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Available(7, _, _)
+        ));
         assert!(input.is_empty());
     });
 }
@@ -364,7 +373,7 @@ fn workspace_events_cross_existing_http_stream_and_recovery_lane() {
                 },
             ]
         );
-        commands.send(Command::Close).await.unwrap();
+        assert!(commands.send(Command::Close).await.is_err());
         tokio::time::timeout(Duration::from_secs(2), task)
             .await
             .unwrap()

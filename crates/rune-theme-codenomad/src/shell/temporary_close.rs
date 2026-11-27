@@ -46,7 +46,7 @@ pub fn dialog<S: 'static>(
             .variant(rune_kit::ButtonVariant::Submit)
             .disabled(busy)
             .on_press_tx(move |s, tx| keep_press(s, tx))
-            .build(kit(layout::dark()))
+            .build(&kit(layout::dark()))
             .key(KEEP);
         if busy {
             btn
@@ -62,7 +62,7 @@ pub fn dialog<S: 'static>(
             .variant(rune_kit::ButtonVariant::Danger)
             .disabled(busy)
             .on_press_tx(move |s, tx| discard_press(s, tx))
-            .build(kit(layout::dark()))
+            .build(&kit(layout::dark()))
             .key(DISCARD);
         if busy {
             btn

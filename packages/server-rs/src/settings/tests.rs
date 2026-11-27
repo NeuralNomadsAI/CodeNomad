@@ -61,6 +61,15 @@ fn owners_follow_the_reference_documents() {
     assert_eq!(Value::Object(settings.owner(Kind::Config, "server")), json!({"opencodeBinary": "opencode2"}));
     assert!(std::fs::read_to_string(&settings.location.config).unwrap().contains("opencode2"));
     assert_eq!(settings.raw_config_owner("ui"), Err(Unreadable));
+    // M8: unreadable/corrupt config.yaml makes server_id() fail without overwriting config or sidecar.
+    let corrupt_dir = crate::shared::test_dir("settings-corrupt-server-id");
+    let corrupt_config = corrupt_dir.join("config.yaml");
+    std::fs::write(&corrupt_config, "server: [\n").unwrap();
+    let corrupt_settings = Settings::new(Location::resolve(corrupt_config.to_str().unwrap()));
+    assert!(corrupt_settings.server_id().is_err());
+    assert_eq!(std::fs::read_to_string(&corrupt_config).unwrap(), "server: [\n");
+    assert!(!corrupt_dir.join("config.yaml.server-id").exists());
+    let _ = std::fs::remove_dir_all(corrupt_dir);
     let _ = std::fs::remove_dir_all(dir);
 }
 

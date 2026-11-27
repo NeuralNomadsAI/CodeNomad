@@ -7,6 +7,7 @@ use crate::Phase;
 pub(crate) fn session_cleanup_protected(s: &State, project_id: &str, session_id: &str) -> bool {
     if !codenomad_client::history::valid_id(session_id)
         || session_id.starts_with("ses_cn_schedule_")
+        || s.command_receipts.has_for_session(session_id)
     {
         return true;
     }
@@ -36,7 +37,7 @@ pub(crate) fn session_cleanup_protected(s: &State, project_id: &str, session_id:
                 || !s.composer.draft.attachments.is_empty()
                 || s.composer.attachments_missing
                 || s.composer.unconfirmed_id().is_some()
-                || s.composer.command_unconfirmed.is_some())
+                || s.command_receipts.has_for_state(s))
         {
             return true;
         }
@@ -71,6 +72,9 @@ pub(crate) fn session_cleanup_protected(s: &State, project_id: &str, session_id:
         }
         if let Tab::Workspace(saved) = &entry.saved {
             if saved.active_session_id.as_deref() == Some(session_id) {
+                return true;
+            }
+            if ui.has_closed_unconfirmed_for(saved, session_id) {
                 return true;
             }
             if saved

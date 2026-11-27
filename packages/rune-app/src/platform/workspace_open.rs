@@ -126,6 +126,39 @@ pub fn windows_default_mode(path: &str) -> DefaultMode {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenError {
+    Unavailable,
+    CheckoutUnavailable,
+    WorktreeChanged,
+    Server(String),
+    Failed,
+}
+
+impl OpenError {
+    pub fn localized(&self, language: &str) -> String {
+        match self {
+            Self::Unavailable => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.nativeActionsUnavailable",
+                &[],
+            ),
+            Self::CheckoutUnavailable => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.checkoutUnavailable",
+                &[],
+            ),
+            Self::WorktreeChanged => rune_theme_codenomad::catalogue::format(
+                language,
+                "gitPanel.error.worktreeChanged",
+                &[],
+            ),
+            Self::Server(message) => message.clone(),
+            Self::Failed => rune_theme_codenomad::catalogue::format(language, "rune.failed", &[]),
+        }
+    }
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -139,8 +172,8 @@ pub async fn open(
     _: String,
     _: Target,
     _: std::sync::Weak<()>,
-) -> Result<(), String> {
-    Err("Native workspace actions are unavailable".into())
+) -> Result<(), OpenError> {
+    Err(OpenError::Unavailable)
 }
 
 #[cfg(not(windows))]

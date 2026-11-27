@@ -86,6 +86,10 @@ impl Principal {
 pub fn unauthorized() -> Error {
     error(Status::UNAUTHORIZED, "Unauthorized")
 }
+pub fn unauthorized_before_dispatch() -> Response {
+    (Status::UNAUTHORIZED, [("x-codenomad-before-dispatch", "1")], Json(json!({"error":"Unauthorized"})))
+        .into_response()
+}
 struct Session {
     born: Instant,
     seen: Instant,
@@ -414,7 +418,26 @@ fn wants_html(headers: &HeaderMap) -> bool {
     })
 }
 
-pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Result<Response, Error> {
+pub async fn admit(State(app): State<Shared>, req: Request, next: Next) -> Result<Response, Error> {
+    let no_store_account = remote::is_no_store_account_path(req.uri().path());
+    let no_store_integrations = crate::integrations::is_integrations_path(req.uri().path());
+    match admit_inner(app, req, next).await {
+        Ok(mut response) => {
+            if no_store_integrations || (no_store_account && !response.status().is_success()) {
+                response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            }
+            Ok(response)
+        }
+        Err(err) if no_store_integrations || no_store_account => {
+            let mut response = err.into_response();
+            response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok(response)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn admit_inner(app: Shared, mut req: Request, next: Next) -> Result<Response, Error> {
     let (key, device) = cookies(req.headers(), app.auth.cookie_name())?;
     let host = req.headers().get(header::HOST).and_then(|x| x.to_str().ok()).unwrap_or("");
     let selected = [format!("127.0.0.1:{}", app.port), format!("localhost:{}", app.port)];
@@ -461,7 +484,12 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }
     let path = req.uri().path().to_owned();
     if device.is_some() || req.headers().contains_key("x-codenomad-server-request") {
-        return Err(error(Status::UNAUTHORIZED, "This device is not paired"));
+        return Ok((
+            Status::UNAUTHORIZED,
+            [("x-codenomad-before-dispatch", "1")],
+            Json(json!({"error":"This device is not paired"})),
+        )
+            .into_response());
     }
     if app.devices.is_some() && path == "/api/remote-control/server-pair" {
         return Ok((
@@ -519,7 +547,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         {
             found("/login")
         } else if api {
-            unauthorized().into_response()
+            unauthorized_before_dispatch()
         } else {
             req.extensions_mut().insert(None::<Principal>);
             next.run(req).await

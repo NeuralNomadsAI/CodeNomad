@@ -1,5 +1,5 @@
 use super::*;
-use crate::opencode::admission::{Refusal, below_minimum, contract};
+use crate::opencode::admission::{Capabilities, Refusal, below_minimum, contract};
 use std::{fs, path::PathBuf, sync::Arc};
 
 #[test]
@@ -79,7 +79,10 @@ fn contract_document() -> Value {
 #[test]
 fn the_declared_contract_is_negotiated_like_the_reference() {
     let modern = contract_document();
-    assert_eq!(contract(&modern), Ok(()));
+    assert_eq!(contract(&modern), Ok(Capabilities { reload: false }));
+    let mut reloadable = modern.clone();
+    reloadable["paths"]["/api/location/reload"] = json!({"post": {}});
+    assert_eq!(contract(&reloadable), Ok(Capabilities { reload: true }));
     let mut retired = modern.clone();
     retired["components"]["schemas"]["Session.Inbox.User"]["properties"]["timeCreated"] = json!({});
     assert_eq!(contract(&retired), Err("canonical_api"));
@@ -286,5 +289,108 @@ async fn the_shared_connection_is_kept_rechecked_and_replaced_after_a_restart() 
     assert!(!native.current(&connected));
     assert!(native.current(&replaced));
     assert_eq!((replaced.pid, native.password()), (2, "secret".to_owned()));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn daemon_environment_honors_profile_vars_and_excludes_protected_keys() {
+    let dir = scratch("daemon-env");
+    let config = dir.join("config.yaml");
+    fs::write(
+        &config,
+        "server:\n  environmentVariables:\n    MY_CUSTOM_FLAG: enabled\n    NODE_EXTRA_CA_CERTS: /tmp/profile-ca.pem\n    OPENCODE_DB: /evil/db\n    XDG_STATE_HOME: /evil/state\n    CODENOMAD_PROFILE: prod\n    ELECTRON_RUN_AS_NODE: \"1\"\n    ELECTRON_NO_ASAR: \"1\"\n    CNRS_TEST_SECRET: nope\n",
+    )
+    .unwrap();
+    let env = launch::daemon_environment_from_config(Some(&config)).unwrap();
+    let get = |name: &str| {
+        env.iter()
+            .find(|(k, _)| if cfg!(windows) { k.eq_ignore_ascii_case(name) } else { k == name })
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(get("MY_CUSTOM_FLAG"), Some("enabled"));
+    if std::env::var("NODE_EXTRA_CA_CERTS").is_err() {
+        assert_eq!(get("NODE_EXTRA_CA_CERTS"), Some("/tmp/profile-ca.pem"));
+    }
+    assert_eq!(get("OPENCODE_DB"), None);
+    assert_eq!(get("XDG_STATE_HOME"), None);
+    assert_eq!(get("CODENOMAD_PROFILE"), None);
+    assert_eq!(get("ELECTRON_RUN_AS_NODE"), None);
+    assert_eq!(get("ELECTRON_NO_ASAR"), None);
+    assert_eq!(get("CNRS_TEST_SECRET"), None);
+
+    // Invalid variable names are rejected like TS `serviceStartupEnvironment`.
+    let bad = dir.join("bad-config.yaml");
+    fs::write(&bad, "server:\n  environmentVariables:\n    \"BAD=KEY\": nope\n").unwrap();
+    assert_eq!(
+        launch::daemon_environment_from_config(Some(&bad)).unwrap_err(),
+        "Invalid OpenCode service environment variable name: BAD=KEY"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn restart_stops_running_daemon_and_passes_profile_env_on_start() {
+    let dir = scratch("restart-env");
+    let (url, _) = fake_daemon("secret", 77).await;
+    let config = dir.join("config.yaml");
+    fs::write(
+        &config,
+        "server:\n  environmentVariables:\n    CN_PROFILE_ENV_TEST: from-profile\n    OPENCODE_DB: blocked\n",
+    )
+    .unwrap();
+    fs::write(dir.join("config").join("service.json"), r#"{"password":"secret"}"#).unwrap();
+    fs::write(dir.join("password.txt"), "secret\n").unwrap();
+    fs::write(dir.join("status.txt"), format!("{url}\n")).unwrap();
+    fs::write(dir.join("start.txt"), format!("{url}\n")).unwrap();
+    #[cfg(windows)]
+    let cli = {
+        let script = dir.join("restart-opencode.cmd");
+        fs::write(
+            &script,
+            "@echo off\r\n\
+             if \"%1 %2\"==\"service stop\" ((echo stop)>>\"%~dp0stop.log\" & (echo stopped)>\"%~dp0status.txt\" & exit /b 0)\r\n\
+             if \"%1 %2\"==\"service status\" (type \"%~dp0status.txt\" & exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"service get password\" (type \"%~dp0password.txt\" & exit /b 0)\r\n\
+             if \"%1 %2\"==\"service start\" ((echo %CN_PROFILE_ENV_TEST%^|%OPENCODE_DB%)>\"%~dp0start-env.txt\" & copy /y \"%~dp0start.txt\" \"%~dp0status.txt\" >nul & type \"%~dp0start.txt\" & exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"debug paths state\" (echo %~dp0state& exit /b 0)\r\n\
+             if \"%1 %2 %3\"==\"debug paths config\" (echo %~dp0config& exit /b 0)\r\n\
+             exit /b 3\r\n",
+        )
+        .unwrap();
+        script.to_string_lossy().into_owned()
+    };
+    #[cfg(not(windows))]
+    let cli = {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("restart-opencode");
+        let d = dir.display();
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncase \"$*\" in\n\
+                 'service stop') echo stop >> '{d}/stop.log'; echo stopped > '{d}/status.txt';;\n\
+                 'service status') cat '{d}/status.txt';;\n\
+                 'service get password') cat '{d}/password.txt';;\n\
+                 'service start') printf '%s|%s\\n' \"$CN_PROFILE_ENV_TEST\" \"$OPENCODE_DB\" > '{d}/start-env.txt'; cp '{d}/start.txt' '{d}/status.txt'; cat '{d}/start.txt';;\n\
+                 'debug paths state') echo '{d}/state';;\n\
+                 'debug paths config') echo '{d}/config';;\n\
+                 *) exit 3;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script.to_string_lossy().into_owned()
+    };
+    let lifecycle = Lifecycle::with_config(cli.clone(), client(), Some(config.clone()));
+    let restarted = lifecycle.restart(soon()).await.unwrap();
+    assert_eq!(restarted.pid, 77);
+    assert_eq!(fs::read_to_string(dir.join("stop.log")).unwrap().lines().count(), 1);
+    assert_eq!(fs::read_to_string(dir.join("start-env.txt")).unwrap().trim(), "from-profile|");
+
+    // Invalid profile environment must fail BEFORE calling `service stop`.
+    fs::write(&config, "server:\n  environmentVariables:\n    \"BAD=KEY\": nope\n").unwrap();
+    let err = lifecycle.restart(soon()).await.unwrap_err();
+    assert!(err.contains("Invalid OpenCode service environment variable name"));
+    assert_eq!(fs::read_to_string(dir.join("stop.log")).unwrap().lines().count(), 1);
     fs::remove_dir_all(dir).unwrap();
 }

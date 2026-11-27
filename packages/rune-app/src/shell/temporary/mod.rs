@@ -454,7 +454,7 @@ fn choose_keep(s: &mut State, tx: &mut Tx) {
     };
     s.temporary.dialog = None;
     let Some(info) = workspace::temporary_tab_info(s, &tab_key) else {
-        workspace::close_ordinary(s, &tab_key, tx);
+        let _ = workspace::close_after_keep(s, &tab_key, tx);
         return;
     };
     let _ = start_keep(s, info, true, tx);
@@ -732,7 +732,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         pending.server_id.as_deref(),
                     );
                     if pending.close_after {
-                        workspace::close_ordinary(s, &pending.tab_key, tx);
+                        let _ = workspace::close_after_keep(s, &pending.tab_key, tx);
                     }
                 }
                 Err(TemporaryError::Unauthorized) => {
@@ -747,7 +747,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         pending.server_id.as_deref(),
                     );
                     if pending.close_after {
-                        workspace::close_ordinary(s, &pending.tab_key, tx);
+                        let _ = workspace::close_after_keep(s, &pending.tab_key, tx);
                     }
                 }
                 Err(err) if err.is_not_found() => {

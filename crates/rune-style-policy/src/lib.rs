@@ -621,6 +621,7 @@ mod tests {
             "unselectable",
             "live_region",
             "position_in_set",
+            "list_start",
             "shortcut_hint",
             "role",
             "set_role",

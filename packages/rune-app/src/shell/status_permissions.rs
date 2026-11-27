@@ -130,6 +130,13 @@ impl Permissions {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_bind(&mut self, backend: Backend) {
+        self.backend = Some(backend);
+        self.online = true;
+        self.visible = true;
+    }
+
     pub(crate) fn settling(&self) -> bool {
         self.writing()
             || self

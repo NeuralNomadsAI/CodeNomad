@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test"
 import Fastify, { type FastifyInstance } from "fastify"
 import { OpenCode } from "@opencode/client"
 import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
+import { markDispatchHookAwareFetch, type RuntimeFetchDispatchHooks } from "../../opencode/compatibility/transport"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { sessionEnvironment } from "../../workspaces/session-environment"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../api-types"
@@ -71,8 +72,19 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
   const assertCurrent = () => { if (!control.current) throw new Error("Stale connection") }
-  const fetcher: typeof fetch = (input, init) => { assertCurrent(); return fetch(input, init) }
-  const client = OpenCode.make({ baseUrl: endpoint.url, fetch: fetcher })
+  const fetcher = markDispatchHookAwareFetch(async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+    _media?: unknown,
+    dispatchHooks?: RuntimeFetchDispatchHooks,
+  ) => {
+    assertCurrent()
+    await dispatchHooks?.beforeFetch?.()
+    assertCurrent()
+    dispatchHooks?.onDispatch?.()
+    return fetch(input, init)
+  })
+  const client = OpenCode.make({ baseUrl: endpoint.url, fetch: fetcher as typeof fetch })
   const workspace = { id: "w", path: "/repo" } as never
   const manager: InstanceProxyWorkspaceManager = {
     get: () => workspace,

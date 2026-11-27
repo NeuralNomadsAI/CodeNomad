@@ -30,8 +30,17 @@ pub fn message_id() -> crate::history::Result<String> {
     Ok(id)
 }
 
-pub(crate) fn encode(input: &Prompt) -> crate::history::Result<Vec<u8>> {
-    encode_limited(input, MAX_BODY_BYTES)
+#[derive(Debug)]
+pub(crate) struct EncodeError(String);
+impl std::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for EncodeError {}
+
+pub(crate) fn encode(input: &Prompt) -> Result<Vec<u8>, EncodeError> {
+    encode_limited(input, MAX_BODY_BYTES).map_err(|error| EncodeError(error.to_string()))
 }
 
 fn encode_limited(input: &Prompt, limit: usize) -> crate::history::Result<Vec<u8>> {
@@ -78,7 +87,7 @@ pub struct Prompt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume: Option<bool>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Delivery {
     Queue,
@@ -129,14 +138,14 @@ pub struct Acknowledgement {
 pub enum PromptError {
     Rejected,
     Unconfirmed,
-    AuthenticationRequired,
+    AuthenticationRequired { before_dispatch: bool },
 }
 impl std::fmt::Display for PromptError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Rejected => f.write_str("prompt was rejected"),
             Self::Unconfirmed => f.write_str("prompt receipt is unconfirmed"),
-            Self::AuthenticationRequired => f.write_str("prompt requires authentication"),
+            Self::AuthenticationRequired { .. } => f.write_str("prompt requires authentication"),
         }
     }
 }

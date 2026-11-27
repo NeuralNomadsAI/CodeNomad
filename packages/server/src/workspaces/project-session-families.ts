@@ -117,30 +117,51 @@ export async function moveProjectSessionFamily(params: {
   targetDirectory: string
   resolveExactDirectory?: (directory: string) => Promise<string | undefined>
   validateTarget?: () => Promise<boolean>
-  runMutation?: <T>(directories: string[], operation: () => Promise<T>) => Promise<T>
+  runMutation?: <T>(directories: string[], operation: () => Promise<T>, sessionIds?: string[]) => Promise<T>
 }): Promise<SessionFamilyMoveResult> {
   return withProject(params.client, params.projectLocation, async (context) => {
-    if (params.validateTarget && !await params.validateTarget()) {
-      throw new ProjectSessionError("Worktree changed before the session move", 409)
-    }
-    const inventory = await listCompleteProjectSessions(context.client, context.project.id)
-    const families = resolveSessionFamilies(inventory)
-    const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
-    if (!family) throw new ProjectSessionError("Session not found in project", 404)
-    assertWorkspaceFamily(family[1], context.workspaceID)
-    const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
-    const move = async () => {
-      await assertInactive(context.client, family[1])
-      for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+    const familySignature = (members: SessionInfo[]) =>
+      members
+        .map((member) => `${member.id}\0${member.location.directory}\0${readLocationRef(member.location).workspaceID ?? ""}`)
+        .sort()
+        .join("\n")
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       if (params.validateTarget && !await params.validateTarget()) {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
-      await moveWithRollback(context, family[1], target)
-      return { rootSessionId: family[0], sessionIds: family[1].map(({ id }) => id) }
+      const inventory = await listCompleteProjectSessions(context.client, context.project.id)
+      const families = resolveSessionFamilies(inventory)
+      const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
+      if (!family) throw new ProjectSessionError("Session not found in project", 404)
+      assertWorkspaceFamily(family[1], context.workspaceID)
+      const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
+      const sessionIds = family[1].map(({ id }) => id)
+      const expectedSignature = familySignature(family[1])
+      const move = async (): Promise<{ retry: true } | SessionFamilyMoveResult> => {
+        await assertInactive(context.client, family[1])
+        const freshInventory = await listCompleteProjectSessions(context.client, context.project.id)
+        const freshFamilies = resolveSessionFamilies(freshInventory)
+        const freshFamily = Array.from(freshFamilies.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
+        if (!freshFamily) throw new ProjectSessionError("Session not found in project", 404)
+        if (familySignature(freshFamily[1]) !== expectedSignature) {
+          return { retry: true }
+        }
+        assertWorkspaceFamily(freshFamily[1], context.workspaceID)
+        for (const session of freshFamily[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+        if (params.validateTarget && !await params.validateTarget()) {
+          throw new ProjectSessionError("Worktree changed before the session move", 409)
+        }
+        await assertInactive(context.client, freshFamily[1])
+        await moveWithRollback(context, freshFamily[1], target)
+        return { rootSessionId: freshFamily[0], sessionIds }
+      }
+      const outcome = params.runMutation
+        ? await params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move, sessionIds)
+        : await move()
+      if (!("retry" in outcome)) return outcome
     }
-    return params.runMutation
-      ? params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move)
-      : move()
+    throw new ProjectSessionError("Session family changed before the session move", 409)
   })
 }
 
@@ -305,6 +326,7 @@ async function moveWithRollback(context: ProjectContext, family: SessionInfo[], 
     const refreshed = await verifyInventory(context, moved, new Map(moved.map((id) => [id, target])))
     const refreshedFamily = resolveSessionFamilies(refreshed).get(family[0]!.id)
     if (!refreshedFamily
+      || refreshedFamily.length !== family.length
       || !family.every(({ id }) => refreshedFamily.some((session) => session.id === id))
       || !refreshedFamily.every((session) => sameLocation(session.location, target))) {
       throw new ProjectSessionError("Session family changed during the move", 409)

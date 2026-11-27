@@ -316,6 +316,12 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
             Some(edge),
             "reconnecting after PageFailed must not wipe page_retry for {edge:?}"
         );
+        assert!(
+            !older(&mut state),
+            "offline detached window must wait for stream reconnect before retrying {edge:?}"
+        );
+        out.try_send(Event::AgentHint(true)).unwrap();
+        assert!(poll_chat(&mut state, 8));
         assert!(older(&mut state));
         let Command::Page(retried_edge, _) = cmd_rx.try_recv().unwrap() else {
             panic!("expected retried Command::Page");
@@ -368,6 +374,56 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
     assert!(!state.history_error);
     assert_eq!(state.transcript_display.timeline.page_retry, None);
 
+    // When ReaderSync arrives with older still valid, the failed pagination retry direction is preserved.
+    let mut state = init();
+    let (mut reader, lane) = Reader::open();
+    reader.install(false);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::Oldest));
+    let _ = cmd_rx.try_recv().unwrap();
+    lane.connection.store(1, SeqCst);
+    out.try_send(Event::ConnectionLost).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
+    lane.events
+        .try_send((
+            1,
+            1,
+            Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: vec![],
+                    older: Some(serde_json::json!({"kind":"before","messageID":"m1"})),
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 1,
+            },
+        ))
+        .unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.reader.as_ref().unwrap().resume_pending);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
+    assert!(older(&mut state));
+    let Command::Page(retried_edge, _) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected retried Command::Page");
+    };
+    assert_eq!(retried_edge, HistoryEdge::Oldest);
+
     // refresh_after_message_action cancels pending paging so a later disconnect cannot resurrect history_error.
     let mut state = init();
     let (mut reader, _lane) = Reader::open();
@@ -403,6 +459,119 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
     assert!(poll_chat(&mut state, 8));
     assert!(!state.history_error);
     assert_eq!(state.transcript_display.timeline.page_retry, None);
+
+    // Terminal incoming channel closure preserves page_retry direction and history_error.
+    let mut state = init();
+    let (mut reader, _lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::After));
+    let _ = cmd_rx.try_recv().unwrap();
+    out.try_send(Event::ConnectionLost).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
+    drop(out);
+    assert!(poll_chat(&mut state, 8));
+    assert!(matches!(state.phase, Phase::Failed));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
+
+    // Direct terminal closure while a page is still in flight preserves its retry edge,
+    // as does Event::Failed followed by channel closure.
+    for send_failed in [false, true] {
+        let mut state = init();
+        let (mut reader, _lane) = Reader::open();
+        reader.install(true);
+        state.reader = Some(reader);
+        state.phase = Phase::Ready;
+        state.history_detached = true;
+        state.can_older = true;
+        let (cmd_tx, cmd_rx) = bounded(4);
+        let (out, incoming) = bounded(4);
+        state.commands = Some(cmd_tx);
+        state.incoming = Some(incoming);
+        assert!(request_page(&mut state, HistoryEdge::Oldest));
+        let _ = cmd_rx.try_recv().unwrap();
+        if send_failed {
+            out.try_send(Event::Failed).unwrap();
+        }
+        drop(out);
+        assert!(poll_chat(&mut state, 8));
+        assert!(matches!(state.phase, Phase::Failed));
+        assert!(state.history_error);
+        assert_eq!(
+            state.transcript_display.timeline.page_retry,
+            Some(HistoryEdge::Oldest)
+        );
+    }
+
+    // Reader content-lane Event::Failed preserves the in-flight retry direction instead of wiping it.
+    let mut state = init();
+    let (mut reader, lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (_out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::After));
+    let _ = cmd_rx.try_recv().unwrap();
+    lane.events.try_send((0, 0, Event::Failed)).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.paging);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
+
+    // WorkspaceEvent::Stopped also preserves an in-flight page retry edge and history_error.
+    let mut state = init();
+    let (mut reader, _lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::Oldest));
+    let _ = cmd_rx.try_recv().unwrap();
+    out.try_send(Event::Workspace(
+        codenomad_client::transport::WorkspaceEvent::Stopped {
+            workspace_id: "workspace".into(),
+            deleted: false,
+            temporary_retained: false,
+        },
+    ))
+    .unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(matches!(state.phase, Phase::Failed));
+    assert!(!state.paging);
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::Oldest)
+    );
 }
 
 #[test]

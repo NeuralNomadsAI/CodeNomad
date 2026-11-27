@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "安装集成",
   "integrations.install.confirm": "安装 {name}（{scope}）？代码将在 OpenCode 中以你的权限运行。",
   "integrations.install.error": "未确认。请刷新以检查。",
+  "settings.nav.integrations": "集成",
 }

@@ -14,7 +14,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -23,6 +23,7 @@ pub(super) enum Turn {
     Process,
     Next,
     Stop,
+    AuthenticationExpired,
 }
 
 pub(super) struct Reader {
@@ -51,6 +52,16 @@ pub(super) struct Reader {
     pub(super) busy: bool,
     pub(super) terminal: bool,
     pub(super) fence: u64,
+    pub(super) inbox: Vec<crate::inbox::QueuedPrompt>,
+    pub(super) inbox_dirty: bool,
+    pub(super) inbox_supported: bool,
+    pub(super) inbox_published: bool,
+    pub(super) inbox_retries: u8,
+    pub(super) inbox_overlap_repairs: u8,
+    pub(super) inbox_version: u64,
+    pub(super) inbox_sync_epoch: u64,
+    pub(super) inbox_quiet: Instant,
+    inbox_flight: Option<(u64, u64, u64, Sender<()>)>,
 }
 
 impl Reader {
@@ -84,16 +95,62 @@ impl Reader {
             busy: false,
             terminal: false,
             fence: 0,
+            inbox: Vec::new(),
+            inbox_dirty: true,
+            inbox_supported: true,
+            inbox_published: false,
+            inbox_retries: 0,
+            inbox_overlap_repairs: 0,
+            inbox_version: 0,
+            inbox_sync_epoch: 0,
+            inbox_quiet: Instant::now(),
+            inbox_flight: None,
         }
+    }
+
+    pub(super) fn invalidate_inbox_flight(&mut self) {
+        self.inbox_version = self.inbox_version.wrapping_add(1);
+        if let Some((_, _, _, cancel)) = self.inbox_flight.take() {
+            cancel.close();
+        }
+    }
+
+    pub(super) fn schedule_inbox_sync(&mut self, delay: Duration) {
+        self.invalidate_inbox_flight();
+        self.inbox_published = false;
+        self.inbox_dirty = self.active_reader;
+        self.inbox_supported = true;
+        self.inbox_retries = 0;
+        self.inbox_quiet = Instant::now() + delay;
+    }
+
+    pub(super) fn inbox_deadline(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
+        (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
+            && self.inbox_dirty
+            && self.inbox_supported
+            && opened
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
+            && wire.inbox.applied_caught_up()
+            && self.inbox_flight.is_none())
+        .then_some(self.inbox_quiet)
     }
 
     pub(super) fn demand(&mut self, reading: Option<&ReadingLane>) {
         if let Some(reading) = reading {
             let want = reading.demand.current();
-            if want.generation != self.generation {
+            let closed = reading.demand.is_closed();
+            if want.generation != self.generation || (closed && self.active_reader) {
                 self.generation = want.generation;
-                self.active_reader = want.target.is_some();
-                self.anchored = want.target;
+                self.active_reader = !closed && want.target.is_some();
+                self.anchored = if closed { None } else { want.target };
                 self.historical = false;
                 self.resident = Vec::new();
                 self.known = HashSet::new();
@@ -113,6 +170,14 @@ impl Reader {
                 self.dirty = self.active_reader;
                 self.parked = false;
                 self.quiet = Instant::now();
+                self.inbox.clear();
+                self.invalidate_inbox_flight();
+                self.inbox_published = false;
+                self.inbox_supported = true;
+                self.inbox_dirty = self.active_reader;
+                self.inbox_retries = 0;
+                self.inbox_overlap_repairs = 0;
+                self.inbox_quiet = Instant::now();
             }
         }
     }
@@ -145,6 +210,25 @@ impl Reader {
         self.frozen_tools.clear();
         self.execution_settlement = 0;
         self.execution_ended_at = None;
+        self.schedule_inbox_sync(Duration::ZERO);
+    }
+
+    pub(super) fn next_sync_at(
+        &self,
+        opened: bool,
+        wire: &stream::State,
+        reading: Option<&ReadingLane>,
+    ) -> Option<Instant> {
+        (self.active_reader
+            && reading.is_none_or(|reading| !reading.demand.is_closed())
+            && self.dirty
+            && !self.parked
+            && opened
+            && wire.upstream.load(SeqCst)
+            && !wire.is_stream_closed()
+            && !wire.is_placement_changed()
+            && !self.historical)
+            .then_some(self.quiet)
     }
 
     pub(super) async fn sync(
@@ -161,13 +245,9 @@ impl Reader {
             out,
             wake,
         } = *lane;
-        if self.active_reader
-            && self.dirty
-            && !self.parked
-            && opened
-            && wire.upstream.load(SeqCst)
-            && !self.historical
-            && Instant::now() >= self.quiet
+        if self
+            .next_sync_at(opened, wire, reading)
+            .is_some_and(|quiet| Instant::now() >= quiet)
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
@@ -180,7 +260,15 @@ impl Reader {
                     backend.restore(self.first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(backend, reading, self.generation, wire, snapshot).await
+            let Some(snapshot) = read_page(
+                backend,
+                reading,
+                self.generation,
+                wire,
+                Fence::Live(stamp),
+                snapshot,
+            )
+            .await
             else {
                 return Ok(Turn::Next);
             };
@@ -409,6 +497,31 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
+                    let mut removed = Vec::new();
+                    self.inbox.retain(|item| {
+                        if self.known.contains(&item.id) {
+                            removed.push(item.id.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    if !removed.is_empty() {
+                        self.schedule_inbox_sync(Duration::from_millis(100));
+                        for id in removed {
+                            if !reader_event(
+                                reading,
+                                self.generation,
+                                out,
+                                wake,
+                                Event::InboxDelta(crate::inbox::InboxDelta::Removed(id)),
+                            )
+                            .await
+                            {
+                                return Ok(Turn::Stop);
+                            }
+                        }
+                    }
                     if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
                     }
@@ -420,8 +533,8 @@ impl Reader {
                     return Ok(Turn::Next);
                 }
                 Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
+                    expire_reading(reading, wire, out).await;
+                    return Ok(Turn::AuthenticationExpired);
                 }
                 Err(PageFailure::Read(error)) => {
                     if cfg!(target_arch = "wasm32")
@@ -431,7 +544,7 @@ impl Reader {
                             Ok(true)
                         )
                     {
-                        wire.cancelled.store(true, SeqCst);
+                        wire.cancel();
                         publish(out, wake, Event::WorkspaceMissing).await;
                         return Ok(Turn::Stop);
                     }
@@ -439,6 +552,227 @@ impl Reader {
                     self.dirty = false;
                     self.parked = true;
                     reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                }
+            }
+        }
+        Ok(Turn::Process)
+    }
+
+    pub(super) fn maybe_start_inbox(
+        &mut self,
+        epoch: u64,
+        backend: &Backend,
+        reading: Option<&ReadingLane>,
+        wire: &Arc<stream::State>,
+        opened: bool,
+        inbox_tx: &Sender<InboxReply>,
+    ) {
+        let Some(deadline) = self.inbox_deadline(opened, wire, reading) else {
+            return;
+        };
+        if Instant::now() < deadline {
+            return;
+        }
+        let generation = self.generation;
+        let seq = self.inbox_version;
+        let sync_epoch = self.inbox_sync_epoch;
+        let wire_inbox = wire.inbox.capture();
+        let (cancel, cancelled) = crate::bounded(1);
+        self.inbox_flight = Some((epoch, generation, seq, cancel));
+        let backend = backend.clone();
+        let wire = wire.clone();
+        let inbox_tx = inbox_tx.clone();
+        crate::runtime::spawn(async move {
+            if wire.is_placement_changed() || cancelled.is_closed() {
+                return;
+            }
+            let outcome = if wire.is_stream_closed() {
+                Some(Err(InboxReadError::StreamClosed))
+            } else {
+                let read = async {
+                    match backend.session_inbox().await {
+                        Err(error)
+                            if crate::http::authentication_expired(&error)
+                                && matches!(backend.authentication_status().await, Ok(false)) =>
+                        {
+                            Err(InboxReadError::AuthenticationExpired)
+                        }
+                        Ok(items) => Ok(items),
+                        Err(_) => Err(InboxReadError::Failed),
+                    }
+                };
+                futures_lite::future::race(
+                    async {
+                        let _ = cancelled.recv().await;
+                        None
+                    },
+                    futures_lite::future::race(
+                        async {
+                            wire.placement_changed().await;
+                            None
+                        },
+                        futures_lite::future::race(
+                            async {
+                                wire.stream_closed().await;
+                                Some(Err(InboxReadError::StreamClosed))
+                            },
+                            async { Some(read.await) },
+                        ),
+                    ),
+                )
+                .await
+            };
+            if let Some(result) = outcome {
+                let _ = inbox_tx
+                    .send(InboxReply {
+                        epoch,
+                        generation,
+                        seq,
+                        sync_epoch,
+                        wire_inbox,
+                        result,
+                    })
+                    .await;
+            }
+        });
+    }
+
+    pub(super) async fn finish_inbox_read(
+        &mut self,
+        lane: &Lane<'_>,
+        epoch: u64,
+        reply: InboxReply,
+    ) -> history::Result<Turn> {
+        let InboxReply {
+            epoch: read_epoch,
+            generation,
+            seq,
+            sync_epoch,
+            wire_inbox,
+            result,
+        } = reply;
+        if read_epoch != epoch || generation != self.generation || seq != self.inbox_version {
+            return Ok(Turn::Process);
+        }
+        self.inbox_flight = None;
+        let Lane {
+            reading,
+            wire,
+            out,
+            wake,
+            ..
+        } = *lane;
+        if !matches!(
+            result,
+            Err(InboxReadError::AuthenticationExpired | InboxReadError::StreamClosed)
+        ) && !wire.inbox.is_admissible(wire_inbox)
+        {
+            self.inbox_dirty = self.active_reader;
+            self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+            return Ok(Turn::Process);
+        }
+        match result {
+            Ok(Some(mut items)) => {
+                let disappeared = self
+                    .inbox
+                    .iter()
+                    .any(|old| !items.iter().any(|next| next.id == old.id));
+                let overlaps_resident = items.iter().any(|item| self.known.contains(&item.id));
+                items.retain(|item| !self.known.contains(&item.id));
+                self.inbox_dirty = false;
+                self.inbox_retries = 0;
+                let mut need_history = disappeared;
+                if overlaps_resident {
+                    if self.inbox_overlap_repairs < 2 {
+                        self.inbox_overlap_repairs += 1;
+                        need_history = true;
+                    }
+                } else {
+                    self.inbox_overlap_repairs = 0;
+                }
+                if need_history && !self.historical && !self.parked {
+                    self.dirty = true;
+                    self.quiet = Instant::now();
+                }
+                if !self.inbox_published || self.inbox != items {
+                    let previous = std::mem::replace(&mut self.inbox, items);
+                    self.inbox_published = true;
+                    let fence = wire.inbox.fence(wire_inbox, sync_epoch);
+                    if !reader_event(
+                        reading,
+                        self.generation,
+                        out,
+                        wake,
+                        Event::Inbox {
+                            items: self.inbox.clone(),
+                            authoritative: true,
+                            fence: Some(fence),
+                        },
+                    )
+                    .await
+                    {
+                        return Ok(Turn::Stop);
+                    }
+                    if !wire.inbox.is_admissible(wire_inbox) {
+                        self.inbox = previous;
+                        self.inbox_published = false;
+                        self.inbox_dirty = self.active_reader;
+                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                    }
+                }
+            }
+            Ok(None) => {
+                self.inbox_dirty = false;
+                self.inbox_supported = false;
+                self.inbox_retries = 0;
+                self.inbox_overlap_repairs = 0;
+                if !self.inbox_published || !self.inbox.is_empty() {
+                    let previous = std::mem::take(&mut self.inbox);
+                    self.inbox_published = true;
+                    let fence = wire.inbox.fence(wire_inbox, sync_epoch);
+                    if !reader_event(
+                        reading,
+                        self.generation,
+                        out,
+                        wake,
+                        Event::Inbox {
+                            items: Vec::new(),
+                            authoritative: true,
+                            fence: Some(fence),
+                        },
+                    )
+                    .await
+                    {
+                        return Ok(Turn::Stop);
+                    }
+                    if !wire.inbox.is_admissible(wire_inbox) {
+                        self.inbox = previous;
+                        self.inbox_supported = true;
+                        self.inbox_published = false;
+                        self.inbox_dirty = self.active_reader;
+                        self.inbox_quiet = Instant::now() + Duration::from_millis(100);
+                    }
+                }
+            }
+            Err(InboxReadError::StreamClosed) => {
+                return Ok(Turn::Next);
+            }
+            Err(InboxReadError::AuthenticationExpired) => {
+                expire_reading(reading, wire, out).await;
+                return Ok(Turn::AuthenticationExpired);
+            }
+            Err(InboxReadError::Failed) => {
+                self.inbox_retries = self.inbox_retries.saturating_add(1);
+                if self.inbox_retries <= 3 {
+                    self.inbox_quiet =
+                        Instant::now() + Duration::from_millis(200 * u64::from(self.inbox_retries));
+                } else {
+                    self.inbox_dirty = false;
+                    self.inbox_published = false;
+                    if !reader_event(reading, self.generation, out, wake, Event::InboxFailed).await
+                    {
+                        return Ok(Turn::Stop);
+                    }
                 }
             }
         }
@@ -489,6 +823,7 @@ pub struct ReadingLane {
     pub demand: demand::Observer,
     pub events: Sender<(u64, u64, Event)>,
     pub connection: Arc<AtomicU64>,
+    pub revoked: Arc<AtomicBool>,
 }
 
 impl ReadingLane {
@@ -499,10 +834,40 @@ impl ReadingLane {
     }
 }
 
+pub(super) struct InboxReply {
+    pub(super) epoch: u64,
+    pub(super) generation: u64,
+    pub(super) seq: u64,
+    pub(super) sync_epoch: u64,
+    pub(super) wire_inbox: crate::inbox::InboxStamp,
+    pub(super) result: Result<Option<Vec<crate::inbox::QueuedPrompt>>, InboxReadError>,
+}
+
+pub(super) enum InboxReadError {
+    AuthenticationExpired,
+    StreamClosed,
+    Failed,
+}
+
 enum PageFailure {
     AuthenticationExpired,
     StreamClosed,
     Read(history::Error),
+}
+
+#[derive(Clone, Copy)]
+enum Fence {
+    Live(u64),
+    History(u64),
+}
+
+impl Fence {
+    fn valid(self, wire: &stream::State) -> bool {
+        match self {
+            Self::Live(stamp) => wire.valid(stamp),
+            Self::History(revision) => wire.history_current(revision),
+        }
+    }
 }
 
 async fn read_page(
@@ -510,10 +875,30 @@ async fn read_page(
     reading: Option<&ReadingLane>,
     generation: u64,
     wire: &stream::State,
+    fence: Fence,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
+    read_fenced(backend, reading, generation, wire, fence, page).await
+}
+
+async fn read_fenced<T>(
+    backend: &Backend,
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    wire: &stream::State,
+    fence: Fence,
+    read: impl std::future::Future<Output = history::Result<T>>,
+) -> Option<Result<T, PageFailure>> {
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
     let page = async {
-        match page.await {
+        match read.await {
             Err(error)
                 if crate::http::authentication_expired(&error)
                     && matches!(backend.authentication_status().await, Ok(false)) =>
@@ -542,20 +927,79 @@ async fn read_page(
         content,
         futures_lite::future::race(
             async {
-                wire.placement_changed().await;
-                None
-            },
-            async {
                 wire.stream_closed().await;
                 Some(Err(PageFailure::StreamClosed))
+            },
+            async {
+                futures_lite::future::race(wire.placement_changed(), async {
+                    while fence.valid(wire) {
+                        crate::runtime::sleep(Duration::from_millis(25)).await;
+                    }
+                })
+                .await;
+                if wire.is_placement_changed() || wire.placement_closed() {
+                    None
+                } else if !wire.alive.load(SeqCst) {
+                    Some(Err(PageFailure::StreamClosed))
+                } else {
+                    None
+                }
             },
         ),
     )
     .await;
-    result.filter(|_| {
-        !wire.is_placement_changed()
-            && reading.is_none_or(|reading| reading.demand.current().generation == generation)
-    })
+    if wire.is_placement_changed()
+        || reading.is_some_and(|reading| reading.demand.current().generation != generation)
+    {
+        return None;
+    }
+    if wire.is_stream_closed() {
+        return Some(Err(PageFailure::StreamClosed));
+    }
+    match result {
+        Some(Err(PageFailure::Read(_))) if !wire.alive.load(SeqCst) => {
+            Some(Err(PageFailure::StreamClosed))
+        }
+        Some(Err(PageFailure::Read(_))) if !fence.valid(wire) => None,
+        other => other,
+    }
+}
+
+pub(super) async fn reader_inbox_delta(
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    delta: crate::inbox::InboxDelta,
+) -> bool {
+    let Some(reading) = reading else {
+        return publish(out, wake, Event::InboxDelta(delta)).await;
+    };
+    let connection = reading.connection.load(SeqCst);
+    let delivered = futures_lite::future::race(
+        async {
+            reading.demand.changed_after(generation).await;
+            None
+        },
+        async {
+            Some(
+                reading
+                    .events
+                    .send((generation, connection, Event::InboxDelta(delta.clone())))
+                    .await
+                    .is_ok(),
+            )
+        },
+    )
+    .await;
+    match delivered {
+        Some(true) => {
+            wake();
+            true
+        }
+        Some(false) => false,
+        None => publish(out, wake, Event::InboxDelta(delta)).await,
+    }
 }
 
 pub(super) async fn reader_event(
@@ -697,15 +1141,304 @@ mod diagnostic_tests {
         rt.block_on(async {
             let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
             let wire = stream::State::default();
-            let mut fut =
-                std::pin::pin!(read_page(&backend, None, 0, &wire, std::future::pending()));
+            wire.alive.store(true, std::sync::atomic::Ordering::SeqCst);
+            wire.upstream
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut fut = std::pin::pin!(read_page(
+                &backend,
+                None,
+                0,
+                &wire,
+                super::Fence::Live(0),
+                std::future::pending(),
+            ));
             assert!(futures_lite::future::poll_once(&mut fut).await.is_none());
             wire.close_stream();
             assert!(matches!(
                 futures_lite::future::poll_once(&mut fut).await,
                 Some(Some(Err(PageFailure::StreamClosed)))
             ));
+
+            // Exercise the HTTP-error branch directly: wire is still open when polling starts,
+            // closes during the HTTP poll, and the HTTP future returns Err(...) so read_page
+            // must reclassify the read error as StreamClosed rather than Read.
+            let closing_wire = std::sync::Arc::new(stream::State::default());
+            closing_wire
+                .alive
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            closing_wire
+                .upstream
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let close_on_poll = std::sync::Arc::clone(&closing_wire);
+            let outcome = read_page(
+                &backend,
+                None,
+                0,
+                &closing_wire,
+                super::Fence::Live(0),
+                std::future::poll_fn(move |_| {
+                    close_on_poll.close_stream();
+                    std::task::Poll::Ready(Err("transient read failure".into()))
+                }),
+            )
+            .await;
+            assert!(matches!(outcome, Some(Err(PageFailure::StreamClosed))));
         });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wire_inbox_fence_rejects_in_flight_and_blocked_publication_invalidation() {
+        use super::{InboxReply, Lane, Reader, ReadingLane, demand};
+        use crate::{
+            backend::Backend, bounded, inbox::QueuedPrompt, prompt::Delivery, stream,
+            transport::Event,
+        };
+        use std::{sync::Arc, time::Duration};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let (out_tx, _out_rx) = bounded(4);
+            let (_in_tx, in_rx) = bounded(4);
+            let (_demand_tx, demand_rx) = demand::open();
+            let (reader_tx, reader_rx) = bounded(1);
+            let reading = ReadingLane {
+                demand: demand_rx,
+                events: reader_tx.clone(),
+                connection: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                revoked: Default::default(),
+            };
+            let wake: crate::Wake = Arc::new(|| {});
+            let wire = Arc::new(stream::State::default());
+            let mut reader = Reader::new();
+            let lane = Lane {
+                backend: &backend,
+                reading: Some(&reading),
+                rx: &in_rx,
+                wire: &wire,
+                out: &out_tx,
+                wake: &wake,
+            };
+            let stale_item = QueuedPrompt {
+                id: "q-stale".into(),
+                delivery: Delivery::Queue,
+                text: "stale".into(),
+                parts: vec![],
+                created: Some(1),
+                editable: true,
+            };
+
+            // 1. Reader seq still matches, but SSE ingress already bumped wire.inbox -> rejected.
+            let captured = wire.inbox.capture();
+            let mark1 = wire.inbox.record_ingress();
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        sync_epoch: 0,
+                        wire_inbox: captured,
+                        result: Ok(Some(vec![stale_item.clone()])),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(reader_rx.is_empty());
+            assert!(reader.inbox_dirty && !reader.inbox_published);
+
+            // 1b. Capturing an unapplied ingress watermark must also be rejected before recovery catches up.
+            let captured_unapplied = wire.inbox.capture();
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        sync_epoch: 0,
+                        wire_inbox: captured_unapplied,
+                        result: Ok(Some(vec![stale_item.clone()])),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(
+                reader_rx.is_empty(),
+                "snapshot must not be admitted while applied watermark lags ingress"
+            );
+            wire.inbox.advance_applied(mark1);
+
+            // 2. Reader channel is full while finish_inbox_read awaits send; SSE bumps wire.inbox
+            // before the slot drains -> emitted Event::Inbox carries an invalidated fence and reader reschedules.
+            reader_tx.send((0, 0, Event::Done)).await.unwrap();
+            let captured2 = wire.inbox.capture();
+            let wire_for_bump = wire.clone();
+            let rx_for_drain = reader_rx.clone();
+            let unblocker = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                wire_for_bump.inbox.record_ingress();
+                let first = rx_for_drain.recv().await.unwrap();
+                assert!(matches!(first.2, Event::Done));
+                rx_for_drain.recv().await.unwrap()
+            });
+            let _ = reader
+                .finish_inbox_read(
+                    &lane,
+                    1,
+                    InboxReply {
+                        epoch: 1,
+                        generation: reader.generation,
+                        seq: reader.inbox_version,
+                        sync_epoch: 0,
+                        wire_inbox: captured2,
+                        result: Ok(Some(vec![stale_item])),
+                    },
+                )
+                .await
+                .unwrap();
+            let (_, _, queued_event) = tokio::time::timeout(Duration::from_secs(2), unblocker)
+                .await
+                .expect("blocked inbox publication unblocked")
+                .unwrap();
+            match queued_event {
+                Event::Inbox {
+                    authoritative: true,
+                    fence: Some(fence),
+                    ..
+                } => assert!(
+                    !fence.is_valid(),
+                    "snapshot invalidated while blocked on full channel must report invalid fence"
+                ),
+                other => panic!("expected fenced authoritative Event::Inbox, got {other:?}"),
+            }
+            assert!(
+                reader.inbox_dirty && !reader.inbox_published && reader.inbox.is_empty(),
+                "invalidated publication must restore previous cache and schedule a replacement inbox GET"
+            );
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn select_input_bounds_rx_burst_to_eight_before_ready_inbox_reply() {
+        use super::super::{
+            Input,
+            transport::{MAX_RX_BURST_BEFORE_INBOX, select_input},
+        };
+        use super::InboxReply;
+        use crate::bounded;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (rx_tx, rx) = bounded(32);
+            let (inbox_tx, inbox_rx) = bounded(4);
+            for i in 0..16u64 {
+                rx_tx.send(Input::Hint(1, i + 1, 0)).await.unwrap();
+            }
+            inbox_tx
+                .send(InboxReply {
+                    epoch: 1,
+                    generation: 0,
+                    seq: 0,
+                    sync_epoch: 0,
+                    wire_inbox: crate::inbox::InboxStamp::default(),
+                    result: Ok(Some(Vec::new())),
+                })
+                .await
+                .unwrap();
+
+            let mut rx_burst = 0u8;
+            let mut rx_before_inbox = 0u8;
+            loop {
+                let (input, reply) =
+                    select_input(&rx, &inbox_rx, &mut rx_burst, None, 0, true, None).await;
+                if reply.is_some() {
+                    break;
+                }
+                assert!(input.is_some());
+                rx_before_inbox += 1;
+                assert!(
+                    rx_before_inbox <= MAX_RX_BURST_BEFORE_INBOX,
+                    "rx burst exceeded hard bound"
+                );
+            }
+            assert_eq!(rx_before_inbox, MAX_RX_BURST_BEFORE_INBOX);
+            assert_eq!(rx_burst, 0);
+            assert!(!rx.is_empty(), "remaining rx inputs must still be queued");
+        });
+    }
+
+    #[test]
+    fn dirty_history_and_applied_watermark_control_inbox_deadline() {
+        let mut reader = super::Reader::new();
+        reader.active_reader = true;
+        reader.historical = false;
+        reader.dirty = true;
+        reader.parked = false;
+        reader.inbox_dirty = true;
+        let wire = crate::stream::State::default();
+        wire.upstream
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        // Dirty unparked history must NOT block independent inbox scheduling.
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "dirty unparked history must not stall inbox refresh"
+        );
+        // Parked dirty history also allows inbox refresh.
+        reader.parked = true;
+        assert!(
+            reader.next_sync_at(true, &wire, None).is_none(),
+            "parked history reader must not schedule history sync"
+        );
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "parked dirty history reader must still allow scheduled inbox refresh"
+        );
+        // Retry invalidates an already-valid published fence even with zero intervening SSE ingress.
+        let valid_before_retry = wire.inbox.fence(wire.inbox.capture(), 0);
+        assert!(valid_before_retry.is_valid());
+        wire.inbox.invalidate_published();
+        assert!(
+            !valid_before_retry.is_valid(),
+            "Retry invalidation must revoke a valid published fence without SSE ingress"
+        );
+        // Unapplied inbox ingress blocks starting a new GET until recovery drains the watermark.
+        let mark1 = wire.inbox.record_ingress();
+        let mark2 = wire.inbox.record_ingress();
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must wait while applied watermark lags ingress"
+        );
+        // Retry invalidates published state without jumping applied past buffered SSE frames.
+        wire.inbox.invalidate_published();
+        assert!(
+            !wire.inbox.applied_caught_up(),
+            "Retry invalidation must not mark buffered SSE frames as applied"
+        );
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must remain blocked until buffered SSE frames are applied"
+        );
+        wire.inbox.advance_applied(mark1);
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_none(),
+            "inbox_deadline must stay blocked until the latest buffered mark is applied"
+        );
+        wire.inbox.advance_applied(mark2);
+        assert!(
+            reader.inbox_deadline(true, &wire, None).is_some(),
+            "inbox_deadline must resume once applied watermark catches up"
+        );
     }
 }
 
