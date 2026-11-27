@@ -64,8 +64,15 @@ enum CompileError {
     DeferToServer,
 }
 
+#[derive(Clone)]
+enum CachedPattern {
+    Compiled(Arc<Pattern>),
+    Deferred { cannot_match_empty: bool },
+    InvalidSyntax,
+}
+
 struct PatternCacheState {
-    entries: HashMap<String, Result<Arc<Pattern>, CompileError>>,
+    entries: HashMap<String, CachedPattern>,
     bytes: usize,
 }
 
@@ -86,9 +93,11 @@ fn match_cache_digest(src: &str, value: &str) -> (u64, u64) {
     (digest_with(s1), digest_with(s2))
 }
 
-fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
+fn compile_cached(src: &str) -> CachedPattern {
     if src.len() > MAX_PATTERN_BYTES {
-        return Err(CompileError::DeferToServer);
+        return CachedPattern::Deferred {
+            cannot_match_empty: false,
+        };
     }
     let cache = PATTERN_CACHE.get_or_init(|| {
         Mutex::new(PatternCacheState {
@@ -101,7 +110,7 @@ fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
     {
         return entry.clone();
     }
-    let compiled = Pattern::compile(src).map(Arc::new);
+    let compiled = Pattern::compile_cached_entry(src);
     if let Ok(mut state) = cache.lock() {
         if !state.entries.contains_key(src) {
             if state.entries.len() >= MAX_CACHE_ENTRIES
@@ -243,9 +252,7 @@ pub fn valid_string_constraints(field: &Value) -> bool {
     match field.get("pattern") {
         None | Some(Value::Null) => true,
         Some(Value::String(raw)) if raw.is_empty() => true,
-        Some(Value::String(raw)) => {
-            !matches!(compile_cached(raw), Err(CompileError::InvalidSyntax))
-        }
+        Some(Value::String(raw)) => !matches!(compile_cached(raw), CachedPattern::InvalidSyntax),
         _ => false,
     }
 }
@@ -268,14 +275,19 @@ pub fn matches_string_constraints_budgeted(
         let src = raw.as_str().ok_or(())?;
         if !src.is_empty() {
             match compile_cached(src) {
-                Ok(pat) => {
+                CachedPattern::Compiled(pat) => {
                     return Ok(match match_cached(src, &pat, value, budget) {
                         MatchOutcome::Matched if deferred => MatchOutcome::Deferred,
                         other => other,
                     });
                 }
-                Err(CompileError::DeferToServer) => return Ok(MatchOutcome::Deferred),
-                Err(CompileError::InvalidSyntax) => return Err(()),
+                CachedPattern::Deferred { cannot_match_empty } => {
+                    if value.is_empty() && cannot_match_empty {
+                        return Ok(MatchOutcome::NoMatch);
+                    }
+                    return Ok(MatchOutcome::Deferred);
+                }
+                CachedPattern::InvalidSyntax => return Err(()),
             }
         }
     }
@@ -492,6 +504,18 @@ fn resolve_local_civil_to_utc_secs<F>(parsed: ParsedLocalDateTime, local_clock: 
 where
     F: Fn(i64) -> Option<(i32, i32, i32, i32, i32, i32)>,
 {
+    resolve_local_civil_to_utc_secs_inner(parsed, &local_clock, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_local_civil_to_utc_secs_inner<F>(
+    parsed: ParsedLocalDateTime,
+    local_clock: &F,
+    allow_fallback: bool,
+) -> Option<i64>
+where
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32, i32)>,
+{
     let target_secs = civil_to_unix_secs(
         parsed.year,
         parsed.month,
@@ -513,9 +537,9 @@ where
     );
     // Sample 36 hours on either side so every timezone (UTC-12..UTC+14) brackets any DST transition.
     if let (Some(off_before), Some(off_mid), Some(off_after)) = (
-        local_offset_secs(target_secs - 129_600, &local_clock),
-        local_offset_secs(target_secs, &local_clock),
-        local_offset_secs(target_secs + 129_600, &local_clock),
+        local_offset_secs(target_secs - 129_600, local_clock),
+        local_offset_secs(target_secs, local_clock),
+        local_offset_secs(target_secs + 129_600, local_clock),
     ) {
         let mut candidates = [
             target_secs - off_before,
@@ -531,8 +555,11 @@ where
         // Spring-forward DST gap: shift forward using the pre-transition offset, matching ECMAScript Date.
         return Some(target_secs - off_before);
     }
+    if !allow_fallback {
+        return None;
+    }
     // For extreme years outside the host OS `local_clock` range (e.g. negative years or > 30827),
-    // resolve the local timezone offset using ECMAScript's equivalent Gregorian year (2000..=2027).
+    // resolve the local timezone offset once using ECMAScript's equivalent Gregorian year (2000..=2027).
     let eq_year = equivalent_gregorian_year(parsed.year);
     let eq_parsed = ParsedLocalDateTime {
         year: eq_year,
@@ -546,7 +573,7 @@ where
         eq_parsed.minute,
         eq_parsed.second,
     );
-    let eq_utc = resolve_local_civil_to_utc_secs(eq_parsed, local_clock)?;
+    let eq_utc = resolve_local_civil_to_utc_secs_inner(eq_parsed, local_clock, false)?;
     let offset = eq_target_secs - eq_utc;
     Some(target_secs - offset)
 }
@@ -1598,7 +1625,7 @@ impl Parser {
         Some(u)
     }
 
-    fn parse(mut self) -> Result<(Expr, usize, bool), CompileError> {
+    fn parse(mut self) -> Result<(Expr, usize, bool, bool), CompileError> {
         let mut expr = self.parse_alt()?;
         if self.pos != self.units.len() {
             return Err(CompileError::InvalidSyntax);
@@ -1613,10 +1640,7 @@ impl Parser {
             self.has_named_captures,
             &mut self.deferred,
         )?;
-        if self.deferred {
-            return Err(CompileError::DeferToServer);
-        }
-        Ok((expr, self.captures, self.needs_backtrack))
+        Ok((expr, self.captures, self.needs_backtrack, self.deferred))
     }
 
     fn parse_alt(&mut self) -> Result<Expr, CompileError> {
@@ -1749,7 +1773,7 @@ impl Parser {
         }
         if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
             self.deferred = true;
-            return Ok(Some((0, Some(0))));
+            return Ok(Some((min, max)));
         }
         Ok(Some((min, max)))
     }
@@ -1837,7 +1861,12 @@ impl Parser {
                                         self.has_named_captures = true;
                                         self.captures += 1;
                                         let idx = self.captures;
-                                        self.named_captures.entry(name).or_insert(idx);
+                                        if self.named_captures.insert(name, idx).is_some() {
+                                            // ES2025 allows duplicate capture group names in
+                                            // disjoint alternatives; defer to OpenCode instead of
+                                            // binding `\k<name>` to only one capture slot.
+                                            self.deferred = true;
+                                        }
                                         GroupKind::Capture(idx)
                                     }
                                     CaptureNameKind::Defer => {
@@ -2826,16 +2855,63 @@ fn run_vm(
     Some(None)
 }
 
-impl Pattern {
-    fn compile(src: &str) -> Result<Self, CompileError> {
-        if src.len() > MAX_PATTERN_BYTES {
-            return Err(CompileError::DeferToServer);
+/// Sound O(AST) lower-bound check: returns `true` only when every match of `expr` MUST consume
+/// at least one UTF-16 code unit, so an empty string `""` can never match.
+fn ast_cannot_match_empty(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Any | Expr::Class { .. } => true,
+        Expr::Empty
+        | Expr::AssertStart
+        | Expr::AssertEnd
+        | Expr::AssertWord(_)
+        | Expr::Backref(_)
+        | Expr::NamedBackref(_)
+        | Expr::Lookaround { .. } => false,
+        Expr::Group(inner) | Expr::Capture { inner, .. } | Expr::Flags { inner, .. } => {
+            ast_cannot_match_empty(inner)
         }
-        let (expr, captures, needs_backtrack) = Parser::new(src).parse()?;
+        Expr::Concat(items) => items.iter().any(ast_cannot_match_empty),
+        Expr::Alt(branches) => !branches.is_empty() && branches.iter().all(ast_cannot_match_empty),
+        Expr::Repeat { inner, min, .. } => *min > 0 && ast_cannot_match_empty(inner),
+    }
+}
+
+impl Pattern {
+    fn compile_cached_entry(src: &str) -> CachedPattern {
+        if src.len() > MAX_PATTERN_BYTES {
+            return CachedPattern::Deferred {
+                cannot_match_empty: false,
+            };
+        }
+        let (expr, captures, needs_backtrack, deferred) = match Parser::new(src).parse() {
+            Ok(parsed) => parsed,
+            Err(CompileError::InvalidSyntax) => return CachedPattern::InvalidSyntax,
+            Err(CompileError::DeferToServer) => {
+                return CachedPattern::Deferred {
+                    cannot_match_empty: false,
+                };
+            }
+        };
+        let cannot_match_empty = ast_cannot_match_empty(&expr);
+        if deferred {
+            return CachedPattern::Deferred { cannot_match_empty };
+        }
+        match Self::compile_parsed(&expr, captures, needs_backtrack) {
+            Ok(pat) => CachedPattern::Compiled(Arc::new(pat)),
+            Err(CompileError::InvalidSyntax) => CachedPattern::InvalidSyntax,
+            Err(CompileError::DeferToServer) => CachedPattern::Deferred { cannot_match_empty },
+        }
+    }
+
+    fn compile_parsed(
+        expr: &Expr,
+        captures: usize,
+        needs_backtrack: bool,
+    ) -> Result<Self, CompileError> {
         if !needs_backtrack {
             let mut insts = Vec::new();
             let mut work = 0usize;
-            compile_expr(&expr, &mut insts, &mut work)?;
+            compile_expr(expr, &mut insts, &mut work)?;
             push_inst(&mut insts, Inst::Match)?;
             return Ok(Self::Nfa(insts));
         }
@@ -2846,7 +2922,7 @@ impl Pattern {
         let mut zero_slots = 0usize;
         let mut work = 0usize;
         compile_vm_expr(
-            &expr,
+            expr,
             VmFlags::default(),
             &mut insts,
             &mut zero_slots,

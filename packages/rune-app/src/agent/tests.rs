@@ -669,7 +669,12 @@ fn native_questions_keep_typed_defaults_conditions_and_validation() {
         fields: vec![json!({"key":"auth","type":"external","url":"https://example.invalid"})],
         ..form.clone()
     };
-    assert!(!agent_forms::supported(&external));
+    assert!(agent_forms::supported(&external));
+    let bad_external = Form {
+        fields: vec![json!({"key":"auth","type":"external","url":"javascript:alert(1)"})],
+        ..form.clone()
+    };
+    assert!(!agent_forms::supported(&bad_external));
     let poison = Form {
         fields: vec![json!({"key":"__proto__","type":"string"})],
         ..form

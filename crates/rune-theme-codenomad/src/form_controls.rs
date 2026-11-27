@@ -498,6 +498,44 @@ pub fn field_container(
     container.children(children)
 }
 
+/// Hard ceiling on form editor text (in UTF-16 code units) enforced at the input boundary for
+/// paste, IME, web replacement, and layout. Kept slightly above OpenCode's 20,000-unit protocol
+/// validation ceiling so oversized pastes still trigger `TooLong { max: 20_000 }` instead of
+/// silently truncating into a submittable answer.
+pub const MAX_FORM_EDITOR_UTF16: usize = 20_480;
+
+fn utf16_prefix_byte_len(s: &str, max_units: usize) -> usize {
+    let mut units = 0usize;
+    for (idx, ch) in s.char_indices() {
+        let len = ch.len_utf16();
+        if units + len > max_units {
+            return idx;
+        }
+        units += len;
+    }
+    s.len()
+}
+
+pub fn clamp_form_text_edit(edit: &mut rune::TextEdit) -> bool {
+    if edit.text.len() <= MAX_FORM_EDITOR_UTF16 {
+        return false;
+    }
+    let end = utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16);
+    if end == edit.text.len() {
+        return false;
+    }
+    let focused = edit.focused;
+    let anchor = edit.anchor.min(end);
+    let focus = edit.focus.min(end);
+    let mut bounded = rune::TextEdit::new(&edit.text[..end]);
+    bounded.focused = focused;
+    bounded.anchor = anchor;
+    bounded.focus = focus;
+    bounded.sync_invariants();
+    *edit = bounded;
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn form_textarea<S: 'static>(
     key: &str,
@@ -618,11 +656,18 @@ pub fn form_textarea<S: 'static>(
         .metrics
         .text_area
         .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(&k));
-    let mut unfocused_edit;
-    let shown_edit = if disabled && edit.focused {
-        unfocused_edit = edit.clone();
-        unfocused_edit.focused = false;
-        &unfocused_edit
+    let mut bounded_edit;
+    let needs_clamp = edit.text.len() > MAX_FORM_EDITOR_UTF16
+        && utf16_prefix_byte_len(&edit.text, MAX_FORM_EDITOR_UTF16) < edit.text.len();
+    let shown_edit = if (disabled && edit.focused) || needs_clamp {
+        bounded_edit = edit.clone();
+        if disabled {
+            bounded_edit.focused = false;
+        }
+        if needs_clamp {
+            clamp_form_text_edit(&mut bounded_edit);
+        }
+        &bounded_edit
     } else {
         edit
     };
@@ -644,7 +689,37 @@ pub fn form_textarea<S: 'static>(
         input = input.description(desc);
     }
     if !disabled {
-        input = input.on_edit(on_edit);
+        let access = std::rc::Rc::new(on_edit);
+        let edit_access = std::rc::Rc::clone(&access);
+        let paste_access = std::rc::Rc::clone(&access);
+        let change_access = std::rc::Rc::clone(&access);
+        input = input
+            .on_edit(move |s: &mut S| edit_access(s))
+            .on_input_paste(move |s: &mut S, content, _| {
+                let raw = content.text();
+                if raw.is_empty() {
+                    return false;
+                }
+                let edit = paste_access(s);
+                clamp_form_text_edit(edit);
+                let (sel_start, sel_end) = edit.range();
+                let kept_utf16 = edit.text[..sel_start].encode_utf16().count()
+                    + edit.text[sel_end..].encode_utf16().count();
+                let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
+                let prefix_len = utf16_prefix_byte_len(raw, remaining);
+                if prefix_len == raw.len() {
+                    return false;
+                }
+                if prefix_len > 0 {
+                    edit.paste(&raw[..prefix_len]);
+                } else if sel_start != sel_end {
+                    edit.insert("");
+                }
+                true
+            })
+            .on_input_change(move |s: &mut S, _| {
+                clamp_form_text_edit(change_access(s));
+            });
     }
     let viewport = rune::auto_grow(input, 1, 1);
     let mut box_el = col()

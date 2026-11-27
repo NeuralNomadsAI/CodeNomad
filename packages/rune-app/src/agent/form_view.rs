@@ -280,7 +280,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
     )> = eval
         .active
         .iter()
-        .filter(|(f, _)| f["hidden"] != true)
+        .filter(|(f, _)| f["type"] == "external" || f["hidden"] != true)
         .map(|(f, res)| (*f, res))
         .collect();
     let display_title = form_display_title(form);
@@ -730,6 +730,101 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     shared_required,
                     children,
                 ));
+            }
+            Some("external") => {
+                if let Some(url) = agent_forms::external_url(field) {
+                    let req_note = Some(t("toolCall.question.status.required"));
+                    let link_label = t("formRequest.openExternal");
+                    let link_accessible = format!("{field_name} · {link_label}");
+                    let ack_label = t("alertDialog.actions.confirm");
+                    let ack_note = join_notes(&[
+                        Some(short_caption.as_str()),
+                        short_desc.as_deref(),
+                        req_note,
+                        error_text.as_deref(),
+                    ]);
+                    let container_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
+                    let link_id = identity.clone();
+                    let link_scope = scope.clone();
+                    let link_url = url.clone();
+                    let ack_id = identity.clone();
+                    let mut children = Vec::new();
+                    children.push(form_controls::clear_choice_button(
+                        &agent_forms::external_link_key(key),
+                        link_label,
+                        &link_accessible,
+                        locked,
+                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                            let Some(seq) = s
+                                .agent
+                                .as_mut()
+                                .filter(|a| !a.forms_mutating())
+                                .and_then(|a| a.drafts.get_mut(&link_id))
+                                .map(|d| {
+                                    d.external_link_seq = d.external_link_seq.wrapping_add(1);
+                                    d.external_link_failed = false;
+                                    d.external_link_seq
+                                })
+                            else {
+                                return;
+                            };
+                            let cb_id = link_id.clone();
+                            let cb_scope = link_scope.clone();
+                            if tx
+                                .open_url_then(&link_url, move |s: &mut State, result, _| {
+                                    if s.current_scope(&cb_scope)
+                                        && let Some(d) =
+                                            s.agent.as_mut().and_then(|a| a.drafts.get_mut(&cb_id))
+                                        && d.external_link_seq == seq
+                                    {
+                                        d.external_link_failed = result.is_err();
+                                    }
+                                })
+                                .is_err()
+                                && let Some(d) =
+                                    s.agent.as_mut().and_then(|a| a.drafts.get_mut(&link_id))
+                                && d.external_link_seq == seq
+                            {
+                                d.external_link_failed = true;
+                            }
+                        }),
+                    ));
+                    if d.external_link_failed {
+                        children.push(form_controls::field_error(
+                            &format!("{error_key}:link"),
+                            t("toastHistory.openLinkError"),
+                        ));
+                    }
+                    children.push(form_controls::checkbox_option(
+                        &agent_forms::external_ack_key(key),
+                        ack_label,
+                        None,
+                        ack_note.as_deref(),
+                        d.external_acknowledged,
+                        locked,
+                        is_invalid,
+                        crate::screen::action(&scope, move |s: &mut State| {
+                            if let Some(d) = s
+                                .agent
+                                .as_mut()
+                                .filter(|a| !a.forms_mutating())
+                                .and_then(|a| a.drafts.get_mut(&ack_id))
+                            {
+                                d.toggle_external_acknowledged();
+                            }
+                        }),
+                    ));
+                    if let Some(msg) = &error_text {
+                        children.push(form_controls::field_error(&error_key, msg));
+                    }
+                    body = body.child(form_controls::field_container(
+                        &container_key,
+                        &field_name,
+                        container_desc.as_deref(),
+                        true,
+                        children,
+                    ));
+                }
             }
             _ => {}
         }

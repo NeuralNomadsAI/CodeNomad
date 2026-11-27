@@ -7874,3 +7874,366 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         );
     });
 }
+
+#[test]
+fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_dup_named() {
+    crate::strings::with_locale("en", || {
+        // 1. Failing native clock lookup must return None without stack overflow.
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "2026-01-15T12:00",
+                |_| None,
+            ),
+            None,
+            "failed clock lookup must not recurse indefinitely"
+        );
+
+        // 2. Oversized paste and IME commits are clamped at the input boundary (retaining
+        // TooLong > 20_000 while keeping text, undo history, and layout bounded).
+        let paste_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r29-paste".into(),
+            title: "Paste bound".into(),
+            fields: vec![json!({
+                "key": "note",
+                "title": "Note",
+                "type": "string",
+                "required": true
+            })],
+        };
+        let (paste_state, _prx) = state_with_form(paste_form.clone());
+        let mut paste_rt = Runtime::new(
+            paste_state,
+            render_form,
+            (420.0, 620.0),
+            Env::new(false, 1.0),
+        );
+        paste_rt.frame(0.0);
+        let input_path = find_node(&paste_rt.accessibility_json(), "field-note")
+            .and_then(|n| n["children"].as_array())
+            .and_then(|kids| kids.first())
+            .and_then(|n| n["id"].as_str())
+            .map(str::to_string);
+        let _ = input_path;
+        let (ix, iy) = paste_rt.find("field-note").unwrap();
+        paste_rt.pointer_down(ix, iy);
+        paste_rt.pointer_up(ix, iy);
+        paste_rt.frame(0.0);
+        paste_rt.paste("a".repeat(2_000_000));
+        paste_rt.frame(0.0);
+        let after_paste_units = paste_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r29-paste".into(), "note".into()))
+            .unwrap()
+            .edit
+            .text
+            .encode_utf16()
+            .count();
+        assert_eq!(
+            after_paste_units,
+            rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "oversized paste must clamp at MAX_FORM_EDITOR_UTF16"
+        );
+        assert!(
+            has_state(
+                find_node(&paste_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "clamped oversized paste (>20_000) must still fail validation and disable Answer"
+        );
+        paste_rt.ime(rune::Ime::Commit("b".repeat(50_000)));
+        paste_rt.frame(0.0);
+        let after_ime_units = paste_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r29-paste".into(), "note".into()))
+            .unwrap()
+            .edit
+            .text
+            .encode_utf16()
+            .count();
+        assert!(
+            after_ime_units <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "oversized IME commit must clamp at MAX_FORM_EDITOR_UTF16"
+        );
+        paste_rt
+            .state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r29-paste".into(), "note".into()))
+            .unwrap()
+            .edit
+            .undo();
+        let after_undo_units = paste_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r29-paste".into(), "note".into()))
+            .unwrap()
+            .edit
+            .text
+            .encode_utf16()
+            .count();
+        assert!(
+            after_undo_units <= rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16,
+            "undo history must never retain unbounded pasted/committed text"
+        );
+
+        // 3. Valid `type: "external"` field exposes safe HTTP(S) link and explicit acknowledgement
+        // checkbox producing `{"setup": true}`, rejects unsafe schemes, and resets on URL change.
+        let ext_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r29-ext".into(),
+            title: "External setup".into(),
+            fields: vec![json!({
+                "key": "setup",
+                "title": "External setup",
+                "type": "external",
+                "url": "https://example.com/setup"
+            })],
+        };
+        assert!(agent_forms::supported(&ext_form));
+        let (ext_state, _erx) = state_with_form(ext_form.clone());
+        let mut ext_rt = Runtime::new(ext_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        ext_rt.frame(0.0);
+        assert!(
+            has_state(
+                find_node(&ext_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "unacknowledged external field must disable Answer"
+        );
+        let link_key = agent_forms::external_link_key("setup");
+        let ack_key = agent_forms::external_ack_key("setup");
+        let (lx, ly) = ext_rt
+            .find(&link_key)
+            .expect("external link button rendered");
+        ext_rt.pointer_down(lx, ly);
+        ext_rt.pointer_up(lx, ly);
+        ext_rt.frame(0.0);
+        assert_eq!(
+            ext_rt.take_url_requests(),
+            vec!["https://example.com/setup".to_string()],
+            "clicking external link button must open validated HTTPS URL"
+        );
+        assert!(
+            has_state(
+                find_node(&ext_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "opening link alone must not silently acknowledge external field"
+        );
+        let (ax, ay) = ext_rt
+            .find(&ack_key)
+            .expect("external acknowledgement checkbox rendered");
+        ext_rt.pointer_down(ax, ay);
+        ext_rt.pointer_up(ax, ay);
+        ext_rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&ext_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "checking explicit external acknowledgement must enable Answer"
+        );
+        assert_eq!(
+            agent_forms::answer(&ext_form, &ext_rt.state.agent.as_ref().unwrap().drafts).unwrap(),
+            json!({ "setup": true })
+        );
+        // Changing URL on refresh resets acknowledgement.
+        let ext_form_v2 = Form {
+            fields: vec![json!({
+                "key": "setup",
+                "title": "External setup",
+                "type": "external",
+                "url": "https://example.com/step-2"
+            })],
+            ..ext_form.clone()
+        };
+        agent_forms::seed(
+            &[ext_form_v2.clone()],
+            &mut ext_rt.state.agent.as_mut().unwrap().drafts,
+        );
+        assert!(
+            agent_forms::answer(&ext_form_v2, &ext_rt.state.agent.as_ref().unwrap().drafts)
+                .is_err(),
+            "URL change on refresh must reset external acknowledgement"
+        );
+
+        // 4. Explicitly cleared optional string with nullable deferred pattern `^(?:a{257})?$`
+        // retains `""` and keeps conditional `when: eq ""` siblings active, while untouched omits it.
+        let nullable_def_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r29-null-def".into(),
+            title: "Nullable deferred".into(),
+            fields: vec![
+                json!({
+                    "key": "opt",
+                    "title": "Optional",
+                    "type": "string",
+                    "required": false,
+                    "pattern": "^(?:a{257})?$"
+                }),
+                json!({
+                    "key": "extra",
+                    "title": "Extra",
+                    "type": "string",
+                    "required": false,
+                    "default": "shown",
+                    "when": [{ "key": "opt", "op": "eq", "value": "" }]
+                }),
+            ],
+        };
+        let (mut nd_state, _ndrx) = state_with_form(nullable_def_form.clone());
+        assert_eq!(
+            agent_forms::answer(&nullable_def_form, &nd_state.agent.as_ref().unwrap().drafts)
+                .unwrap(),
+            json!({}),
+            "untouched optional field must stay omitted and keep eq \"\" sibling hidden"
+        );
+        {
+            let opt_d = nd_state
+                .agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r29-null-def".into(), "opt".into()))
+                .unwrap();
+            opt_d.edit.text = "x".into();
+            assert!(opt_d.is_dirty());
+            opt_d.edit.text.clear();
+        }
+        assert_eq!(
+            agent_forms::answer(&nullable_def_form, &nd_state.agent.as_ref().unwrap().drafts)
+                .unwrap(),
+            json!({ "opt": "", "extra": "shown" }),
+            "explicitly cleared optional string with nullable deferred regex must retain \"\" and activate eq \"\" sibling"
+        );
+
+        // 5. Server rejection marker is bound to the submitted field schema and invalidated when
+        // a later snapshot replaces the field's pattern on the same form ID.
+        let schema_v1 = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r29-schema".into(),
+            title: "Schema update".into(),
+            fields: vec![json!({
+                "key": "code",
+                "title": "Code",
+                "type": "string",
+                "required": true,
+                "pattern": "^a{257}$"
+            })],
+        };
+        let schema_v2 = Form {
+            fields: vec![json!({
+                "key": "code",
+                "title": "Code",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?:a{257}|ok)$"
+            })],
+            ..schema_v1.clone()
+        };
+        let (jobs_tx, _jobs_rx) = codenomad_client::bounded(1);
+        let (perms_tx, _perms_rx) = codenomad_client::bounded(1);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(1);
+        let (catalog_tx, _catalog_rx) = codenomad_client::bounded(1);
+        let (stop_tx, _stop_rx) = codenomad_client::bounded(1);
+        let (out_tx, res_rx) = codenomad_client::bounded(16);
+        let mut agent = crate::agent::Ui::new(crate::agent::Handle {
+            connection: None,
+            workspace_id: None,
+            jobs: jobs_tx,
+            permissions: perms_tx,
+            forms: forms_tx,
+            catalog: catalog_tx,
+            stop: stop_tx,
+            results: res_rx,
+        });
+        let _ = forms_rx.try_recv();
+        agent.fixture_ready();
+        agent.forms_lane.reading = false;
+        agent.forms = vec![schema_v1.clone()];
+        agent.selected = schema_v1.id.clone();
+        agent_forms::seed(&agent.forms, &mut agent.drafts);
+        agent.mark_pending_known();
+        agent
+            .drafts
+            .get_mut(&("form-r29-schema".into(), "code".into()))
+            .unwrap()
+            .edit
+            .text = "ok".into();
+        agent.answer_form("form-r29-schema");
+        let act_gen = match forms_rx.try_recv().unwrap() {
+            crate::agent::PendingJob::Act(_, g) => g,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        out_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "Form field does not match pattern: code".into(),
+                )),
+                Some(vec![schema_v1.clone()]),
+                act_gen,
+            ))
+            .unwrap();
+        assert!(agent.poll());
+        assert!(
+            agent_forms::answer(&schema_v1, &agent.drafts).is_err(),
+            "unchanged schema must keep `ok` rejected after 400"
+        );
+        // Later refresh replaces the pattern on the same form ID: stale rejection must clear.
+        agent.refresh_forms();
+        let refresh_gen = match forms_rx.try_recv().unwrap() {
+            crate::agent::PendingJob::Read(g) => g,
+            _ => panic!("expected PendingJob::Read"),
+        };
+        out_tx
+            .try_send(crate::agent::Result::Forms(
+                Some(vec![schema_v2.clone()]),
+                refresh_gen,
+            ))
+            .unwrap();
+        assert!(agent.poll());
+        assert_eq!(
+            agent_forms::answer(&schema_v2, &agent.drafts).unwrap()["code"],
+            json!("ok"),
+            "replacing field schema on later snapshot must invalidate stale rejection marker"
+        );
+
+        // 6. Duplicate named capture groups in disjoint alternatives defer to OpenCode instead of
+        // binding `\k<x>` only to the first capture and falsely rejecting `bb`.
+        let dup_named_field = json!({
+            "key": "dup",
+            "title": "Dup",
+            "type": "string",
+            "required": true,
+            "pattern": "^(?:(?<x>a)|(?<x>b))\\k<x>$"
+        });
+        for candidate in ["aa", "bb"] {
+            let mut d = agent_forms::Draft::default();
+            d.edit = rune::edit::TextEdit::new(candidate);
+            assert_eq!(
+                agent_forms::validate(&dup_named_field, &d),
+                Ok(Some(json!(candidate))),
+                "duplicate named capture pattern must defer and accept `{candidate}`"
+            );
+        }
+    });
+}

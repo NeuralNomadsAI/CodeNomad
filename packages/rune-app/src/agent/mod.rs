@@ -157,7 +157,7 @@ pub(crate) fn focused_control_key(
         }
         for field in active_fields
             .into_iter()
-            .filter(|field| field["hidden"] != true)
+            .filter(|field| field["type"] == "external" || field["hidden"] != true)
         {
             let Some(field_key) = field["key"].as_str() else {
                 continue;
@@ -166,6 +166,11 @@ pub(crate) fn focused_control_key(
                 Some("boolean") => {
                     key == agent_forms::bool_option_key(field_key, "true")
                         || key == agent_forms::bool_option_key(field_key, "false")
+                }
+                Some("external") => {
+                    agent_forms::external_url(field).is_some()
+                        && (key == agent_forms::external_link_key(field_key)
+                            || key == agent_forms::external_ack_key(field_key))
                 }
                 Some("string") => {
                     let options = agent_forms::normalized_options(field);
@@ -1208,10 +1213,14 @@ impl Ui {
                     .any(|f| f.id == rejection.form_id && f.fields == rejection.submitted_fields)
                 {
                     for (field_key, submitted_value) in rejection.to_mark {
-                        if let Some(draft) =
-                            self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                        if let Some(field_schema) = rejection
+                            .submitted_fields
+                            .iter()
+                            .find(|f| f["key"].as_str() == Some(field_key.as_str()))
+                            && let Some(draft) =
+                                self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
                         {
-                            draft.server_rejected_value = Some(submitted_value);
+                            draft.set_server_rejected(field_schema.clone(), submitted_value);
                         }
                     }
                 } else {
@@ -1220,7 +1229,7 @@ impl Ui {
                             self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
                             && draft.server_rejected_value.as_ref() == Some(&submitted_value)
                         {
-                            draft.server_rejected_value = None;
+                            draft.clear_server_rejected();
                         }
                     }
                 }
@@ -1271,10 +1280,14 @@ impl Ui {
                     .any(|f| f.id == form_id && f.fields == submitted_fields)
                 {
                     for (field_key, submitted_value) in &to_mark {
-                        if let Some(draft) =
-                            self.drafts.get_mut(&(form_id.clone(), field_key.clone()))
+                        if let Some(field_schema) = submitted_fields
+                            .iter()
+                            .find(|f| f["key"].as_str() == Some(field_key.as_str()))
+                            && let Some(draft) =
+                                self.drafts.get_mut(&(form_id.clone(), field_key.clone()))
                         {
-                            draft.server_rejected_value = Some(submitted_value.clone());
+                            draft
+                                .set_server_rejected(field_schema.clone(), submitted_value.clone());
                         }
                     }
                 }

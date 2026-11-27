@@ -116,6 +116,23 @@ pub fn clear_option_key(field_key: &str) -> String {
     format!("clear:{}:{field_key}", field_key.len())
 }
 
+pub fn external_link_key(field_key: &str) -> String {
+    format!("ext-link:{}:{field_key}", field_key.len())
+}
+
+pub fn external_ack_key(field_key: &str) -> String {
+    format!("ext-ack:{}:{field_key}", field_key.len())
+}
+
+pub fn external_url(field: &Value) -> Option<String> {
+    if field["type"] != "external" {
+        return None;
+    }
+    field["url"]
+        .as_str()
+        .and_then(|raw| codenomad_client::http::external_http_url(raw).map(|(url, _)| url))
+}
+
 pub fn valid_options_shape(field: &Value) -> bool {
     match field["type"].as_str() {
         Some("multiselect") => field
@@ -142,6 +159,7 @@ pub enum FieldKind {
     Integer,
     Boolean,
     Multiselect,
+    External,
     Unsupported,
 }
 
@@ -153,6 +171,7 @@ fn field_kind(field: &Value) -> FieldKind {
         Some("integer") => FieldKind::Integer,
         Some("boolean") => FieldKind::Boolean,
         Some("multiselect") => FieldKind::Multiselect,
+        Some("external") => FieldKind::External,
         _ => FieldKind::Unsupported,
     }
 }
@@ -198,6 +217,7 @@ pub fn valid_bounds(field: &Value) -> bool {
             parse_f64_bound(field, "minimum").is_ok() && parse_f64_bound(field, "maximum").is_ok()
         }
         Some("boolean") => true,
+        Some("external") => external_url(field).is_some(),
         _ => false,
     }
 }
@@ -224,6 +244,7 @@ fn string_value_satisfies_bounds(
 /// Whether an active field requires a non-empty answer before submission.
 pub fn field_required(field: &Value) -> bool {
     field["required"] == true
+        || field["type"] == "external"
         || (field["hidden"] != true
             && field["type"] == "multiselect"
             && parse_u64_bound(field, "minItems")
@@ -666,9 +687,30 @@ pub struct Draft {
     pub custom_dirty: Cell<bool>,
     pub custom_was_focused: bool,
     pub option_desc_reveals: HashMap<String, usize>,
+    pub external_url: Option<String>,
+    pub external_acknowledged: bool,
+    pub external_link_failed: bool,
+    pub external_link_seq: u64,
     pub server_rejected_value: Option<Value>,
+    pub server_rejected_schema: Option<Value>,
 }
 impl Draft {
+    pub fn toggle_external_acknowledged(&mut self) {
+        self.external_acknowledged = !self.external_acknowledged;
+        self.dirty = true;
+    }
+    pub fn set_server_rejected(&mut self, field: Value, value: Value) {
+        self.server_rejected_schema = Some(field);
+        self.server_rejected_value = Some(value);
+    }
+    pub fn clear_server_rejected(&mut self) {
+        self.server_rejected_schema = None;
+        self.server_rejected_value = None;
+    }
+    pub fn is_server_rejected(&self, field: &Value, candidate: &str) -> bool {
+        self.server_rejected_schema.as_ref() == Some(field)
+            && self.server_rejected_value.as_ref().and_then(Value::as_str) == Some(candidate)
+    }
     pub fn choose(&mut self, value: &str) {
         self.edit = TextEdit::new(value);
         self.dirty = true;
@@ -964,7 +1006,12 @@ impl Default for Draft {
             custom_dirty: Cell::new(false),
             custom_was_focused: false,
             option_desc_reveals: HashMap::new(),
+            external_url: None,
+            external_acknowledged: false,
+            external_link_failed: false,
+            external_link_seq: 0,
             server_rejected_value: None,
+            server_rejected_schema: None,
         }
     }
 }
@@ -987,11 +1034,12 @@ fn declared_option_set(field: &Value) -> Option<BTreeSet<String>> {
 
 fn fresh_draft(field: &Value) -> Draft {
     let declared = declared_option_set(field);
-    let hidden = field["hidden"] == true;
+    let hidden = field["hidden"] == true && field["type"] != "external";
     let mut d = Draft {
         kind: Some(field_kind(field)),
         declared_options: declared.clone(),
         hidden_only: hidden,
+        external_url: external_url(field),
         ..Default::default()
     };
     let value = &field["default"];
@@ -1195,12 +1243,20 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 drafts.insert(id, fresh_draft(field));
                 continue;
             };
-            let hidden = field["hidden"] == true;
+            if draft
+                .server_rejected_schema
+                .as_ref()
+                .is_some_and(|schema| schema != field)
+            {
+                draft.clear_server_rejected();
+            }
+            let hidden = field["hidden"] == true && field["type"] != "external";
             let draft_empty = draft.edit.text.is_empty()
                 && draft.custom.text.is_empty()
                 && draft.choice.is_none()
                 && draft.selected.is_empty()
-                && draft.preserved_custom_selected.is_empty();
+                && draft.preserved_custom_selected.is_empty()
+                && !draft.external_acknowledged;
             // Fields seeded while hidden, or untouched/empty visible fields that become hidden,
             // reseed cleanly from the current schema while preserving lifetime choice provenance
             // and never leaking hidden defaults into visible editors.
@@ -1475,7 +1531,16 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 draft.choice = None;
-                if kind == FieldKind::StringFree {
+                if kind == FieldKind::External {
+                    let next_url = external_url(field);
+                    if draft.external_url != next_url {
+                        draft.external_url = next_url;
+                        draft.external_acknowledged = false;
+                        draft.external_link_failed = false;
+                        draft.external_link_seq = draft.external_link_seq.wrapping_add(1);
+                    }
+                    draft.hidden_value = None;
+                } else if kind == FieldKind::StringFree {
                     if !hidden {
                         draft.hidden_value = None;
                     } else if draft.edit.text.is_empty() {
@@ -1515,6 +1580,9 @@ fn json_value_eq(a: &Value, b: &Value) -> bool {
 }
 
 pub fn active(field: &Value, values: &serde_json::Map<String, Value>) -> bool {
+    if field["type"] == "external" {
+        return true;
+    }
     field["when"].as_array().is_none_or(|rules| {
         rules.iter().all(|rule| {
             let Some(value) = rule["key"].as_str().and_then(|k| values.get(k)) else {
@@ -1550,7 +1618,7 @@ pub fn supported_budgeted(form: &Form, budget: &mut string_constraints::MatchBud
                 && keys.insert(k)
         }) && matches!(
             f["type"].as_str(),
-            Some("string" | "number" | "integer" | "boolean" | "multiselect")
+            Some("string" | "number" | "integer" | "boolean" | "multiselect" | "external")
         ) && (f["when"].as_array().is_some()
             || (valid_options_shape(f)
                 && valid_bounds(f)
@@ -1687,9 +1755,7 @@ fn validate_budgeted_with_deferred(
                         return Err(ValidationError::InvalidFormat);
                     }
                     string_constraints::MatchOutcome::Deferred => {
-                        if d.server_rejected_value.as_ref().and_then(Value::as_str)
-                            == Some(effective)
-                        {
+                        if d.is_server_rejected(field, effective) {
                             return Err(ValidationError::InvalidFormat);
                         }
                         return Ok((Some(json!(effective)), true));
@@ -1702,11 +1768,12 @@ fn validate_budgeted_with_deferred(
                 if d.is_dirty() {
                     field["required"] != true
                         && min_len.is_none_or(|m| m == 0)
+                        && !d.is_server_rejected(field, "")
                         && string_constraints::matches_string_constraints_budgeted(
                             field, "", budget,
                         )
                         .map_err(|()| ValidationError::Unsupported)?
-                            == string_constraints::MatchOutcome::Matched
+                            != string_constraints::MatchOutcome::NoMatch
                 } else {
                     d.has_string_value
                 }
@@ -1761,7 +1828,7 @@ fn validate_budgeted_with_deferred(
                 string_constraints::MatchOutcome::Matched => Ok((Some(json!(effective)), false)),
                 string_constraints::MatchOutcome::NoMatch => Err(ValidationError::InvalidFormat),
                 string_constraints::MatchOutcome::Deferred => {
-                    if d.server_rejected_value.as_ref().and_then(Value::as_str) == Some(effective) {
+                    if d.is_server_rejected(field, effective) {
                         return Err(ValidationError::InvalidFormat);
                     }
                     Ok((Some(json!(effective)), true))
@@ -2027,6 +2094,16 @@ fn validate_budgeted_with_deferred(
                 return Err(ValidationError::Required);
             }
             Ok((Some(json!(values)), false))
+        }
+        Some("external") => {
+            if external_url(field).is_none() {
+                return Err(ValidationError::Unsupported);
+            }
+            if d.external_acknowledged {
+                Ok((Some(json!(true)), false))
+            } else {
+                Err(ValidationError::Required)
+            }
         }
         _ => Err(ValidationError::Unsupported),
     }
