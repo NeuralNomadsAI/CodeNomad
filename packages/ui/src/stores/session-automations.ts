@@ -3,9 +3,8 @@ import { backendOf } from "../lib/backend-client"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
-import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { backendEvents as serverEvents } from "../lib/server-events"
-import { createSessionAutomationsStore } from "./session-automations-store"
+import { createSessionAutomationsStore, formatAutomationMutationError } from "./session-automations-store"
 
 const EXECUTION_SETTLED_EVENTS = new Set([
   "session.execution.succeeded",
@@ -80,7 +79,14 @@ export function runSessionAutomationAction(
           ? await api.resumeSessionAutomation(instanceId, sessionId, automationId)
           : await api.deleteSessionAutomation(instanceId, sessionId, automationId)
       if (result.status !== "ok") {
-        throw new Error(result.upstream && result.error ? result.error : tGlobal("instanceShell.automations.error"))
+        const fallback = tGlobal("instanceShell.automations.error")
+        showToastNotification({
+          category: "sessions",
+          title: fallback,
+          message: result.upstream && result.error ? result.error : fallback,
+          variant: "error",
+        })
+        return
       }
       ok = true
       if (action === "delete") {
@@ -92,10 +98,11 @@ export function runSessionAutomationAction(
         return result.automation ?? { ...item, status: nextStatus, ...(nextStatus === "paused" ? { nextDueAt: undefined } : {}) }
       })
     } catch (error) {
+      const fallback = tGlobal("instanceShell.automations.error")
       showToastNotification({
         category: "sessions",
-        title: tGlobal("instanceShell.automations.error"),
-        message: getOpencodeErrorMessage(error, tGlobal("instanceShell.automations.error")),
+        title: fallback,
+        message: formatAutomationMutationError(error, fallback),
         variant: "error",
       })
     }

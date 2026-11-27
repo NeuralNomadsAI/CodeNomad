@@ -34,6 +34,8 @@ function fixture() {
     carrierOwned: false,
     carrierError: undefined as unknown,
     session: { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } } as any,
+    closed: false,
+    onOwnsLocation: undefined as undefined | (() => void),
     current: () => {},
     fetch: async (url: URL, init?: RequestInit): Promise<Response> => {
       const headers = new Headers(init?.headers)
@@ -77,9 +79,12 @@ function fixture() {
   }
   registerSessionAutomationsRoutes(app, {
     workspaceManager: {
-      get: () => workspace,
-      getServiceLocation: () => location,
-      ownsLocation: async () => state.owned,
+      get: () => (state.closed ? undefined : workspace),
+      getServiceLocation: () => (state.closed ? undefined : location),
+      ownsLocation: async () => {
+        state.onOwnsLocation?.()
+        return state.owned
+      },
       getSharedServiceConnection: async () => ({
         client,
         endpoint: { url: "http://localhost:3000", password: "fixture" },
@@ -278,5 +283,18 @@ test("blocks cross-project and cross-directory automations for the same session 
     const fallbackErr = await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/resume" })
     assert.equal(fallbackErr.statusCode, 502)
     assert.equal(fallbackErr.json().upstream, undefined)
+  } finally { await f.app.close() }
+})
+
+test("fences list publication if the workspace closes during per-row ownership checks", async () => {
+  const f = fixture()
+  try {
+    let ownsCalls = 0
+    f.state.onOwnsLocation = () => {
+      ownsCalls += 1
+      if (ownsCalls === 2) f.state.closed = true
+    }
+    const response = await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })
+    assert.deepEqual(response.json(), { status: "unavailable" })
   } finally { await f.app.close() }
 })

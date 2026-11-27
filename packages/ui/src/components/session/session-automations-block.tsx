@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createComputed, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
 import { Tooltip } from "@kobalte/core/tooltip"
 import { ChevronRight, Pause, Play, Trash2 } from "lucide-solid"
 import type { SessionAutomation } from "../../../../server/src/opencode/automation-contract"
@@ -76,6 +76,8 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
   const [showDone, setShowDone] = createSignal(false)
   const [detailId, setDetailId] = createSignal<string | null>(null)
   let detailReturnTarget: HTMLElement | undefined
+  let blockRef: HTMLDivElement | undefined
+  let focusBeforeReorder: HTMLElement | null = null
   let viewAbort = new AbortController()
 
   createEffect(() => {
@@ -102,9 +104,30 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
   const byId = createMemo(() => new Map(automations().map(item => [item.id, item])))
   const live = createMemo(() => sortLiveAutomations(automations().filter(item => item.status !== "done")))
   const done = createMemo(() => sortDoneAutomations(automations().filter(item => item.status === "done")))
+  const sameIds = (left: readonly string[], right: readonly string[]) =>
+    left.length === right.length && left.every((id, index) => id === right[index])
+  const liveIds = createMemo(() => live().map(item => item.id), undefined, { equals: sameIds })
+  const doneIds = createMemo(() => done().map(item => item.id), undefined, { equals: sameIds })
   const detailAutomation = createMemo(() => {
     const id = detailId()
     return id ? byId().get(id) ?? null : null
+  })
+
+  createComputed(() => {
+    liveIds()
+    doneIds()
+    const active = document.activeElement
+    focusBeforeReorder = active instanceof HTMLElement && blockRef?.contains(active) ? active : null
+  })
+
+  createEffect(() => {
+    liveIds()
+    doneIds()
+    const target = focusBeforeReorder
+    focusBeforeReorder = null
+    if (target && target.isConnected && document.activeElement === document.body) {
+      target.focus({ preventScroll: true })
+    }
   })
 
   createEffect(() => {
@@ -266,8 +289,8 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
 
   return (
     <Show when={automations().length > 0}>
-      <div class="session-automations-block" role="group" aria-label={t("instanceShell.automations.label")}>
-        <For each={live().map(item => item.id)}>{renderRow}</For>
+      <div ref={blockRef} class="session-automations-block" role="group" aria-label={t("instanceShell.automations.label")}>
+        <For each={liveIds()}>{renderRow}</For>
         <Show when={done().length > 0}>
           <button
             type="button"
@@ -279,7 +302,7 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
             <span>{t("instanceShell.automations.doneToggle", { count: done().length })}</span>
           </button>
           <Show when={showDone()}>
-            <For each={done().map(item => item.id)}>{renderRow}</For>
+            <For each={doneIds()}>{renderRow}</For>
           </Show>
         </Show>
         <SessionAutomationDetailDialog

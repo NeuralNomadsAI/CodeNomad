@@ -126,7 +126,7 @@ async function resolveOwnedSession(
     await verifyOrdinary(latest, latestLocation)
     current()
   }
-  return { kind: "ok" as const, connection, location, projectID: session.projectID, revalidate }
+  return { kind: "ok" as const, connection, location, projectID: session.projectID, current, revalidate }
 }
 
 async function isOwnedAutomation(
@@ -181,7 +181,6 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         return { status: "unavailable" } satisfies SessionAutomationsResponse
       }
       const payload = await readBoundedJson(response, owned.connection) as { data?: unknown } | undefined
-      await owned.revalidate()
       if (!payload || !Array.isArray(payload.data)) {
         return { status: "unavailable" } satisfies SessionAutomationsResponse
       }
@@ -192,6 +191,7 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         if (!await isOwnedAutomation(projected, owned, sessionID, request.params.id, deps.workspaceManager, signal)) continue
         automations.push(projected.automation)
       }
+      await owned.revalidate()
       return { status: "ok", automations } satisfies SessionAutomationsResponse
     } catch (error) {
       if (error instanceof MissionScheduleInputError && error.statusCode === 403) {
@@ -277,9 +277,11 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
       }
       if (action === "delete") {
         await response.body?.cancel()
+        owned.current()
         return { status: "ok" } satisfies SessionAutomationMutationResponse
       }
       const body = await readBoundedJson(response, owned.connection) as { data?: unknown } | undefined
+      owned.current()
       const updated = projectSessionAutomation(body?.data)
       return updated
         ? ({ status: "ok", automation: updated.automation } satisfies SessionAutomationMutationResponse)

@@ -277,3 +277,62 @@ test("dismisses an open Delete confirmation when switching conversations without
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("preserves keyboard focus on Pause/Resume when pausing reorders active rows", async () => {
+  const firstActive: SessionAutomation = {
+    ...activeAuto,
+    id: "aut_first",
+    name: "First active check",
+    nextDueAt: Date.now() + 60_000,
+    updatedAt: 30,
+  }
+  const secondActive: SessionAutomation = {
+    ...activeAuto,
+    id: "aut_second",
+    name: "Second active check",
+    nextDueAt: Date.now() + 120_000,
+    updatedAt: 20,
+  }
+  const list = [firstActive, secondActive]
+  const { page, errors } = await open(
+    { ses_auto: { status: "ok", automations: list } },
+    {
+      onAction: ({ automationId, action }) => {
+        if (action === "pause") {
+          const item = list.find(entry => entry.id === automationId)
+          if (item) {
+            item.status = "paused"
+            item.nextDueAt = undefined
+          }
+          return { body: { status: "ok", automation: item } }
+        }
+        return { body: { status: "ok" } }
+      },
+    },
+  )
+  try {
+    const group = block(page)
+    await group.waitFor()
+    assert.deepEqual(
+      await group.locator(".session-automation-row").evaluateAll(rows => rows.map(row => row.getAttribute("data-automation-id"))),
+      ["aut_first", "aut_second"],
+    )
+    const firstRow = group.locator('[data-automation-id="aut_first"]')
+    const toggle = await firstRow.getByRole("button", { name: "Pause automation" }).elementHandle()
+    assert.ok(toggle)
+    await toggle.focus()
+    await page.keyboard.press("Enter")
+    await firstRow.getByRole("button", { name: "Resume automation" }).waitFor()
+    assert.deepEqual(
+      await group.locator(".session-automation-row").evaluateAll(rows => rows.map(row => row.getAttribute("data-automation-id"))),
+      ["aut_second", "aut_first"],
+      "paused row moves below still-active row",
+    )
+    assert.equal(
+      await toggle.evaluate(el => el === document.activeElement && el.getAttribute("aria-label") === "Resume automation"),
+      true,
+      "toggle retains keyboard focus after DOM reorder",
+    )
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

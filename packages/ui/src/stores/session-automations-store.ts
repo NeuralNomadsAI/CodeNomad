@@ -1,6 +1,20 @@
 import { createSignal, untrack } from "solid-js"
 import { parseInstanceKey } from "../lib/backend-identity"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import type { SessionAutomation, SessionAutomationsResponse } from "../../../server/src/opencode/automation-contract"
+
+/** Returns genuine upstream automation errors as-is while keeping fixed local route errors localized. */
+export function formatAutomationMutationError(error: unknown, fallback: string): string {
+  if (error instanceof HttpResponseError && error.body && typeof error.body === "object") {
+    const body = error.body as { status?: unknown; error?: unknown; upstream?: unknown }
+    if (body.status === "error") {
+      return body.upstream === true && typeof body.error === "string" && body.error.trim()
+        ? body.error.trim()
+        : fallback
+    }
+  }
+  return fallback
+}
 
 /** A Session's `/automation` list as last heard: `loading` until the first answer. */
 export type SessionAutomationsSnapshot = { status: "loading" } | SessionAutomationsResponse
@@ -21,13 +35,21 @@ interface Entry {
   overdueChecks: number
 }
 
-function earliestActiveDueAt(automations: readonly SessionAutomation[]): number | null {
-  let earliest: number | null = null
+function inspectActiveDueTimes(automations: readonly SessionAutomation[], nowMs: number): {
+  hasOverdue: boolean
+  nextFutureDue: number | null
+} {
+  let hasOverdue = false
+  let nextFutureDue: number | null = null
   for (const item of automations) {
     if (item.status !== "active" || typeof item.nextDueAt !== "number" || !Number.isFinite(item.nextDueAt)) continue
-    if (earliest === null || item.nextDueAt < earliest) earliest = item.nextDueAt
+    if (item.nextDueAt <= nowMs) {
+      hasOverdue = true
+    } else if (nextFutureDue === null || item.nextDueAt < nextFutureDue) {
+      nextFutureDue = item.nextDueAt
+    }
   }
-  return earliest
+  return { hasOverdue, nextFutureDue }
 }
 
 /**
@@ -84,40 +106,43 @@ export function createSessionAutomationsStore(
     clearDueTimer(entry)
     if (entry.demand === 0 || options.signal?.(instanceId)?.aborted) return
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return
-    const nextDue = earliestActiveDueAt(automations)
+    const nowMs = now()
+    const { hasOverdue, nextFutureDue } = inspectActiveDueTimes(automations, nowMs)
+    const futureDelay = nextFutureDue !== null
+      ? Math.min(nextFutureDue - nowMs + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
+      : null
     const hasActiveEventTrigger = automations.some(item => item.status === "active" && item.trigger.type === "event")
     const hasPendingShellResult = automations.some(item =>
       item.action.type === "shell" && item.status === "done" && item.lastOutput === undefined && item.lastOutcome === undefined)
-    if (nextDue === null && !hasActiveEventTrigger && !hasPendingShellResult) {
+    if (!retryFailure && futureDelay === null && !hasOverdue && !hasActiveEventTrigger && !hasPendingShellResult) {
       entry.overdueChecks = 0
       return
     }
     let delayMs: number
-    if (retryFailure || (nextDue === null && !hasActiveEventTrigger && hasPendingShellResult)) {
-      // Bound retries if a read fails transiently or a one-shot shell automation has not yet written its outcome/output.
+    if (retryFailure) {
+      // Bound retries if a read fails transiently.
       if (entry.overdueChecks >= 3) return
       entry.overdueChecks += 1
       delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
-    } else if (nextDue !== null) {
-      const remaining = nextDue - now()
-      if (remaining > 0) {
-        entry.overdueChecks = 0
-        delayMs = Math.min(remaining + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
-      } else if (hasActiveEventTrigger) {
-        entry.overdueChecks = 0
-        delayMs = EVENT_TRIGGER_POLL_MS
-      } else {
-        // Bound retries if an automation stays overdue (e.g. session busy or late run).
-        if (entry.overdueChecks >= 3) return
-        entry.overdueChecks += 1
-        delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
-      }
-      if (hasActiveEventTrigger && delayMs > EVENT_TRIGGER_POLL_MS) {
-        delayMs = EVENT_TRIGGER_POLL_MS
-      }
-    } else {
+    } else if (hasActiveEventTrigger) {
       entry.overdueChecks = 0
-      delayMs = EVENT_TRIGGER_POLL_MS
+      delayMs = futureDelay !== null ? Math.min(EVENT_TRIGGER_POLL_MS, futureDelay) : EVENT_TRIGGER_POLL_MS
+    } else if (hasOverdue || hasPendingShellResult) {
+      // Bound overdue/pending-shell retries, but keep the next future deadline scheduled once retries are exhausted.
+      if (entry.overdueChecks < 3) {
+        entry.overdueChecks += 1
+        const backoff = OVERDUE_BACKOFF_MS * entry.overdueChecks
+        delayMs = futureDelay !== null ? Math.min(backoff, futureDelay) : backoff
+      } else if (futureDelay !== null) {
+        delayMs = futureDelay
+      } else {
+        return
+      }
+    } else if (futureDelay !== null) {
+      entry.overdueChecks = 0
+      delayMs = futureDelay
+    } else {
+      return
     }
     entry.dueTimer = setTimeout(() => {
       entry.dueTimer = undefined

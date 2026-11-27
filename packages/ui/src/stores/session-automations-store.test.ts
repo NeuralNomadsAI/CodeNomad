@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { SessionAutomation, SessionAutomationsResponse } from "../../../server/src/opencode/automation-contract"
-import { createSessionAutomationsStore } from "./session-automations-store.ts"
+import { HttpResponseError } from "../lib/retryable-file-search.ts"
+import { createSessionAutomationsStore, formatAutomationMutationError } from "./session-automations-store.ts"
 
 const automation = (id: string, overrides: Partial<SessionAutomation> = {}): SessionAutomation => ({
   id,
@@ -314,5 +315,57 @@ describe("session automations store", () => {
     assert.deepEqual(f.store.state("i", "ses_a"), { status: "loading" }, "evicts snapshot on last release")
     authority.abort()
     assert.deepEqual(f.store.state("i", "ses_a"), { status: "loading" }, "evicted snapshot stays absent after detach")
+  })
+
+  it("keeps future due times scheduled even after another overdue automation exhausts retries", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    let clock = 1_000_000
+    const f = fixture({ now: () => clock })
+    const release = f.store.demand("i", "ses_a")
+    const both = {
+      status: "ok" as const,
+      automations: [
+        automation("aut_overdue", { nextDueAt: clock - 10_000 }),
+        automation("aut_future", { nextDueAt: clock + 120_000 }),
+      ],
+    }
+    f.reads[0]!.resolve(both)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Exhaust the 3 overdue backoff checks (15s + 30s + 45s = 90s).
+    for (const [step, expectedReads] of [[15_000, 2], [30_000, 3], [45_000, 4]] as const) {
+      clock += step
+      t.mock.timers.tick(step)
+      assert.equal(f.reads.length, expectedReads)
+      f.reads[expectedReads - 1]!.resolve(both)
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+
+    // 30s left until aut_future (120s total) + 1.5s grace = 31.5s.
+    clock += 31_400
+    t.mock.timers.tick(31_400)
+    assert.equal(f.reads.length, 4)
+    clock += 100
+    t.mock.timers.tick(100)
+    assert.equal(f.reads.length, 5, "still refreshes when the later future automation becomes due")
+    release()
+  })
+
+  it("localizes fixed route errors while preserving genuine upstream error messages", () => {
+    const fallback = "Impossible de mettre à jour l'automatisation"
+    const notFound = new HttpResponseError("Automation not found", 404, null, undefined, {
+      status: "error",
+      error: "Automation not found",
+    })
+    const upstream = new HttpResponseError("Upstream lock active", 502, null, undefined, {
+      status: "error",
+      error: "Upstream lock active",
+      upstream: true,
+    })
+    assert.equal(formatAutomationMutationError(notFound, fallback), fallback)
+    assert.equal(formatAutomationMutationError(upstream, fallback), "Upstream lock active")
+    assert.equal(formatAutomationMutationError(new Error("Network error"), fallback), fallback)
   })
 })
