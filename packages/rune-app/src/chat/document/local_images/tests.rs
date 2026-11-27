@@ -1915,16 +1915,40 @@ fn converting_tool_output_with_different_name_does_not_shadow_input_file_and_ref
         }]
     }))
     .unwrap();
+    let convert_same_basename = history::decode_message(&json!({
+        "id": "m5", "type": "assistant", "time": {"completed": 5},
+        "content": [{
+            "type": "tool", "id": "call-convert-basename", "name": "convert",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/source.png"},
+                "content": [{"type": "file", "name": "source.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    if let Part::Tool(tool) = &convert_same_basename.parts[0] {
+        let shadow_paths = tool_image_paths(tool);
+        assert_eq!(shadow_paths.len(), 1);
+        assert_eq!(
+            shadow_paths[0].iter().map(Box::as_ref).collect::<Vec<_>>(),
+            vec!["source.png"],
+            "a non-read tool returning a short basename must not record its input filePath as a shadow"
+        );
+    } else {
+        panic!("expected tool part");
+    }
     let candidates = session_candidates(&[
         read_source.into(),
         convert_tool.into(),
         convert_short.into(),
         convert_unnamed.into(),
+        convert_same_basename.into(),
     ]);
     assert_eq!(
         match_local_image(&candidates, "/tmp/source.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline(PNG_A.into())),
-        "a non-read tool outputting an unnamed or differently named image must not index it under its input filePath"
+        "a non-read tool outputting an unnamed, differently named, or same-basename image must not index it under its input filePath"
     );
     assert_eq!(
         match_local_image(&candidates, "/tmp/resultat.png", true).map(|c| &c.source),
@@ -2016,4 +2040,37 @@ fn decoded_empty_alt_local_image_keeps_filename_accessible_label() {
         !tree.contains("Image preview"),
         "decoded empty-alt local image must not fall back to generic English label: {tree}"
     );
+    rt.update(|s, _| {
+        let terms = vec!["chart.png".into()];
+        let query = rune_theme_codenomad::timeline::search::Query {
+            terms: &terms,
+            ranked: false,
+            active: true,
+            claimed: None,
+        };
+        assert!(
+            super::super::bounded_prose_matches_for(
+                s,
+                "task-card",
+                "frag-empty-alt",
+                "![](/tmp/chart.png)",
+                4096,
+                Conversation::Root,
+                query,
+            ),
+            "decoded empty-alt local image must remain findable by its accessible filename label"
+        );
+        assert!(
+            !super::super::bounded_prose_highlights_for(
+                s,
+                "task-card",
+                "frag-empty-alt",
+                "![](/tmp/chart.png)",
+                4096,
+                Conversation::Root,
+                query,
+            ),
+            "decoded empty-alt local image must not claim active search highlight"
+        );
+    });
 }

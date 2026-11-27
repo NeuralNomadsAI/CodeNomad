@@ -258,17 +258,42 @@ fn owned_deferred_image_fetches_passive_bytes_and_refuses_other_sessions() {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+fn png_with_tag(base: &[u8], tag: u8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(base.len() + 15);
+    out.extend_from_slice(&base[..base.len() - 12]);
+    let payload = [b't', b'E', b'X', b't', b'k', 0, b'0' + tag];
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in &payload {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    out.extend_from_slice(&3u32.to_be_bytes());
+    out.extend_from_slice(&payload);
+    out.extend_from_slice(&(!crc).to_be_bytes());
+    out.extend_from_slice(&base[base.len() - 12..]);
+    out
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
 fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images() {
     use base64::{Engine, engine::general_purpose::STANDARD};
 
-    // 8x4 RGBA = 128 bytes each.
+    // 8x4 RGBA = 128 bytes each (172 bytes with mipmaps). Tag each copy with a valid ancillary
+    // `tEXt` chunk before `IEND` so `ImageCache` assigns distinct handles for distinct images.
     let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC").unwrap();
     let cache = ImageCache::new(Arc::new(|| {}));
     let mut pictures = Pictures::default();
     let leases = [Rc::new(()), Rc::new(()), Rc::new(())];
-    let make_ready = || {
-        let img = cache.load(png.as_slice());
+    let make_ready = |tag: u8| {
+        let bytes = png_with_tag(&png, tag);
+        let img = cache.load(bytes.as_slice());
         img.wait().unwrap();
         img
     };
@@ -289,7 +314,7 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
                 visible,
                 clip_gate: None,
                 request: None,
-                image: Some(make_ready()),
+                image: Some(make_ready(idx as u8)),
                 frames: 1,
                 last_size: Some([8, 4]),
                 settled: true,
@@ -315,7 +340,7 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
     assert_eq!(pictures.images["off-new"].last_size, Some([8, 4]));
     assert!(pictures.images["on-screen"].image.is_some());
 
-    // Multi-frame animation accounting: a 32-frame 8x4 entry accounts for 5461 bytes with mipmaps.
+    // Multi-frame animation accounting: a 32-frame 8x4 entry accounts for 5504 bytes with mipmaps.
     let anim_lease = Rc::new(());
     pictures.images.insert(
         "off-gif".into(),
@@ -326,7 +351,7 @@ fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images()
             visible: false,
             clip_gate: None,
             request: None,
-            image: Some(make_ready()),
+            image: Some(make_ready(9)),
             frames: 32,
             last_size: Some([8, 4]),
             settled: true,
@@ -484,4 +509,81 @@ fn encoded_frame_count_detects_gif_apng_and_webp_frames() {
         webp.extend_from_slice(&0u32.to_le_bytes());
     }
     assert_eq!(encoded_frame_count_native(&webp), 4);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn shared_decoded_image_deduplicates_accounting_and_eviction() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    let base = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC").unwrap();
+    let png_a = png_with_tag(&base, 1);
+    let png_b = png_with_tag(&base, 2);
+    let mut pictures = Pictures::default();
+    let cache = pictures
+        .cache
+        .get_or_insert_with(|| ImageCache::new(Arc::new(|| {})));
+    let shared = cache.load(png_a.as_slice());
+    let unique = cache.load(png_b.as_slice());
+    shared.wait().unwrap();
+    unique.wait().unwrap();
+    let shared_bytes = decoded_bytes(&shared, 1);
+    let unique_bytes = decoded_bytes(&unique, 1);
+    assert!(shared_bytes > 0 && unique_bytes > 0);
+    assert_ne!(shared.id(), unique.id());
+
+    let lease_visible = Rc::new(());
+    let lease_dup = Rc::new(());
+    let lease_unique_a = Rc::new(());
+    let lease_unique_b = Rc::new(());
+    let make_entry = |lease: &Rc<()>, visible: bool, image: Image, last_seen: u64| Entry {
+        lease: Rc::downgrade(lease),
+        media: PictureSource::Unavailable,
+        mime: String::new(),
+        visible,
+        clip_gate: None,
+        request: None,
+        image: Some(image),
+        frames: 1,
+        last_size: None,
+        settled: true,
+        last_seen,
+    };
+    pictures.images.insert(
+        "a".into(),
+        make_entry(&lease_visible, true, shared.clone(), 10),
+    );
+    pictures
+        .images
+        .insert("b".into(), make_entry(&lease_dup, false, shared.clone(), 1));
+    pictures.images.insert(
+        "c".into(),
+        make_entry(&lease_unique_a, false, unique.clone(), 2),
+    );
+    pictures.images.insert(
+        "d".into(),
+        make_entry(&lease_unique_b, false, unique.clone(), 3),
+    );
+
+    // Two pairs of entries share two unique `Image` handles; retained_bytes counts each handle once.
+    let expected = 4 + shared_bytes + unique_bytes;
+    assert_eq!(pictures.retained_bytes(), expected);
+
+    // With budget = shared_bytes, the offscreen duplicate `b` shares pixels with visible `a`
+    // and must NOT be evicted; both offscreen holders (`c` and `d`) of `unique` are evicted
+    // together so its decoded pixels are actually released.
+    assert!(pictures.evict_offscreen_decoded(None, shared_bytes));
+    assert!(
+        pictures.images["a"].image.is_some(),
+        "visible entry stays ready"
+    );
+    assert!(
+        pictures.images["b"].image.is_some(),
+        "offscreen duplicate sharing pixels with a visible entry must not be evicted"
+    );
+    assert!(
+        pictures.images["c"].image.is_none() && pictures.images["d"].image.is_none(),
+        "all offscreen holders of an evicted unique Image must be cleared together"
+    );
+    assert_eq!(pictures.retained_bytes(), 4 + shared_bytes);
 }

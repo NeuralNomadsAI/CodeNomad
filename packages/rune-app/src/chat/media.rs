@@ -14,7 +14,7 @@ use rune_theme_codenomad::{
 };
 use std::{
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     rc::{Rc, Weak},
     sync::Arc,
@@ -297,11 +297,15 @@ impl Pictures {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        let entries = self.images.iter().fold(0usize, |total, (key, entry)| {
-            let decoded = entry
-                .image
-                .as_ref()
-                .map_or(0, |image| decoded_bytes(image, entry.frames));
+        let mut decoded_by_id = HashMap::new();
+        let mut total = self.images.iter().fold(0usize, |total, (key, entry)| {
+            if let Some(image) = entry.image.as_ref() {
+                let bytes = decoded_bytes(image, entry.frames);
+                decoded_by_id
+                    .entry(image.id())
+                    .and_modify(|existing: &mut usize| *existing = (*existing).max(bytes))
+                    .or_insert(bytes);
+            }
             let source = match &entry.media {
                 PictureSource::Inline(bytes) => bytes.len(),
                 PictureSource::Http(url) => url.len(),
@@ -313,16 +317,18 @@ impl Pictures {
                 .saturating_add(key.len())
                 .saturating_add(entry.mime.len())
                 .saturating_add(source)
-                .saturating_add(decoded)
         });
-        let preview = self
-            .preview
-            .as_ref()
-            .and_then(|(_, _, image)| attachment::decoded_size(image))
-            .map_or(0, |[w, h]| {
-                (w as usize).saturating_mul(h as usize).saturating_mul(4)
-            });
-        entries.saturating_add(preview)
+        if let Some((_, _, image)) = &self.preview {
+            let bytes = decoded_bytes(image, 1);
+            decoded_by_id
+                .entry(image.id())
+                .and_modify(|existing: &mut usize| *existing = (*existing).max(bytes))
+                .or_insert(bytes);
+        }
+        for bytes in decoded_by_id.into_values() {
+            total = total.saturating_add(bytes);
+        }
+        total
     }
 
     #[cfg(test)]
@@ -748,57 +754,84 @@ impl Pictures {
     }
 
     fn evict_offscreen_decoded(&mut self, view: Option<(&Clock, [f32; 4])>, budget: usize) -> bool {
-        let mut total = self.images.values().fold(0usize, |acc, entry| {
-            acc.saturating_add(
-                entry
-                    .image
-                    .as_ref()
-                    .filter(|image| image.is_ready())
-                    .map_or(0, |image| decoded_bytes(image, entry.frames)),
-            )
-        });
-        if total <= budget {
-            return false;
-        }
         let preview_key = self
             .preview
             .as_ref()
             .and_then(|(anchor, _, _)| anchor.strip_suffix("-enlarge"));
         let hover_key = self.hover.as_ref().map(|(anchor, _)| anchor.as_str());
-        let mut candidates: Vec<(u64, String, usize)> = self
-            .images
-            .iter()
-            .filter_map(|(key, entry)| {
-                if entry_in_view(entry, view)
-                    || preview_key == Some(key.as_str())
-                    || hover_key == Some(key.as_str())
-                {
+        let mut bytes_by_id = HashMap::new();
+        let mut protected_ids = HashSet::new();
+        let mut offscreen_by_id: HashMap<_, (u64, Vec<String>)> = HashMap::new();
+        for (key, entry) in &self.images {
+            let Some(image) = entry.image.as_ref().filter(|image| image.is_ready()) else {
+                continue;
+            };
+            let id = image.id();
+            let bytes = decoded_bytes(image, entry.frames);
+            bytes_by_id
+                .entry(id)
+                .and_modify(|existing: &mut usize| *existing = (*existing).max(bytes))
+                .or_insert(bytes);
+            if entry_in_view(entry, view)
+                || preview_key == Some(key.as_str())
+                || hover_key == Some(key.as_str())
+            {
+                protected_ids.insert(id);
+            } else {
+                offscreen_by_id
+                    .entry(id)
+                    .and_modify(|(last_seen, keys)| {
+                        *last_seen = (*last_seen).max(entry.last_seen);
+                        keys.push(key.clone());
+                    })
+                    .or_insert_with(|| (entry.last_seen, vec![key.clone()]));
+            }
+        }
+        if let Some((_, _, image)) = &self.preview
+            && image.is_ready()
+        {
+            let id = image.id();
+            let bytes = decoded_bytes(image, 1);
+            bytes_by_id
+                .entry(id)
+                .and_modify(|existing: &mut usize| *existing = (*existing).max(bytes))
+                .or_insert(bytes);
+            protected_ids.insert(id);
+        }
+        let mut total = bytes_by_id
+            .values()
+            .copied()
+            .fold(0usize, usize::saturating_add);
+        if total <= budget {
+            return false;
+        }
+        let mut candidates: Vec<(u64, usize, Vec<String>)> = offscreen_by_id
+            .into_iter()
+            .filter_map(|(id, (last_seen, keys))| {
+                if protected_ids.contains(&id) {
                     return None;
                 }
-                let bytes = entry
-                    .image
-                    .as_ref()
-                    .filter(|image| image.is_ready())
-                    .map(|image| decoded_bytes(image, entry.frames))
-                    .filter(|&bytes| bytes > 0)?;
-                Some((entry.last_seen, key.clone(), bytes))
+                let bytes = bytes_by_id.get(&id).copied().filter(|&bytes| bytes > 0)?;
+                Some((last_seen, bytes, keys))
             })
             .collect();
         candidates.sort_by_key(|(last_seen, _, _)| *last_seen);
         let mut evicted = false;
-        for (_, key, bytes) in candidates {
+        for (_, bytes, keys) in candidates {
             if total <= budget {
                 break;
             }
-            if let Some(entry) = self.images.get_mut(&key) {
-                if let Some(size) = entry.image.as_ref().and_then(attachment::decoded_size) {
-                    entry.last_size = Some(size);
+            for key in keys {
+                if let Some(entry) = self.images.get_mut(&key) {
+                    if let Some(size) = entry.image.as_ref().and_then(attachment::decoded_size) {
+                        entry.last_size = Some(size);
+                    }
+                    entry.image = None;
+                    entry.settled = false;
+                    evicted = true;
                 }
-                entry.image = None;
-                entry.settled = false;
-                total = total.saturating_sub(bytes);
-                evicted = true;
             }
+            total = total.saturating_sub(bytes);
         }
         evicted
     }

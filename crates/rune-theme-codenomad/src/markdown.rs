@@ -16,8 +16,9 @@ pub struct LiftedImage {
 pub enum ImageSearch {
     /// Keep the image's alt text in prose search (non-lifted or unresolved images).
     Inline,
-    /// Rendered image pixels: omit highlight spans while keeping alt text discoverable for visibility checks.
-    Hidden,
+    /// Rendered image pixels: omit highlight spans while keeping its accessible label discoverable
+    /// for visibility checks.
+    Hidden { label: String },
     /// Match against a custom fallback label rendered by `image_frame`.
     Fallback { key: String, label: String },
 }
@@ -436,10 +437,18 @@ fn prose_ranges_with_images(
                 }
                 skipped_image_depth = 1;
                 match image_search_text(dest_url) {
-                    ImageSearch::Inline | ImageSearch::Hidden => {
+                    ImageSearch::Inline => {
                         skipped_image_fallback = None;
                         skipped_image_collect_alt = true;
                         skipped_image_alt.clear();
+                    }
+                    ImageSearch::Hidden { label } => {
+                        skipped_image_fallback = None;
+                        skipped_image_collect_alt = false;
+                        if !unhighlighted_image_match && !label.is_empty() && query.matches(&label)
+                        {
+                            unhighlighted_image_match = true;
+                        }
                     }
                     ImageSearch::Fallback { key, label } => {
                         skipped_image_fallback = Some((key, label));
@@ -1214,7 +1223,7 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
     };
     let (ok_spans, _, _) = prose_ranges_with_images(&rewritten, ok_query, 8, &|src| {
         if src == "found.png" {
-            ImageSearch::Hidden
+            ImageSearch::Hidden { label: "Ok".into() }
         } else {
             ImageSearch::Inline
         }
@@ -1258,21 +1267,34 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         &|_, _| None,
         &|_| ImageSearch::Inline,
     ));
-    // Rendered local image pixels keep their alt discoverable for hidden-input visibility checks
-    // without claiming a highlight span.
+    // Rendered local image pixels keep their accessible label discoverable for hidden-input
+    // visibility checks without claiming a highlight span (including empty-alt filename labels).
     assert!(prose_has_match_with_images(
         "![Plan réseau](local.png)",
         false,
         remote_query,
         &|_, _| None,
-        &|_| ImageSearch::Hidden,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
     ));
     assert!(!prose_has_highlight_with_images(
         "![Plan réseau](local.png)",
         false,
         remote_query,
         &|_, _| None,
-        &|_| ImageSearch::Hidden,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
+    ));
+    assert!(prose_has_match_with_images(
+        "![](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
     ));
     let html_alt = literal_breaks_with_images("![<chart>](missing.png)", false, &|src, _| {
         Some(src.to_owned())

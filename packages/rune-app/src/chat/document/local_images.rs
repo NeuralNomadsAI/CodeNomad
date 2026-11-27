@@ -187,7 +187,9 @@ impl Plan {
                     .filter_map(Option::as_ref)
                     .map(|slot| {
                         if slot.image.is_some() || slot.placeholder_size.is_some() {
-                            markdown::ImageSearch::Hidden
+                            markdown::ImageSearch::Hidden {
+                                label: slot.label.clone(),
+                            }
                         } else {
                             markdown::ImageSearch::Fallback {
                                 key: slot.key.clone(),
@@ -224,7 +226,9 @@ impl Plan {
                 if let Some(slot) = entry {
                     flags.push(true);
                     meta.push(if slot.image.is_some() || slot.placeholder_size.is_some() {
-                        markdown::ImageSearch::Hidden
+                        markdown::ImageSearch::Hidden {
+                            label: slot.label.clone(),
+                        }
                     } else {
                         markdown::ImageSearch::Fallback {
                             key: slot.key.clone(),
@@ -776,6 +780,19 @@ fn input_matches_picture_name(input: &KnownPath, picture_name: &KnownPath) -> bo
     }
 }
 
+fn allow_input_path(
+    tool: &Tool,
+    picture_raw: Option<&str>,
+    picture_known: Option<&KnownPath>,
+    input_known: Option<&KnownPath>,
+) -> bool {
+    tool_reads_input_path(tool)
+        && (picture_raw.is_none()
+            || picture_known
+                .zip(input_known)
+                .is_some_and(|(name, input)| input_matches_picture_name(input, name)))
+}
+
 pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
     if tool.status != "completed" || tool.pictures.is_empty() {
         return Box::default();
@@ -796,11 +813,12 @@ pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
         if let Some(name) = picture_raw {
             paths.push(name.into());
         }
-        let allow_input = (picture_raw.is_none() && tool_reads_input_path(tool))
-            || picture_known
-                .as_ref()
-                .zip(input_known.as_ref())
-                .is_some_and(|(name, input)| input_matches_picture_name(input, name));
+        let allow_input = allow_input_path(
+            tool,
+            picture_raw,
+            picture_known.as_ref(),
+            input_known.as_ref(),
+        );
         if single
             && allow_input
             && let Some(path) = input_raw
@@ -841,11 +859,12 @@ fn collect_tool_candidates(row_id: &str, tool: &Tool, call: u64, out: &mut Vec<C
         let mut paths = Vec::new();
         let picture_raw = picture.name.as_deref().filter(|value| !value.is_empty());
         let picture_known = picture_raw.and_then(KnownPath::new);
-        let allow_input = (picture_raw.is_none() && tool_reads_input_path(tool))
-            || picture_known
-                .as_ref()
-                .zip(input_path.as_ref())
-                .is_some_and(|(name, input)| input_matches_picture_name(input, name));
+        let allow_input = allow_input_path(
+            tool,
+            picture_raw,
+            picture_known.as_ref(),
+            input_path.as_ref(),
+        );
         if let Some(known) = picture_known {
             paths.push(known);
         }
