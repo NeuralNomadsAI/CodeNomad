@@ -392,6 +392,15 @@ test("archive publication fences native changes and only exact archived ownershi
   assert.equal(scheduledPassageOwner(later, later, "ses_existing", marker), undefined, "a later pending does not invalidate exact archive ownership")
   assert.throws(() => scheduledPassageOwner(undefined, archived, "ses_existing", marker))
   assert.throws(() => scheduledPassageOwner({ deletedAt: 1 }, archived, "ses_existing", marker))
+  // A conversation a passage created for itself is an ordinary one again once its passage is archived or its schedule deleted:
+  // a person may pick it to coordinate another Mission.
+  const own = { ...marker, document: { missionID: marker.document.missionID, passageID: marker.document.passageID } }
+  const tombstone = { version: 1, id: doc.id, projectID: doc.projectID, projectCanonical: doc.projectCanonical, revision: archived.revision + 1, deletedAt: at + 4000,
+    timeGeneration: doc.timeGeneration, requestID: "delete_schedule", expectedRevision: archived.revision, deleteManagedSessions: false }
+  assert.equal(scheduledPassageOwner(tombstone, archived, "ses_existing", own), undefined)
+  assert.equal(scheduledPassageOwner(archived, archived, "ses_existing", own), undefined)
+  assert.throws(() => scheduledPassageOwner({ ...tombstone, id: "msn_other_schedule" }, archived, "ses_existing", own), /tombstone differs/)
+  assert.throws(() => scheduledPassageOwner(doc, doc, "ses_existing", { ...own, document: { ...own.document, passageID: "psg_other" } }), /pending differs/)
   assert.throws(() => scheduledPassageOwner(doc, doc, "ses_wrong", marker), /pending differs/)
   assert.throws(() => scheduledPassageOwner(archived, archived, "ses_existing", { ...marker, missionID: "wrong" }), /archive unavailable/)
 })
