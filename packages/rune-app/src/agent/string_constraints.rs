@@ -554,18 +554,34 @@ fn contains_js_month_name(s: &str) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn looks_like_slash_date(s: &str) -> bool {
-    let mut parts = s.split('/');
-    let Some(a) = parts.next() else {
+fn looks_like_legacy_numeric_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.is_empty() || !b[0].is_ascii_digit() {
         return false;
-    };
-    let Some(b) = parts.next() else {
+    }
+    if !b.iter().all(|&c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                b' ' | b'\t' | b'/' | b'-' | b'.' | b',' | b':' | b'+' | b'(' | b')'
+            )
+    }) {
         return false;
-    };
-    !a.is_empty()
-        && !b.is_empty()
-        && a.bytes().all(|x| x.is_ascii_digit())
-        && b.bytes().next().is_some_and(|x| x.is_ascii_digit())
+    }
+    for sep in [b'/', b'-', b'.'] {
+        let mut parts = s.split(sep as char);
+        let (Some(a), Some(c)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if !a.is_empty()
+            && !c.is_empty()
+            && a.bytes().all(|x| x.is_ascii_digit())
+            && c.bytes().next().is_some_and(|x| x.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -649,10 +665,11 @@ fn is_valid_date_time(value: &str) -> bool {
         });
         let Some((year, ylen)) = iso_candidate else {
             // Defer non-ISO JavaScript `Date.parse` formats (e.g. RFC 2822
-            // `"Thu, 26 Nov 2026 14:30:00 GMT"`, `"Nov 26, 2026"`, `"2026/11/26"`) to OpenCode
-            // instead of falsely blocking valid protocol defaults on desktop.
+            // `"Thu, 26 Nov 2026 14:30:00 GMT"`, `"Nov 26, 2026"`, `"2026/11/26"`,
+            // `"11-26-2026 14:30:00"`) to OpenCode instead of falsely blocking valid protocol
+            // defaults on desktop.
             let has_digit = s.bytes().any(|b| b.is_ascii_digit());
-            return has_digit && (contains_js_month_name(s) || looks_like_slash_date(s));
+            return has_digit && (contains_js_month_name(s) || looks_like_legacy_numeric_date(s));
         };
         let rest_after_year = &s[ylen..];
         if rest_after_year.is_empty() {

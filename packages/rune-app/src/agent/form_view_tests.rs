@@ -5263,3 +5263,173 @@ fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_of
         );
     });
 }
+
+#[test]
+fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass_multiselect_render()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Optional string field with `custom: true`, one non-empty option, and `default: ""`
+        // preserves the untouched empty custom default, activates `when: eq ""`, and submits both.
+        // Typing then clearing the custom editor drops back to absent (matching Solid).
+        let empty_custom_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r21-empty-custom".into(),
+            title: "Mode".into(),
+            fields: vec![
+                json!({
+                    "key": "mode",
+                    "title": "Mode",
+                    "type": "string",
+                    "custom": true,
+                    "options": [{"value": "fast", "label": "Fast"}],
+                    "default": ""
+                }),
+                json!({
+                    "key": "followup",
+                    "title": "Follow-up",
+                    "type": "string",
+                    "default": "details",
+                    "when": [{"key": "mode", "op": "eq", "value": ""}]
+                }),
+            ],
+        };
+        let mut drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&empty_custom_form), &mut drafts);
+        let untouched = agent_forms::answer(&empty_custom_form, &drafts)
+            .expect("untouched explicit empty custom default must activate follow-up and submit");
+        assert_eq!(untouched, json!({"mode": "", "followup": "details"}));
+        drafts
+            .get_mut(&("form-r21-empty-custom".into(), "mode".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "custom".into();
+        let typed = agent_forms::answer(&empty_custom_form, &drafts).unwrap();
+        assert_eq!(typed, json!({"mode": "custom"}));
+        drafts
+            .get_mut(&("form-r21-empty-custom".into(), "mode".into()))
+            .unwrap()
+            .custom_editor()
+            .text
+            .clear();
+        let cleared = agent_forms::answer(&empty_custom_form, &drafts).unwrap();
+        assert_eq!(cleared, json!({}));
+
+        // 2. Blank custom input (`" "`) in a custom multiselect with a declared `""` option
+        // ("None") never marks "None" checked and still lets the user toggle "None" on and off.
+        let empty_opt_ms = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r21-blank-opt".into(),
+            title: "Choices".into(),
+            fields: vec![json!({
+                "key": "picks",
+                "title": "Picks",
+                "type": "multiselect",
+                "custom": true,
+                "minItems": 1,
+                "options": [{"value": "", "label": "None"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(empty_opt_ms);
+        let mut brt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        brt.frame(0.0);
+        brt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r21-blank-opt".into(), "picks".into()))
+                .unwrap()
+                .custom_editor()
+                .text = " ".into();
+        });
+        brt.frame(1.0 / 60.0);
+        let none_key = agent_forms::multi_option_key("picks", "");
+        let btree1 = brt.accessibility_json();
+        assert!(
+            has_state(find_node(&btree1, &none_key).unwrap(), "unchecked"),
+            "blank custom input must not mark declared empty-value checkbox as checked"
+        );
+        assert!(has_state(
+            find_node(&btree1, "answer-question").unwrap(),
+            "disabled"
+        ));
+        // Clicking "None" explicitly selects `""`, satisfies `minItems: 1`, and submits `[""]`.
+        tap(&mut brt, &none_key);
+        let btree2 = brt.accessibility_json();
+        assert!(has_state(find_node(&btree2, &none_key).unwrap(), "checked"));
+        assert!(!has_state(
+            find_node(&btree2, "answer-question").unwrap(),
+            "disabled"
+        ));
+        let bans = agent_forms::answer(
+            &brt.state.agent.as_ref().unwrap().forms[0],
+            &brt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("explicitly selecting declared empty-value checkbox must submit");
+        assert_eq!(bans["picks"], json!([""]));
+
+        // 3. Desktop accepts US hyphenated `date-time` default `11-26-2026 14:30:00` in a
+        // required hidden field and submits it verbatim.
+        let us_dt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r21-us-dt".into(),
+            title: "US date".into(),
+            fields: vec![json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "11-26-2026 14:30:00"
+            })],
+        };
+        let mut udrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&us_dt_form), &mut udrafts);
+        let uans = agent_forms::answer(&us_dt_form, &udrafts)
+            .expect("US hyphenated date-time default must pass on desktop");
+        assert_eq!(uans["when"], json!("11-26-2026 14:30:00"));
+
+        // 4. Pasting a huge comma-separated column (> 20,000 UTF-16 code units) into a 64-option
+        // custom multiselect stays fast on render (O(1) size bailout, never reparsed 64 times).
+        let opts_64: Vec<serde_json::Value> = (0..64)
+            .map(|i| json!({"value": format!("opt_{i:02}"), "label": format!("Opt {i:02}")}))
+            .collect();
+        let big_paste_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r21-paste".into(),
+            title: "Paste".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": opts_64
+            })],
+        };
+        let (mut state, _rx) = state_with_form(big_paste_form);
+        state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r21-paste".into(), "tags".into()))
+            .unwrap()
+            .custom_editor()
+            .text = (0..10_000)
+            .map(|i| format!("row{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let t0 = std::time::Instant::now();
+        let mut prt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        prt.frame(0.0);
+        prt.frame(1.0 / 60.0);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(2),
+            "oversized custom paste across 64 multiselect options must bail out cleanly in render"
+        );
+    });
+}

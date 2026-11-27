@@ -653,6 +653,7 @@ impl Draft {
     }
     pub fn choose_option(&mut self, value: &str) {
         self.choice = Some(value.into());
+        self.has_string_value = false;
         if !self.custom.text.is_empty() {
             self.custom = TextEdit::new("");
             self.custom_baseline.clear();
@@ -661,6 +662,7 @@ impl Draft {
     }
     pub fn clear_choice(&mut self) {
         let cleared_choice = self.choice.take().is_some();
+        let cleared_empty = std::mem::take(&mut self.has_string_value);
         let cleared_custom = if !self.custom.text.is_empty() {
             self.custom = TextEdit::new("");
             self.custom_baseline.clear();
@@ -668,30 +670,42 @@ impl Draft {
         } else {
             false
         };
-        if cleared_choice || cleared_custom {
+        if cleared_choice || cleared_empty || cleared_custom {
             self.dirty = true;
         }
     }
-    pub fn multiselect_checked(&self, allow_custom: bool, value: &str) -> bool {
-        self.selected.contains(value)
-            || (allow_custom
-                && !self.custom.text.is_empty()
-                && parse_custom_entries(&self.custom.text)
-                    .iter()
-                    .any(|entry| entry.value == value))
+    /// Parse non-empty custom multiselect entries once (bailing out in O(1) when the draft
+    /// exceeds the 20,000 UTF-16 code-unit limit) so rendering can test all checkboxes in O(1).
+    pub fn custom_multiselect_values(&self) -> HashSet<String> {
+        if self.custom.text.is_empty()
+            || self.custom.text.len() > 80_000
+            || self.custom.text.encode_utf16().count() > 20_000
+        {
+            return HashSet::new();
+        }
+        parse_custom_entries(&self.custom.text)
+            .into_iter()
+            .filter(|entry| !entry.value.is_empty())
+            .map(|entry| entry.value)
+            .collect()
     }
     pub fn toggle(&mut self, value: &str) {
         self.oversized_multiselect_default = false;
         let in_selected = self.selected.contains(value);
-        let in_custom = !self.custom.text.is_empty()
+        let in_custom = !value.is_empty()
+            && !self.custom.text.is_empty()
+            && self.custom.text.len() <= 80_000
+            && self.custom.text.encode_utf16().count() <= 20_000
             && parse_custom_entries(&self.custom.text)
                 .iter()
-                .any(|entry| entry.value == value);
+                .any(|entry| !entry.value.is_empty() && entry.value == value);
         if in_selected || in_custom {
             self.selected.remove(value);
             if in_custom {
                 let was_custom_edited = self.is_custom_edited();
-                if remove_promoted_lines(&mut self.custom, |decoded| decoded == value) {
+                if remove_promoted_lines(&mut self.custom, |decoded| {
+                    !decoded.is_empty() && decoded == value
+                }) {
                     self.custom_baseline = self.custom.text.clone();
                     if was_custom_edited {
                         self.custom_dirty.set(true);
@@ -902,8 +916,12 @@ fn fresh_draft(field: &Value) -> Draft {
                 }
             } else if hidden {
                 d.hidden_value = Some(raw.to_string());
-            } else if !raw.is_empty() && field["custom"] == true {
-                d.custom = TextEdit::new(raw);
+            } else if field["custom"] == true {
+                if raw.is_empty() {
+                    d.has_string_value = true;
+                } else {
+                    d.custom = TextEdit::new(raw);
+                }
             }
         }
     } else if matches!(field["type"].as_str(), Some("number" | "integer")) {
@@ -1330,8 +1348,12 @@ pub fn validate_budgeted(
                     && (!custom_val.is_empty() || hidden_explicit)
                 {
                     (Some(custom_val), true)
+                } else if let Some(choice) = d.choice.as_deref() {
+                    (Some(choice), false)
+                } else if allow_custom && !d.is_dirty() && d.has_string_value {
+                    (Some(""), true)
                 } else {
-                    (d.choice.as_deref(), false)
+                    (None, false)
                 };
                 let Some(selected_text) = selected_text else {
                     return if field["required"] == true {

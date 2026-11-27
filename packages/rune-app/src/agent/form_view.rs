@@ -451,12 +451,18 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     req_note,
                     error_text.as_deref(),
                 ]);
+                let custom_checked = if allow_custom {
+                    d.custom_multiselect_values()
+                } else {
+                    std::collections::HashSet::new()
+                };
                 let mut items: Vec<El> = valid
                     .into_iter()
                     .enumerate()
                     .map(|(index, option)| {
                         let label = option_label(option, index);
-                        let checked = d.multiselect_checked(allow_custom, option.value);
+                        let checked = d.selected.contains(option.value)
+                            || (!option.value.is_empty() && custom_checked.contains(option.value));
                         let value = option.value.to_string();
                         let id = identity.clone();
                         form_controls::checkbox_option(
