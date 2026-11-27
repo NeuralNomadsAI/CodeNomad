@@ -66,6 +66,7 @@ import {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   reconcilePendingSessionIndicators,
+  needsPendingRequestLiveness,
   reconcilePendingRequestLiveness,
   refreshVolatileInstanceState,
   syncLoadedSessionInboxes,
@@ -286,10 +287,13 @@ const App: Component = () => {
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
     const livenessTimer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return
       for (const instance of instances().values()) {
-        if (instance.status === "ready" && instance.client) void reconcilePendingRequestLiveness(instance.id).catch((error) => {
-          log.warn("Failed to reconcile pending request liveness", { instanceId: instance.id, error })
-        })
+        if (instance.status === "ready" && instance.client && needsPendingRequestLiveness(instance.id)) {
+          void reconcilePendingRequestLiveness(instance.id).catch((error) => {
+            log.warn("Failed to reconcile pending request liveness", { instanceId: instance.id, error })
+          })
+        }
       }
     }, 30_000)
     const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"

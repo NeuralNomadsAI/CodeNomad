@@ -256,9 +256,13 @@ capability is deliberately never probed during an observed compaction.
 Candidate traversal constructs no cold Locations; native HTTP middleware may
 warm or rebuild the single bootstrap root, and root eviction or a config rebuild
 constructs it again. Pending recovery waits for catalogue activation at that
-owned root, then rechecks ownership and compaction admission and dispatches once.
-The authenticated, validated snapshot itself establishes coverage. Snapshots
-can go stale after leases release, so per-kind
+owned root (within a 15-second activation budget inside the 30-second route
+deadline) on a cold bootstrap, then rechecks ownership and compaction admission
+and dispatches once. Once a connection proves the snapshot works at that
+bootstrap root, subsequent batches dispatch directly and re-activate once on a
+400 `rpc.unavailable`/`rpc.method_not_found` response before concluding
+unsupported. The authenticated, validated snapshot itself establishes coverage.
+Snapshots can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ### Fixed pruning broker admission

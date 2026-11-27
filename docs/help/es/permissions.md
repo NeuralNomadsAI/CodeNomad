@@ -77,6 +77,6 @@ Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**. Par
 1. Comprueba el indicador de conexión y reconecta al mismo backend/proyecto.
 2. Deja que la recuperación reconcilie las solicitudes nativas pendientes; las solicitudes conocidas y los borradores se conservan si la cobertura es incompleta.
 
-Tras dos intentos incompletos consecutivos, cada proyecto muestra un solo aviso de recuperación por pestaña del navegador hasta que la recuperación se complete.
+Los fallos temporales de recuperación se reintentan en segundo plano sin crear notificaciones. Si el plugin integrado de OpenCode no puede listar las solicitudes en espera, aparece un único aviso por backend en la pestaña del navegador hasta que la recuperación se complete.
 
-Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).
+Una respuesta incompleta no es una cola vacía autoritativa, y un aviso de plugin no disponible no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).

@@ -32,6 +32,7 @@ import {
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { discoverCheckoutRoot } from "./git-common-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
 import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory, WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
@@ -564,6 +565,13 @@ export class WorkspaceManager {
     // The explicitly opened folder is already authority. Do not require native
     // discovery (or a second connection) to authorize that exact local directory.
     if (target && target === root) {
+      try {
+        const checkoutRoot = await discoverCheckoutRoot(root)
+        media?.current()
+        return { slug: "root", directory: target, worktreeDirectory: checkoutRoot ?? root, exact: true }
+      } catch {
+        media?.current()
+      }
       try {
         const { repoRoot } = await resolveRepoRoot(root)
         media?.current()
