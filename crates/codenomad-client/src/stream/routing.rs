@@ -69,6 +69,7 @@ pub(super) async fn dispatch_marked(
             &b.session,
             &state.inbox,
             Some(state.history_revision.as_ref()),
+            Some(state.upstream.as_ref()),
             &value,
         )
     };

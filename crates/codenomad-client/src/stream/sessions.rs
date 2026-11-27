@@ -2,15 +2,16 @@
 use super::{Backend, Input, Result, Sender, SeqCst, State, children, mission_events};
 use crate::{inbox::InboxWire, transport::WorkspaceEvent};
 use serde_json::Value;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 
-/// Advance `inbox` ingress and `history_revision` synchronously on frame arrival before any routing
-/// queue or side send.
+/// Advance `inbox` ingress, `upstream` disconnect state, and `history_revision` synchronously on
+/// frame arrival before any routing queue or side send.
 pub(super) fn note_inbox_frame(
     workspace: &str,
     session: &str,
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
+    upstream: Option<&AtomicBool>,
     data: &str,
 ) -> u64 {
     if data.len() > super::limits::FRAME_LIMIT {
@@ -34,7 +35,14 @@ pub(super) fn note_inbox_frame(
     serde_json::from_str::<Value>(data.trim())
         .ok()
         .map_or(0, |value| {
-            note_inbox_value(workspace, session, inbox, history_revision, &value)
+            note_inbox_value(
+                workspace,
+                session,
+                inbox,
+                history_revision,
+                upstream,
+                &value,
+            )
         })
 }
 
@@ -96,8 +104,16 @@ pub(super) fn note_inbox_value(
     session: &str,
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
+    upstream: Option<&AtomicBool>,
     value: &Value,
 ) -> u64 {
+    if value["instanceId"] == workspace
+        && value["type"] == "instance.eventStatus"
+        && value["status"] != "connected"
+        && let Some(up) = upstream
+    {
+        up.store(false, SeqCst);
+    }
     if let Some(rev) = history_revision
         && matches_history_boundary(workspace, session, value)
     {
@@ -540,6 +556,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                     &backend.session,
                     &state.inbox,
                     Some(state.history_revision.as_ref()),
+                    Some(state.upstream.as_ref()),
                     &frame.to_string(),
                 );
                 assert!(
@@ -565,11 +582,21 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 &backend.session,
                 &state.inbox,
                 Some(state.history_revision.as_ref()),
+                Some(state.upstream.as_ref()),
                 &disconnect_frame.to_string(),
+            );
+            assert!(
+                !state.upstream.load(SeqCst),
+                "instance.eventStatus disconnect must clear upstream synchronously on wire ingress"
             );
             assert!(
                 !state.history_current(before_disconnect),
                 "instance.eventStatus disconnect must invalidate history_revision synchronously on wire ingress"
+            );
+            let after_disconnect = state.history_revision.load(SeqCst);
+            assert!(
+                !state.history_current(after_disconnect),
+                "history_current must stay false even with the post-disconnect revision while upstream is false"
             );
         });
 }

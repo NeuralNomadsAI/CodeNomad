@@ -973,6 +973,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         spawn_detached_reconcile(l, current_stream_generation);
                     }
                 }
+            } else if pairing_required && !stale_connection {
+                s.phase = Phase::WorkspaceMissing;
             }
         }
         Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {

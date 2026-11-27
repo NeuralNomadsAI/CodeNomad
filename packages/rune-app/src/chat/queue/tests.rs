@@ -1036,4 +1036,35 @@ fn unconfirmed_queued_prompt_reconciles_on_authoritative_inbox_and_confirmed_can
         rt.state.transcript_display.queue.items().len(),
         queue_len_before
     );
+
+    // An external cancel buffered in the active reader channel right before tab suspension must
+    // still settle the unconfirmed lock when chat::reader::suspend drains the channel.
+    let (reader, lane) = crate::chat::reader::Reader::fixture_open();
+    let generation = reader.generation();
+    rt.state.reader = Some(reader);
+    rt.state.draft = rune::edit::TextEdit::new("Cancel before suspend");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(fifth) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected fifth prompt command");
+    };
+    let fifth_id = fifth.id.expect("fifth prompt id");
+    rt.update(|s, _| {
+        crate::composer::acknowledge(s, &fifth_id, crate::transport::PromptOutcome::Unconfirmed);
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), Some(fifth_id.as_str()));
+    lane.events
+        .try_send((
+            generation,
+            0,
+            Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed(
+                fifth_id.clone(),
+            )),
+        ))
+        .unwrap();
+    rt.update(|s, _| {
+        crate::chat::reader::suspend(s);
+    });
+    assert_eq!(rt.state.composer.unconfirmed_id(), None);
+    assert!(rt.state.draft.text.is_empty());
+    assert!(!rt.state.messages.iter().any(|row| row.id == fifth_id));
 }

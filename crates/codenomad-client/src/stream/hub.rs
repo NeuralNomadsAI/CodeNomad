@@ -78,6 +78,7 @@ struct SubscriberSignals {
     placement: Option<Sender<()>>,
     inbox: Option<crate::inbox::InboxWire>,
     history_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
+    upstream: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 struct Subscriber {
@@ -168,6 +169,7 @@ impl Subscriber {
                 session,
                 inbox,
                 self.signals.history_revision.as_deref(),
+                self.signals.upstream.as_deref(),
                 data,
             )
         } else {
@@ -900,6 +902,7 @@ pub(super) async fn read_shared(
             .catalogue
             .is_none()
             .then(|| state.history_revision.clone()),
+        upstream: state.catalogue.is_none().then(|| state.upstream.clone()),
     };
     enum SubscribeStep {
         Ready(Subscription),

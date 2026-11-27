@@ -81,6 +81,7 @@ pub(crate) struct Reader {
     parked: bool,
     activity: Option<(bool, u64)>,
     settling: bool,
+    settled_inbox: Vec<String>,
 }
 
 impl Reader {
@@ -134,6 +135,7 @@ impl Reader {
                 parked: false,
                 activity: None,
                 settling: false,
+                settled_inbox: Vec::new(),
             },
             ReadingLane {
                 demand,
@@ -149,8 +151,39 @@ impl Reader {
         self.revoked.store(true, SeqCst);
     }
 
-    fn drain(&self) {
-        while self.events.try_recv().is_ok() {}
+    fn record_settled_inbox(&mut self, event: &Event) {
+        match event {
+            Event::InboxDelta(codenomad_client::inbox::InboxDelta::Upsert(item)) => {
+                self.settled_inbox.push(item.id.clone());
+            }
+            Event::InboxDelta(codenomad_client::inbox::InboxDelta::Delivery { id, .. })
+            | Event::InboxDelta(codenomad_client::inbox::InboxDelta::Removed(id)) => {
+                self.settled_inbox.push(id.clone());
+            }
+            Event::Inbox {
+                items,
+                authoritative: true,
+                ..
+            } => {
+                for item in items {
+                    self.settled_inbox.push(item.id.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn drain(&mut self) {
+        while let Ok((_, _, event)) = self.events.try_recv() {
+            self.record_settled_inbox(&event);
+        }
+    }
+
+    pub(crate) fn drain_settled_inbox(&mut self) -> Vec<String> {
+        if self.hidden {
+            self.drain();
+        }
+        std::mem::take(&mut self.settled_inbox)
     }
 
     pub(crate) fn stop_content(&mut self) {
@@ -286,6 +319,7 @@ impl Reader {
                 self.last_taken = Some((generation, connection));
                 return Some(event);
             }
+            self.record_settled_inbox(&event);
         }
         None
     }
@@ -964,7 +998,27 @@ pub(crate) fn suspend(s: &mut State) {
         }
         s.paging = false;
     }
+    let _ = settle_discarded_inbox(s);
     s.transcript_display.suspend_rendered();
+}
+
+pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
+    let Some(ids) = s.reader.as_mut().map(Reader::drain_settled_inbox) else {
+        return false;
+    };
+    let mut changed = false;
+    for id in ids {
+        changed |= crate::composer::confirm_unconfirmed_id(s, &id);
+        if s.composer.is_optimistic(&id) {
+            s.composer.clear_optimistic(Some(&id));
+            if let Some(index) = s.messages.iter().position(|row| row.id == id) {
+                s.messages.remove(index);
+                s.revision += 1;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {

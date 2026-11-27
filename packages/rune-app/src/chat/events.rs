@@ -881,6 +881,7 @@ fn drain_chat(
         s.revision += 1;
         changed = true;
     }
+    changed |= chat::reader::settle_discarded_inbox(s);
     changed | super::usage::family::Totals::poll(s)
 }
 

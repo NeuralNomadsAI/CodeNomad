@@ -562,6 +562,7 @@ async fn receive_chunk(
                             &b.session,
                             &state.inbox,
                             Some(state.history_revision.as_ref()),
+                            Some(state.upstream.as_ref()),
                             data,
                         )
                     } else {
