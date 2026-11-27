@@ -172,7 +172,9 @@ pub(crate) fn panel_body<S: 'static>(
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
     let refresh = scoped.clone();
-    let mut field = layout::hinted_field(&ui.filter, search).label(search);
+    let mut field = layout::hinted_field(&ui.filter, search)
+        .label(search)
+        .input_mode(rune::InputMode::Search);
     if partial {
         field = field.description(t("missionsPanel.pages.searchLoaded"));
     }

@@ -99,6 +99,8 @@ impl Policy {
                 "HasPopup",
                 "Orientation",
                 "AutoComplete",
+                "InputMode",
+                "Autofill",
                 "PhysicalInput",
                 "PhysicalKeyCode",
                 "Mods",
@@ -448,6 +450,11 @@ mod tests {
         assert!(check("use rune_theme_codenomad::{Space, Layout}; fn v(){ let n = 600; column().pad(Space::Md).child(button(\"send\", false)); assert_eq!(n, 600); }").unwrap().is_empty());
         assert!(
             check("use rune::Live; fn v() { let viewport = Live::new([0.; 4]); viewport.get(); }")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            check("fn v(f: rune::El) { let _ = f.input_mode(rune::InputMode::Search).autofill(rune::Autofill::CurrentPassword); }")
                 .unwrap()
                 .is_empty()
         );

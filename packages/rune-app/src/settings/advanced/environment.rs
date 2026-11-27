@@ -150,6 +150,7 @@ impl Editor {
             let field = layout::field(&self.value)
                 .label(value)
                 .secure()
+                .autofill(rune::Autofill::Off)
                 .revealed(self.reveal)
                 .disabled(!ready)
                 .on_edit(move |s| &mut edit(s).value);
