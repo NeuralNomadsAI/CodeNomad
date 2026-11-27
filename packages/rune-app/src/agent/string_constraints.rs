@@ -444,6 +444,20 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn equivalent_gregorian_year(year: i64) -> i64 {
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let jan1_dow = (days_from_civil(year, 1, 1) + 4).rem_euclid(7);
+    for candidate in 2000..=2027 {
+        let cand_leap = (candidate % 4 == 0 && candidate % 100 != 0) || candidate % 400 == 0;
+        let cand_dow = (days_from_civil(candidate, 1, 1) + 4).rem_euclid(7);
+        if cand_leap == is_leap && cand_dow == jan1_dow {
+            return candidate;
+        }
+    }
+    2000
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_local_civil_to_utc_secs<F>(parsed: ParsedLocalDateTime, local_clock: F) -> Option<i64>
 where
     F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
@@ -467,39 +481,76 @@ where
         ((target_sod % 3600) / 60) as i32,
     );
     // Sample 36 hours on either side so every timezone (UTC-12..UTC+14) brackets any DST transition.
-    let off_before = local_offset_secs(target_secs - 129_600, &local_clock)?;
-    let off_mid = local_offset_secs(target_secs, &local_clock)?;
-    let off_after = local_offset_secs(target_secs + 129_600, &local_clock)?;
-    let mut candidates = [
-        target_secs - off_before,
-        target_secs - off_mid,
-        target_secs - off_after,
-    ];
-    candidates.sort_unstable();
-    // Exact wall-clock match (normal time, or earlier instant for fall-back overlaps).
-    for cand in candidates {
-        if local_clock(cand)? == target_civil {
-            return Some(cand);
+    if let (Some(off_before), Some(off_mid), Some(off_after)) = (
+        local_offset_secs(target_secs - 129_600, &local_clock),
+        local_offset_secs(target_secs, &local_clock),
+        local_offset_secs(target_secs + 129_600, &local_clock),
+    ) {
+        let mut candidates = [
+            target_secs - off_before,
+            target_secs - off_mid,
+            target_secs - off_after,
+        ];
+        candidates.sort_unstable();
+        for cand in candidates {
+            if local_clock(cand)? == target_civil {
+                return Some(cand);
+            }
         }
+        // Spring-forward DST gap: shift forward using the pre-transition offset, matching ECMAScript Date.
+        return Some(target_secs - off_before);
     }
-    // Spring-forward DST gap: shift forward using the pre-transition offset, matching ECMAScript Date.
-    Some(target_secs - off_before)
+    // For extreme years outside the host OS `local_clock` range (e.g. negative years or > 30827),
+    // resolve the local timezone offset using ECMAScript's equivalent Gregorian year (2000..=2027).
+    let eq_year = equivalent_gregorian_year(parsed.year);
+    let eq_parsed = ParsedLocalDateTime {
+        year: eq_year,
+        ..parsed
+    };
+    let eq_target_secs = civil_to_unix_secs(
+        eq_parsed.year,
+        eq_parsed.month,
+        eq_parsed.day,
+        eq_parsed.hour,
+        eq_parsed.minute,
+        eq_parsed.second,
+    );
+    let eq_utc = resolve_local_civil_to_utc_secs(eq_parsed, local_clock)?;
+    let offset = eq_target_secs - eq_utc;
+    Some(target_secs - offset)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn format_utc_iso(utc_secs: i64, millis: u32) -> Option<String> {
+    const MAX_JS_DATE_MS: i128 = 8_640_000_000_000_000;
+    let total_ms = i128::from(utc_secs) * 1000 + i128::from(millis);
+    if total_ms.abs() > MAX_JS_DATE_MS {
+        return None;
+    }
     let days = utc_secs.div_euclid(86_400);
     let sod = utc_secs.rem_euclid(86_400);
     let (uy, um, ud) = civil_from_days(days);
     let uh = sod / 3600;
     let umin = (sod % 3600) / 60;
     let usec = sod % 60;
-    if !(0..=9999).contains(&uy) {
-        return None;
+    if (0..=9999).contains(&uy) {
+        Some(format!(
+            "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{millis:03}Z"
+        ))
+    } else if uy > 9999 {
+        Some(format!(
+            "+{uy:06}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{millis:03}Z"
+        ))
+    } else {
+        let abs_y = uy.unsigned_abs();
+        Some(format!(
+            "-{abs_y:06}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{millis:03}Z"
+        ))
     }
-    Some(format!(
-        "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{millis:03}Z"
-    ))
+}
+
+pub fn is_local_date_time_without_zone(value: &str) -> bool {
+    parse_local_date_time_without_zone(trim_es(value)).is_some()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1150,6 +1201,44 @@ fn hex_nibble_u16(u: u16) -> Option<u16> {
     }
 }
 
+enum CaptureNameKind {
+    Valid(String),
+    Defer,
+    Invalid,
+}
+
+fn classify_capture_name(slice: &[u16]) -> CaptureNameKind {
+    if slice.is_empty() {
+        return CaptureNameKind::Invalid;
+    }
+    if slice.contains(&(b'\\' as u16)) {
+        return CaptureNameKind::Defer;
+    }
+    let mut out = String::with_capacity(slice.len());
+    for (idx, decoded) in char::decode_utf16(slice.iter().copied()).enumerate() {
+        let Ok(ch) = decoded else {
+            return CaptureNameKind::Defer;
+        };
+        if idx == 0 {
+            if ch.is_ascii() {
+                if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
+                    return CaptureNameKind::Invalid;
+                }
+            } else if !ch.is_alphabetic() {
+                return CaptureNameKind::Defer;
+            }
+        } else if ch.is_ascii() {
+            if !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+                return CaptureNameKind::Invalid;
+            }
+        } else if !(ch.is_alphanumeric() || matches!(ch, '\u{200C}' | '\u{200D}')) {
+            return CaptureNameKind::Defer;
+        }
+        out.push(ch);
+    }
+    CaptureNameKind::Valid(out)
+}
+
 #[derive(Clone, Debug)]
 enum Expr {
     Empty,
@@ -1464,18 +1553,22 @@ impl Parser {
                                     return Err(CompileError::InvalidSyntax);
                                 }
                                 let name_slice = &self.units[name_start..name_end];
-                                if is_digit_u16(name_slice[0])
-                                    || !name_slice
-                                        .iter()
-                                        .all(|&c| is_word_u16(c) || c == b'$' as u16)
-                                {
-                                    return Err(CompileError::InvalidSyntax);
+                                match classify_capture_name(name_slice) {
+                                    CaptureNameKind::Valid(name) => {
+                                        self.captures += 1;
+                                        let idx = self.captures;
+                                        self.named_captures.entry(name).or_insert(idx);
+                                        GroupKind::Capture(idx)
+                                    }
+                                    CaptureNameKind::Defer => {
+                                        self.deferred = true;
+                                        self.captures += 1;
+                                        GroupKind::Capture(self.captures)
+                                    }
+                                    CaptureNameKind::Invalid => {
+                                        return Err(CompileError::InvalidSyntax);
+                                    }
                                 }
-                                let name = String::from_utf16_lossy(name_slice);
-                                self.captures += 1;
-                                let idx = self.captures;
-                                self.named_captures.entry(name).or_insert(idx);
-                                GroupKind::Capture(idx)
                             }
                         }
                         _ => {
@@ -1620,9 +1713,17 @@ impl Parser {
                     if end == start || self.next() != Some(b'>' as u16) {
                         return Err(CompileError::InvalidSyntax);
                     }
-                    let name = String::from_utf16_lossy(&self.units[start..end]);
-                    self.needs_backtrack = true;
-                    Ok(Expr::NamedBackref(name))
+                    match classify_capture_name(&self.units[start..end]) {
+                        CaptureNameKind::Valid(name) => {
+                            self.needs_backtrack = true;
+                            Ok(Expr::NamedBackref(name))
+                        }
+                        CaptureNameKind::Defer => {
+                            self.deferred = true;
+                            Ok(Expr::Empty)
+                        }
+                        CaptureNameKind::Invalid => Err(CompileError::InvalidSyntax),
+                    }
                 } else {
                     self.deferred = true;
                     Ok(Expr::Empty)

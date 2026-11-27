@@ -148,8 +148,13 @@ impl State {
                 .agent
                 .as_mut()
                 .filter(|a| !a.forms_mutating())
-                .and_then(|a| a.drafts.get_mut(&id))
-                .map(|d| d.custom_editor()),
+                .and_then(|a| {
+                    a.reconcile_custom_focus();
+                    a.drafts.get_mut(&id).map(|d| {
+                        d.custom_was_focused = true;
+                        d.custom_editor()
+                    })
+                }),
         };
         edit.unwrap_or(&mut self.rejected_edit)
     }

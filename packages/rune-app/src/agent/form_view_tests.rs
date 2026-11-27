@@ -5883,7 +5883,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         // Deliver a failed reply that leaves the same form pending.
         results_tx
             .try_send(crate::agent::Result::ActForm(
-                false,
+                crate::agent_api::FormReplyOutcome::Failed,
                 Some(vec![focus_form.clone()]),
                 pending_gen,
             ))
@@ -6085,7 +6085,9 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         };
         results2_tx
             .try_send(crate::agent::Result::ActForm(
-                false,
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "{\"error\":\"invalid field token\"}".into(),
+                )),
                 Some(vec![deferred_form.clone()]),
                 def_gen,
             ))
@@ -6128,6 +6130,299 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
                 "disabled"
             ),
             "editing the deferred field must re-enable Answer"
+        );
+    });
+}
+
+#[test]
+fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_years_committed_custom_multiselect_and_reveal_focus_region()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. A transient 503 failure (FormReplyOutcome::Failed) on a deferred field (`^a{257}$`)
+        // keeps the unchanged valid answer retryable with Answer enabled.
+        let retry_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-503".into(),
+            title: "Retry".into(),
+            fields: vec![json!({
+                "key": "code",
+                "title": "Code",
+                "type": "string",
+                "required": true,
+                "pattern": "^a{257}$"
+            })],
+        };
+        let (jobs, _) = codenomad_client::bounded(1);
+        let (stop, _) = codenomad_client::bounded(1);
+        let (results_tx, results) = codenomad_client::bounded(4);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(4);
+        let mut handle = crate::agent::Handle::test(jobs, stop, results);
+        handle.forms = forms_tx;
+        let mut ui = crate::agent::Ui::new(handle);
+        ui.reading = false;
+        ui.known = true;
+        ui.mark_pending_known();
+        ui.forms_lane.reading = false;
+        ui.online = true;
+        while forms_rx.try_recv().is_ok() {}
+        ui.selected = retry_form.id.clone();
+        ui.forms.push(retry_form.clone());
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        ui.drafts
+            .get_mut(&("form-r24-503".into(), "code".into()))
+            .unwrap()
+            .editor()
+            .text = "a".repeat(257);
+        let mut state = crate::init();
+        state.phase = crate::Phase::Ready;
+        state.agent = Some(ui);
+        let mut rt = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        rt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r24-503"));
+        let g1 = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, generation)) => generation,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::Failed,
+                Some(vec![retry_form.clone()]),
+                g1,
+            ))
+            .unwrap();
+        rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        rt.frame(1.0 / 60.0);
+        let after_503 = rt.accessibility_json();
+        assert!(
+            find_node(&after_503, &agent_forms::field_error_key("code")).is_none(),
+            "transient 503 failure must not mark a deferred field invalid"
+        );
+        assert!(
+            !has_state(
+                find_node(&after_503, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "transient 503 failure must keep Answer enabled for retry"
+        );
+
+        // 2. Unicode ECMAScript capture group names (`^(?<café>abc)$`) are accepted and matched
+        // locally, and escaped names defer instead of marking the form unsupported.
+        let unicode_cap_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-unicode-cap".into(),
+            title: "Unicode".into(),
+            fields: vec![json!({
+                "key": "word",
+                "title": "Word",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?<café>abc)$"
+            })],
+        };
+        assert!(agent_forms::supported(&unicode_cap_form));
+        let mut budget = crate::agent::string_constraints::MatchBudget::new();
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &unicode_cap_form.fields[0],
+                "abc",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &unicode_cap_form.fields[0],
+                "xyz",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+        let unicode_ref_field = json!({
+            "key": "dup",
+            "type": "string",
+            "required": true,
+            "pattern": "^(?<café>[a-z]+)-\\k<café>$"
+        });
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &unicode_ref_field,
+                "hi-hi",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Matched)
+        );
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &unicode_ref_field,
+                "hi-no",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::NoMatch)
+        );
+        let escaped_cap_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-escaped-cap".into(),
+            title: "Escaped".into(),
+            fields: vec![json!({
+                "key": "word",
+                "title": "Word",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?<a\\u0062>abc)$"
+            })],
+        };
+        assert!(agent_forms::supported(&escaped_cap_form));
+
+        // 3. Signed 6-digit extended ISO local date-time (`+010000-01-01T00:00`) normalizes to
+        // `+010000-01-01T00:00:00.000Z` on desktop just like web, and out-of-range local
+        // date-times fail validation rather than sending raw timezone-less strings.
+        let utc_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+            let days = utc_secs.div_euclid(86_400);
+            let sod = utc_secs.rem_euclid(86_400);
+            let z = days + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = mp + if mp < 10 { 3 } else { -9 };
+            let y = y + i64::from(m <= 2);
+            Some((
+                y as i32,
+                m as i32,
+                d as i32,
+                (sod / 3600) as i32,
+                ((sod % 3600) / 60) as i32,
+            ))
+        };
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "+010000-01-01T00:00",
+                utc_clock
+            )
+            .as_deref(),
+            Some("+010000-01-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "-000001-01-01T00:00",
+                utc_clock
+            )
+            .as_deref(),
+            Some("-000001-01-01T00:00:00.000Z")
+        );
+        let oor_dt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-oor-dt".into(),
+            title: "Date".into(),
+            fields: vec![json!({
+                "key": "dt",
+                "title": "DT",
+                "type": "string",
+                "format": "date-time",
+                "required": true
+            })],
+        };
+        let mut oor_drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&oor_dt_form), &mut oor_drafts);
+        oor_drafts
+            .get_mut(&("form-r24-oor-dt".into(), "dt".into()))
+            .unwrap()
+            .editor()
+            .text = "+275760-09-14T00:00".into();
+        assert!(
+            agent_forms::answer(&oor_dt_form, &oor_drafts).is_err(),
+            "out-of-range local date-time must fail validation instead of sending unnormalized wire value"
+        );
+
+        // 4. Typing declared `prod` into Other values, Tabbing out (committing), and replacing
+        // custom text with `qa` keeps Production checked and submits `["prod", "qa"]`.
+        let commit_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-commit".into(),
+            title: "Deploy".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let (mut mstate, _mrx) = state_with_form(commit_form);
+        {
+            let a = mstate.agent.as_mut().unwrap();
+            let d = a
+                .drafts
+                .get_mut(&("form-r24-commit".into(), "targets".into()))
+                .unwrap();
+            d.custom.focused = true;
+            d.custom_editor().text = "prod".into();
+            a.reconcile_custom_focus();
+            // Simulate Tab out (blur).
+            a.drafts
+                .get_mut(&("form-r24-commit".into(), "targets".into()))
+                .unwrap()
+                .custom
+                .focused = false;
+            assert!(a.reconcile_custom_focus());
+            // Focus again and replace custom text with `qa`.
+            let d = a
+                .drafts
+                .get_mut(&("form-r24-commit".into(), "targets".into()))
+                .unwrap();
+            d.custom.focused = true;
+            d.custom_editor().text = "qa".into();
+        }
+        let a = mstate.agent.as_ref().unwrap();
+        let mans = agent_forms::answer(&a.forms[0], &a.drafts).unwrap();
+        assert_eq!(mans["targets"], json!(["prod", "qa"]));
+
+        // 5. focused_control_key resolves description-reveal buttons for both radio and checkbox
+        // options to the form's scroll region so post-layout focus reveal keeps them in view.
+        let long_desc = "D".repeat(500);
+        let reveal_focus_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r24-reveal-focus".into(),
+            title: "Choices".into(),
+            fields: vec![
+                json!({
+                    "key": "env",
+                    "title": "Environment",
+                    "type": "string",
+                    "options": [{"value": "prod", "label": "Prod", "description": long_desc}]
+                }),
+                json!({
+                    "key": "tags",
+                    "title": "Tags",
+                    "type": "multiselect",
+                    "options": [{"value": "api", "label": "API", "description": long_desc}]
+                }),
+            ],
+        };
+        let (rf_state, _rfrx) = state_with_form(reveal_focus_form);
+        let radio_reveal = agent_forms::option_desc_reveal_key("env", "prod");
+        let multi_reveal = agent_forms::option_desc_reveal_key("tags", "api");
+        let expected_region = Some("pending-content-form-r24-reveal-focus".to_string());
+        assert_eq!(
+            crate::agent::focused_control_key(&rf_state, Some(&radio_reveal)),
+            Some((radio_reveal, expected_region.clone())),
+            "radio option description reveal button must resolve to form scroll region"
+        );
+        assert_eq!(
+            crate::agent::focused_control_key(&rf_state, Some(&multi_reveal)),
+            Some((multi_reveal, expected_region)),
+            "checkbox option description reveal button must resolve to form scroll region"
         );
     });
 }

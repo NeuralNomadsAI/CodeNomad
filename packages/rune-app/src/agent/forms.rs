@@ -575,6 +575,7 @@ pub struct Draft {
     pub dirty: bool,
     pub text_dirty: Cell<bool>,
     pub custom_dirty: Cell<bool>,
+    pub custom_was_focused: bool,
     pub option_desc_reveals: HashMap<String, usize>,
     pub server_rejected_value: Option<Value>,
 }
@@ -686,6 +687,50 @@ impl Draft {
         }
         &mut self.custom
     }
+    /// Promote newly entered declared options from custom multiselect input into `selected` when
+    /// the custom editor commits on blur, preserving Solid's behavior when custom text is later
+    /// replaced while keeping explicit duplicates (e.g. checked `prod` + typed `prod`) intact.
+    pub fn reconcile_committed_multiselect_custom(
+        &mut self,
+        options: &[NormalizedOption<'_>],
+    ) -> bool {
+        self.custom_was_focused = false;
+        if self.kind != Some(FieldKind::Multiselect)
+            || self.custom.text.is_empty()
+            || self.custom.text.len() > 80_000
+            || self.custom.text.encode_utf16().count() > 20_000
+        {
+            return false;
+        }
+        let mut to_promote = HashSet::new();
+        for entry in parse_custom_entries(&self.custom.text) {
+            if !entry.value.is_empty()
+                && options.iter().any(|o| o.value == entry.value)
+                && !self.selected.contains(entry.value.as_str())
+            {
+                to_promote.insert(entry.value);
+            }
+        }
+        if to_promote.is_empty() {
+            return false;
+        }
+        let mut remaining_removals = to_promote.clone();
+        remove_promoted_lines(&mut self.custom, |decoded| {
+            remaining_removals.remove(decoded)
+        });
+        for value in to_promote {
+            if self.selected.insert(value.clone()) {
+                self.multiselect_order
+                    .get_or_insert_with(Vec::new)
+                    .push(value);
+            }
+        }
+        self.custom_baseline = self.custom.text.clone();
+        self.dirty = true;
+        self.text_dirty.set(true);
+        self.custom_dirty.set(true);
+        true
+    }
     pub fn is_dirty(&self) -> bool {
         if self.edit.text != self.edit_baseline || self.custom.text != self.custom_baseline {
             self.text_dirty.set(true);
@@ -735,6 +780,7 @@ impl Default for Draft {
             dirty: false,
             text_dirty: Cell::new(false),
             custom_dirty: Cell::new(false),
+            custom_was_focused: false,
             option_desc_reveals: HashMap::new(),
             server_rejected_value: None,
         }
@@ -1387,7 +1433,16 @@ fn validate_budgeted_with_deferred(
             }
             let normalized_dt = if field["format"] == "date-time" && !hidden_present && d.is_dirty()
             {
-                string_constraints::normalize_edited_local_date_time(effective_raw)
+                if string_constraints::is_local_date_time_without_zone(effective_raw) {
+                    let Some(norm) =
+                        string_constraints::normalize_edited_local_date_time(effective_raw)
+                    else {
+                        return Err(ValidationError::InvalidFormat);
+                    };
+                    Some(norm)
+                } else {
+                    None
+                }
             } else {
                 None
             };

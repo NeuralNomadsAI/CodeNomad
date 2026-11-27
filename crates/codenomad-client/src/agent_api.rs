@@ -90,6 +90,13 @@ pub enum Action {
     Answer(String, Value, Vec<Value>),
     Cancel(String),
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormReplyOutcome {
+    Ok,
+    ValidationRejected(Option<String>),
+    Failed,
+}
+
 impl Backend {
     pub async fn notification_label(&self) -> Option<String> {
         if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
@@ -406,6 +413,47 @@ impl Backend {
                 Ok(())
             }
         }
+    }
+    pub async fn agent_form_action(&self, action: &Action) -> FormReplyOutcome {
+        let Action::Answer(id, answer, fields) = action else {
+            return match self.agent_action(action).await {
+                Ok(()) => FormReplyOutcome::Ok,
+                Err(_) => FormReplyOutcome::Failed,
+            };
+        };
+        let path = format!("session/{}", self.session);
+        let Ok(raw_forms) = self.control_get(&format!("{path}/form")).await else {
+            return FormReplyOutcome::Failed;
+        };
+        let Ok(pending) = forms(&raw_forms, &self.session) else {
+            return FormReplyOutcome::Failed;
+        };
+        if !pending.iter().any(|f| f.id == *id && f.fields == *fields) {
+            return FormReplyOutcome::Failed;
+        }
+        let Ok(response) = self
+            .client
+            .post(self.control_url(&format!("{path}/form/{id}/reply")))
+            .json(&json!({"answer": answer}))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+        else {
+            return FormReplyOutcome::Failed;
+        };
+        let status = response.status();
+        if status.is_success() {
+            return FormReplyOutcome::Ok;
+        }
+        if matches!(status.as_u16(), 400 | 422) {
+            let body = response.bytes().await.ok().and_then(|bytes| {
+                let capped = &bytes[..bytes.len().min(16_384)];
+                let text = String::from_utf8_lossy(capped).trim().to_string();
+                (!text.is_empty()).then_some(text)
+            });
+            return FormReplyOutcome::ValidationRejected(body);
+        }
+        FormReplyOutcome::Failed
     }
     pub async fn interrupt(&self) -> Result<()> {
         self.control_post(

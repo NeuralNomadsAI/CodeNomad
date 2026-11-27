@@ -34,7 +34,7 @@ enum Result {
     Catalog(Option<Vec<Model>>, String, u64),
     Act(bool, Snapshot, Option<String>, u64),
     ActPermission(bool, Option<Vec<Permission>>, u64),
-    ActForm(bool, Option<Vec<Form>>, u64),
+    ActForm(crate::agent_api::FormReplyOutcome, Option<Vec<Form>>, u64),
     Stop(bool),
     VerifiedIdle(String, bool),
 }
@@ -169,22 +169,27 @@ pub(crate) fn focused_control_key(
                     let options = agent_forms::normalized_options(field);
                     options.iter().any(|option| {
                         agent_forms::string_option_key(field_key, option.value) == key
+                            || (option.description.is_some()
+                                && agent_forms::option_desc_reveal_key(field_key, option.value)
+                                    == key)
                     }) || (field["required"] != true
                         && !options.is_empty()
                         && key == agent_forms::clear_option_key(field_key))
                 }
                 Some("multiselect") => {
-                    agent_forms::normalized_options(field)
-                        .iter()
-                        .any(|option| agent_forms::multi_option_key(field_key, option.value) == key)
-                        || (field["custom"] == true
-                            && a.drafts
-                                .get(&(f.id.clone(), field_key.to_string()))
-                                .is_some_and(|d| {
-                                    d.preserved_custom.iter().any(|raw| {
-                                        agent_forms::multi_option_key(field_key, raw) == key
-                                    })
-                                }))
+                    agent_forms::normalized_options(field).iter().any(|option| {
+                        agent_forms::multi_option_key(field_key, option.value) == key
+                            || (option.description.is_some()
+                                && agent_forms::option_desc_reveal_key(field_key, option.value)
+                                    == key)
+                    }) || (field["custom"] == true
+                        && a.drafts
+                            .get(&(f.id.clone(), field_key.to_string()))
+                            .is_some_and(|d| {
+                                d.preserved_custom
+                                    .iter()
+                                    .any(|raw| agent_forms::multi_option_key(field_key, raw) == key)
+                            }))
                 }
                 _ => false,
             };
@@ -306,6 +311,28 @@ pub struct Ui {
     trailing: Option<bool>,
     catalog_trailing: Option<String>,
 }
+fn body_mentions_field_key(body: &str, key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    let bytes = body.as_bytes();
+    for (idx, _) in body.match_indices(key) {
+        let before_ok = idx == 0 || {
+            let b = bytes[idx - 1];
+            !(b.is_ascii_alphanumeric() || b == b'_')
+        };
+        let after_idx = idx + key.len();
+        let after_ok = after_idx == bytes.len() || {
+            let b = bytes[after_idx];
+            !(b.is_ascii_alphanumeric() || b == b'_')
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let (jobs, rx) = bounded(1);
     let (permissions, prx) = bounded(1);
@@ -357,8 +384,8 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
             let result = match job {
                 PendingJob::Read(generation) => Result::Forms(b.forms_snapshot().await, generation),
                 PendingJob::Act(action, generation) => {
-                    let ok = b.agent_action(&action).await.is_ok();
-                    Result::ActForm(ok, b.forms_snapshot().await, generation)
+                    let outcome = b.agent_form_action(&action).await;
+                    Result::ActForm(outcome, b.forms_snapshot().await, generation)
                 }
             };
             if o.send(result).await.is_err() {
@@ -595,6 +622,7 @@ impl Ui {
         self.act(Action::Permission(id, decision.into(), message))
     }
     pub fn answer_form(&mut self, id: &str) {
+        self.reconcile_custom_focus();
         if let Some(form) = self.forms.iter().find(|f| f.id == id) {
             if let Ok((answer, deferred)) = agent_forms::answer_with_deferred(form, &self.drafts) {
                 let fields = form.fields.clone();
@@ -612,10 +640,36 @@ impl Ui {
             self.act(Action::Cancel(id));
         }
     }
+    pub(crate) fn reconcile_custom_focus(&mut self) -> bool {
+        let mut changed = false;
+        for form in &self.forms {
+            for field in &form.fields {
+                if field["type"] != "multiselect" || field["custom"] != true {
+                    continue;
+                }
+                let Some(key) = field["key"].as_str() else {
+                    continue;
+                };
+                let Some(draft) = self.drafts.get_mut(&(form.id.clone(), key.to_string())) else {
+                    continue;
+                };
+                if draft.custom.focused {
+                    draft.custom_was_focused = true;
+                } else if draft.custom_was_focused {
+                    let options = agent_forms::normalized_options(field);
+                    if draft.reconcile_committed_multiselect_custom(&options) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
+    }
     fn clear_form_editor_focus(&mut self) {
         for draft in self.drafts.values_mut() {
             draft.edit.focused = false;
             draft.custom.focused = false;
+            draft.custom_was_focused = false;
         }
     }
     pub fn idle(&self) -> bool {
@@ -1120,10 +1174,11 @@ impl Ui {
                         }
                     }
                 }
-                Result::ActForm(ok, forms, generation) => {
+                Result::ActForm(outcome, forms, generation) => {
                     self.forms_lane.busy = false;
                     self.clear_form_editor_focus();
                     let submitted_deferred = self.pending_deferred_submission.take();
+                    let ok = matches!(outcome, crate::agent_api::FormReplyOutcome::Ok);
                     if self.scope_missing {
                         self.forms_lane.reconciling = false;
                     } else {
@@ -1131,7 +1186,9 @@ impl Ui {
                         self.forms_lane.error = !ok || (fresh && forms.is_none());
                         self.sync_error();
                         if fresh {
-                            if !ok
+                            if let crate::agent_api::FormReplyOutcome::ValidationRejected(
+                                ref detail,
+                            ) = outcome
                                 && let Some(ref pending_forms) = forms
                                 && let Some((form_id, submitted_fields, deferred_fields)) =
                                     submitted_deferred
@@ -1139,7 +1196,33 @@ impl Ui {
                                     .iter()
                                     .any(|f| f.id == form_id && f.fields == submitted_fields)
                             {
-                                for (field_key, submitted_value) in deferred_fields {
+                                let matching: Vec<&(String, serde_json::Value)> =
+                                    if let Some(body) = detail {
+                                        deferred_fields
+                                            .iter()
+                                            .filter(|(k, _)| body_mentions_field_key(body, k))
+                                            .collect()
+                                    } else {
+                                        Vec::new()
+                                    };
+                                let to_mark: Vec<(String, serde_json::Value)> =
+                                    if !matching.is_empty() {
+                                        matching.into_iter().cloned().collect()
+                                    } else if deferred_fields.len() == 1
+                                        && !detail.as_deref().is_some_and(|body| {
+                                            submitted_fields.iter().any(|f| {
+                                                f["key"].as_str().is_some_and(|k| {
+                                                    k != deferred_fields[0].0
+                                                        && body_mentions_field_key(body, k)
+                                                })
+                                            })
+                                        })
+                                    {
+                                        deferred_fields
+                                    } else {
+                                        Vec::new()
+                                    };
+                                for (field_key, submitted_value) in to_mark {
                                     if let Some(draft) =
                                         self.drafts.get_mut(&(form_id.clone(), field_key))
                                     {

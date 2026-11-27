@@ -539,8 +539,12 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
             .is_ok()
     );
     assert!(
-        out.try_send(super::Result::ActForm(true, Some(vec![]), form_gen))
-            .is_ok()
+        out.try_send(super::Result::ActForm(
+            crate::agent_api::FormReplyOutcome::Ok,
+            Some(vec![]),
+            form_gen
+        ))
+        .is_ok()
     );
     assert!(out.try_send(super::Result::Stop(true)).is_ok());
     assert!(ui.poll());
@@ -572,8 +576,12 @@ fn lane_errors_are_isolated_across_model_pending_catalog_and_stop() {
             .is_ok()
     );
     assert!(
-        out.try_send(super::Result::ActForm(true, Some(vec![]), form_gen))
-            .is_ok()
+        out.try_send(super::Result::ActForm(
+            crate::agent_api::FormReplyOutcome::Ok,
+            Some(vec![]),
+            form_gen
+        ))
+        .is_ok()
     );
     assert!(ui.poll());
     assert!(
@@ -1846,8 +1854,12 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
         super::PendingJob::Act(_, generation) => generation,
         _ => panic!("expected form cancel act"),
     };
-    out.try_send(super::Result::ActForm(false, None, form_act_gen))
-        .unwrap();
+    out.try_send(super::Result::ActForm(
+        crate::agent_api::FormReplyOutcome::Failed,
+        None,
+        form_act_gen,
+    ))
+    .unwrap();
     assert!(ui.poll());
     assert!(ui.blocked());
     assert!(ui.navigation_blocked());
@@ -1875,8 +1887,12 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
     ui.attention.execution(Some("idle_1".into()));
     out.try_send(super::Result::ActPermission(false, None, act_gen))
         .unwrap();
-    out.try_send(super::Result::ActForm(false, None, form_act_gen))
-        .unwrap();
+    out.try_send(super::Result::ActForm(
+        crate::agent_api::FormReplyOutcome::Failed,
+        None,
+        form_act_gen,
+    ))
+    .unwrap();
     out.try_send(super::Result::Stop(false)).unwrap();
     out.try_send(super::Result::Session(
         super::Snapshot {
