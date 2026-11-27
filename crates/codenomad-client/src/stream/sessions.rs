@@ -191,7 +191,13 @@ pub(super) async fn relay(
             _ => {}
         }
     }
-    if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
+    if own
+        && value["type"] == "instance.event"
+        && matches!(
+            native["type"].as_str(),
+            Some("vcs.branch.updated" | "worktree.updated")
+        )
+    {
         out.send(Input::Workspace(
             epoch,
             WorkspaceEvent::WorktreesChanged {

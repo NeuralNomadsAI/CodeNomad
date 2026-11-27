@@ -45,6 +45,11 @@ enum PendingOp {
     },
 }
 
+enum ReconcileExpectation {
+    Removed(String),
+    Reset,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     selected_id: String,
@@ -54,6 +59,8 @@ pub(super) struct State {
     reconciliation_pending: bool,
     pending_op: Option<PendingOp>,
     flight: Option<Receiver<Reply>>,
+    in_flight_expected: Option<ReconcileExpectation>,
+    reconcile_expected: Option<ReconcileExpectation>,
     confirming: bool,
     reconciling: bool,
     reloading: bool,
@@ -229,6 +236,7 @@ impl State {
             return effects;
         };
         self.flight = None;
+        let in_flight_expected = self.in_flight_expected.take();
         match reply {
             Reply::Remove {
                 outcome,
@@ -243,18 +251,30 @@ impl State {
                     self.failed = false;
                     self.needs_reload = false;
                     self.reconciliation_pending = false;
+                    self.reconcile_expected = None;
                     self.confirming = true;
                     effects.invalidate = true;
                 }
-                MissionPatchOutcome::Conflict
-                | MissionPatchOutcome::Unsupported
-                | MissionPatchOutcome::Failed => {
+                MissionPatchOutcome::Conflict | MissionPatchOutcome::Unsupported => {
                     self.failed = true;
                     self.needs_reload = true;
+                    self.reconcile_expected = None;
                     if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
                         self.reconciling = true;
                         effects.invalidate = true;
                     } else {
+                        self.pending_label = None;
+                    }
+                }
+                MissionPatchOutcome::Failed => {
+                    self.failed = true;
+                    self.needs_reload = true;
+                    if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                        self.reconciling = true;
+                        self.reconcile_expected = in_flight_expected;
+                        effects.invalidate = true;
+                    } else {
+                        self.reconcile_expected = None;
                         self.pending_label = None;
                     }
                 }
@@ -273,6 +293,7 @@ impl State {
         if self.reloading {
             self.reloading = false;
             self.pending_label = None;
+            self.reconcile_expected = None;
             if ctx.config_loaded {
                 self.failed = false;
                 self.needs_reload = false;
@@ -297,10 +318,27 @@ impl State {
         if self.reconciling {
             self.reconciling = false;
             self.pending_label = None;
-            self.failed = true;
-            self.needs_reload = true;
-            if !ctx.config_loaded {
-                self.reconciliation_pending = true;
+            let expected = self.reconcile_expected.take();
+            let confirmed = ctx.config_loaded
+                && models_valid(true, ctx.config_snapshot)
+                && expected.is_some_and(|exp| {
+                    let models = normalize_mission_models(raw_models(ctx.config_snapshot));
+                    match exp {
+                        ReconcileExpectation::Removed(id) => !models.iter().any(|m| m.id == id),
+                        ReconcileExpectation::Reset => models.is_empty(),
+                    }
+                });
+            if confirmed {
+                self.selected_id.clear();
+                self.failed = false;
+                self.needs_reload = false;
+                self.reconciliation_pending = false;
+            } else {
+                self.failed = true;
+                self.needs_reload = true;
+                if !ctx.config_loaded {
+                    self.reconciliation_pending = true;
+                }
             }
             effects.changed = true;
             effects.settled = true;
@@ -370,6 +408,7 @@ impl State {
                 let (out, inbox) = bounded(1);
                 let wake = wake.clone();
                 self.flight = Some(inbox);
+                self.in_flight_expected = Some(ReconcileExpectation::Removed(id));
                 platform::spawn(async move {
                     let (outcome, pre_send_aborted) =
                         if !send_authority.authorize_send(&backend).await {
@@ -417,6 +456,7 @@ impl State {
                 let (out, inbox) = bounded(1);
                 let wake = wake.clone();
                 self.flight = Some(inbox);
+                self.in_flight_expected = Some(ReconcileExpectation::Reset);
                 platform::spawn(async move {
                     let (outcome, pre_send_aborted) =
                         if !send_authority.authorize_send(&backend).await {

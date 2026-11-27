@@ -462,9 +462,7 @@ fn drain_chat(
                 }
             }
             Event::Reconnecting | Event::ConnectionLost => {
-                if matches!(event, Event::ConnectionLost) {
-                    s.conversation_stream_connected = false;
-                }
+                s.conversation_stream_connected = false;
                 workspace::suspend_mission_briefing(s);
                 s.transcript_display.messages.offline();
                 s.transcript_display.queue.offline();

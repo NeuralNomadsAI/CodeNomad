@@ -880,3 +880,533 @@ fn native_preferences_reopen_preserves_missions_scope_and_profiles_disclosure() 
         assert!(!shared.borrow().missions.profiles_open());
     });
 }
+
+#[test]
+fn direct_mode_reopening_preferences_during_sse_outage_keeps_target_offline_after_http_refresh() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let client_id = backend.client_id.clone();
+
+        let mut root = crate::init();
+        let (_out, incoming) = codenomad_client::bounded(4);
+        root.incoming = Some(incoming);
+        root.conversation_client_id = Some(client_id);
+        root.conversation_stream_connected = true;
+        root.phase = crate::Phase::Ready;
+        prefs.window_wake = Some(Arc::new(|| {}));
+        let shared = root.settings.shared.clone();
+        *shared.borrow_mut() = prefs;
+
+        // Direct conversation SSE drops while HTTP stays reachable.
+        crate::settings::connection_event(&root, &crate::transport::Event::ConnectionLost, true);
+        root.conversation_stream_connected = false;
+        root.phase = crate::Phase::Reconnecting;
+        assert!(shared.borrow().is_transport_lost());
+
+        // Reopen native Preferences during the SSE outage: Target::capture must see offline.
+        let target = Target::capture(&root).unwrap();
+        assert!(
+            !target.online(),
+            "direct-mode Target::capture must stay offline while conversation SSE is disconnected"
+        );
+        shared.borrow_mut().provider_target = Some(target);
+
+        // Even after HTTP config refresh clears transport_lost, target must stay offline (no session/depth requests).
+        shared.borrow_mut().refresh();
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let (mut saw_meta, mut saw_config, mut saw_state) = (false, false, false);
+        while !(saw_meta && saw_config && saw_state) {
+            let req = next_request(&listener, &mut rt).await;
+            match req.first.as_str() {
+                "GET /api/meta HTTP/1.1" => {
+                    saw_meta = true;
+                    req.reply(200, json!({"capabilities":[]})).await;
+                }
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                    saw_config = true;
+                    req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                }
+                "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                    saw_state = true;
+                    req.reply(200, json!({"state":{}})).await;
+                }
+                other => panic!("unexpected request while SSE offline: {other}"),
+            }
+        }
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().is_transport_lost()
+        })
+        .await;
+        assert!(
+            !shared.borrow().provider_target.as_ref().unwrap().online(),
+            "HTTP refresh must not mark direct-mode Target online while SSE is still down"
+        );
+
+        // Open Missions tab while SSE is still down: must NOT issue any session or depth HTTP request.
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+        assert!(
+            timeout(Duration::from_millis(120), listener.accept())
+                .await
+                .is_err(),
+            "Missions must not resolve session or allow depth reads/writes during direct-mode SSE outage"
+        );
+
+        // Once SSE reconnects (AgentHint(true)), target becomes online and resolves live location.
+        root.conversation_stream_connected = true;
+        root.phase = crate::Phase::Ready;
+        crate::settings::connection_event(&root, &crate::transport::Event::AgentHint(true), true);
+        assert!(shared.borrow().provider_target.as_ref().unwrap().online());
+        let req = next_request(&listener, &mut rt).await;
+        assert!(
+            req.first == "GET /workspaces/captured/instance/api/session/session HTTP/1.1",
+            "expected live session lookup after SSE reconnect, got {}",
+            req.first
+        );
+    });
+}
+
+#[test]
+fn uncertain_depth_write_survives_visiting_another_worktree_and_returning() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_clone = backend.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        *shared.borrow_mut() = prefs;
+
+        let target_a = Target::capture(&root).unwrap();
+        shared.borrow_mut().provider_target = Some(target_a);
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_a1 = "a".repeat(64);
+        let exp_a2 = "b".repeat(64);
+        let exp_b1 = "c".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_a1,
+            true,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Start PUT(4) on A and drop the connection without replying -> Uncertain on A.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        let put_a = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_a.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        drop(put_a);
+        wait_until(|| {
+            tick(&mut rt);
+            shared.borrow().missions.has_unconfirmed() && rt.find("mission-depth-refresh").is_some()
+        })
+        .await;
+
+        // Close web settings, visit worktree B, and resolve B cleanly.
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.provider_target = None;
+            prefs.missions.suspend_reads();
+        }
+        tick(&mut rt);
+        let target_b = Target::fixture(backend_clone.clone(), "captured", Some("session-b"));
+        shared.borrow_mut().provider_target = Some(target_b);
+        tick(&mut rt);
+        let mut saw_b_session = false;
+        let mut saw_b_agents = false;
+        let mut saw_b_providers = false;
+        let mut saw_b_models = false;
+        let mut saw_b_depth = false;
+        while !(saw_b_session && saw_b_agents && saw_b_providers && saw_b_models && saw_b_depth) {
+            let req = next_request(&listener, &mut rt).await;
+            if req.first == "GET /workspaces/captured/instance/api/session/session-b HTTP/1.1" {
+                saw_b_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session-b","location":{"directory":"/repo/wt-b"}}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/agent")
+            {
+                saw_b_agents = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-b"},"data":[]}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/provider")
+            {
+                saw_b_providers = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-b"},"data":{"all":[],"connected":[]}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/model")
+            {
+                saw_b_models = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-b"},"data":[]}),
+                )
+                .await;
+            } else if req.first
+                == "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-b HTTP/1.1"
+            {
+                saw_b_depth = true;
+                req.reply(200, depth_snapshot_json("/repo/wt-b", Some(3), &exp_b1))
+                    .await;
+            } else {
+                panic!("unexpected request on B: {}", req.first);
+            }
+        }
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-b"))
+        })
+        .await;
+        assert!(
+            shared.borrow().missions.has_unconfirmed(),
+            "visiting B must not forget unconfirmed write on A"
+        );
+
+        // Return to A: session lookup and catalog may run, but NO automatic depth GET on A.
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.provider_target = None;
+            prefs.missions.suspend_reads();
+        }
+        tick(&mut rt);
+        let target_a2 = Target::fixture(backend_clone, "captured", Some("session"));
+        shared.borrow_mut().provider_target = Some(target_a2);
+        tick(&mut rt);
+        let mut saw_a_session = false;
+        let mut saw_a_agents = false;
+        let mut saw_a_providers = false;
+        let mut saw_a_models = false;
+        while !(saw_a_session && saw_a_agents && saw_a_providers && saw_a_models) {
+            let req = next_request(&listener, &mut rt).await;
+            if req.first == "GET /workspaces/captured/instance/api/session/session HTTP/1.1" {
+                saw_a_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/repo/wt-a"}}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/agent")
+            {
+                saw_a_agents = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[]}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/provider")
+            {
+                saw_a_providers = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":{"all":[],"connected":[]}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/model")
+            {
+                saw_a_models = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[]}),
+                )
+                .await;
+            } else {
+                panic!(
+                    "returning to uncertain A must not auto-GET depth: {}",
+                    req.first
+                );
+            }
+        }
+        tick(&mut rt);
+        if let Ok(accepted) = timeout(Duration::from_millis(120), listener.accept()).await {
+            let (socket, _) = accepted.unwrap();
+            let req = read_request(socket, Duration::from_secs(3)).await;
+            panic!(
+                "returning to uncertain A must wait for explicit Refresh, got {}",
+                req.first
+            );
+        }
+        assert!(
+            shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        );
+        assert!(rt.find("mission-depth-refresh").is_some());
+
+        // Explicit Refresh + confirmation recovers A and clears has_unconfirmed.
+        click(&mut rt, "mission-depth-refresh");
+        click(&mut rt, "file-decision-confirm");
+        let recovery_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            recovery_get.first,
+            "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
+        );
+        recovery_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_a2))
+            .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().missions.has_unconfirmed()
+                && !shared
+                    .borrow()
+                    .missions
+                    .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+    });
+}
+
+#[test]
+fn library_remove_lost_ack_clears_error_when_authoritative_get_confirms_removal() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        prefs.window_wake = Some(Arc::new(|| {}));
+        prefs.config.snapshot = Some(json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": [],
+                "missionModels": [
+                    {
+                        "version": 1,
+                        "id": "11111111-1111-4111-8111-111111111111",
+                        "name": "Saved preset",
+                        "objective": "Check build",
+                        "notes": "",
+                        "template": "custom"
+                    }
+                ]
+            }
+        }));
+        let shared = Rc::new(RefCell::new(prefs));
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        click(&mut rt, "mission-model-library-trigger");
+        click_option(&mut rt, "mission-model-library", "Saved preset");
+        click(&mut rt, "mission-models-remove");
+        click(&mut rt, "file-decision-confirm");
+
+        // Drop the PATCH response without replying (server applied removal, ack was lost).
+        let patch = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            patch.first,
+            "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+        );
+        drop(patch);
+
+        // Authoritative reconciliation GET returns missionModels: [] confirming removal.
+        let get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            get.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        get.reply(
+            200,
+            json!({
+                "settings": {
+                    "locale": "en",
+                    "missionProfileDefaults": [],
+                    "missionModels": []
+                }
+            }),
+        )
+        .await;
+
+        wait_until(|| {
+            tick(&mut rt);
+            !shared.borrow().missions.has_unconfirmed()
+        })
+        .await;
+        assert!(
+            rt.find("mission-models-reload").is_none(),
+            "confirmed lost-ack removal must clear library reload/error lock"
+        );
+    });
+}
+
+#[test]
+fn depth_picker_announces_busy_during_save_and_steps_closed_with_arrow_key() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        shared.borrow_mut().provider_target = Some(target);
+
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "7".repeat(64);
+        let exp_2 = "8".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(3),
+            &exp_1,
+            true,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        fn find_node<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+            if node["key"] == key {
+                return Some(node);
+            }
+            node["children"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|child| find_node(child, key))
+        }
+
+        // Focus closed depth trigger and press ArrowDown -> steps from 3 to 4 without opening popup.
+        rt.update(|_, tx| tx.focus("mission-subagent-depth-trigger", true));
+        rt.frame(0.02);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Down,
+            mods: Default::default(),
+        });
+        rt.frame(0.02);
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_4.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_4.body["depth"], json!(4));
+
+        // While PUT(4) is in flight, trigger stays focused/collapsed and closed ArrowDown queues 5.
+        rt.frame(0.02);
+        assert!(shared.borrow().missions.depth_save_in_flight());
+        let a11y = rt.accessibility_json();
+        let trigger = find_node(&a11y, "mission-subagent-depth-trigger")
+            .expect("depth trigger must remain mounted while saving");
+        assert_eq!(trigger["value"], json!("4"));
+        let states = trigger["states"].as_array().cloned().unwrap_or_default();
+        assert!(
+            states.iter().any(|s| s == "focused"),
+            "depth trigger must stay focused during save, trigger={trigger}"
+        );
+        assert!(
+            find_node(&a11y, "mission-subagent-depth-content").is_none(),
+            "closed stepping must not open depth listbox"
+        );
+
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Down,
+            mods: Default::default(),
+        });
+        rt.frame(0.02);
+        assert!(
+            find_node(&rt.accessibility_json(), "mission-subagent-depth-content").is_none(),
+            "stepping while saving must queue next depth without opening popup"
+        );
+
+        put_4.reply_no_content().await;
+        let confirm_get = next_request(&listener, &mut rt).await;
+        confirm_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_2))
+            .await;
+        let put_5 = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_5.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_5.body["depth"], json!(5));
+        assert_eq!(put_5.body["expectation"], json!(exp_2));
+        put_5.reply_no_content().await;
+    });
+}

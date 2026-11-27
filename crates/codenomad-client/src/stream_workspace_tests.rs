@@ -283,6 +283,35 @@ fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
 }
 
 #[test]
+fn worktree_updated_emits_worktrees_changed_in_direct_conversation_stream() {
+    run(async {
+        let backend = backend().await;
+        let (out, inbox) = bounded(4);
+        let state = State::default();
+        deliver(
+            &backend,
+            &out,
+            &state,
+            json!({"type":"instance.event","instanceId":"foreign","event":{"type":"worktree.updated","data":{}}}),
+        )
+        .await;
+        assert!(inbox.is_empty());
+        deliver(
+            &backend,
+            &out,
+            &state,
+            json!({"type":"instance.event","instanceId":"owner","event":{"type":"worktree.updated","data":{}}}),
+        )
+        .await;
+        assert!(
+            matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "owner"),
+            "worktree.updated on owned workspace must emit WorktreesChanged in direct conversation stream"
+        );
+        assert!(inbox.is_empty());
+    });
+}
+
+#[test]
 fn workspace_events_cross_existing_http_stream_and_recovery_lane() {
     use std::{
         io::{Read, Write},

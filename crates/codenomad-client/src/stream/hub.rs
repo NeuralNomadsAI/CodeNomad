@@ -792,8 +792,7 @@ impl Hub {
         }
     }
 
-    pub(crate) fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
-        let rev = self.location_revisions.lock().unwrap();
+    fn workspace_healthy_locked(rev: &LocationRevisions, workspace: &str) -> bool {
         if rev.upstream_unhealthy.contains(workspace) {
             return false;
         }
@@ -801,6 +800,27 @@ impl Hub {
             return rev.upstream_verified_healthy.contains(workspace);
         }
         true
+    }
+
+    fn location_revision_locked(
+        rev: &LocationRevisions,
+        workspace: &str,
+        session: Option<&str>,
+    ) -> u64 {
+        let ws = rev.workspace.get(workspace).copied().unwrap_or(0);
+        let ses = session
+            .and_then(|s| {
+                rev.session
+                    .get(&(workspace.to_owned(), s.to_owned()))
+                    .copied()
+            })
+            .unwrap_or(0);
+        rev.overflow.wrapping_add(ws).wrapping_add(ses)
+    }
+
+    pub(crate) fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
+        let rev = self.location_revisions.lock().unwrap();
+        Self::workspace_healthy_locked(&rev, workspace)
     }
 
     pub(crate) fn note_session_location_change(&self, workspace: &str, session: &str) {
@@ -821,15 +841,15 @@ impl Hub {
 
     pub(crate) fn location_revision(&self, workspace: &str, session: Option<&str>) -> u64 {
         let rev = self.location_revisions.lock().unwrap();
-        let ws = rev.workspace.get(workspace).copied().unwrap_or(0);
-        let ses = session
-            .and_then(|s| {
-                rev.session
-                    .get(&(workspace.to_owned(), s.to_owned()))
-                    .copied()
-            })
-            .unwrap_or(0);
-        rev.overflow.wrapping_add(ws).wrapping_add(ses)
+        Self::location_revision_locked(&rev, workspace, session)
+    }
+
+    pub(crate) fn location_state(&self, workspace: &str, session: Option<&str>) -> (u64, bool) {
+        let rev = self.location_revisions.lock().unwrap();
+        (
+            Self::location_revision_locked(&rev, workspace, session),
+            Self::workspace_healthy_locked(&rev, workspace),
+        )
     }
     async fn subscribe(
         self: &Arc<Self>,

@@ -87,8 +87,8 @@ impl SendAuthority {
                 .expected_location
                 .as_ref()
                 .is_none_or(|(ws, ses, rev)| {
-                    backend.client.location_revision(ws, ses.as_deref()) == *rev
-                        && backend.client.workspace_upstream_healthy(ws)
+                    let (current_rev, healthy) = backend.client.location_state(ws, ses.as_deref());
+                    current_rev == *rev && healthy
                 })
     }
 

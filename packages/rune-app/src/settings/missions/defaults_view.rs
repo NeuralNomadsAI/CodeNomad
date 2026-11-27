@@ -1,10 +1,7 @@
 //! Defaults card view for Preferences → Missions (scope, task mode, folded profiles, deleteSessions).
 use super::{Confirm, InfoTip, Missions, Picker, defaults};
 use crate::{
-    settings::{
-        preferences::{Owner, Preferences},
-        providers::Target,
-    },
+    settings::preferences::{Owner, Preferences},
     strings::{locale, t},
 };
 use codenomad_client::settings::missions::{

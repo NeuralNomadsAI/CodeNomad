@@ -240,6 +240,9 @@ impl Http {
     pub fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
         self.7.workspace_upstream_healthy(workspace)
     }
+    pub fn location_state(&self, workspace: &str, session: Option<&str>) -> (u64, bool) {
+        self.7.location_state(workspace, session)
+    }
     pub(crate) fn preferences_notices(&self) -> Arc<[AtomicU64; 3]> {
         self.4.clone()
     }

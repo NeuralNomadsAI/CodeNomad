@@ -1519,3 +1519,28 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
         },
     );
 }
+
+#[test]
+fn hub_location_state_reads_revision_and_health_atomically() {
+    let hub = Hub::default();
+    let (rev0, healthy0) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev0, 0);
+    assert!(healthy0);
+
+    hub.note_session_location_change("ws-a", "ses-1");
+    let (rev1, healthy1) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev1, 1);
+    assert!(healthy1);
+    assert_eq!(hub.location_revision("ws-a", Some("ses-1")), rev1);
+    assert_eq!(hub.workspace_upstream_healthy("ws-a"), healthy1);
+
+    hub.note_workspace_upstream_status("ws-a", false);
+    let (rev2, healthy2) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev2, 2);
+    assert!(!healthy2);
+
+    hub.note_workspace_upstream_status("ws-a", true);
+    let (rev3, healthy3) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev3, 3);
+    assert!(healthy3);
+}

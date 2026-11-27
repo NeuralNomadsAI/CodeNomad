@@ -93,6 +93,8 @@ fn valid_depth_choice(snapshot: &SubagentDepthSnapshot, value: &str) -> bool {
         .is_some_and(|d| d >= capability.minimum && capability.maximum.is_none_or(|max| d <= max))
 }
 
+const MAX_UNCERTAIN_LOCATIONS: usize = 64;
+
 #[derive(Default)]
 pub(super) struct State {
     scope: Option<(String, u64)>,
@@ -118,9 +120,58 @@ pub(super) struct State {
     read_flight: Option<ReadFlight>,
     save_flight: Option<SaveFlight>,
     pending_save: bool,
+    uncertain_locations: Vec<(String, String)>,
+    recovering_uncertain: Option<(String, String)>,
 }
 
 impl State {
+    fn current_location(&self) -> Option<(String, String)> {
+        if let Some(target) = &self.save_target {
+            return Some((target.workspace.clone(), target.directory.clone()));
+        }
+        let workspace = self.scope.as_ref().map(|(w, _)| w.as_str())?;
+        let directory = self
+            .snapshot
+            .as_ref()
+            .map(|s| s.directory.as_str())
+            .or(self.opener_directory.as_deref())?;
+        Some((workspace.to_owned(), directory.to_owned()))
+    }
+
+    fn record_uncertain_location(&mut self, workspace: &str, directory: &str) {
+        if self
+            .uncertain_locations
+            .iter()
+            .any(|(w, d)| w == workspace && same_server_path(d, directory))
+        {
+            return;
+        }
+        if self.uncertain_locations.len() >= MAX_UNCERTAIN_LOCATIONS {
+            self.uncertain_locations.remove(0);
+        }
+        self.uncertain_locations
+            .push((workspace.to_owned(), directory.to_owned()));
+    }
+
+    fn enter_uncertain(&mut self) {
+        if let Some((workspace, directory)) = self.current_location() {
+            self.record_uncertain_location(&workspace, &directory);
+        }
+        self.recovering_uncertain = None;
+        self.phase = Phase::Uncertain;
+    }
+
+    fn is_uncertain_location(&self, workspace: &str, directory: &str) -> bool {
+        self.uncertain_locations
+            .iter()
+            .any(|(w, d)| w == workspace && same_server_path(d, directory))
+    }
+
+    fn clear_uncertain_location(&mut self, workspace: &str, directory: &str) {
+        self.uncertain_locations
+            .retain(|(w, d)| !(w == workspace && same_server_path(d, directory)));
+    }
+
     pub(super) fn rebind(&mut self, same_address: bool) {
         if !same_address {
             *self = Self::default();
@@ -131,6 +182,11 @@ impl State {
 
     pub(super) fn invalidate_location(&mut self) -> bool {
         let had_pending_choice = self.pending_save || self.queued.is_some() || self.background_read;
+        let enter_uncertain =
+            self.phase == Phase::Saving || self.save_flight.is_some() || had_pending_choice;
+        if enter_uncertain {
+            self.enter_uncertain();
+        }
         let mut changed = self.resolved_authority.take().is_some()
             | self.read_location_revision.take().is_some()
             | self.read_started_location_revision.take().is_some()
@@ -143,10 +199,10 @@ impl State {
             | std::mem::take(&mut self.dirty)
             | self.read_flight.take().is_some()
             | self.read_started_revision.take().is_some()
-            | self.seen_revision.take().is_some();
-        if self.phase == Phase::Saving || self.save_flight.is_some() || had_pending_choice {
+            | self.seen_revision.take().is_some()
+            | self.recovering_uncertain.take().is_some();
+        if enter_uncertain {
             self.save_flight = None;
-            self.phase = Phase::Uncertain;
             changed = true;
         } else if self.phase == Phase::Reading {
             self.phase = if self.snapshot.is_some() {
@@ -237,9 +293,15 @@ impl State {
             || self.pending_save
             || self.queued.is_some()
             || self.phase == Phase::Uncertain
+            || !self.uncertain_locations.is_empty()
     }
 
     pub(super) fn request_refresh(&mut self) {
+        let recovering = if self.phase == Phase::Uncertain {
+            self.current_location()
+        } else {
+            None
+        };
         self.dirty = false;
         self.error = false;
         self.saved = false;
@@ -249,6 +311,7 @@ impl State {
         self.ready_target = None;
         self.background_read = false;
         self.pending_save = false;
+        self.recovering_uncertain = recovering;
         if self.phase == Phase::Uncertain || self.phase == Phase::Unsupported {
             self.phase = Phase::Idle;
         }
@@ -276,7 +339,7 @@ impl State {
             .map_or_else(|| self.saved_value(), |queued| queued.value.as_str())
     }
 
-    fn locked(&self) -> bool {
+    pub(super) fn locked(&self) -> bool {
         self.busy() || self.pending_save
     }
 
@@ -430,12 +493,12 @@ impl State {
         let mut changed = false;
         let mut settled = false;
         if transport_lost && (self.phase == Phase::Saving || self.save_flight.is_some()) {
+            self.enter_uncertain();
             self.save_flight = None;
             self.pending_save = false;
             self.queued = None;
             self.save_target = None;
             self.background_read = false;
-            self.phase = Phase::Uncertain;
             return (true, true);
         }
         if let Some(result) = self
@@ -472,9 +535,9 @@ impl State {
                     self.phase = Phase::Unsupported;
                 }
                 Err(SubagentDepthError::Conflict | SubagentDepthError::Failed) => {
+                    self.enter_uncertain();
                     self.queued = None;
                     self.save_target = None;
-                    self.phase = Phase::Uncertain;
                 }
             }
             changed = true;
@@ -497,6 +560,7 @@ impl State {
         let (mut changed, mut settled) = self.poll_save_only(transport_lost);
         if transport_lost {
             if self.background_read || (launch_pending && self.pending_save) {
+                self.enter_uncertain();
                 self.background_read = false;
                 self.pending_save = false;
                 self.dirty = false;
@@ -505,7 +569,6 @@ impl State {
                 self.read_started_location_revision = None;
                 self.queued = None;
                 self.save_target = None;
-                self.phase = Phase::Uncertain;
                 changed = true;
                 settled = true;
             }
@@ -523,23 +586,20 @@ impl State {
             let started_rev = self.read_started_revision.take();
             let started_loc_rev = self.read_started_location_revision.take();
             let Some(target) = self.save_target.clone() else {
+                self.enter_uncertain();
                 self.queued = None;
-                self.phase = Phase::Uncertain;
                 return (true, true);
             };
-            let current_loc_rev = target
+            let (current_loc_rev, upstream_healthy) = target
                 .backend
                 .client
-                .location_revision(&target.workspace, target.session.as_deref());
+                .location_state(&target.workspace, target.session.as_deref());
             match result {
                 Ok(snapshot)
                     if same_server_path(&snapshot.directory, &target.directory)
                         && started_loc_rev == Some(current_loc_rev)
                         && target.location_revision == Some(current_loc_rev)
-                        && target
-                            .backend
-                            .client
-                            .workspace_upstream_healthy(&target.workspace)
+                        && upstream_healthy
                         && location_token.load(Ordering::SeqCst)
                             == target.expected_location_token
                         && prefs_authority.load(Ordering::SeqCst)
@@ -620,9 +680,9 @@ impl State {
                     }
                 }
                 _ => {
+                    self.enter_uncertain();
                     self.queued = None;
                     self.save_target = None;
-                    self.phase = Phase::Uncertain;
                 }
             }
             changed = true;
@@ -635,17 +695,14 @@ impl State {
             && let Some(target) = self.save_target.clone()
         {
             self.pending_save = false;
-            let current_loc_rev = target
+            let (current_loc_rev, upstream_healthy) = target
                 .backend
                 .client
-                .location_revision(&target.workspace, target.session.as_deref());
+                .location_state(&target.workspace, target.session.as_deref());
             if self.resolved_authority != Some(target.authority)
                 || self.read_location_revision != Some(current_loc_rev)
                 || target.location_revision != Some(current_loc_rev)
-                || !target
-                    .backend
-                    .client
-                    .workspace_upstream_healthy(&target.workspace)
+                || !upstream_healthy
                 || location_token.load(Ordering::SeqCst) != target.expected_location_token
                 || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
                 || self
@@ -654,10 +711,10 @@ impl State {
                     .is_none_or(|od| !same_server_path(od, &target.directory))
                 || !ServerOwner::backend_verified(&target.backend)
             {
+                self.enter_uncertain();
                 self.dirty = false;
                 self.queued = None;
                 self.save_target = None;
-                self.phase = Phase::Uncertain;
                 changed = true;
                 settled = true;
             } else if let Some(snapshot) = &self.snapshot
@@ -696,18 +753,18 @@ impl State {
                     );
                     changed = true;
                 } else {
+                    self.enter_uncertain();
                     self.dirty = false;
                     self.queued = None;
                     self.save_target = None;
-                    self.phase = Phase::Uncertain;
                     changed = true;
                     settled = true;
                 }
             } else {
+                self.enter_uncertain();
                 self.dirty = false;
                 self.queued = None;
                 self.save_target = None;
-                self.phase = Phase::Uncertain;
                 changed = true;
                 settled = true;
             }
@@ -718,22 +775,19 @@ impl State {
             && self.queued.is_some()
             && let Some(target) = self.save_target.clone()
         {
-            let loc_rev = target
+            let (loc_rev, upstream_healthy) = target
                 .backend
                 .client
-                .location_revision(&target.workspace, target.session.as_deref());
+                .location_state(&target.workspace, target.session.as_deref());
             if !ServerOwner::backend_verified(&target.backend)
                 || target.location_revision != Some(loc_rev)
-                || !target
-                    .backend
-                    .client
-                    .workspace_upstream_healthy(&target.workspace)
+                || !upstream_healthy
                 || location_token.load(Ordering::SeqCst) != target.expected_location_token
                 || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
             {
+                self.enter_uncertain();
                 self.queued = None;
                 self.save_target = None;
-                self.phase = Phase::Uncertain;
                 changed = true;
                 settled = true;
             } else {
@@ -846,9 +900,14 @@ impl State {
                 self.ready_target = None;
                 self.suspend();
             } else {
+                if self.phase == Phase::Uncertain {
+                    self.enter_uncertain();
+                }
+                let uncertain_locations = std::mem::take(&mut self.uncertain_locations);
                 *self = Self {
                     scope: Some(scope),
                     authority,
+                    uncertain_locations,
                     ..Self::default()
                 };
             }
@@ -862,6 +921,9 @@ impl State {
             .as_deref()
             .is_some_and(|od| !same_server_path(od, directory))
         {
+            if self.phase == Phase::Uncertain {
+                self.enter_uncertain();
+            }
             self.suspend();
             self.queued = None;
             self.pending_save = false;
@@ -872,18 +934,31 @@ impl State {
             self.read_location_revision = None;
             self.ready_target = None;
             self.opener_directory = None;
-            if self.phase != Phase::Uncertain {
-                self.snapshot = None;
-                self.draft.clear();
-                self.phase = Phase::Idle;
-            }
+            self.recovering_uncertain = None;
+            self.snapshot = None;
+            self.draft.clear();
+            self.phase = Phase::Idle;
+            changed = true;
+        }
+        let recovering_here = self
+            .recovering_uncertain
+            .as_ref()
+            .is_some_and(|(w, d)| w == workspace && same_server_path(d, directory));
+        if !recovering_here
+            && self.phase != Phase::Uncertain
+            && self.save_flight.is_none()
+            && self.read_flight.is_none()
+            && self.is_uncertain_location(workspace, directory)
+        {
+            self.phase = Phase::Uncertain;
+            self.opener_directory = Some(directory.to_owned());
             changed = true;
         }
 
         if transport_lost || !target.online() {
             if self.phase == Phase::Saving || self.save_flight.is_some() {
+                self.enter_uncertain();
                 self.save_flight = None;
-                self.phase = Phase::Uncertain;
                 self.pending_save = false;
                 self.queued = None;
                 changed = true;
@@ -928,6 +1003,9 @@ impl State {
                                 && queued.base == display
                                 && valid_depth_choice(&snapshot, &queued.value)
                         });
+                        self.clear_uncertain_location(workspace, &snapshot.directory);
+                        self.clear_uncertain_location(workspace, directory);
+                        self.recovering_uncertain = None;
                         self.opener_directory = Some(directory.to_owned());
                         self.resolved_authority = Some(authority);
                         self.read_location_revision = Some(current_location_revision);
@@ -948,19 +1026,31 @@ impl State {
                         }
                     }
                     Ok(_) => {
+                        self.recovering_uncertain = None;
                         self.queued = None;
                         self.error = true;
-                        self.phase = Phase::Ready;
+                        self.phase = if self.is_uncertain_location(workspace, directory) {
+                            Phase::Uncertain
+                        } else {
+                            Phase::Ready
+                        };
                     }
                     Err(SubagentDepthError::Unsupported) => {
+                        self.clear_uncertain_location(workspace, directory);
+                        self.recovering_uncertain = None;
                         self.queued = None;
                         self.error = false;
                         self.phase = Phase::Unsupported;
                     }
                     Err(SubagentDepthError::Conflict | SubagentDepthError::Failed) => {
+                        self.recovering_uncertain = None;
                         self.queued = None;
                         self.error = true;
-                        self.phase = Phase::Ready;
+                        self.phase = if self.is_uncertain_location(workspace, directory) {
+                            Phase::Uncertain
+                        } else {
+                            Phase::Ready
+                        };
                     }
                 }
             }

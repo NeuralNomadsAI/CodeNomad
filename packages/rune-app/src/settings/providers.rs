@@ -47,19 +47,29 @@ impl Target {
             } else {
                 let backend = super::bound_backend(s)?;
                 let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
+                let transport_lost = s.settings.shared.borrow().is_transport_lost();
+                let online = if s.incoming.is_some()
+                    || s.conversation_client_id.is_some()
+                    || matches!(s.phase, crate::Phase::Reconnecting | crate::Phase::Failed)
+                {
+                    s.conversation_stream_connected
+                        && !matches!(s.phase, crate::Phase::Reconnecting | crate::Phase::Failed)
+                        && !transport_lost
+                } else {
+                    !transport_lost
+                };
                 (
                     backend,
                     workspace,
                     (!session.is_empty()).then_some(session),
                     false,
                     None,
-                    true,
+                    online,
                 )
             };
-        let observed_location_revision = backend
+        let (observed_location_revision, observed_upstream_healthy) = backend
             .client
-            .location_revision(&workspace, session.as_deref());
-        let observed_upstream_healthy = backend.client.workspace_upstream_healthy(&workspace);
+            .location_state(&workspace, session.as_deref());
         Some(Self {
             backend,
             workspace,
@@ -103,14 +113,12 @@ impl Target {
         if !self.backend.client.same_connection(&current.client) {
             self.backend = current.clone();
             self.observed = None;
-            self.observed_location_revision = self
+            let (rev, healthy) = self
                 .backend
                 .client
-                .location_revision(&self.workspace, self.session.as_deref());
-            self.observed_upstream_healthy = self
-                .backend
-                .client
-                .workspace_upstream_healthy(&self.workspace);
+                .location_state(&self.workspace, self.session.as_deref());
+            self.observed_location_revision = rev;
+            self.observed_upstream_healthy = healthy;
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
@@ -254,14 +262,10 @@ impl Target {
     }
 
     pub(super) fn sync_location_state(&mut self) -> bool {
-        let rev = self
+        let (rev, healthy) = self
             .backend
             .client
-            .location_revision(&self.workspace, self.session.as_deref());
-        let healthy = self
-            .backend
-            .client
-            .workspace_upstream_healthy(&self.workspace);
+            .location_state(&self.workspace, self.session.as_deref());
         let changed =
             self.observed_location_revision != rev || self.observed_upstream_healthy != healthy;
         self.observed_location_revision = rev;
