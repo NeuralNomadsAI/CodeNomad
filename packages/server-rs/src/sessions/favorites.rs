@@ -22,10 +22,14 @@ fn id_ok(id: &str) -> bool {
         && (4..=514).contains(&id.len())
         && id.bytes().all(|v| v.is_ascii_alphanumeric() || matches!(v, b'_' | b'-'))
 }
-fn belonging(session: &Value, workspace: &Workspace) -> bool {
-    session["location"]["directory"] == workspace.location["directory"]
-        && session["location"].get("workspaceID").is_none()
-        && dunce::canonicalize(&workspace.path).ok().as_ref() == Some(&workspace.path)
+async fn belonging(app: &App, session: &Value, workspace: &Workspace) -> bool {
+    if session["location"].get("workspaceID").is_some() {
+        return false;
+    }
+    let Some(directory) = session["location"]["directory"].as_str() else {
+        return false;
+    };
+    crate::worktrees::owns(app, workspace, directory).await
 }
 fn key(workspace: &Workspace) -> String {
     let mut path = workspace.path.to_string_lossy().replace('\\', "/");
@@ -147,7 +151,7 @@ pub async fn update(
     let operation = async {
         if input.favorite {
             let session = crate::opencode::session_record(&app, &target).await.map_err(|(status, _)| status)?;
-            if session["id"] != target || !belonging(&session, &workspace) {
+            if session["id"] != target || !belonging(&app, &session, &workspace).await {
                 return Err(Status::FORBIDDEN);
             }
             let mut parents = Vec::new();
@@ -165,7 +169,9 @@ pub async fn update(
             }
             let latest = crate::opencode::session_record(&app, &target).await.map_err(|(status, _)| status)?;
             if app.workspace(&id).is_err()
-                || !belonging(&latest, &workspace)
+                || latest["id"] != target
+                || latest["location"]["directory"] != session["location"]["directory"]
+                || !belonging(&app, &latest, &workspace).await
                 || latest["parentID"] != session["parentID"]
             {
                 return Err(Status::CONFLICT);
@@ -208,5 +214,143 @@ pub fn deleted(app: &App, event: &Value) {
     }
     if changed {
         let _ = save(app, &state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn belonging_admits_root_and_linked_worktree_and_refuses_foreign_or_workspace_id() {
+        let _serial = crate::git::test_git_serial().await;
+        let root_base = dunce::canonicalize(crate::shared::test_dir("favorites-worktrees")).unwrap();
+        let repo = root_base.join("repo");
+        let linked = root_base.join("linked");
+        let foreign = root_base.join("foreign");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&foreign).unwrap();
+
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let mut cmd = std::process::Command::new("git");
+            cmd.current_dir(dir).args(args);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000);
+            }
+            let out = cmd.output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        std::fs::write(repo.join("a.txt"), "hello").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "init"]);
+        git(&repo, &["worktree", "add", "-b", "wt", linked.to_str().unwrap()]);
+
+        let repo_canon = dunce::canonicalize(&repo).unwrap();
+        let linked_canon = dunce::canonicalize(&linked).unwrap();
+        let foreign_canon = dunce::canonicalize(&foreign).unwrap();
+        let repo_str = repo_canon.to_string_lossy().into_owned();
+        let linked_str = linked_canon.to_string_lossy().into_owned();
+
+        let mock_router = axum::Router::new()
+            .route(
+                "/api/location",
+                axum::routing::get({
+                    let d = repo_str.clone();
+                    move || {
+                        let d = d.clone();
+                        async move {
+                            Json(json!({
+                                "directory": d,
+                                "project": { "id": "prj_fav", "directory": d, "canonical": d }
+                            }))
+                        }
+                    }
+                }),
+            )
+            .route("/api/worktree/refresh", axum::routing::post(|| async { Json(json!({})) }))
+            .route(
+                "/api/worktree",
+                axum::routing::get({
+                    let r = repo_str.clone();
+                    let l = linked_str.clone();
+                    move || {
+                        let r = r.clone();
+                        let l = l.clone();
+                        async move { Json(json!([{"directory": r}, {"directory": l}])) }
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, mock_router).await.unwrap() });
+
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "opencode".into(),
+            password: None,
+            file: None,
+            cookie: "cn".into(),
+            token: false,
+            skip: true,
+            managed_local: false,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            root_base.join("config.yaml").to_str().unwrap(),
+        ));
+        let app = App::new(
+            auth,
+            0,
+            root_base.clone(),
+            root_base.clone(),
+            false,
+            settings,
+            Value::Null,
+            crate::opencode::Native::test_connection(addr),
+            PathBuf::new(),
+            None,
+            crate::files::watch::Watches::new(tx),
+            None,
+        );
+        let wid = uuid::Uuid::new_v4();
+        let workspace = Workspace {
+            id: wid,
+            request_id: None,
+            path: repo_canon.clone(),
+            name: None,
+            status: "ready",
+            proxy_path: format!("/workspaces/{wid}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({ "directory": repo_str }),
+            temporary: None,
+        };
+        app.inner.lock().unwrap().workspaces.push(workspace.clone());
+
+        let root_session = json!({ "id": "ses_root", "location": { "directory": repo_str } });
+        let linked_session = json!({ "id": "ses_linked", "location": { "directory": linked_str } });
+        let foreign_session =
+            json!({ "id": "ses_foreign", "location": { "directory": foreign_canon.to_string_lossy() } });
+        let scoped_session = json!({
+            "id": "ses_ws",
+            "location": { "directory": linked_str, "workspaceID": "ws_1" }
+        });
+
+        assert!(belonging(&app, &root_session, &workspace).await);
+        assert!(belonging(&app, &linked_session, &workspace).await);
+        assert!(!belonging(&app, &foreign_session, &workspace).await);
+        assert!(!belonging(&app, &scoped_session, &workspace).await);
+        server.abort();
+        let _ = std::fs::remove_dir_all(&root_base);
     }
 }
