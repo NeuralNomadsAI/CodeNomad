@@ -1489,18 +1489,23 @@ fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
     let hits_other = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let hm = hits_match.clone();
     let ho = hits_other.clone();
-    let state_match = State::default().with_session_deleted(Some(Arc::new(move || {
-        hm.fetch_add(1, SeqCst);
-    })));
-    let state_other = State::default().with_session_deleted(Some(Arc::new(move || {
-        ho.fetch_add(1, SeqCst);
-    })));
+    let (ev_tx, _ev_rx) = bounded(4);
+    let state_match = State::observing_preferences(ev_tx.clone(), Arc::new(|| {}))
+        .with_session_deleted(Some(Arc::new(move || {
+            hm.fetch_add(1, SeqCst);
+        })));
+    let state_other = State::observing_preferences(ev_tx, Arc::new(|| {})).with_session_deleted(
+        Some(Arc::new(move || {
+            ho.fetch_add(1, SeqCst);
+        })),
+    );
     let sub_match = Subscriber::with_signals(
         1,
         None,
         None,
         SubscriberSignals {
             conversation: Some(("ws-1".into(), "ses-1".into())),
+            placement: state_match.placement_signal(),
             session_deleted: state_match.session_deleted_hook(),
             ..SubscriberSignals::default()
         },
@@ -1511,6 +1516,7 @@ fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
         None,
         SubscriberSignals {
             conversation: Some(("ws-1".into(), "ses-2".into())),
+            placement: state_other.placement_signal(),
             session_deleted: state_other.session_deleted_hook(),
             ..SubscriberSignals::default()
         },
@@ -1548,6 +1554,14 @@ fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
         hits_other.load(SeqCst),
         0,
         "non-matching subscriber hook must not fire"
+    );
+    assert!(
+        state_match.placement_closed(),
+        "matching session.deleted must revoke send placement immediately even on overflow"
+    );
+    assert!(
+        !state_other.placement_closed(),
+        "non-matching subscriber placement must remain open"
     );
     shared.finish(&hub, false);
 }

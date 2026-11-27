@@ -514,13 +514,15 @@ impl SharedStream {
                     FrameClass::SessionMoved { workspace, session }
                         if sub.matches_conversation(workspace, session)
                 );
-                if session_moved {
+                let session_deleted = matches!(
+                    &class,
+                    FrameClass::SessionDeleted { workspace, session }
+                        if sub.matches_conversation(workspace, session)
+                );
+                if session_moved || session_deleted {
                     sub.signal_placement();
                 }
-                if let FrameClass::SessionDeleted { workspace, session } = &class
-                    && sub.matches_conversation(workspace, session)
-                    && let Some(hook) = sub.take_session_deleted_hook()
-                {
+                if session_deleted && let Some(hook) = sub.take_session_deleted_hook() {
                     deleted_hooks.push(hook);
                 }
                 let mark = sub.note_inbox_frame(&frame.0, &frame.1);

@@ -279,13 +279,15 @@ pub(super) fn close_with_uuid(
         return;
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
+    // Drain queued confirmations on the active conversation before capturing or recovering drafts
+    // from an ingress session.deleted hook so an already-confirmed prompt is never resurrected.
+    let active_incoming_deleted = active && crate::chat::events::drain_active_incoming_deleted(s);
     capture(s);
     let _ = super::drafts::drain_window_deleted_sessions_closing_with_uuid(
         s,
         Some(index),
         &mut next_uuid,
     );
-    let active_incoming_deleted = active && crate::chat::events::drain_active_incoming_deleted(s);
     let active_visit_deleted: Vec<String> = if active {
         s.screen
             .launcher_mut()
@@ -387,12 +389,17 @@ pub(super) fn close_with_uuid(
             })
     };
     if let Tab::Workspace(mut saved) = removed.saved {
+        let mut closed_unconfirmed_attempts: std::collections::BTreeMap<String, String> =
+            Default::default();
         // Preserve unconfirmed attempt locks across tab closure without retaining inline attachment bytes.
         for (session_id, live) in &removed.live_drafts {
             if !removed.pending_drafts.contains(session_id)
                 && let Some(unconfirmed) = live.unconfirmed_state()
             {
                 let attempt_id = unconfirmed.id().to_owned();
+                if !unconfirmed.is_edited() {
+                    closed_unconfirmed_attempts.insert(session_id.clone(), attempt_id.clone());
+                }
                 ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
                 propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
                 if active_matches(ui, &saved, session_id) {
@@ -405,6 +412,9 @@ pub(super) fn close_with_uuid(
             && let Some(unconfirmed) = removed.cache.as_ref().and_then(Cache::unconfirmed_state)
         {
             let attempt_id = unconfirmed.id().to_owned();
+            if !unconfirmed.is_edited() {
+                closed_unconfirmed_attempts.insert(session_id.clone(), attempt_id.clone());
+            }
             ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
             propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
             if active_matches(ui, &saved, session_id) {
@@ -452,6 +462,12 @@ pub(super) fn close_with_uuid(
         while ui.closed_derived_from.len() > ui.closed.len() {
             ui.closed_derived_from.pop();
         }
+        while ui.closed_unconfirmed_attempts.len() < ui.closed.len() {
+            ui.closed_unconfirmed_attempts.push(Default::default());
+        }
+        while ui.closed_unconfirmed_attempts.len() > ui.closed.len() {
+            ui.closed_unconfirmed_attempts.pop();
+        }
         let scope = super::ProjectScope::from_workspace(&saved);
         for id in removed.pending_deleted {
             if !ui
@@ -482,6 +498,7 @@ pub(super) fn close_with_uuid(
                     closed_w.attachment_parts.remove(id);
                     ui.closed_restored[idx].remove(id);
                     ui.closed_derived_from[idx].remove(id);
+                    ui.closed_unconfirmed_attempts[idx].remove(id);
                 }
             }
             for other in &mut ui.entries {
@@ -513,10 +530,13 @@ pub(super) fn close_with_uuid(
         ui.closed.push(saved);
         ui.closed_restored.push(restored_keys);
         ui.closed_derived_from.push(derived_from);
+        ui.closed_unconfirmed_attempts
+            .push(closed_unconfirmed_attempts);
         let evicted = if ui.closed.len() > 16 {
             let old = ui.closed.remove(0);
             ui.closed_restored.remove(0);
             ui.closed_derived_from.remove(0);
+            ui.closed_unconfirmed_attempts.remove(0);
             let old_scope = super::ProjectScope::from_workspace(&old);
             let old_keys: std::collections::BTreeSet<String> = old
                 .drafts

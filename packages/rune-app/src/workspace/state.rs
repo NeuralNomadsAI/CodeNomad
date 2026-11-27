@@ -229,6 +229,10 @@ pub struct Ui {
     closed: Vec<Workspace>,
     closed_restored: Vec<HashSet<String>>,
     closed_derived_from: Vec<std::collections::BTreeMap<String, drafts::DraftCopy>>,
+    // Per-closed-tab untouched unconfirmed attempt provenance (session_id -> attempt_id),
+    // kept out of Snapshot to preserve the v1 codec while preventing late confirmations from
+    // erasing independent closed drafts that happen to have identical text.
+    closed_unconfirmed_attempts: Vec<std::collections::BTreeMap<String, String>>,
     closed_pending_deleted: Vec<(ProjectScope, String)>,
     deleted_sessions: (
         codenomad_client::Sender<(ProjectScope, String)>,
@@ -340,6 +344,14 @@ impl Ui {
             }
         });
         removed
+    }
+    pub(super) fn forget_closed_unconfirmed_session(
+        &mut self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) {
+        self.closed_unconfirmed
+            .retain(|item| !item.matches(workspace, session_id));
     }
     pub(in crate::workspace) fn entries_slice(&self) -> &[Entry] {
         &self.entries
@@ -460,6 +472,7 @@ impl Ui {
             closed: Vec::new(),
             closed_restored: Vec::new(),
             closed_derived_from: Vec::new(),
+            closed_unconfirmed_attempts: Vec::new(),
             closed_pending_deleted: Vec::new(),
             deleted_sessions: codenomad_client::bounded(256),
             restored_draft_presence_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
