@@ -478,3 +478,29 @@ test("a destructive event projects synchronously and subsumes the pending frame"
     f.cleanup()
   }
 })
+
+test("a failed coalesced frame projection retries on bounded backoff instead of dropping the page", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retry-failure")
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let attempts = 0
+  f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+    attempts += 1
+    if (attempts === 1) throw new Error("transient projection failure")
+    return originalHydrate(...args)
+  }) as typeof f.store.hydrateMessages
+  try {
+    const { streamId, joined } = f.stream(3)
+    clock.fire()
+    assert.equal(attempts, 1, "first projection attempt failed")
+    assert.equal(f.store.getMessage(streamId), undefined)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    clock.fire()
+    assert.equal(attempts, 2, "failed frame projection retried automatically")
+    assert.equal(f.storeText(streamId), joined, "retried projection landed the missed reply")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})

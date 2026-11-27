@@ -670,7 +670,13 @@ async function resyncAuthoritativeTranscript(
     swapped = true
     replaceTranscriptEntry(transcript, fresh)
 
-    transcript.onResynced?.(fresh.data)
+    if (transcript.onResynced) {
+      transcript.onResynced(fresh.data)
+    } else if (hasTranscriptProjectionGates()) {
+      scheduleTranscriptProjection(instanceId, sessionId, fresh.data)
+    } else {
+      projectOpenCodeMessages(instanceId, sessionId, fresh.data, false)
+    }
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
     if (transcript.retireWhenDrained && fresh.data.session.status(sessionId) === "running") {
@@ -1481,18 +1487,28 @@ function completeSettlementRead(
  * the UI still believed working has settled, so the terminal event may never
  * be delivered. The observation owes the same settlement read the terminal
  * event would have finished. */
-export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
+export function observeNonEventSettlement(instanceId: string, sessionId: string): boolean {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
-  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return false
   flushTranscriptContentBatch(instanceId, sessionId, transcript)
-  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
-    repairDivergedSettlement(instanceId, sessionId, transcript)
-    return
+  if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
+    // Unlike a terminal event, nothing invalidated the SDK's message key; a key
+    // an earlier sync completed would make this read a no-op.
+    transcript.entry.data.session.message.invalidate(sessionId)
+    completeSettlementRead(instanceId, sessionId, transcript)
+    return true
   }
-  // Unlike a terminal event, nothing invalidated the SDK's message key; a key
-  // an earlier sync completed would make this read a no-op.
+  if (isDiverged(transcript, transcript.entry)) {
+    repairDivergedSettlement(instanceId, sessionId, transcript)
+    return true
+  }
+  if (transcript.needsAuthoritativeResync || transcript.resyncing) return true
+  // The run settled during an SSE gap without delivering a terminal event:
+  // reply rows or tail deltas can be missing with no unsettled tool or divergence.
+  if (!isTranscriptWatched(instanceId, sessionId)) return false
   transcript.entry.data.session.message.invalidate(sessionId)
-  completeSettlementRead(instanceId, sessionId, transcript)
+  completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true })
+  return true
 }
 
 /** The SDK reducer's own settlement-refresh condition: an assistant tool whose

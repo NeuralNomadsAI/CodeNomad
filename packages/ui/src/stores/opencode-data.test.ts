@@ -1654,6 +1654,79 @@ describe("OpenCode data projection", () => {
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })
+
+  it("reconciles missed reply messages on non-event settlement even without unsettled tools or divergence", async () => {
+    const instanceId = "opencode-data-liveness-missed-reply"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "missed reply" }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [reply, prompt], cursor: {} }
+    })
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, sessionId)
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const normalized = normalizeSessionMessage(sessionId, prompt as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["user-1"])
+
+      assert.equal(observeNonEventSettlement(instanceId, sessionId), true)
+      await waitForReplay(() => store.getSessionMessageIds(sessionId).includes("assistant-1"))
+      assert.equal(reads, 1)
+      const part = Object.values(store.getMessage("assistant-1")?.parts ?? {})[0]?.data as any
+      assert.equal(part?.text, "missed reply")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("publishes an authoritative resynced transcript even when no onResynced callback was registered", async () => {
+    const instanceId = "opencode-data-resync-no-callback"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "resynced reply" }],
+    }
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [reply, prompt], cursor: {} }))
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, sessionId)
+    applyOpenCodeDataEvent(instanceId, "/work", { id: "connected-1", type: "server.connected", created: 1, data: { daemon: "daemon-1" } } as any)
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const normalized = normalizeSessionMessage(sessionId, prompt as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      // Trigger same-source reconnect resync on a reducer seeded without an onResynced callback.
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "connected-2", type: "server.connected", created: 10, data: { daemon: "daemon-1" } } as any)
+      await waitForReplay(() => store.getSessionMessageIds(sessionId).includes("assistant-1"))
+      const part = Object.values(store.getMessage("assistant-1")?.parts ?? {})[0]?.data as any
+      assert.equal(part?.text, "resynced reply")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
 })
 
 describe("frame-batched content reduction", () => {

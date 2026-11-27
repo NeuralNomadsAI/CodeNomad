@@ -530,13 +530,15 @@ export class WorkspaceManager {
   }
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
-    const [target, root] = await Promise.all([
-      ownershipRealpath(directory), ownershipRealpath(record.path),
-    ])
+    const event = purpose === "event"
+    const readPath = (candidate: string) => event
+      ? realpath(candidate).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error })
+      : ownershipRealpath(candidate)
+    const [target, root] = await Promise.all([readPath(directory), readPath(record.path)])
     if (target && target === root) return true
-    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, { strict: event })) return false
     return (await resolveOwnedWorktreePath({
-      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
+      workspaceId: event ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory,
       loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),

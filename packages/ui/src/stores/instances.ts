@@ -570,22 +570,20 @@ const connectionResyncs = new TrailingResyncCoordinator(
     }
     await settle(() => fetchSessions(instanceId, { reset: true, signal }))
     if (!current()) return
-    await Promise.all([
-      settle(() => reloadWorktrees(instanceId, false, signal)),
-      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
-      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
-      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
-    ])
-    if (!current()) return
-    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
+    const loadedMessages = new Set(messagesLoaded().get(instanceId) ?? [])
+    const activeId = activeSessionId().get(instanceId)
     for (const sessionId of loadedMessages) {
       signal.throwIfAborted()
       if (!current()) return
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
-    const activeId = activeSessionId().get(instanceId)
-    if (!current()) return
-    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true, signal }))
+    await Promise.all([
+      activeId && loadedMessages.has(activeId) ? settle(() => loadMessages(instanceId, activeId, { force: true, signal })) : Promise.resolve(),
+      settle(() => reloadWorktrees(instanceId, false, signal)),
+      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
+      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
+    ])
     if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) throw failures[0]
@@ -1367,7 +1365,9 @@ createRoot(() => {
 async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
   if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
-  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some(
+    (session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending",
+  )
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
   const client = instances().get(instanceId)?.client

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
@@ -179,4 +179,30 @@ test("cold registered-only ownership after cancellation never acquires or provis
   await assert.rejects(manager.getWorktreeIdentityForPath(workspace.id, target, "event"), /no existing connection/)
   assert.throws(connection.assertCurrent, /connection changed/)
   assert.deepEqual([discoveries, starts, preparations, constructions, refreshes], [1, 0, 1, 1, 0])
+})
+
+test("event ownership rejects unreadable Git metadata instead of silently caching a negative match", async t => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-event-strict-git-"))
+  const repo = path.join(root, "repo"), broken = path.join(root, "broken")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { stdio: "pipe" })
+  git(root, "init", "-b", "main", repo)
+  mkdirSync(broken)
+  writeFileSync(path.join(broken, ".git"), "malformed gitdir pointer\n")
+  const client = {
+    location: { get: async ({ location }: { location: { directory: string } }) => ({
+      directory: location.directory, project: { id: "fixture", directory: repo, canonical: repo },
+    }) },
+    worktree: { refresh: async () => {}, list: async () => [{ directory: repo }] },
+  } as unknown as OpenCodeClient
+  const connection = fixtureConnection(client)
+  const manager = new WorkspaceManager({ rootDir: root, eventBus: new EventBus(), logger: pino({ level: "silent" }),
+    settings: { getOwner: () => ({ environmentVariables: {} }) } as any,
+    binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Fixture" }) } as any,
+    sharedService: { existingConnection: () => connection, client: async () => client, validateLocation: async (location: LocationRef) => client.location.get({ location }),
+      headers: async () => ({}), shutdown: async () => {} } as any,
+  })
+  t.after(async () => { await manager.shutdown(); rmSync(root, { recursive: true, force: true }) })
+  const { workspace } = await manager.create(repo)
+  await assert.rejects(manager.ownsDirectory(workspace.id, broken, "event"))
+  assert.equal(await manager.ownsDirectory(workspace.id, broken, "request"), false)
 })
