@@ -4311,7 +4311,6 @@ mod resume_tests {
             vec![msg("m-0"), msg("m-1")],
             false,
             false,
-            crate::Phase::Ready,
             true,
             false,
             None,
@@ -5637,6 +5636,352 @@ mod resume_tests {
             lane.demand.current().target,
             Some(Target::Around(dest)),
             "rebound after horizontal jitter must re-request Target::Around(dest)"
+        );
+    }
+
+    #[test]
+    fn unphased_wheel_reversal_on_probe_delivery_frame_keeps_rollback() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("uprev-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full36", 0..36);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("uprev-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_36", 16..36),
+                        older: Some(serde_json::json!("older-uprev")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: unphased mouse-wheel step downward starts ReplayDeltas while SyncUndo stays armed.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -80.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Frame B (probe-delivery frame): unphased mouse-wheel step upward must still roll back
+        // cached rows and compose on top of the first downward step instead of clamping to Trim16_36.
+        rt.wheel_event(rune::WheelEvent::new(0.0, 640.0).at(wx, wy));
+        rt.frame(0.016);
+        assert_eq!(
+            rt.state.messages.len(),
+            36,
+            "unphased upward wheel on probe-delivery frame must still restore cached rows"
+        );
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let dest = rt
+            .elements()
+            .into_iter()
+            .filter_map(|e| {
+                let k = e.key?;
+                k.starts_with("uprev-").then_some((k, e.rect))
+            })
+            .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+            .map(|(k, _)| k)
+            .expect("visible row after unphased probe-delivery reversal");
+        let dest_idx: usize = dest.strip_prefix("uprev-").unwrap().parse().unwrap();
+        assert!(
+            dest_idx < 16,
+            "unphased reversal on probe-delivery frame must reach above trimmed edge uprev-16: got {dest}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(dest)),
+            "unphased probe-delivery rollback must re-request Target::Around(dest)"
+        );
+    }
+
+    #[test]
+    fn resize_on_replay_delivery_frame_keeps_rolled_back_anchor_relative() {
+        let long_sentence = "Wrapped transcript content that expands vertically when the viewport narrows significantly. ";
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rrep-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(4)),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full40", 0..40);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rrep-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim19_22", 19..22),
+                        older: Some(serde_json::json!("older-rrep")),
+                        newer: Some(serde_json::json!("newer-rrep")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: upward wheel rolls back 40 rows at 844 px and mounts the replay probe.
+        rt.wheel_event(rune::WheelEvent::new(0.0, 240.0).at(wx, wy));
+        rt.frame(0.016);
+        assert_eq!(rt.state.messages.len(), 40);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B delivers the replay probe, narrow the viewport (staying above the 420 px
+        // rail threshold so history width changes once) so rows 0..20 rewrap substantially taller;
+        // the replay must still land 240 px above rrep-20, not at a stale 844 px absolute offset.
+        rt.set_viewport((480.0, 390.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let anchor_row = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("rrep-20"))
+            .expect(
+                "rrep-20 must stay visible ~240 px below history top after replay-frame resize",
+            );
+        let anchor_rel_y = anchor_row.rect[1] - hist[1];
+        assert!(
+            (anchor_rel_y - 240.0).abs() <= 2.0,
+            "replay-frame resize must anchor 240 px above rrep-20 in the new layout, got rel_y={anchor_rel_y}"
+        );
+    }
+
+    #[test]
+    fn shift_vertical_wheel_respects_rune_axis_turn_rules() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("shft-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let run_case = |ctrl: bool| -> (usize, Option<Target>) {
+            let mut s = init();
+            s.phase = Phase::Ready;
+            s.messages = make_rows("Full40", 0..40);
+            let (reader, lane) = Reader::open();
+            s.reader = Some(reader);
+            let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+            rt.poll = Some(crate::poll);
+            for _ in 0..20 {
+                rt.frame(0.02);
+            }
+            rt.update(|_, tx| {
+                tx.instant();
+                tx.scroll_key_to("shft-20", 0.0);
+            });
+            for _ in 0..20 {
+                rt.frame(0.02);
+            }
+            rt.update(|s, tx| {
+                suspend(s);
+                resume(s, tx);
+            });
+            let g = rt.state.reader.as_ref().unwrap().generation;
+            for _ in 0..10 {
+                rt.frame(0.02);
+            }
+            lane.events
+                .try_send((
+                    g,
+                    0,
+                    Event::ReaderSync {
+                        page: crate::history::Page {
+                            rows: make_rows("Trim18_22", 18..22),
+                            older: Some(serde_json::json!("older-shft")),
+                            newer: Some(serde_json::json!("newer-shft")),
+                            running: false,
+                            user_file_references: false,
+                        },
+                        version: 1,
+                    },
+                ))
+                .unwrap();
+            rt.set_viewport((844.0, 390.0), 1.0);
+            rt.frame(0.02);
+            rt.frame(0.02);
+            assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+            assert_eq!(rt.state.messages.len(), 4);
+
+            let h_rect = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+            let mut ev = rune::WheelEvent::new(0.0, 360.0).at(wx, wy);
+            ev.mods.shift = true;
+            ev.mods.ctrl = ctrl;
+            ev.precise = false;
+            rt.wheel_event(ev);
+            for _ in 0..30 {
+                rt.frame(0.02);
+            }
+            (rt.state.messages.len(), lane.demand.current().target)
+        };
+
+        // Notched Shift+wheel (without Ctrl) turns horizontal in Rune and must NOT undo trim.
+        let (h_len, h_target) = run_case(false);
+        assert_eq!(
+            h_len, 4,
+            "notched Shift+wheel must not roll back trimmed rows"
+        );
+        assert_eq!(
+            h_target,
+            Some(Target::Around("shft-20".into())),
+            "notched Shift+wheel must not re-request an older target"
+        );
+
+        // Ctrl+Shift+wheel stays vertical in Rune on every platform and MUST roll back trim.
+        let (v_len, v_target) = run_case(true);
+        assert_eq!(
+            v_len, 40,
+            "Ctrl+Shift vertical wheel must still roll back trimmed rows"
+        );
+        assert_ne!(
+            v_target,
+            Some(Target::Around("shft-20".into())),
+            "Ctrl+Shift vertical wheel rollback must advance target above shft-20"
         );
     }
 }

@@ -339,6 +339,19 @@ impl Reading {
         None
     }
 
+    fn live_row_offset(&self, id: &str, history_bounds: [f32; 4]) -> Option<f32> {
+        if history_bounds[3] <= 0.0 || !history_bounds[1].is_finite() {
+            return None;
+        }
+        let rows = self.live_rows.borrow();
+        let (weak, live) = rows.get(id)?;
+        if weak.strong_count() == 0 {
+            return None;
+        }
+        let rect = live.get();
+        (rect[3] > 0.0 && rect[1].is_finite()).then_some(rect[1] - history_bounds[1])
+    }
+
     pub(crate) fn live_bookmark(&self, history_bounds: [f32; 4], gap: bool) -> Bookmark {
         self.live_bookmark_fresh(history_bounds, gap)
             .unwrap_or_else(|| self.bookmark(gap))
@@ -1124,6 +1137,24 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     })
 }
 
+fn effective_wheel_delta_for(ev: &rune::WheelEvent, shift_turns_wheel: bool) -> (f32, f32) {
+    if ev.mods.shift
+        && !ev.mods.ctrl
+        && ev.dx == 0.0
+        && ev.dy != 0.0
+        && (shift_turns_wheel || !ev.precise)
+    {
+        (ev.dy, 0.0)
+    } else {
+        (ev.dx, ev.dy)
+    }
+}
+
+fn effective_wheel_delta(ev: &rune::WheelEvent) -> (f32, f32) {
+    const SHIFT_TURNS_WHEEL: bool = !cfg!(target_os = "macos");
+    effective_wheel_delta_for(ev, SHIFT_TURNS_WHEEL)
+}
+
 fn handle_reading_wheel(
     s: &mut State,
     wheel_scope: &Rc<()>,
@@ -1137,6 +1168,7 @@ fn handle_reading_wheel(
     {
         return false;
     }
+    let (dx, dy) = effective_wheel_delta(ev);
     let ended = ev.phase == rune_theme_codenomad::timeline::GesturePhase::Ended;
     let clock = tx.clock();
     let vertical_locked = s
@@ -1157,7 +1189,7 @@ fn handle_reading_wheel(
                 .reading()
                 .frame_restore_matches(fr, clock)
         });
-    if ev.dy.abs() <= 0.001 {
+    if dy.abs() <= 0.001 {
         if !ended && vertical_locked && (has_sync_undo_now || active_frame_restore) {
             let reading = s.transcript_display.reading_mut();
             reading.claim_vertical_wheel_gesture(clock);
@@ -1168,7 +1200,7 @@ fn handle_reading_wheel(
         }
         return false;
     }
-    if !vertical_locked && (ev.mods.shift || ev.dx.abs() > ev.dy.abs()) {
+    if !vertical_locked && dx.abs() > dy.abs() {
         return false;
     }
     if active_frame_restore {
@@ -1730,14 +1762,17 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                     tx.scroll_to_y("history", target);
                     return;
                 }
-                let keep_gesture_undo = s.transcript_display.reading().sync_undo_gesture_active();
-                if !keep_gesture_undo && let Some(reader) = &mut s.reader {
+                let keep_replay_undo = matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+                    || s.transcript_display.reading().sync_undo_gesture_active();
+                if !keep_replay_undo && let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                 }
                 let pending_scroll = s
                     .reader
                     .as_ref()
                     .is_some_and(crate::chat::reader::Reader::has_pending_scroll);
+                let history_bounds = s.tool_diff_preferences.history_bounds.get();
+                let last_row_id = s.messages.last().map(|row| row.id.clone());
                 let reading = s.transcript_display.reading_mut();
                 match fr.target {
                     FrameRestoreTarget::Anchor(id, anchor_offset) => {
@@ -1754,18 +1789,66 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         tx.scroll_key_to(id, anchor_offset + delta);
                     }
                     FrameRestoreTarget::ReplayDeltas { anchor, deltas, .. } => {
-                        let mut dest = match anchor {
+                        #[derive(Clone, Copy, PartialEq, Eq)]
+                        enum ReplayEdge {
+                            None,
+                            Top,
+                            Bottom,
+                        }
+                        let mut dest = match &anchor {
                             Bookmark::Latest => cur.max,
                             Bookmark::Message { .. } => cur.offset,
                         };
+                        let mut edge = match &anchor {
+                            Bookmark::Latest => ReplayEdge::Bottom,
+                            Bookmark::Message { .. } => ReplayEdge::None,
+                        };
                         for &dy in &deltas {
-                            dest = (dest - dy).clamp(0.0, cur.max);
+                            let raw = dest - dy;
+                            if raw <= 0.0 {
+                                dest = 0.0;
+                                edge = ReplayEdge::Top;
+                            } else if raw >= cur.max {
+                                dest = cur.max;
+                                edge = ReplayEdge::Bottom;
+                            } else {
+                                dest = raw;
+                            }
                         }
+                        let pin_bottom =
+                            edge == ReplayEdge::Bottom && (cur.max - dest).max(0.0) <= 0.5;
+                        let keyed_target = if pin_bottom {
+                            None
+                        } else {
+                            match edge {
+                                ReplayEdge::Top => None,
+                                ReplayEdge::None => match &anchor {
+                                    Bookmark::Message { id, offset } => {
+                                        let base = reading
+                                            .live_row_offset(id, history_bounds)
+                                            .unwrap_or(*offset);
+                                        Some((id.clone(), base + (cur.offset - dest)))
+                                    }
+                                    Bookmark::Latest => None,
+                                },
+                                ReplayEdge::Bottom => last_row_id.and_then(|id| {
+                                    let base = reading.live_row_offset(&id, history_bounds)?;
+                                    Some((id, base + (cur.offset - dest)))
+                                }),
+                            }
+                        };
                         if (cur.offset - dest).abs() <= 0.5 {
-                            let at_bottom = cur.at_bottom();
+                            let at_bottom = pin_bottom || cur.at_bottom();
                             reading.at_bottom = at_bottom;
                             reading.following = at_bottom;
-                            tx.live_only();
+                            if pin_bottom {
+                                Reading::restore(&Bookmark::Latest, tx);
+                            } else if let Some((id, at)) = keyed_target {
+                                tx.instant();
+                                tx.scroll_key_to(id, at);
+                            } else {
+                                tx.live_only();
+                            }
                             return;
                         }
                         if pending_scroll {
@@ -1773,7 +1856,7 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         } else {
                             reading.bump_manual_scroll();
                         }
-                        let at_bottom = cur.max <= 0.5 || dest >= cur.max - 0.5;
+                        let at_bottom = pin_bottom || cur.max <= 0.5 || dest >= cur.max - 0.5;
                         reading.at_bottom = at_bottom;
                         reading.following = at_bottom;
                         s.revision += 1;
@@ -1795,6 +1878,8 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                                     deltas,
                                     restored_anchor: false,
                                 }
+                            } else if let Some((id, at)) = &keyed_target {
+                                FrameRestoreTarget::Anchor(id.clone(), *at)
                             } else {
                                 FrameRestoreTarget::Offset
                             },
@@ -1806,8 +1891,15 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         if let Some(reader) = &mut s.reader {
                             reader.defer_sync_until(cur.seq + 1);
                         }
-                        tx.instant();
-                        tx.scroll_to_y("history", dest);
+                        if pin_bottom {
+                            Reading::restore(&Bookmark::Latest, tx);
+                        } else if let Some((id, at)) = keyed_target {
+                            tx.instant();
+                            tx.scroll_key_to(id, at);
+                        } else {
+                            tx.instant();
+                            tx.scroll_to_y("history", dest);
+                        }
                     }
                     FrameRestoreTarget::FromBottom => {
                         let from_bottom = (max - target).max(0.0);
@@ -2359,5 +2451,42 @@ mod tests {
                 0.0
             ))
         );
+    }
+
+    #[test]
+    fn effective_wheel_delta_matches_rune_shift_rules() {
+        let mut shift_precise = rune::WheelEvent::new(0.0, 240.0);
+        shift_precise.mods.shift = true;
+        shift_precise.precise = true;
+        // On macOS (shift_turns_wheel == false), Shift + precise trackpad stays vertical.
+        assert_eq!(
+            effective_wheel_delta_for(&shift_precise, false),
+            (0.0, 240.0)
+        );
+        // On non-macOS (shift_turns_wheel == true), Shift + vertical wheel turns horizontal.
+        assert_eq!(
+            effective_wheel_delta_for(&shift_precise, true),
+            (240.0, 0.0)
+        );
+
+        let mut shift_notched = rune::WheelEvent::new(0.0, 240.0);
+        shift_notched.mods.shift = true;
+        shift_notched.precise = false;
+        // Notched mouse wheel + Shift turns horizontal on every platform.
+        assert_eq!(
+            effective_wheel_delta_for(&shift_notched, false),
+            (240.0, 0.0)
+        );
+        assert_eq!(
+            effective_wheel_delta_for(&shift_notched, true),
+            (240.0, 0.0)
+        );
+
+        let mut ctrl_shift = rune::WheelEvent::new(0.0, 240.0);
+        ctrl_shift.mods.shift = true;
+        ctrl_shift.mods.ctrl = true;
+        // Ctrl + Shift stays vertical on every platform.
+        assert_eq!(effective_wheel_delta_for(&ctrl_shift, false), (0.0, 240.0));
+        assert_eq!(effective_wheel_delta_for(&ctrl_shift, true), (0.0, 240.0));
     }
 }
