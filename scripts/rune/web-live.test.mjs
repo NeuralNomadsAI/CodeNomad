@@ -64,22 +64,22 @@ test('SSE 503 backoff requires independent handover proof for 4-5 probes and rej
   assert.deepEqual(assertSse503Backoff(single), {retryDelay1Ms: 1015, retryDelay2Ms: 2015, coalescedSlotProbes: 0})
 
   const muxFast = [probe(0, 5), probe(15, 20), probe(1030, 1035), probe(3050, 3055)]
-  const fastHandover = handover(0, {conv: [3]})
+  const fastHandover = handover(0, {conv: [3], meta: [4]})
   assert.equal(shouldServeSse503(muxFast.slice(0, 3), fastHandover), true)
   assert.equal(shouldServeSse503(muxFast, fastHandover), false)
   assert.deepEqual(assertSse503Backoff(muxFast, fastHandover), {retryDelay1Ms: 1010, retryDelay2Ms: 2015, coalescedSlotProbes: 1})
 
   // Overlapping window: handover at 815 ms followed by a slow 1700 ms first retry must still take priority over 3-probe completion.
   const muxOverlap = [probe(0, 5), probe(820, 825), probe(2525, 2530), probe(4650, 4655)]
-  const slowHandover = handover(0, {conv: [810]})
+  const slowHandover = handover(0, {conv: [810], meta: [805]})
   assert.equal(shouldServeSse503(muxOverlap.slice(0, 3), slowHandover), true)
   assert.equal(shouldServeSse503(muxOverlap, slowHandover), false)
   assert.throws(() => assertSse503Backoff(muxOverlap.slice(0, 3), slowHandover), /must not terminate early after a proved multiplexed handover/)
   assert.deepEqual(assertSse503Backoff(muxOverlap, slowHandover), {retryDelay1Ms: 1700, retryDelay2Ms: 2120, coalescedSlotProbes: 1})
 
-  // Order A (Launcher first, Conversation second after retry 1): 5 probes.
+  // Order A (Launcher first, Conversation second after retry 1 with both /api/meta 200 and session sync): 5 probes.
   const muxAfterRetry1 = [probe(0, 5), probe(1015, 1020), probe(1520, 1525), probe(2535, 2540), probe(4560, 4565)]
-  const lateConvHandover = handover(0, {conv: [1523]})
+  const lateConvHandover = handover(0, {conv: [1523], meta: [1508]})
   assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), lateConvHandover), true)
   assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 4), lateConvHandover), true)
   assert.equal(shouldServeSse503(muxAfterRetry1, lateConvHandover), false)
@@ -94,18 +94,26 @@ test('SSE 503 backoff requires independent handover proof for 4-5 probes and rej
 
   // One conversation signal at 830 ms cannot justify both P1 (820 ms) and P2 (835 ms) to allow an extra retry (5 probes).
   const doubleCounted = [probe(0, 5), probe(820, 825), probe(835, 840), probe(1850, 1855), probe(3870, 3875)]
-  const singleSignalAt830 = handover(0, {conv: [830]})
+  const singleSignalAt830 = handover(0, {conv: [830], meta: [815]})
   assert.equal(shouldServeSse503(doubleCounted.slice(0, 4), singleSignalAt830), false)
   assert.throws(() => assertSse503Backoff(doubleCounted.slice(0, 4), singleSignalAt830), /first bounded retry delay/)
   assert.throws(() => assertSse503Backoff(doubleCounted, singleSignalAt830), /cannot reuse a multiplexed handover already attributed to probe 2/)
 
-  // Repeated signals from the same subscriber (e.g. Conversation at 20 ms and 810 ms, or 3 ms and 1520 ms) must be ignored.
+  // A single Conversation signal without an independent /api/meta 200 must be rejected.
+  assert.equal(shouldServeSse503(muxFast.slice(0, 3), handover(0, {conv: [3]})), false)
+  assert.throws(() => assertSse503Backoff(muxFast, handover(0, {conv: [3]})), /4-probe SSE 503 recovery requires independent proof/)
+  assert.equal(shouldServeSse503(muxOverlap.slice(0, 3), handover(0, {conv: [810]})), false)
+  assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [810]})), /4-probe SSE 503 recovery requires independent proof/)
+  assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), handover(0, {conv: [1523]})), false)
+  assert.throws(() => assertSse503Backoff(muxAfterRetry1, handover(0, {conv: [1523]})), /5-probe SSE 503 recovery requires independent proof/)
+
+  // Repeated signals from the same subscriber (e.g. Conversation at 200 ms and 810 ms, or 3 ms and 1520 ms) must be ignored.
   const sameSubscriberTwice = handover(0, {conv: [3, 1520]})
   assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), sameSubscriberTwice), false)
   assert.throws(() => assertSse503Backoff(muxAfterRetry1, sameSubscriberTwice), /5-probe SSE 503 recovery requires independent proof/)
   assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [3, 810]})), /4-probe SSE 503 recovery requires independent proof/)
-  assert.equal(shouldServeSse503(muxOverlap.slice(0, 3), handover(0, {conv: [20, 810]})), false)
-  assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [20, 810]})), /4-probe SSE 503 recovery requires independent proof/)
+  assert.equal(shouldServeSse503(muxOverlap.slice(0, 3), handover(0, {conv: [200, 810], meta: [805]})), false)
+  assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [200, 810], meta: [805]})), /4-probe SSE 503 recovery requires independent proof/)
   assert.throws(() => assertSse503Backoff(muxOverlap, handover(0, {conv: [3], meta: [20, 810]})), /4-probe SSE 503 recovery requires independent proof/)
   assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3), handover(0, {conv: [3], meta: [20, 1508]})), false)
   assert.throws(() => assertSse503Backoff(muxAfterRetry1, handover(0, {conv: [3], meta: [20, 1508]})), /5-probe SSE 503 recovery requires independent proof/)

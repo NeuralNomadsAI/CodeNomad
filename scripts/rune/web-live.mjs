@@ -138,18 +138,21 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   const metaSyncs=(handover.launcherMetaTimes||[]).filter(at=>at>=handover.sseOpenedAt)
   const firstConv=convSyncs.length?Math.min(...convSyncs):null
   const firstLauncherMeta=metaSyncs.length?Math.min(...metaSyncs):null
+  if(firstConv===null||firstLauncherMeta===null)return false
   const afterPrevGate=at=>targetIndex===1
     ? (delay<SSE_RETRY1_MIN_MS||at>probes[0].fulfilledAt)
     : at>=probes[1].receivedAt
   const allowPrevInFlight=targetIndex===1?delay<SSE_RETRY1_MIN_MS:true
-  // Order A: Launcher opened the admitted SSE first; only the first Conversation sync since SSE 200 counts.
-  const conversationSecond=firstConv!==null&&handover.sseOpenedAt<=probes[0].receivedAt&&
-    afterPrevGate(firstConv)&&isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
-  // Order B: Conversation synced on P0; only the first Launcher /api/meta 200 since SSE 200 counts.
-  const conversationFirst=firstConv!==null&&firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS&&
-    firstLauncherMeta!==null&&afterPrevGate(firstLauncherMeta)&&
+  // Require both independent subscriber signals (subscriber /api/meta 200 + active Conversation sync).
+  const metaMatches=afterPrevGate(firstLauncherMeta)&&
     isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
-  return conversationSecond||conversationFirst
+  if(!metaMatches)return false
+  // Order A: Conversation synced near targetIndex alongside subscriber /api/meta 200.
+  const conversationAtTarget=afterPrevGate(firstConv)&&
+    isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
+  // Order B: Conversation already synced on P0, then Launcher attested via /api/meta 200 near targetIndex.
+  const conversationAtP0=firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS
+  return conversationAtTarget||conversationAtP0
 }
 
 export function shouldServeSse503(probes, handover){
@@ -403,11 +406,15 @@ async function verifySseAuthenticated503Recovery({
           }
           handoverFrozen=true
           recoveredStatuses++
-          await route.fulfill({status,headers,body:text})
+          let fulfillError=null
+          await trackFulfill(pendingSseFulfills,
+            route.fulfill({status,headers,body:text}),
+            err=>{ fulfillError=err; if(!sseTeardown)failRoute(err) })
+          if(fulfillError)throw fulfillError
           probe.fulfilledAt=performance.now()
           recoveredCaptured.resolve()
         } catch (err) {
-          failRoute(err)
+          if(!sseTeardown)failRoute(err)
           await route.abort().catch(()=>{})
         }
       }
@@ -485,6 +492,7 @@ async function verifySseAuthenticated503Recovery({
         releaseHeldSse.resolve(recovered)
         page.off('response',onSseResponse)
         page.off('request',onSubscriberRequest)
+        await settleWithin(Promise.allSettled([...pendingSseFulfills]),null,2_000)
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
         await page.unroute(eventsUrl,routeEvents).catch(()=>{})
         await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
@@ -699,10 +707,14 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
                   await route.abort().catch(()=>{})
                   return
                 }
-                await route.fulfill({status,headers,body:text})
+                let fulfillError=null
+                await trackFulfill(pendingFocusFulfills,
+                  route.fulfill({status,headers,body:text}),
+                  err=>{ fulfillError=err })
+                if(fulfillError)throw fulfillError
               } catch (err) {
                 followUpCaptured.reject(err)
-                if(focusActive)failFocusRoute(err)
+                if(!focusTeardown&&focusActive)failFocusRoute(err)
                 await route.abort().catch(()=>{})
               } finally {
                 followUpSettled.resolve()
@@ -729,11 +741,15 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
               await route.abort().catch(()=>{})
               return
             }
-            await route.fulfill({status,headers,body:text})
+            let fulfillError=null
+            await trackFulfill(pendingFocusFulfills,
+              route.fulfill({status,headers,body:text}),
+              err=>{ fulfillError=err })
+            if(fulfillError)throw fulfillError
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)
-            if(focusActive)failFocusRoute(err)
+            if(!focusTeardown&&focusActive)failFocusRoute(err)
             await route.abort().catch(()=>{})
           } finally {
             staleDone=true
@@ -835,6 +851,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
           await settleFollowUp()
+          await settleWithin(Promise.allSettled([...pendingFocusFulfills]),null,2_000)
           await page.unroute(eventsUrl,holdEvents).catch(()=>{})
           await page.unroute(authStatusUrl,holdStaleStatus).catch(()=>{})
         }
