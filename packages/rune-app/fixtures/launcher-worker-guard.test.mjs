@@ -4,7 +4,7 @@ import {mkdir,mkdtemp,realpath,rm,symlink} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import {createWorkerStdoutTap,evaluateWorkerExit,needsOwnedWindowsWorker,publishWorkerProof,validateOwnedWorkerProfile} from './launcher-worker-guard.mjs'
+import {createWorkerStartAck,evaluateWorkerExit,needsOwnedWindowsWorker,publishWorkerProof,sendWorkerStartAck,validateOwnedWorkerProfile} from './launcher-worker-guard.mjs'
 
 test('Windows Job Object worker wraps mobile, keyboard viewport, and mobile drawers fixtures', () => {
   for (const flag of [
@@ -101,94 +101,77 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   assert.equal(clean.workerExited, true)
   assert.equal(clean.workerExitCode, 0)
   assert.equal(clean.finalResult, 0)
-
-  const truncatedStdout = evaluateWorkerExit({
-    exit: { code: 0, signal: null },
-    stdoutForwardError: new Error('Timed out draining forwarded worker stdout'),
-    proof: { result: 0 },
-  })
-  assert.equal(truncatedStdout.workerExited, true)
-  assert.equal(truncatedStdout.stdoutForwardError, 'Timed out draining forwarded worker stdout')
-  assert.equal(truncatedStdout.finalResult, 1)
 })
 
-test('validateOwnedWorkerProfile rejects links and createWorkerStdoutTap authenticates worker startup over pipe', async () => {
-  const forwarded = []
-  const tap = createWorkerStdoutTap('tok-run-1', chunk => forwarded.push(Buffer.from(chunk)))
-  tap.push('CODENOMAD_WORKER_')
-  tap.push('STARTED=tok-run-1\r\n{"fixture":"launcher"}\n')
-  const nonUtf8 = Buffer.from([0xff, 0xfe, 0x00, 0x80])
-  tap.push(nonUtf8)
-  tap.flush()
-  assert.equal(tap.hasStarted(), true)
-  assert.deepEqual(Buffer.concat(forwarded), Buffer.concat([Buffer.from('{"fixture":"launcher"}\n'), nonUtf8]))
-
-  const noNewlineForwarded = []
-  const noNewlineTap = createWorkerStdoutTap('tok-no-nl', chunk => noNewlineForwarded.push(Buffer.from(chunk)))
-  noNewlineTap.push('CODENOMAD_WORKER_STARTED=tok-no-nl')
-  noNewlineTap.flush()
-  assert.equal(noNewlineTap.hasStarted(), false)
-  assert.deepEqual(Buffer.concat(noNewlineForwarded), Buffer.from('CODENOMAD_WORKER_STARTED=tok-no-nl'))
-
-  const wrongForwarded = []
-  const wrongTap = createWorkerStdoutTap('tok-run-2', chunk => wrongForwarded.push(Buffer.from(chunk)))
-  wrongTap.push('CODENOMAD_WORKER_STARTED=tok-other\nhello\n')
-  wrongTap.flush()
-  assert.equal(wrongTap.hasStarted(), false)
-  assert.deepEqual(Buffer.concat(wrongForwarded), Buffer.from('CODENOMAD_WORKER_STARTED=tok-other\nhello\n'))
-
-  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'cn-worker-guard-'))
+test('validateOwnedWorkerProfile rejects links and loopback start ack authenticates worker startup', async () => {
+  const ack = await createWorkerStartAck('tok-run-1')
   try {
-    const rawTestsRoot = path.join(tmpRoot, 'tests')
-    const outsideDir = path.join(tmpRoot, 'outside')
-    await mkdir(rawTestsRoot, { recursive: true })
-    await mkdir(outsideDir, { recursive: true })
-    const testsRoot = await realpath(rawTestsRoot)
-
-    const realProfile = path.join(testsRoot, 'launcher-12345678-1234-1234-1234-123456789abc')
-    await mkdir(realProfile)
-    const validated = await validateOwnedWorkerProfile(realProfile, testsRoot)
-    assert.equal(validated, realProfile)
-
-    const linkProfile = path.join(testsRoot, 'launcher-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
-    await symlink(outsideDir, linkProfile, process.platform === 'win32' ? 'junction' : 'dir')
-    await assert.rejects(
-      () => validateOwnedWorkerProfile(linkProfile, testsRoot),
-      /must be a real directory/,
-    )
-
-    const unstartedProfile = path.join(testsRoot, 'launcher-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
-    await mkdir(unstartedProfile)
-    const result = publishWorkerProof({
-      workerProfile: unstartedProfile,
-      exit: { code: 1, signal: null },
-      workerStarted: wrongTap.hasStarted(),
-    })
-    assert.equal(result, 1)
-    const proof = JSON.parse(readFileSync(path.join(unstartedProfile, 'proof.json'), 'utf8'))
-    assert.equal(proof.result, 1)
-    assert.equal(proof.workerExited, false)
-    assert.equal(proof.workerExitCode, null)
-    assert.equal(proof.workerStopError, undefined)
-    assert.equal(proof.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
-
-    assert.throws(
-      () => publishWorkerProof({ workerProfile: realProfile, exit: { code: 0, signal: null } }),
-      /workerStarted must be a boolean/,
-    )
-
-    writeFileSync(path.join(realProfile, 'proof.worker.json.tmp'), JSON.stringify({ result: 0 }))
-    const verifiedResult = publishWorkerProof({
-      workerProfile: realProfile,
-      exit: { code: 0, signal: null },
-      workerStarted: tap.hasStarted(),
-    })
-    assert.equal(verifiedResult, 0)
-    assert.equal(existsSync(path.join(realProfile, 'proof.worker.json.tmp')), false)
-    const verifiedProof = JSON.parse(readFileSync(path.join(realProfile, 'proof.json'), 'utf8'))
-    assert.equal(verifiedProof.result, 0)
-    assert.equal(verifiedProof.workerExited, true)
+    assert.equal(ack.hasStarted(), false)
+    await assert.rejects(() => sendWorkerStartAck(ack.port, 'tok-wrong'))
+    assert.equal(ack.hasStarted(), false)
+    await sendWorkerStartAck(ack.port, 'tok-run-1')
+    assert.equal(ack.hasStarted(), true)
   } finally {
-    await rm(tmpRoot, { recursive: true, force: true })
+    ack.close()
+  }
+
+  const unstartedAck = await createWorkerStartAck('tok-run-2')
+  try {
+    const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'cn-worker-guard-'))
+    try {
+      const rawTestsRoot = path.join(tmpRoot, 'tests')
+      const outsideDir = path.join(tmpRoot, 'outside')
+      await mkdir(rawTestsRoot, { recursive: true })
+      await mkdir(outsideDir, { recursive: true })
+      const testsRoot = await realpath(rawTestsRoot)
+
+      const realProfile = path.join(testsRoot, 'launcher-12345678-1234-1234-1234-123456789abc')
+      await mkdir(realProfile)
+      const validated = await validateOwnedWorkerProfile(realProfile, testsRoot)
+      assert.equal(validated, realProfile)
+
+      const linkProfile = path.join(testsRoot, 'launcher-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+      await symlink(outsideDir, linkProfile, process.platform === 'win32' ? 'junction' : 'dir')
+      await assert.rejects(
+        () => validateOwnedWorkerProfile(linkProfile, testsRoot),
+        /must be a real directory/,
+      )
+
+      const unstartedProfile = path.join(testsRoot, 'launcher-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+      await mkdir(unstartedProfile)
+      const result = publishWorkerProof({
+        workerProfile: unstartedProfile,
+        exit: { code: 1, signal: null },
+        workerStarted: unstartedAck.hasStarted(),
+      })
+      assert.equal(result, 1)
+      const proof = JSON.parse(readFileSync(path.join(unstartedProfile, 'proof.json'), 'utf8'))
+      assert.equal(proof.result, 1)
+      assert.equal(proof.workerExited, false)
+      assert.equal(proof.workerExitCode, null)
+      assert.equal(proof.workerStopError, undefined)
+      assert.equal(proof.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
+
+      assert.throws(
+        () => publishWorkerProof({ workerProfile: realProfile, exit: { code: 0, signal: null } }),
+        /workerStarted must be a boolean/,
+      )
+
+      writeFileSync(path.join(realProfile, 'proof.worker.json.tmp'), JSON.stringify({ result: 0 }))
+      const verifiedResult = publishWorkerProof({
+        workerProfile: realProfile,
+        exit: { code: 0, signal: null },
+        workerStarted: ack.hasStarted(),
+      })
+      assert.equal(verifiedResult, 0)
+      assert.equal(existsSync(path.join(realProfile, 'proof.worker.json.tmp')), false)
+      const verifiedProof = JSON.parse(readFileSync(path.join(realProfile, 'proof.json'), 'utf8'))
+      assert.equal(verifiedProof.result, 0)
+      assert.equal(verifiedProof.workerExited, true)
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  } finally {
+    unstartedAck.close()
   }
 })

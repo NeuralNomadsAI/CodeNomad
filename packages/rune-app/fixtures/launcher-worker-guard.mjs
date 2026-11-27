@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {readFileSync,renameSync,unlinkSync,writeFileSync} from 'node:fs'
 import {lstat,realpath} from 'node:fs/promises'
+import net from 'node:net'
 import path from 'node:path'
 
 export function needsOwnedWindowsWorker(argv, platform = process.platform) {
@@ -25,66 +26,86 @@ export async function validateOwnedWorkerProfile(workerProfilePath, testsReal) {
   return profileReal
 }
 
-export function createWorkerStdoutTap(token, write) {
+export async function createWorkerStartAck(token) {
   assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
-  const expected = Buffer.from(`CODENOMAD_WORKER_STARTED=${token}`)
   let started = false
-  let headerPending = true
-  let chunks = []
-  let bufferedBytes = 0
-  return {
-    push(chunk) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      if (!headerPending) {
-        write(buf)
-        return
+  const server = net.createServer(socket => {
+    let data = ''
+    let settled = false
+    const finish = ok => {
+      if (settled) return
+      settled = true
+      if (ok) {
+        started = true
+        socket.end('OK\n')
+        server.close()
+      } else {
+        socket.destroy()
       }
-      chunks.push(buf)
-      bufferedBytes += buf.length
-      const combined = Buffer.concat(chunks, bufferedBytes)
-      const nl = combined.indexOf(0x0a)
+    }
+    socket.setTimeout(2000, () => finish(false))
+    socket.on('error', () => {})
+    socket.on('data', chunk => {
+      data += chunk.toString('utf8')
+      const nl = data.indexOf('\n')
       if (nl >= 0) {
-        const lineEnd = nl > 0 && combined[nl - 1] === 0x0d ? nl - 1 : nl
-        const line = combined.subarray(0, lineEnd)
-        const rest = combined.subarray(nl + 1)
-        headerPending = false
-        chunks = []
-        bufferedBytes = 0
-        if (line.equals(expected)) {
-          started = true
-        } else {
-          write(combined.subarray(0, nl + 1))
-        }
-        if (rest.length > 0) write(rest)
-      } else if (bufferedBytes > expected.length + 2) {
-        headerPending = false
-        chunks = []
-        bufferedBytes = 0
-        write(combined)
+        finish(data.slice(0, nl).replace(/\r$/, '') === token)
+      } else if (data.length > token.length + 2) {
+        finish(false)
       }
-    },
-    flush() {
-      if (headerPending && bufferedBytes > 0) {
-        const combined = Buffer.concat(chunks, bufferedBytes)
-        headerPending = false
-        chunks = []
-        bufferedBytes = 0
-        write(combined)
-      }
-    },
-    hasStarted() {
-      return started
-    },
+    })
+    socket.once('end', () => finish(false))
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+  server.unref()
+  return {
+    port: server.address().port,
+    hasStarted: () => started,
+    close: () => { try { server.close() } catch {} },
   }
 }
 
-export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, stdoutForwardError = null, outerSignal = null, proof = null }) {
+export async function sendWorkerStartAck(port, token) {
+  assert(Number.isSafeInteger(port) && port > 0 && port <= 65535, 'Invalid worker ack port')
+  assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
+  await new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port })
+    let reply = ''
+    let settled = false
+    const done = err => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      if (err) reject(err)
+      else resolve()
+    }
+    socket.setTimeout(5000, () => done(new Error('Timed out acknowledging owned worker startup')))
+    socket.once('error', done)
+    socket.once('connect', () => { socket.write(`${token}\n`) })
+    socket.on('data', chunk => {
+      reply += chunk.toString('utf8')
+      if (reply.includes('\n')) {
+        if (reply.split('\n')[0].replace(/\r$/, '') === 'OK') done(null)
+        else done(new Error('Unexpected worker startup acknowledgement reply'))
+      }
+    })
+    socket.once('end', () => done(new Error('Worker startup acknowledgement closed before OK')))
+  })
+}
+
+export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
   const spawnError = exit?.error ?? (!workerStarted && exit && exit.code !== 86
     ? new Error(`Owned worker did not start (supervisor exit code=${exit.code}, signal=${exit.signal})`)
     : null)
   const workerExited = exit !== null && !spawnError && !unconfirmedStop && exit.code !== 86 && exit.signal === null && !stopError
   const workerCode = exit && !spawnError ? (exit.code ?? (exit.signal === 'SIGINT' ? 130 : exit.signal === 'SIGTERM' ? 143 : 1)) : null
-  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError) || Boolean(stdoutForwardError)
+  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError)
   const interrupted = outerSignal ?? proof?.interruptedSignal ?? exit?.signal ?? (workerCode === 130 ? 'SIGINT' : workerCode === 143 ? 'SIGTERM' : null)
   const finalResult = proof?.result === 0 && !supervisorFailed && !interrupted ? 0 : 1
   const workerStopError = stopError
@@ -102,19 +123,18 @@ export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop
     workerExitSignal: exit && !spawnError ? exit.signal : null,
     ...(workerStopError ? { workerStopError } : {}),
     ...(spawnError ? { workerSpawnError: String(spawnError?.message ?? spawnError) } : {}),
-    ...(stdoutForwardError ? { stdoutForwardError: String(stdoutForwardError?.message ?? stdoutForwardError) } : {}),
   }
 }
 
-export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, stdoutForwardError = null, outerSignal = null }) {
+export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
   assert.equal(typeof workerStarted, 'boolean', 'workerStarted must be a boolean')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
-  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, stdoutForwardError, outerSignal, proof })
-  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError, stdoutForwardError: formattedStdoutError } = verdict
+  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
+  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
   const finalProof = {
     ...(proof ?? { profile: workerProfile }),
     result: finalResult,
@@ -124,7 +144,6 @@ export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfi
     workerExitSignal,
     ...(workerStopError ? { workerStopError } : {}),
     ...(workerSpawnError ? { workerSpawnError } : {}),
-    ...(formattedStdoutError ? { stdoutForwardError: formattedStdoutError } : {}),
   }
   writeFileSync(supervisorProofTmp, JSON.stringify(finalProof, null, 2))
   renameSync(supervisorProofTmp, proofFile)
