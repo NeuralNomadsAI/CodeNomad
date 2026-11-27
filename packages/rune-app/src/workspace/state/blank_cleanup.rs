@@ -409,6 +409,7 @@ mod tests {
             let project = Project {
                 id: "ws1".into(),
                 path: "/repo".into(),
+                temporary: false,
             };
             let mut state = crate::init();
             crate::gallery::shell::fixture(&mut state);
@@ -504,6 +505,7 @@ mod tests {
         let project = Project {
             id: "ws1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         {
             let l = state.screen.launcher_mut().unwrap();
@@ -558,6 +560,8 @@ mod tests {
                     backend_id: None,
                     server_id: None,
                     folder: "/repo".into(),
+                    project_name: None,
+                    temporary: false,
                     occurrence: 0,
                     workspace_id: Some("ws1".into()),
                     active_session_id: Some("ses_new".into()),
@@ -570,6 +574,8 @@ mod tests {
                     backend_id: None,
                     server_id: None,
                     folder: "/repo-wt".into(),
+                    project_name: None,
+                    temporary: false,
                     occurrence: 0,
                     workspace_id: Some("ws2".into()),
                     active_session_id: Some("ses_linked_open".into()),
@@ -586,6 +592,8 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
+            temporary: false,
             occurrence: 1,
             workspace_id: Some("ws1".into()),
             active_session_id: None,
@@ -641,6 +649,7 @@ mod tests {
         let project = Project {
             id: "ws1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         {
             let l = state.screen.launcher_mut().unwrap();
@@ -699,6 +708,7 @@ mod tests {
         let project = Project {
             id: "ws1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         {
             let l = state.screen.launcher_mut().unwrap();

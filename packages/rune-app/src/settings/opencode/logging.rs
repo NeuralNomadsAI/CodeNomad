@@ -2,6 +2,7 @@ use super::super::{Preferences, preferences::server::LEVELS};
 use crate::strings::t;
 use rune::{El, col, text};
 use rune_theme_codenomad::{
+    Space,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -19,6 +20,7 @@ impl Logging {
         &self,
         shared: &Rc<RefCell<Preferences>>,
         layers: &mut Vec<El>,
+        logs_action: El,
         access: fn(&mut S) -> &mut Self,
     ) -> El {
         const KEY: &str = "opencode-log-level";
@@ -68,6 +70,7 @@ impl Logging {
         chrome::card(
             col()
                 .full_width()
+                .separate(Space::Sm)
                 .on_key(move |s, event, tx| {
                     event.key == rune::Key::Enter
                         && event.mods == rune::Mods::default()
@@ -85,7 +88,8 @@ impl Logging {
                             !prefs.can_retry() || pending,
                             move |_: &mut S| retry.borrow_mut().retry_log_level(),
                         ))
-                })),
+                }))
+                .child(logs_action),
         )
     }
 }

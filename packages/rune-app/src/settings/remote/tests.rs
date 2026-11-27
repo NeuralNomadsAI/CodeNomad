@@ -716,3 +716,290 @@ fn partial_stop_and_devices_failure_keep_status_recheck_and_stop_available() {
         assert!(rt.find("remote-control-start").is_some());
     });
 }
+
+#[test]
+fn direct_access_client_errors_localize_while_server_errors_surface_verbatim() {
+    fn fr_view(s: &Harness, cx: &mut rune::Cx<Harness>) -> El {
+        crate::strings::with_locale("fr", || {
+            layout::render(cx, |_| {
+                s.remote.view(
+                    &s.shared,
+                    |s: &mut Harness| Some(&mut s.remote),
+                    |s| &mut s.remote,
+                )
+            })
+        })
+    }
+
+    platform::block_on(async {
+        let server = MockServer::start(move |method, path, body| match (method, path) {
+            ("GET", "/api/remote-control/status") => (
+                200,
+                "application/json",
+                json!({
+                    "manageable": true,
+                    "enabled": false,
+                    "state": "stopped",
+                    "pairedDevices": 0,
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/remote-control/devices") => {
+                (200, "application/json", json!({"devices": []}).to_string())
+            }
+            ("GET", "/api/meta") => (
+                200,
+                "application/json",
+                json!({
+                    "listeningMode": "all",
+                    "localRequest": true,
+                    "localUrl": "http://127.0.0.1:9898",
+                    "addresses": []
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/auth/status") => (
+                200,
+                "application/json",
+                json!({"authenticated": true, "username": "codenomad", "passwordUserProvided": true})
+                    .to_string(),
+            ),
+            ("PATCH", "/api/storage/config/server") => (400, "application/json", String::new()),
+            ("POST", "/api/auth/password") => {
+                if body.contains("unconfirmed-pass") {
+                    (200, "application/json", json!({"ok": false}).to_string())
+                } else {
+                    (
+                        409,
+                        "application/json",
+                        json!({"error": "Server password is provided via CLI/env"}).to_string(),
+                    )
+                }
+            }
+            _ => (
+                404,
+                "application/json",
+                json!({"error": "not found"}).to_string(),
+            ),
+        })
+        .await;
+
+        let wake: Waker = Arc::new(|| {});
+        let shared = Rc::new(RefCell::new(Preferences::default()));
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.fixture_locale("fr");
+            prefs.backend = Some(Backend::unauthenticated(&server.base).unwrap());
+            prefs.window_wake = Some(wake.clone());
+        }
+        let mut rt = Runtime::new(
+            Harness {
+                shared,
+                remote: Remote::default(),
+                wake,
+            },
+            fr_view,
+            (960.0, 2000.0),
+            Env::new(false, 1.0),
+        );
+
+        pump(&mut rt, "initial-load-fr", |h| {
+            h.remote.snapshot.is_some() && h.remote.direct.meta_loaded()
+        })
+        .await;
+
+        // Rejected listening-mode PATCH must display localized French error, not English Rust prose.
+        click(&mut rt, "remote-listening-mode-switch");
+        click(&mut rt, "remote-listening-confirm-apply");
+        pump(&mut rt, "listening-mode-rejected", |h| {
+            h.remote.direct.mode_idle()
+        })
+        .await;
+        let tree = rt.accessibility_json();
+        let expected_fr = crate::strings::with_locale("fr", || t("settings.preferenceSaveFailed"));
+        assert_eq!(count_text(&tree, expected_fr), 1);
+        assert!(!find_text(&tree, "Listening mode change"));
+
+        // Unconfirmed password response (ok: false) must also display the localized French error
+        // independently on the password card.
+        click(&mut rt, "remote-password-toggle");
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("unconfirmed-pass", "unconfirmed-pass");
+        });
+        rt.frame(0.02);
+        click(&mut rt, "remote-password-save");
+        pump(&mut rt, "password-unconfirmed", |h| {
+            h.remote.direct.password_idle()
+        })
+        .await;
+        assert!(
+            server
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p, b)| m == "POST"
+                    && p == "/api/auth/password"
+                    && b.contains("unconfirmed-pass"))
+        );
+        let tree = rt.accessibility_json();
+        assert_eq!(count_text(&tree, expected_fr), 2);
+        assert!(!find_text(&tree, "Password update was not confirmed"));
+
+        // Explicit server error message still surfaces verbatim.
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("conflict-pass", "conflict-pass");
+        });
+        rt.frame(0.02);
+        click(&mut rt, "remote-password-save");
+        pump(&mut rt, "password-server-error", |h| {
+            h.remote.direct.password_idle()
+        })
+        .await;
+        assert!(find_text(
+            &rt.accessibility_json(),
+            "Server password is provided via CLI/env"
+        ));
+    });
+}
+
+#[test]
+fn remote_revoke_error_survives_reconciliation_and_stale_profile_submission_is_refused() {
+    platform::block_on(async {
+        let device_id = "22222222-3333-4444-5555-666666666666";
+        let devices_present = Arc::new(Mutex::new(true));
+        let devices_srv = devices_present.clone();
+        let server_a = MockServer::start(move |method, path, _| {
+            match (method, path) {
+            ("GET", "/api/remote-control/status") => (
+                200,
+                "application/json",
+                json!({
+                    "manageable": true,
+                    "enabled": true,
+                    "state": "connected",
+                    "remoteUrl": "https://codenomad-test.opentunnel.xyz",
+                    "pairedDevices": usize::from(*devices_srv.lock().unwrap()),
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/remote-control/devices") => {
+                let list = if *devices_srv.lock().unwrap() {
+                    json!({"devices": [{
+                        "id": device_id,
+                        "name": "Phone",
+                        "origin": null,
+                        "lastSeenAt": "2026-11-25T10:00:00Z",
+                        "revocationPending": false
+                    }]})
+                } else {
+                    json!({"devices": []})
+                };
+                (200, "application/json", list.to_string())
+            }
+            ("DELETE", path) if path == format!("/api/remote-control/devices/{device_id}") => {
+                *devices_srv.lock().unwrap() = false;
+                (
+                    404,
+                    "application/json",
+                    json!({"error": "Remote device not found"}).to_string(),
+                )
+            }
+            ("GET", "/api/meta") => (
+                200,
+                "application/json",
+                json!({
+                    "listeningMode": "all",
+                    "localRequest": true,
+                    "localUrl": "http://127.0.0.1:9898",
+                    "addresses": []
+                })
+                .to_string(),
+            ),
+            ("GET", "/api/auth/status") => (
+                200,
+                "application/json",
+                json!({"authenticated": true, "username": "operator", "passwordUserProvided": true})
+                    .to_string(),
+            ),
+            _ => (
+                404,
+                "application/json",
+                json!({"error": "not found"}).to_string(),
+            ),
+        }
+        })
+        .await;
+
+        let server_b = MockServer::start(move |method, path, _| match (method, path) {
+            ("POST", "/api/auth/password") => (
+                200,
+                "application/json",
+                json!({"ok": true, "username": "other", "passwordUserProvided": true}).to_string(),
+            ),
+            _ => (
+                200,
+                "application/json",
+                json!({"manageable": true, "enabled": true, "state": "stopped"}).to_string(),
+            ),
+        })
+        .await;
+
+        let mut rt = new_runtime(&server_a.base);
+        pump(&mut rt, "revoke-load", |h| {
+            h.remote.snapshot.is_some() && h.remote.direct.meta_loaded()
+        })
+        .await;
+
+        // Revoke fails with explicit 404 while follow-up GET returns empty devices: error must stay visible.
+        click(&mut rt, &format!("remote-device-revoke-{device_id}"));
+        pump(&mut rt, "revoke-reconciled", |h| h.remote.flight.is_none()).await;
+        assert!(find_text(
+            &rt.accessibility_json(),
+            "Remote device not found"
+        ));
+
+        // Explicit manual Refresh clears the confirmed error.
+        click(&mut rt, "remote-control-refresh");
+        pump(&mut rt, "explicit-refresh", |h| h.remote.flight.is_none()).await;
+        assert!(!find_text(
+            &rt.accessibility_json(),
+            "Remote device not found"
+        ));
+
+        // Open password form on A, switch Preferences backend to B BEFORE Remote::poll runs,
+        // and submit the still-rendered form: profile B must receive zero POST /api/auth/password.
+        click(&mut rt, "remote-password-toggle");
+        rt.update(|s, _| {
+            s.remote
+                .direct
+                .set_password_drafts("secret-for-a", "secret-for-a");
+            s.shared.borrow_mut().backend = Some(Backend::unauthenticated(&server_b.base).unwrap());
+        });
+        click(&mut rt, "remote-password-save");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !server_b
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, p, _)| m == "POST" && p == "/api/auth/password")
+        );
+    });
+}
+
+fn count_text(tree: &Value, needle: &str) -> usize {
+    let here = usize::from(
+        tree["name"]
+            .as_str()
+            .is_some_and(|name| name.contains(needle)),
+    );
+    here + tree["children"].as_array().map_or(0, |children| {
+        children.iter().map(|c| count_text(c, needle)).sum()
+    })
+}

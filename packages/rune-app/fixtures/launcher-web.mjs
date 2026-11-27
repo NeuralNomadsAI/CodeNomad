@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
 import {createHash} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
+import {chmod,readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
 import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {createAttestedTcpRelay,fixtureAttestationEnv,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyExecutableMatches,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../../../scripts/native-fixture-http.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
-  root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart,
-  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
+  root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog,http,mobile,restart,
+  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -26,9 +27,12 @@ export async function launchWeb({
     if(!webAndroid){
       const issue=await http.post('/api/remote-control/pairings')
       assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
+      paired=await pairFixture({origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
     }
-  }else await http.storageState({path:storage})
+  }else{
+    await http.storageState({path:storage})
+    await chmod(storage,0o600).catch(()=>{})
+  }
   let workspace
   if(!webRestore){
     const opened=await http.post('/api/workspaces',{data:{path:project}})
@@ -44,23 +48,53 @@ export async function launchWeb({
   state.staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
 
   const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-  const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+  const args=webAndroid
+    ?[uiOrigin,profile,project,ui,String(serverPid),String(process.pid)]
+    :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')
+  if(webKeyboard)args.push('--keyboard-viewport')
   if(mobileSessionSearch)args.push('--mobile-session-search')
-  if(webGitImages)args.push('--git-images')
   if(historyReturnOnly)args.push('--history-return-only')
+  if(webGitImages)args.push('--git-images')
   if(webMoreActions)args.push('--more-actions-only')
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
-    state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
-    await state.deviceLease.open()
+    // Validate ADB config and attest the private ADB server PID and executable before opening the TCP relay.
+    const device=androidDevice(androidEnv)
+    const adbPid=await resolveLoopbackListenerPid(Number(device.port))
+    await verifyExecutableMatches(adbPid,androidEnv.RUNE_ANDROID_ADB)
+    const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid,{
+      requireClientAttestation:true,
+      allowedClientPids:[adbPid],
+    })
+    state.androidRelay=androidRelay
+    const lease=androidLease(device,uiOrigin,{
+      localPort:androidRelay.port,
+      closeRelay:()=>androidRelay.close(),
+    })
+    try{
+      await lease.open()
+      state.deviceLease=lease
+    }catch(error){
+      try{await androidRelay.close()}catch(closeError){console.error(`Failed to close Android relay after open failure: ${closeError.message}`)}
+      state.androidRelay=undefined
+      throw error
+    }
   }
-  const launch=webMobile?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+  const safeClientEnv=stripFixtureServerSecrets(env)
+  const attestationEnv=fixtureAttestationEnv(process.env,{includeServerRoots:true})
+  const launch=(webMobile||webKeyboard)?spawn:spawnFixtureChild
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...safeClientEnv,...androidEnv,...attestationEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile||webKeyboard?['ipc']:[])]})
   state.client=client
+  if(webKeyboard)client.on('message',action=>{
+    if(action==='reset-keyboard'){
+      resetKeyboard()
+      if(client.connected)client.send({ok:true},()=>{})
+    }
+  })
   if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{
     state.mobileAction=(async()=>{
@@ -72,6 +106,11 @@ export async function launchWeb({
         if(action==='restart'){
           const resumed=await restart(http,uiOrigin)
           http=resumed.http
+          if(state.androidRelay){
+            await verifyLoopbackListenerOwner(Number(new URL(uiOrigin).port),resumed.value.serverPid)
+            const attested=await verifyPrivateFixtureServer({targetPid:resumed.value.serverPid,launcherPid:process.pid,profile,root})
+            state.androidRelay.setTargetPid(resumed.value.serverPid,attested.targetStartId)
+          }
           return {value:resumed.value}
         }
         return {value:await mobile.command(action,http,ts?.https)}

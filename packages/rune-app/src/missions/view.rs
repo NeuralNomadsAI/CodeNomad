@@ -181,7 +181,7 @@ pub(crate) fn panel_body<S: 'static>(
             let (panel, fallback) = scoped.get(s);
             panel.map_or(fallback, |panel| &mut panel.filter)
         })
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key("missions-search");
     let field = if partial {
         field.help(t("missionsPanel.pages.searchLoaded"))

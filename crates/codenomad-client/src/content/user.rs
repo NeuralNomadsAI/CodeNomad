@@ -44,7 +44,7 @@ fn basename(uri: &str) -> Option<String> {
 }
 fn list<'a>(value: &'a Value, key: &str) -> Result<&'a [Value]> {
     match value.get(key) {
-        None => Ok(&[]),
+        None | Some(Value::Null) => Ok(&[]),
         Some(Value::Array(values)) => Ok(values),
         _ => Err("invalid native user attachments".into()),
     }
@@ -56,6 +56,9 @@ fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
     let id = string(value, "id")?;
+    decode_payload(id, value)
+}
+pub(crate) fn decode_payload(id: &str, value: &Value) -> Result<Vec<Part>> {
     let skills = list(value, "skills")?;
     let files = list(value, "files")?;
     let mut parts = Vec::with_capacity(skills.len() + files.len());

@@ -585,7 +585,11 @@ pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
         | WorkspaceEvent::FilesChanged { workspace_id, .. }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
         | WorkspaceEvent::SessionMoved { workspace_id, .. }
-        | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
+        | WorkspaceEvent::ServicesConfigChanged { workspace_id }
+        | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
+        | WorkspaceEvent::Stopped { workspace_id, .. } => Some(workspace_id.as_str()),
+        WorkspaceEvent::PluginsChanged { workspace_id, .. }
+        | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id.as_deref(),
         _ => None,
     }
 }
@@ -613,14 +617,37 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
                 .as_ref()
                 .is_some_and(|git| git.workspace_id() == target)
             {
-                crate::git::event(s, event);
-                delivered = true;
+                if let WorkspaceEvent::NativeStreamStatus {
+                    workspace_id,
+                    connected: true,
+                } = event
+                {
+                    crate::git::event(
+                        s,
+                        &WorkspaceEvent::WorktreesChanged {
+                            workspace_id: workspace_id.clone(),
+                        },
+                    );
+                    delivered = true;
+                } else if !matches!(event, WorkspaceEvent::NativeStreamStatus { .. }) {
+                    crate::git::event(s, event);
+                    delivered = true;
+                }
             }
             if let Some(files) = &mut s.files
                 && files.workspace_id() == target
             {
                 files.event(event.clone());
                 delivered = true;
+            }
+            if s.status_services.workspace_id() == Some(target) {
+                s.status_services.event(event);
+                delivered = true;
+            }
+            if matches!(event, WorkspaceEvent::Stopped { .. })
+                && let Some(agent) = &mut s.agent
+            {
+                delivered |= agent.workspace_stopped(target);
             }
         }
     }
@@ -643,7 +670,9 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
 pub(crate) fn has_detached_panels(s: &State) -> bool {
     let active = s.screen.is_launcher()
         && s.incoming.is_none()
-        && (s.git.owner.is_some() || s.files.is_some());
+        && (s.git.owner.is_some()
+            || s.files.is_some()
+            || s.status_services.workspace_id().is_some());
     active
         || s.workspace.as_ref().is_some_and(|ui| {
             ui.entries.iter().enumerate().any(|(index, entry)| {
@@ -664,6 +693,9 @@ pub(crate) fn detached_workspace_ids(s: &State) -> std::collections::HashSet<Str
         }
         if let Some(files) = &s.files {
             ids.insert(files.workspace_id().to_owned());
+        }
+        if let Some(id) = s.status_services.workspace_id() {
+            ids.insert(id.to_owned());
         }
     }
     if let Some(ui) = &s.workspace {
@@ -701,15 +733,36 @@ pub(crate) fn stop_unlisted_detached(
             .map(|git| git.workspace_id().to_owned())
             .filter(|id| !live.contains(id.as_str()))
         {
-            crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            crate::git::event(
+                s,
+                &WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                },
+            );
             changed = true;
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
             if !live.contains(workspace_id.as_str()) {
-                files.event(WorkspaceEvent::Stopped { workspace_id });
+                files.event(WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
+        }
+        if let Some(workspace_id) = s.status_services.workspace_id().map(str::to_owned)
+            && !live.contains(workspace_id.as_str())
+        {
+            s.status_services.event(&WorkspaceEvent::Stopped {
+                workspace_id,
+                deleted: false,
+                temporary_retained: false,
+            });
+            changed = true;
         }
     }
     if let Some(ui) = &mut s.workspace {
@@ -743,7 +796,14 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    crate::git::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
                     changed = true;
                 }
                 Some(_) => {
@@ -764,7 +824,11 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    files.event(WorkspaceEvent::Stopped { workspace_id });
+                    files.event(WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
+                    });
                     changed = true;
                 }
                 Some(_) => {
@@ -773,6 +837,30 @@ pub(crate) fn reconcile_detached_online(
                 }
                 None if opened_after.contains(workspace_id.as_str()) => {
                     files.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        if let Some(workspace_id) = s.status_services.workspace_id().map(str::to_owned) {
+            match live {
+                Some(live)
+                    if !opened_after.contains(workspace_id.as_str())
+                        && !live.contains(workspace_id.as_str()) =>
+                {
+                    s.status_services.event(&WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
+                    });
+                    changed = true;
+                }
+                Some(_) => {
+                    s.status_services.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(workspace_id.as_str()) => {
+                    s.status_services.online(true);
                     changed = true;
                 }
                 None => {}
@@ -802,6 +890,10 @@ pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
         }
         if let Some(files) = &mut s.files {
             files.online(online);
+            changed = true;
+        }
+        if s.status_services.workspace_id().is_some() {
+            s.status_services.online(online);
             changed = true;
         }
     }

@@ -18,6 +18,9 @@ pub(crate) fn announce_paging(tx: &mut Tx) {
 }
 
 pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
+    if s.phase.reconnecting() || s.phase == crate::Phase::Failed || s.stream_offline {
+        return;
+    }
     if s.can_older {
         cancel_page(s);
         if request_page(s, HistoryEdge::Oldest) {
@@ -33,6 +36,7 @@ pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
 
 pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) -> bool {
     if s.paging
+        || s.stream_offline
         || !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) && s.reader.is_some()
         || !match edge {
             HistoryEdge::Before | HistoryEdge::Oldest => s.can_older,
@@ -76,7 +80,7 @@ pub(crate) fn cancel_page(s: &mut State) {
     }
 }
 
-pub(super) fn fail_pending_page(s: &mut State) {
+pub(crate) fn fail_pending_page(s: &mut State) {
     let timeline = &mut s.transcript_display.timeline;
     if let Some((_ticket, edge)) = timeline.paging.take() {
         s.paging = false;
@@ -101,11 +105,7 @@ pub(crate) fn admit_page(
     accepted.then_some(edge)
 }
 
-pub(in crate::chat) fn install_page(
-    s: &mut State,
-    page: crate::history::Page,
-    edge: Option<HistoryEdge>,
-) {
+pub(crate) fn install_page(s: &mut State, page: crate::history::Page, edge: Option<HistoryEdge>) {
     if !page.rows.is_empty() {
         let bookmark = match edge {
             Some(HistoryEdge::Oldest) => page.rows.first(),
@@ -121,12 +121,14 @@ pub(in crate::chat) fn install_page(
         s.attachments.cancel();
         s.history_detached = page.newer.is_some();
         if let Some(reader) = &mut s.reader {
+            reader.clear_sync_undo();
             reader.install(s.history_detached);
             if let Some(bookmark) = bookmark {
                 reader.bookmark = bookmark;
                 reader.pending_scroll = true;
             }
         }
+        s.composer.clear_optimistic(None);
         s.messages = page.rows;
         if s.history_detached {
             s.transcript_display.tool_clock.pause();
@@ -150,12 +152,15 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
     s.paging = false;
     s.history_error = false;
     if let Some(reader) = &mut s.reader {
+        reader.clear_sync_undo();
         reader.drain();
         reader.resume_pending = false;
         reader.pending_scroll = false;
         reader.install(s.history_detached);
     }
+    s.composer.clear_optimistic(None);
     s.messages = page.rows;
+    crate::composer::reconcile(s);
     if s.history_detached {
         s.transcript_display.tool_clock.pause();
     } else {

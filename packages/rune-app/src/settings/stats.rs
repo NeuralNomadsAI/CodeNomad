@@ -1,4 +1,4 @@
-mod dates;
+pub(super) mod dates;
 #[cfg(test)]
 mod tests;
 mod view;

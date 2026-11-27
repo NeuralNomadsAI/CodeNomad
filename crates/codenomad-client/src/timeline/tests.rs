@@ -364,7 +364,10 @@ fn a_proposed_anchor_commits_only_with_a_current_admission() {
                     },
                 )
                 .await;
-                assert_eq!(read.is_some(), !invalidate && !superseded);
+                assert_eq!(
+                    matches!(read, crate::timeline::JumpOffer::Loaded(..)),
+                    !invalidate && !superseded
+                );
             },
         );
     }

@@ -29,6 +29,18 @@ fn speech_keys_follow_their_base_url() {
     );
     let kept = json!({"speech": {"baseUrl": "a", "apiKey": "new"}});
     assert_eq!(speech_pairing(&kept, &current), kept);
+    // A nested speech.speech object must never shadow the effective speech.baseUrl reference.
+    let nested_bypass = owner(Some(&json!({
+        "speech": {
+            "baseUrl": "https://trusted.example/v1",
+            "apiKey": "secret",
+            "speech": {"baseUrl": "https://attacker.invalid/v1"}
+        }
+    })));
+    assert_eq!(
+        speech_pairing(&json!({"speech": {"baseUrl": "https://attacker.invalid/v1"}}), &nested_bypass),
+        json!({"speech": {"baseUrl": "https://attacker.invalid/v1", "apiKey": null}})
+    );
 }
 
 #[test]
@@ -61,6 +73,15 @@ fn owners_follow_the_reference_documents() {
     assert_eq!(Value::Object(settings.owner(Kind::Config, "server")), json!({"opencodeBinary": "opencode2"}));
     assert!(std::fs::read_to_string(&settings.location.config).unwrap().contains("opencode2"));
     assert_eq!(settings.raw_config_owner("ui"), Err(Unreadable));
+    // M8: unreadable/corrupt config.yaml makes server_id() fail without overwriting config or sidecar.
+    let corrupt_dir = crate::shared::test_dir("settings-corrupt-server-id");
+    let corrupt_config = corrupt_dir.join("config.yaml");
+    std::fs::write(&corrupt_config, "server: [\n").unwrap();
+    let corrupt_settings = Settings::new(Location::resolve(corrupt_config.to_str().unwrap()));
+    assert!(corrupt_settings.server_id().is_err());
+    assert_eq!(std::fs::read_to_string(&corrupt_config).unwrap(), "server: [\n");
+    assert!(!corrupt_dir.join("config.yaml.server-id").exists());
+    let _ = std::fs::remove_dir_all(corrupt_dir);
     let _ = std::fs::remove_dir_all(dir);
 }
 

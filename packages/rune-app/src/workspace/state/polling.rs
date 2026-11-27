@@ -2,8 +2,8 @@
 #[cfg(target_arch = "wasm32")]
 use super::platform;
 use super::{
-    State, Tx, blank_cleanup, catalogue, history_budget, idle_markers, observation::poll_cached,
-    panel_state, resume,
+    State, Tx, blank_cleanup, catalogue, idle_markers, observation::poll_cached, panel_state,
+    resume,
 };
 
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
@@ -27,7 +27,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let became_ready = loading && !ui.persistence.loading;
-    if let Some(store) = &ui.persistence.store {
+    if ui.persistence.restore_enabled
+        && !ui.persistence.mutating
+        && let Some(store) = &ui.persistence.store
+    {
         s.saved_outlines.poll(store, s.wake.clone());
     }
     if became_ready {
@@ -38,19 +41,22 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
+    #[cfg(target_arch = "wasm32")]
+    platform::pairing::set_defer_checks(s, true);
     changed |= poll_cached(s, &mut ui, Some(now), tx);
     changed |= blank_cleanup::poll(s, &mut ui, tx);
     changed |= idle_markers::poll(s, &mut ui, now, tx);
     changed |= crate::timeline::sync_outline_mutation(s);
     let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;
-    ui.stage();
+    let stashed = s.temporary.stashed_for_snapshot();
+    ui.stage_with_stashed(stashed);
     let previous_error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.partial,
     );
-    let snapshot = ui.snapshot();
+    let snapshot = ui.snapshot_with_stashed(stashed);
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
     let error = (
         ui.persistence.read_error,
@@ -58,6 +64,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.partial,
     );
     s.workspace = Some(ui);
+    #[cfg(target_arch = "wasm32")]
+    platform::pairing::flush_deferred_checks(s);
     if !mission_auth_expired.is_empty() {
         #[cfg(not(target_arch = "wasm32"))]
         for expired in mission_auth_expired {
@@ -71,9 +79,6 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     if became_ready {
         resume(s, tx);
-    }
-    if changed {
-        history_budget::enforce(s);
     }
     changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error

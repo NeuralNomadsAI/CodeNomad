@@ -241,6 +241,7 @@ mod tests {
             let project = Project {
                 id: "ws1".into(),
                 path: "/repo".into(),
+                temporary: false,
             };
             let client = tokio::spawn({
                 let backend = backend.clone();
@@ -298,6 +299,7 @@ mod tests {
             let project = Project {
                 id: "ws1".into(),
                 path: "/repo".into(),
+                temporary: false,
             };
             let task = tokio::spawn({
                 let backend = backend.clone();
@@ -326,6 +328,7 @@ mod tests {
             let project = Project {
                 id: "ws1".into(),
                 path: "/plain".into(),
+                temporary: false,
             };
             let client = tokio::spawn({
                 let backend = backend.clone();

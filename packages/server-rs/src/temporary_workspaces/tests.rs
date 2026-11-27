@@ -191,7 +191,7 @@ impl Harness {
         let settings = settings::Settings::new(settings::document::Location::resolve(
             config_dir.join("config.yaml").to_str().unwrap(),
         ));
-        let meta_doc = meta::document(Uuid::new_v4(), server_addr.port(), &root, None, json!({})).unwrap();
+        let meta_doc = meta::document(Some(Uuid::new_v4()), server_addr.port(), &root, None, json!({})).unwrap();
         let app = Arc::new(App::new(
             auth,
             server_addr.port(),

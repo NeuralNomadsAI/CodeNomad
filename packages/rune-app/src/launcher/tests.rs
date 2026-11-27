@@ -301,6 +301,7 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
         launcher.project = Some(Project {
             id: "project".into(),
             path: "/fixture".into(),
+            temporary: false,
         });
         launcher.sessions = vec![Session {
             id: "existing".into(),
@@ -425,6 +426,7 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         if let Some(l) = s.screen.launcher_mut() {
             l.connection = Some(backend.clone());
@@ -560,6 +562,7 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
     let project = Project {
         id: "proj-1".into(),
         path: "/repo".into(),
+        temporary: false,
     };
     crate::workspace::opened(&mut s, &project);
     let bound = Backend {
@@ -754,6 +757,63 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.linked.rows.is_empty());
 }
 
+#[test]
+fn root_creation_uncertain_survives_passive_listings_until_explicit_refresh() {
+    let mut launcher = Launcher::fixture();
+    launcher.sessions = vec![row("root"), row("deleted")];
+    launcher.creation_uncertain = true;
+    launcher.creation_uncertain_linked = None;
+    launcher.error = Some("rune.create_error");
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+        true,
+        false,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root"]
+    );
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root"), row("other")],
+            next: None,
+        },
+        None,
+        true,
+        true,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "other"]
+    );
+    launcher.apply_directory_refresh(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+    );
+    assert!(!launcher.creation_uncertain);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct CatalogueFixture {
     base_url: String,
@@ -889,10 +949,12 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
+            temporary: false,
         };
         let project_b = Project {
             id: "proj-b".into(),
             path: "/repo-b".into(),
+            temporary: false,
         };
         let bound_a = Backend {
             workspace: project_a.id.clone(),
@@ -1066,6 +1128,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_c = Project {
             id: "proj-c".into(),
             path: "/repo-c".into(),
+            temporary: false,
         };
         let opening_c = rt
             .state
@@ -1090,7 +1153,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             l.authentication_required = false;
             l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
             l.pending_stream_generation = 1;
-            l.stopped_during_pending.insert(project_c.id.clone());
+            l.stopped_during_pending
+                .insert(project_c.id.clone(), (false, false));
             l.result = Some(opened_in);
             l.pending = true;
         }
@@ -1130,6 +1194,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let project_d = Project {
             id: "proj-d".into(),
             path: "/repo-d".into(),
+            temporary: false,
         };
         let opening_d = rt
             .state
@@ -1195,7 +1260,8 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.sessions.clear();
-            l.stopped_during_pending.insert("proj-stopped".into());
+            l.stopped_during_pending
+                .insert("proj-stopped".into(), (false, false));
             l.result = Some(created_in);
             l.pending = true;
         }
@@ -1243,6 +1309,7 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
+            temporary: false,
         };
         let bound_a = Backend {
             workspace: project_a.id.clone(),
@@ -1333,6 +1400,7 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         let project_d = Project {
             id: "proj-d".into(),
             path: "/repo-d".into(),
+            temporary: false,
         };
         let opening_d = rt
             .state
@@ -1428,6 +1496,7 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
     let project = Project {
         id: "proj-att".into(),
         path: "/repo-att".into(),
+        temporary: false,
     };
     let mut draft = crate::composer::draft::Draft::default();
     draft
@@ -1448,6 +1517,8 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
                 backend_id: Some("external".into()),
                 server_id: Some("srv-att".into()),
                 folder: project.path.clone(),
+                project_name: None,
+                temporary: false,
                 occurrence: 0,
                 workspace_id: Some(project.id.clone()),
                 active_session_id: Some("ses-att".into()),
@@ -1555,4 +1626,86 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
     assert!(!rt.state.composer.attachments_missing);
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
     assert!(rt.state.files.is_some());
+}
+
+#[test]
+fn failed_session_retry_stays_reconnecting_until_sync_and_reverts_on_error() {
+    let mut state = crate::init();
+    crate::gallery::shell::fixture(&mut state);
+    let backend = Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: "http://127.0.0.1:9/".into(),
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        client_id: "fixture".into(),
+        session_directory: Some("/project".into()),
+        fresh_mode: false,
+    };
+    let project = {
+        let launcher = state.screen.launcher_mut().unwrap();
+        launcher.connection = Some(backend.clone());
+        launcher.project.clone().unwrap()
+    };
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::connected(&mut state);
+    crate::workspace::opened(&mut state, &project);
+    crate::workspace::bound(&mut state, &backend);
+    state.draft = TextEdit::new("Draft across device revocation");
+    state.phase = Phase::Failed;
+    state.commands = None;
+    let mut rt = rune::Runtime::new(
+        state,
+        crate::view,
+        (1100.0, 800.0),
+        rune::Env::new(false, 1.0),
+    );
+
+    // Retrying a failed session with no live transport enters Phase::Reconnecting immediately.
+    rt.update(crate::retry_connection);
+    assert!(rt.state.screen.launcher().unwrap().pending);
+    assert!(rt.state.phase == Phase::Reconnecting);
+    assert!(rt.state.incoming.is_none());
+
+    // If the rebind lookup fails, phase reverts to Phase::Failed so Retry stays actionable.
+    let (err_out, err_in) = bounded(1);
+    rt.state.screen.launcher_mut().unwrap().result = Some(err_in);
+    assert!(
+        err_out
+            .try_send(Err("sessionList.reload.error".into()))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(!rt.state.screen.launcher().unwrap().pending);
+    assert!(rt.state.phase == Phase::Failed);
+
+    // A succeeding retry keeps Phase::Reconnecting through Reply::Selected -> bind_at until sync.
+    rt.update(crate::retry_connection);
+    assert!(rt.state.phase == Phase::Reconnecting);
+    let (sel_out, sel_in) = bounded(1);
+    rt.state.screen.launcher_mut().unwrap().result = Some(sel_in);
+    assert!(
+        sel_out
+            .try_send(Ok(Reply::Selected(
+                vec![],
+                Some((
+                    backend,
+                    "Fixture conversation".into(),
+                    None,
+                    Instant::now(),
+                    "root".into()
+                )),
+                None,
+                false,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.phase == Phase::Reconnecting);
+    assert!(rt.state.commands.is_some());
+    assert!(rt.state.incoming.is_some());
+    assert_eq!(rt.state.draft.text, "Draft across device revocation");
 }

@@ -643,6 +643,8 @@ mod tests {
                 backend_id: None,
                 server_id: None,
                 folder: "/repo".into(),
+                project_name: None,
+                temporary: false,
                 occurrence: 0,
                 workspace_id: Some("ws1".into()),
                 active_session_id: Some("ses_root".into()),
@@ -669,7 +671,7 @@ mod tests {
 
         let mut rt = rune::Runtime::new(
             state,
-            crate::workspace::strip,
+            |s, cx| crate::workspace::strip(s, cx.touch_controls(), false),
             (800.0, 80.0),
             rune::Env::new(false, 1.0),
         );

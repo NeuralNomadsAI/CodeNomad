@@ -103,6 +103,77 @@ fn single_file(identity: &Identity, meta: &fs::Metadata) -> bool {
     meta.file_type().is_file() && !meta.file_type().is_symlink() && identity.nlink == 1
 }
 
+#[cfg(unix)]
+fn handle_times(file: &File) -> io::Result<(i64, i64, i64, i64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = file.metadata()?;
+    Ok((m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec()))
+}
+
+#[cfg(windows)]
+fn handle_times(file: &File) -> io::Result<(i64, i64, i64, i64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx};
+    let mut basic: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: live handle owned by `file` and properly sized `FILE_BASIC_INFO` output struct.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle() as _,
+            FileBasicInfo,
+            (&mut basic as *mut FILE_BASIC_INFO).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((basic.LastWriteTime, 0, basic.ChangeTime, 0))
+}
+
+/// Bounded, existing-only read with the same single-file nofollow identity rules as publication
+/// (`readDesktopPluginFile` in `desktop-plugin-artifact.ts`).
+pub(crate) fn read_regular_nofollow(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    let (before_named, meta) = named_identity(path).ok()??;
+    if !single_file(&before_named, &meta) || before_named.size > max_bytes as u64 {
+        return None;
+    }
+    let mut file = open_nofollow(path).ok()?;
+    let (held, regular) = handle_identity(&file).ok()?;
+    let before_times = handle_times(&file).ok()?;
+    if !regular
+        || held.nlink != 1
+        || held.ino == 0
+        || held.dev != before_named.dev
+        || held.ino != before_named.ino
+        || held.size != before_named.size
+    {
+        return None;
+    }
+    let mut bytes = vec![0u8; held.size as usize];
+    file.read_exact(&mut bytes).ok()?;
+    let mut trailing = [0u8; 1];
+    if file.read(&mut trailing).ok()? != 0 {
+        return None;
+    }
+    let (after_held, after_regular) = handle_identity(&file).ok()?;
+    let after_times = handle_times(&file).ok()?;
+    let (after_named, after_meta) = named_identity(path).ok()??;
+    if !after_regular
+        || after_held.nlink != 1
+        || !single_file(&after_named, &after_meta)
+        || after_held.dev != held.dev
+        || after_held.ino != held.ino
+        || after_held.size != held.size
+        || after_named.dev != held.dev
+        || after_named.ino != held.ino
+        || after_named.size != held.size
+        || after_times != before_times
+    {
+        return None;
+    }
+    Some(bytes)
+}
+
 /// The identity of one regular file holding exactly `bundle`, or the reason it is not.
 fn verified(plugin: &Path, bundle: &[u8], hash: &str) -> io::Result<Result<Identity, &'static str>> {
     let Some((before, meta)) = named_identity(plugin)? else {

@@ -65,10 +65,12 @@ pub(crate) struct Watchdog<C = SystemClock> {
     state: Mutex<WatchState>,
 }
 
+#[cfg(test)]
 pub(crate) struct PauseGuard<'a, C: Clock> {
     watchdog: &'a Watchdog<C>,
 }
 
+#[cfg(test)]
 impl<C: Clock> Drop for PauseGuard<'_, C> {
     fn drop(&mut self) {
         let mut state = self.watchdog.state.lock().unwrap();
@@ -108,6 +110,7 @@ impl<C: Clock> Watchdog<C> {
         self.state.lock().unwrap().last = self.clock.now();
     }
 
+    #[cfg(test)]
     pub(crate) fn pause(&self) -> PauseGuard<'_, C> {
         self.state.lock().unwrap().paused += 1;
         PauseGuard { watchdog: self }

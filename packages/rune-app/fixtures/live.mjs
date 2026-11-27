@@ -1,47 +1,47 @@
-// Own backend, real existing OpenCode service, exact disposable session with every tool denied.
+// Own backend and private OpenCode, with every tool denied.
 import assert from 'node:assert/strict'
-import {fixtureChildPid,spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
-import {writeFile,readFile} from 'node:fs/promises'
+import {randomUUID} from 'node:crypto'
+import {writeFile} from 'node:fs/promises'
+import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
-import {connectNative} from './live-access.mjs'
-import {privateEnvironment} from './private-profile.mjs'
+import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const here=path.resolve(import.meta.dirname,'..')
-const existing=process.argv.indexOf('--reuse')
-let live
-if(existing>=0) {
-  const file=path.resolve(process.argv[existing+1])
-  assert(file.startsWith(path.join(here,'fixture-profile')+path.sep))
-  live={...await connectNative(),...JSON.parse(await readFile(file,'utf8'))}
-} else live=await prepareLive()
+requirePrivateCli();requireTestSupport()
+const existing=args.indexOf('--reuse')
+const manifest=existing<0?null:await privateManifest(args[existing+1])
+await withNative(async native=>{
+const live=manifest?{...native,sessionID:manifest.sessionID}:await prepareLive(native)
 const {profile,project,sessionID}=live
 const current=(await live.read(`/api/session/${sessionID}`)).data
+assert.equal(current.location.directory,project)
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
-const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
-  CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=spawn(serverBinary,
-  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log=''
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
+const rustPassword=randomUUID()
+const env={...live.runtimeEnv,CNRS_FIXTURE_URL:live.relay,CNRS_FIXTURE_PASSWORD:live.relayPassword,
+  CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1'}
+const server=launchFixture(serverBinary,
+  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,rustPassword]})
+live.allowRelayClient(server.pid(),server.closed)
 let child
-let observed
+let observed,stream,observeTask,rustFetch,rustRelay
 try {
-  let origin
-  for(const end=Date.now()+20000;!origin;){
-    assert(Date.now()<end&&server.exitCode===null,'Private Rust server startup failed')
-    origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
-  }
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
+  const origin=await server.ready(rustOrigin)
+  const rustPid=await server.pid()
+  rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:rustPassword,isolateSessionCookie:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   const opened=await call('/api/workspaces',{method:'POST',body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201,'Disposable workspace admission')
   const abort=new AbortController()
   observed=abort
-  const stream=await fetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
+  const openTimer=setTimeout(()=>abort.abort(Error('SSE open timed out')),15000)
+  try{stream=await rustFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})}
+  finally{clearTimeout(openTimer)}
   assert.equal(stream.status,200)
   const stats={turn:0,chunks:0,body:'',ids:[],tools:0}
   const observe=async()=>{
@@ -70,19 +70,18 @@ try {
       }
     }
   }
-  observe().catch(error=>{if(error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
+  observeTask=observe().catch(error=>{if(!abort.signal.aborted&&error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
-  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:['inherit','inherit','pipe'],
-    env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
-      RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
-  child.stderr.pipe(process.stderr)
-  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await fixtureChildPid(child)}))
-  await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject)})
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,rustPassword],
+    env:{...live.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
+      RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
+  rustRelay.allowClientPid(child.pid(),child.closed)
+  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
+  assert.equal(await child.closed,0,child.output())
 } finally {
-  observed?.abort()
-  if(child?.exitCode===null)child.kill()
-  server.stdin.write('shutdown\n')
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,5000))])
-  if(server.exitCode===null)server.kill()
-  await writeFile(path.join(profile,'backend.log'),log)
+  observed?.abort();void stream?.body?.cancel?.().catch(()=>{})
+  if(observeTask)await Promise.race([observeTask,delay(2000,undefined,{ref:false})])
+  try{await child?.stop()}finally{try{await Promise.allSettled([rustFetch?.close(),rustRelay?.close()])}finally{await server.stop()}}
+  await writeFile(path.join(profile,'backend.log'),server.output())
 }
+},{profile:manifest?.profile})

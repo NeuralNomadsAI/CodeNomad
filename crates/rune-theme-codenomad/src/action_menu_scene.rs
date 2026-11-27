@@ -21,7 +21,7 @@ pub fn trigger(highlighted: bool) -> El {
                 },
             ))
         })
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .size(
             t.metric("fileRowAction", "minWidth").px(),
             t.metric("fileRowAction", "minHeight").px(),

@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
-import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
+import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
-import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
+import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
-import {request} from 'playwright'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
 import {seedHistory,historyResponse,historyPreview} from './launcher-history.mjs'
@@ -20,14 +20,18 @@ import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
+import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
+import {needsOwnedWindowsWorker} from './launcher-worker-guard.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
+const webMobileDrawers=process.argv.includes('--web-mobile-drawers')
+const webKeyboard=process.argv.includes('--web-keyboard-viewport')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
 const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
-if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers)&&!process.argv.includes('--owned-mobile-worker'))){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
   const closed=new Promise(resolve=>worker.once('close',resolve))
   const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
@@ -51,8 +55,10 @@ const webSearch=process.argv.includes('--web-history-search')
 const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webOutline,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webMobileDrawers||webOutline||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
+assert(!webMobileDrawers||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webKeyboard&&!process.argv.includes('--web-restore')),'Mobile drawers uses its own loopback Chromium fixture mode')
+assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!webOutline&&!webTimeline&&!webSearch&&!webMobileDrawers&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
 assert(!webMissions||!webRestore&&!webMobile)
 assert(!webGitImages||!webRestore&&!webMobile&&!webMissions)
 if(!web)requireTestSupport()
@@ -70,7 +76,16 @@ const restoreFileDrafts=process.argv.includes('--file-draft-restart')
 const draftOutput=restoreFileDrafts?process.env.RUNE_TEST_FILES_OUTPUT:undefined
 if(draftOutput)assert(path.isAbsolute(draftOutput),'Files fixture output must be absolute')
 const here=path.resolve(import.meta.dirname,'..')
-const output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
+let output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
+if(web&&!draftOutput&&!gitOutput){
+  output=(await assertWorktreeTestRoot(root)).testsReal
+}else if(draftOutput||gitOutput){
+  const parent=path.dirname(output)
+  const parentReal=await realpath(parent)
+  output=path.join(parentReal,path.basename(output))
+  const existing=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  assert(!existing||(!existing.isSymbolicLink()&&existing.isDirectory()),`Fixture output root must be a real directory: ${output}`)
+}
 const run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
 if(webSearch){
@@ -80,13 +95,15 @@ if(webSearch){
 const browserOutput=path.join(output,run,'browser')
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 if(webFileWrap)await writeFile(path.join(project,'wrap.txt'),'Workspace word wrap fixture: '+'wide source '.repeat(24)+'\n')
+if(webMobileDrawers)await writeFile(path.join(project,'drawer-probe.txt'),'Mobile drawer fixture file\n')
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
 const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
 const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'),'utf8')):null
 if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
 const review=path.join(path.dirname(project),'review')
-const gitEnv=gitPanel||webGitImages?{...await privateEnvironment(profile),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}:undefined
+const gitBaseEnv=gitPanel||webGitImages||gitCount||((webMobile&&!webAndroid)||webSearch||webMobileDrawers)?await privateEnvironment(profile):undefined
+const gitEnv=gitPanel||webGitImages?gitBaseEnv:undefined
 const git=async (...args)=>(await promisify(execFile)('git',['-C',project,...args],{windowsHide:true,env:gitEnv})).stdout
 if(webGitImages)await seedGitImages(project,git)
 if(gitPanel){
@@ -100,13 +117,13 @@ if(gitPanel){
   await git('worktree','add','--quiet','-b','review',review)
   await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
 }
-if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
-const linked=(webMobile&&!webAndroid||webSearch)?path.join(path.dirname(project),'linked'):null
+if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:gitBaseEnv})
+const linked=(webMobile&&!webAndroid||webSearch||webMobileDrawers)?path.join(path.dirname(project),'linked'):null
 if(linked){
   const hooks=path.join(profile,'empty-hooks')
   await mkdir(hooks)
   const git=(...args)=>promisify(execFile)('git',['-c',`core.hooksPath=${hooks}`,'-C',project,...args],{
-    windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
+    windowsHide:true,env:gitBaseEnv,
   })
    await git('init','--quiet',...(webSearch?['-b','history-fixture']:[]))
   await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
@@ -203,7 +220,9 @@ function add(id,title,directory=project) {
   return row
 }
 add('ses_existing','Existing history')
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_existing').append('assistant',`Keyboard passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_another').append('assistant',`Question passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 seedHistory({stores,webTimeline:webTimeline||webOutline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
@@ -217,13 +236,15 @@ if(linked&&!webSearch){
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
 }
 const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
+let keyboardPermissionSettled=false,keyboardFormSettled=false
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
+const backendPassword=randomUUID(),nativePassword=randomUUID()
 const upstream=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://127.0.0.1');requests.push(`${req.method} ${url.pathname}`)
     if(filesState||gitPanel)assert(!(url.pathname==='/api/session'&&req.method==='POST')&&!url.pathname.endsWith('/prompt'),'Read-only native session fixture')
-    assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
+    assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${nativePassword}`).toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
     if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
@@ -231,8 +252,26 @@ const upstream=createServer(async(req,res)=>{
       assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid&&!webMoreActions)&&
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits prompts only in the Android and mobile menu scenes')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:webKeyboard?[{...fixtureModel,enabled:true}]:[]})
       if(url.pathname==='/api/command'&&webSearch)return json({location:{directory:project},data:[]})
+      if(webKeyboard){
+        const keyboardPermission={id:'permission-keyboard',sessionID:'ses_existing',action:'edit',
+          resources:Array.from({length:12},(_,i)=>`/synthetic/keyboard-${i}.rs`),message:'Approve synthetic edit'}
+        const keyboardForm={id:'form-keyboard',sessionID:'ses_another',title:'Synthetic keyboard question',
+          fields:Array.from({length:8},(_,i)=>({key:`q${i}`,type:'string',title:`Question field ${i}`}))}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission')return json({data:keyboardPermissionSettled?[]:[keyboardPermission]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard'){
+          if(keyboardPermissionSettled){res.statusCode=404;return json({_tag:'PermissionNotFoundError',requestID:'permission-keyboard',message:'Permission is no longer pending for this session'})}
+          return json({data:keyboardPermission})
+        }
+        if(req.method==='POST'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard/reply'){keyboardPermissionSettled=true;return json({data:{}})}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form')return json({data:keyboardFormSettled?[]:[keyboardForm]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){
+          if(keyboardFormSettled){res.statusCode=404;return json({_tag:'FormNotFoundError',id:'form-keyboard',message:'Question is no longer pending for this session'})}
+          return json({data:{...keyboardForm,state:{status:'pending'}}})
+        }
+        if(req.method==='DELETE'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){keyboardFormSettled=true;return json({data:{}})}
+      }
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -245,7 +284,7 @@ const upstream=createServer(async(req,res)=>{
       res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
-    if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
+    if((webMobile||compare||webMobileDrawers)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){
       if(url.pathname==='/api/session/active')return json({data:{}})
       if(url.pathname==='/api/project')return json([])
@@ -316,7 +355,7 @@ const upstream=createServer(async(req,res)=>{
       if(!cursor){
         assert.equal(url.searchParams.get('limit'),'200')
         const search=url.searchParams.get('search')
-        if(webMobile&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
+        if((webMobile||webMobileDrawers)&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
         if(rows.length>1)next=Buffer.from(JSON.stringify({directory,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
         rows=rows.slice(0,1)
       }else rows=rows.slice(1)
@@ -432,14 +471,15 @@ const upstream=createServer(async(req,res)=>{
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
-Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
+Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let host,server,log='',client,androidCleanup,result=1,http,expired=false
+let host,server,log='',client,clientRelay,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
 async function startServer(){
-  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
+  const blockedCli=path.join(profile,'disabled-opencode-cli.exe')
+  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0',blockedCli],
     {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
   server=host.child
   return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)
@@ -450,7 +490,9 @@ async function stopServer(){
 }
 async function signIn(origin){
   await http?.dispose()
-  http=await signInFixture(origin,'fixture-backend')
+  const serverPid=await host.pid()
+  assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Owned fixture server PID unavailable')
+  http=await signInFixture(origin,backendPassword,serverPid)
 }
 async function restartWeb(previous,uiOrigin){
   const {serverId}=await (await previous.get('/api/meta')).json()
@@ -465,26 +507,31 @@ async function restartWeb(previous,uiOrigin){
   assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
   const opened=await http.post('/api/workspaces',{data:{path:project}})
   assert(opened.ok())
-  return {http,value:{older,witness:(await opened.json()).id}}
+  return {http,value:{older,witness:(await opened.json()).id,serverPid:await host.pid()}}
 }
 try{
   const origin=await startServer()
+  const serverPid=await host.pid()
+  const clientEnv=stripFixtureServerSecrets(env)
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env:clientEnv,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webMobileDrawers,webKeyboard,resetKeyboard:()=>{keyboardPermissionSettled=false;keyboardFormSettled=false},webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
-    await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
+    await pendingOpenFixture({origin,serverPid,backendPassword,profile,project,env,clientBinary});result=0
   }else if(restoreState){
     if(restoreFileDrafts)await signIn(origin)
+    clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
     for(const stage of ['prepare','resume','verify']){
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      const stageClosed=new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})
+      clientRelay.allowClientPid(fixtureChildPid(client),stageClosed)
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
-      try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
+      try{result=await stageClosed}finally{clearTimeout(timer)}
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
       if(restoreFileDrafts){
@@ -497,14 +544,18 @@ try{
     }
   }else {
     if(gitPanel)await signIn(origin)
+    clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
-    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    const clientClosed=new Promise(resolve=>client.once('exit',resolve))
+    clientRelay.allowClientPid(fixtureChildPid(client),clientClosed)
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){
-    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
-    assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
+    const maxBudget=webMobile?480000:300000
+    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):webMobile?480000:web||filesState||gitPanel?300000:120000
+    assert(Number.isInteger(budget)&&budget>0&&budget<=maxBudget,'Invalid client deadline')
     const timer=setTimeout(()=>{expired=true;client.kill()},budget)
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
@@ -540,7 +591,7 @@ try{
     for(const key of ['readerHiddenLive','readerSuspensionRetained','readerQueuedCloseAndReplacementFenced','readerClosed'])assert.equal(filesProof[key],true)
     if(documentState)assert.deepEqual(filesProof.document,{cancelled:true,versionConflict:true,saved:documentDraft,draftRetained:true,lateEditRejected:true,discarded:true,interfaceQualified:false})
     assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')))
-    http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
+    await signIn(origin);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
   }
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState&&!gitPanel)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
@@ -553,8 +604,11 @@ try{
   if(webState.deviceLease){
     await webState.clientClosed
     androidCleanup=await webState.deviceLease.close()
+  }else if(webState.androidRelay){
+    await webState.androidRelay.close().catch(error=>{androidCleanup=[`relay close: ${error.message}`]})
   }
   await webState.mobileAction
+  await clientRelay?.close().catch(()=>{})
   await http?.dispose()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()

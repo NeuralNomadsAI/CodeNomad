@@ -77,6 +77,7 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
     let original = Project {
         id: "original-record".into(),
         path: "/original".into(),
+        temporary: false,
     };
     rt.state.screen.launcher_mut().unwrap().project = Some(original.clone());
     opened(&mut rt.state, &original);

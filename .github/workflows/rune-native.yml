@@ -11,6 +11,9 @@ on:
       - 'packages/server/src/server/routes/auth-pages/**'
       - 'crates/**'
       - 'scripts/rune/**'
+      - 'scripts/native-fixture-*'
+      - 'scripts/native-product-fixture.mjs'
+      - 'scripts/perf/**'
       - 'packages/ui/src/**'
       - 'packages/ui/tests/**'
       - '.github/workflows/rune-native.yml'
@@ -89,7 +92,6 @@ jobs:
           node scripts/rune/generate-hotkeys.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
-          node --test packages/rune-app/fixtures/*.test.mjs
           node --test scripts/perf/*.test.mjs
       - name: Build application and run native runtime tests
         run: |
@@ -103,9 +105,10 @@ jobs:
           cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
-          fi
+          cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          node --test scripts/native-fixture-guards.test.mjs
+          node --test scripts/native-fixture-cold-diagnostics.test.mjs
+          node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad

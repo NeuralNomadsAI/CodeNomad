@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixtureChildPid, fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, fixturePaginationGuard, hardKillFixtureChild, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 import { execFileSync, spawn } from "node:child_process"
 import { once } from "node:events"
 import fs from "node:fs"
@@ -57,7 +57,7 @@ test("Windows job still owns a grandchild after both ancestors exit", windows, a
   `)
   const stopped = once(root, "close")
   try {
-    const [data] = await once(root.stdout, "data")
+    const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
     const [middle, leaf] = JSON.parse(data.toString())
     const inner = await fixtureChildPid(root)
     assert.equal(alive(middle), false)
@@ -79,7 +79,7 @@ test("Windows job teardown leaves a foreign PID alone even when the fixture adve
     const root = own(`console.log(process.argv[1]); setInterval(() => {}, 1000)`, String(foreign.pid))
     const stopped = once(root, "close")
     try {
-      const [data] = await once(root.stdout, "data")
+      const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
       assert.equal(Number(String(data).trim()), foreign.pid)
       await stopFixtureChild(root, stopped)
       assert.equal(alive(foreign.pid), true)
@@ -97,6 +97,15 @@ test("Windows job permits immediate graceful shutdown over stdin", windows, asyn
   assert.equal(root.exitCode, 0)
 })
 
+test("stopFixtureChild rejects supervisor exit code 86 even after graceful close callback", { timeout: 15_000 }, async () => {
+  const root = own(`process.stdin.resume(); process.stdin.once("end", () => process.exit(86))`)
+  const stopped = once(root, "close")
+  await assert.rejects(
+    stopFixtureChild(root, stopped, 5000, 2000, { close: () => root.stdin.end() }),
+    /incomplete child tree termination/,
+  )
+})
+
 test("Windows enclosing bench job keeps its daemon across backend exits but kills it on close", windows, async () => {
   const root = own(`
     const {spawn} = require("node:child_process")
@@ -112,7 +121,7 @@ test("Windows enclosing bench job keeps its daemon across backend exits but kill
   `)
   const stopped = once(root, "close")
   try {
-    const [data] = await once(root.stdout, "data")
+    const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
     const [backendExit, daemon] = JSON.parse(String(data))
     assert.equal(backendExit, 0)
     assert.equal(alive(daemon), true)
@@ -150,7 +159,79 @@ test("Windows mobile enclosing job kills detached browser descendants when the I
   } finally { await stopFixtureChild(worker, stopped) }
 })
 
+test("fixture job terminates child and grandchild when parent dies and hides CODENOMAD_FIXTURE_PARENT_PID", { timeout: 30_000 }, async () => {
+  const guardsUrl = new URL("./native-fixture-guards.mjs", import.meta.url).href
+  const parentScript = `
+    import { spawnFixtureChild, fixtureChildPid } from ${JSON.stringify(guardsUrl)}
+    const child = spawnFixtureChild(process.execPath, ["-e", \`
+      const { spawn } = require("node:child_process")
+      const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: process.platform === "win32", windowsHide: true, stdio: "ignore" })
+      leaf.once("spawn", () => {
+        console.log(JSON.stringify({ childPid: process.pid, leafPid: leaf.pid, leaked: Boolean(process.env.CODENOMAD_FIXTURE_PARENT_PID) }))
+      })
+      setInterval(() => {}, 1000)
+    \`], { env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k))), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+    child.stdout.once("data", chunk => {
+      process.stdout.write(chunk)
+    })
+    await fixtureChildPid(child)
+    setInterval(() => {}, 1000)
+  `
+  const parentEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k)))
+  const parent = spawn(process.execPath, ["--input-type=module", "-e", parentScript], { env: parentEnv, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const parentStopped = once(parent, "close")
+  let childPid, leafPid
+  try {
+    const [data] = await once(parent.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const info = JSON.parse(String(data))
+    childPid = info.childPid
+    leafPid = info.leafPid
+    assert.equal(info.leaked, false, "CODENOMAD_FIXTURE_PARENT_PID must not leak to the fixture child")
+    assert.equal(alive(childPid), true)
+    assert.equal(alive(leafPid), true)
+    process.kill(parent.pid, "SIGKILL")
+    await parentStopped
+    const deadline = Date.now() + 5_000
+    while ((alive(childPid) || alive(leafPid)) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(alive(childPid), false, "child must terminate after abrupt parent death")
+    assert.equal(alive(leafPid), false, "grandchild must terminate after abrupt parent death")
+  } finally {
+    if (parent.exitCode === null && parent.signalCode === null) {
+      try { process.kill(parent.pid, "SIGKILL") } catch {}
+      await parentStopped
+    }
+    for (const pid of [leafPid, childPid]) {
+      if (pid && alive(pid)) try { process.kill(pid, "SIGKILL") } catch {}
+    }
+  }
+})
+
+test("hardKillFixtureChild terminates a stubborn owned child tree and confirms its exit", { timeout: 20_000 }, async () => {
+  const child = spawnFixtureChild(process.execPath, ["-e", `
+    process.on("SIGTERM", () => {})
+    console.log("READY")
+    setInterval(() => {}, 1000)
+  `], { env: isolated, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const closed = once(child, "close")
+  try {
+    await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const innerPid = await fixtureChildPid(child)
+    assert.equal(alive(innerPid), true)
+    await hardKillFixtureChild(child, closed, 5_000)
+    assert.equal(alive(innerPid), false)
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      await stopFixtureChild(child, closed).catch(() => {})
+    }
+  }
+})
+
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {
+  const guardsSource = fs.readFileSync(new URL("native-fixture-guards.mjs", import.meta.url), "utf8")
+  assert.match(guardsSource, /required = process\.platform === "win32" \|\| process\.platform === "darwin"/,
+    "native codenomad-fixture-job supervisor must be required on Windows and macOS")
   for (const script of ["test-missions-native.mjs", "test-missions-native-family-control.mjs"]) {
     const source = fs.readFileSync(new URL(script, import.meta.url), "utf8")
     assert.match(source, /await stopFixtureChild\(child, stopped\)/, script)
@@ -176,6 +257,7 @@ test("native pagination rejects cycles instead of looping indefinitely", () => {
 
 test("private Git setup cannot commit an inherited repository or index", t => {
   const base = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA, "Temp", "opencode") : os.tmpdir()
+  fs.mkdirSync(base, { recursive: true })
   const root = fs.mkdtempSync(path.join(base, "fixture-git-isolation-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const caller = path.join(root, "caller"), project = path.join(root, "project"), hooks = path.join(root, "hooks")
@@ -186,7 +268,7 @@ test("private Git setup cannot commit an inherited repository or index", t => {
   fs.writeFileSync(environment.GIT_CONFIG_GLOBAL, "")
   const git = (directory, args, env = environment) => execFileSync("git", ["-C", directory,
     "-c", "user.name=Private Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
-    "-c", `core.hooksPath=${hooks}`, ...args], { env, encoding: "utf8", stdio: "pipe", windowsHide: true }).trim()
+    "-c", `core.hooksPath=${hooks}`, ...args], { env, encoding: "utf8", stdio: "pipe", windowsHide: true, timeout: 15_000 }).trim()
   git(caller, ["init"])
   git(caller, ["commit", "--allow-empty", "-m", "caller"])
   fs.writeFileSync(path.join(caller, "staged.txt"), "preserved")
@@ -204,4 +286,93 @@ test("private Git setup cannot commit an inherited repository or index", t => {
   assert.equal(git(caller, ["rev-parse", "HEAD"]), before)
   assert.deepEqual(fs.readFileSync(path.join(caller, ".git", "index")), index)
   assert.equal(git(caller, ["diff", "--cached", "--name-only"]), "staged.txt")
+})
+
+test("nested fixture supervisors terminate a SIGTERM-ignoring grandchild on outer stop", { timeout: 30_000 }, async () => {
+  const guardsUrl = new URL("./native-fixture-guards.mjs", import.meta.url).href
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k)))
+  const innerScript = `
+    import { spawnFixtureChild, fixtureChildPid } from ${JSON.stringify(guardsUrl)}
+    const leaf = spawnFixtureChild(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('LEAF:' + process.pid); setInterval(() => {}, 1000)"], {
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k))),
+      windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    })
+    leaf.stdout.once("data", chunk => process.stdout.write(chunk))
+    await fixtureChildPid(leaf)
+    setInterval(() => {}, 1000)
+  `
+  const outer = spawnFixtureChild(process.execPath, ["--input-type=module", "-e", innerScript], {
+    env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  })
+  const outerStopped = once(outer, "close")
+  let leafPid
+  try {
+    const [data] = await once(outer.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const match = /^LEAF:(\d+)/m.exec(String(data))
+    assert(match, `Expected leaf PID, got: ${data}`)
+    leafPid = Number(match[1])
+    assert.equal(alive(leafPid), true)
+    await stopFixtureChild(outer, outerStopped, 2_000, 3_000)
+    const deadline = Date.now() + 5_000
+    while (alive(leafPid) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(alive(leafPid), false, "nested SIGTERM-ignoring grandchild must terminate")
+  } finally {
+    await stopFixtureChild(outer, outerStopped).catch(() => {})
+    if (leafPid && alive(leafPid)) try { process.kill(leafPid, "SIGKILL") } catch {}
+  }
+})
+
+test("Windows fixture job --inherit-console runs child in Job Object and cleans up descendants", windows, async () => {
+  const { fixtureJobExecutable } = await import("./native-fixture-guards.mjs")
+  const exe = fixtureJobExecutable()
+  const child = spawn(exe, ["--inherit-console", process.execPath, "-e", `
+    const { spawn } = require("node:child_process")
+    const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, windowsHide: true, stdio: "ignore" })
+    leaf.once("spawn", () => { console.log("INHERIT:" + leaf.pid) })
+    setInterval(() => {}, 1000)
+  `], { env: { ...isolated, CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const stopped = once(child, "close")
+  let leafPid
+  try {
+    const [data] = await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const match = /^INHERIT:(\d+)/m.exec(String(data))
+    assert(match, `Expected leaf PID, got: ${data}`)
+    leafPid = Number(match[1])
+    assert.equal(alive(leafPid), true)
+    child.kill()
+    await stopped
+    assert.equal(alive(leafPid), false, "descendant under --inherit-console job must exit when job closes")
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill(); await stopped }
+    if (leafPid && alive(leafPid)) try { process.kill(leafPid, "SIGKILL") } catch {}
+  }
+})
+
+test("gated fixture child never spawns on abortGate and runs after releaseGate", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codenomad-gate-"))
+  const marker = path.join(dir, "spawned.txt")
+  try {
+    const aborted = spawnFixtureChild(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "bad")`], {
+      gate: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    })
+    const abortedClosed = once(aborted, "close")
+    aborted.abortGate()
+    const [abortedCode] = await abortedClosed
+    assert.notEqual(abortedCode, 0)
+    assert.equal(fs.existsSync(marker), false, "aborted gate must never spawn the child")
+    const released = spawnFixtureChild(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ok")`], {
+      gate: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    })
+    const releasedClosed = once(released, "close")
+    await new Promise(resolve => setTimeout(resolve, 150))
+    assert.equal(fs.existsSync(marker), false, "child must stay held before releaseGate")
+    released.releaseGate()
+    const [releasedCode] = await releasedClosed
+    assert.equal(releasedCode, 0)
+    assert.equal(fs.existsSync(marker), true, "child must run after releaseGate")
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true })
+  }
 })

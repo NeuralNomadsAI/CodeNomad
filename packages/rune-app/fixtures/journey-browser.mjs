@@ -3,29 +3,37 @@ import {readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {mobileClientHints, mobileContext} from '../../../scripts/rune/web-mobile.mjs'
 import {activateControl,launchOwnedChromium} from '../../../scripts/rune/web-chromium.mjs'
+import {createAttestedFetch,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {commit, edited, filename, initial, prompt, reply, title, assertPrivateChild} from './journey-host.mjs'
 import {signInFixture,until} from './fixture-host.mjs'
 import {guardJourney} from './journey-web-policy.mjs'
 import {traceJourneyTouch} from './journey-touch-trace.mjs'
 
 export async function journeyBrowser(host, web, report, executablePath){
-  const {origin,password,profile,project,env}=host
+  const {origin,rustPid,password,profile,project,env}=host
+  assert(Number.isSafeInteger(rustPid)&&rustPid>0,'Owned Rust server PID required')
   const labels=JSON.parse(await readFile(new URL('../../../crates/rune-theme-codenomad/assets/catalogues/en.json',import.meta.url),'utf8'))
   const manifest=JSON.parse(await readFile(path.join(web,'bundle-manifest.json'),'utf8'))
   assert.equal(manifest.testSupport,false,'Use a product WASM artifact')
-  const http=await signInFixture(origin,password)
+  const http=await signInFixture(origin,password,rustPid)
   let storageState
   try{
     storageState=await http.storageState()
   }finally{await http.dispose()}
-  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env)})
+  const rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
+  const cookieHeader=(storageState?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+  const browserStorageState={
+    ...storageState,
+    cookies:(storageState?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
+  }
+  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid,injectCookie:cookieHeader})
   const {browser}=owned
   report.chromiumPID=owned.pid
   try{
-    const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
+    const context=await browser.newContext({...mobileContext(browser),storageState:browserStorageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
     report.refused=refused
-    const reads=await guardJourney(context,{origin,project,web,refused})
+    const reads=await guardJourney(context,{origin,project,web,refused,attestedFetch:rustFetch,cookieHeader})
     const page=await context.newPage()
     await traceJourneyTouch(page,[
       labels['instanceShell.rightPanel.tabs.files'],labels['instanceShell.rightPanel.tabs.status'],
@@ -96,7 +104,7 @@ export async function journeyBrowser(host, web, report, executablePath){
         await action()
         assert.deepEqual(refused,[],'No unadmitted browser request')
         assert.deepEqual(errors,[])
-      }catch(error){entry.error=error.message}
+      }catch(error){entry.error=redactSecrets(error.message,[password])}
       entry.touch=await page.evaluate(()=>{
         const trace=window.__journeyTouch
         if(!trace)return []
@@ -110,7 +118,7 @@ export async function journeyBrowser(host, web, report, executablePath){
         page.screenshot({path:`${base}.png`,scale:'css',timeout:20000}),
       ])
       const failures=proof.filter(result=>result.status==='rejected')
-      if(failures.length)entry.evidenceError=failures.map(result=>result.reason.message).join('\n')
+      if(failures.length)entry.evidenceError=redactSecrets(failures.map(result=>result.reason.message).join('\n'),[password])
       entry.durationMs=Math.round(performance.now()-start)
       if(entry.error||entry.evidenceError)throw Error(entry.error??entry.evidenceError)
       entry.ok=true
@@ -250,7 +258,9 @@ export async function journeyBrowser(host, web, report, executablePath){
       await text(reply).waitFor()
     })
   }finally{
-    try{report.chromiumClosedGracefully=await owned.close()}
-    catch(error){report.stage='browser-cleanup';throw error}
+    try{await rustFetch?.close()}finally{
+      try{report.chromiumClosedGracefully=await owned.close()}
+      catch(error){report.stage='browser-cleanup';throw error}
+    }
   }
 }

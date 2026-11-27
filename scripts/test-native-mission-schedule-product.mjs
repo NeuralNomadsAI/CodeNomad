@@ -11,7 +11,8 @@ import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, hardKillFixtureChild, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, createAttestedRelay, RELAY_PLACEHOLDER_PASSWORD, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
@@ -73,7 +74,7 @@ async function journey(kind) {
   for (const name of ["CONFIG", "DATA", "STATE", "CACHE"]) env[`XDG_${name}_HOME`] = path.join(root, `xdg-${name.toLowerCase()}`)
   env.XDG_RUNTIME_DIR = path.join(root, "runtime")
   for (const [name, directory] of Object.entries(env)) if (/^(HOME|USERPROFILE|APPDATA|LOCALAPPDATA|ProgramData|TEMP|TMP|OPENCODE_CONFIG_DIR|XDG_.*)$/.test(name)) await mkdir(directory, { recursive: true })
-  for (const name of Object.keys(process.env)) if (/^(OPENCODE_|CODENOMAD_|XDG_|WSL_|npm_config_|GIT_)/i.test(name)) delete process.env[name]
+  for (const name of Object.keys(process.env)) if (/^(OPENCODE_|CODENOMAD_|XDG_|WSL_|npm_config_|GIT_)/i.test(name) && !/^CODENOMAD_FIXTURE_JOB_EXE$/i.test(name)) delete process.env[name]
   Object.assign(process.env, env)
   process.env.CLI_CONFIG = path.join(root, "profile.yaml")
   const [{ default: Fastify }, { default: pino }, { OpenCode }, { Service },
@@ -233,6 +234,12 @@ async function journey(kind) {
   }
   const launch = async (cold = false) => {
     assert(!child || child.exitCode !== null || child.signalCode !== null, "Never run two service incarnations against this DB")
+    if (child) {
+      const prior = children.find(entry => entry.child === child)
+      assert(child.exitCode !== 86, "Refusing to start new service after incomplete prior tree termination (exit 86)")
+      assert(!prior || prior.hardKilled || !child.signalCode || child.signalCode === "SIGTERM",
+        `Refusing to start new service after unverified signal exit (${child.signalCode})`)
+    }
     credentialsChild = undefined; nativeErrorLength = 0; nativeErrorTruncated = false
     child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const current = { child, closed: new Promise(resolve => child.once("close", resolve)) }; children.push(current)
@@ -250,25 +257,65 @@ async function journey(kind) {
     client = undefined; endpoint = undefined
     if (!cold) await connect()
   }
+  let attestedFetch, managerRelay, managerEndpoint
   const connect = async signal => {
-    // Registration can precede HTTP readiness. Retry only discovery of our own
-    // process; native mutations and the cold no-client window keep their gates.
+    // Registration can precede HTTP readiness. Read registration locally and attest OS socket ownership
+    // before sending Basic auth or calling /api/info.
+    const pid = await fixtureChildPid(child)
+    assert(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
     endpoint = await until(async () => {
       signal?.throwIfAborted()
-      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, await fixtureChildPid(child))
-      return Service.discover({ file: registrationFile })
+      const raw = JSON.parse(await readFile(registrationFile, "utf8"))
+      if (raw.pid !== pid || typeof raw.url !== "string") return false
+      const auth = raw.auth ?? (raw.password ? { type: "basic", username: raw.username ?? "opencode", password: raw.password } : undefined)
+      return { url: raw.url, auth }
     }, 40000)
     signal?.throwIfAborted()
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
-    client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
+    const origin = new URL(endpoint.url).origin
+    const port = Number(new URL(endpoint.url).port)
+    await until(async () => {
+      signal?.throwIfAborted()
+      try { await verifyLoopbackListenerOwner(port, pid); return true } catch { return false }
+    }, 40000)
+    await attestedFetch?.close().catch(() => {})
+    await managerRelay?.close().catch(() => {})
+    attestedFetch = createAttestedFetch(origin, port, pid)
+    const headers = Service.headers(endpoint)
+    client = OpenCode.make({ baseUrl: endpoint.url, headers, fetch: attestedFetch })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, await fixtureChildPid(child))
+    const info = await until(async () => {
+      signal?.throwIfAborted()
+      try { return await client.server.info({ signal }) } catch { return false }
+    }, 40000)
+    assert.equal(info.version, cliVersion); assert.equal(info.pid, pid)
+    const authHeader = headers.authorization ?? headers.Authorization
+    assert(authHeader, "Expected OpenCode authorization header")
+    managerRelay = await createAttestedRelay(origin, pid, { requireClientAttestation: true, injectAuthorization: authHeader })
+    managerRelay.allowClientPid(process.pid)
+    managerEndpoint = { url: managerRelay.origin, auth: { type: "basic", username: endpoint.auth?.username ?? "opencode", password: RELAY_PLACEHOLDER_PASSWORD } }
     if (endpoint.auth?.password) credentialsChild = child
-    rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
+    rememberRuntime(managerEndpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
+    await managerRelay?.close().catch(() => {})
+    managerRelay = undefined; managerEndpoint = undefined
+    await attestedFetch?.close().catch(() => {})
+    attestedFetch = undefined
     const owned = children.find(entry => entry.child === child)
-    if (owned && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, owned.closed)
+    if (owned) {
+      if (child.exitCode === null && child.signalCode === null) {
+        await stopFixtureChild(child, owned.closed)
+      } else {
+        await owned.closed
+        if (child.exitCode === 86) {
+          throw new Error(`Fixture supervisor ${child.pid} exited with incomplete child tree termination (86)`)
+        }
+        if (!owned.hardKilled && child.signalCode && child.signalCode !== "SIGTERM") {
+          throw new Error(`Fixture supervisor ${child.pid} terminated unexpectedly with signal ${child.signalCode}`)
+        }
+      }
+    }
     client = undefined; endpoint = undefined
   }
   const yaml = path.join(root, "profile.yaml"), human = { sessionId: randomUUID(), username: "fixture-human" }
@@ -278,15 +325,23 @@ async function journey(kind) {
     isLoopbackRequest: request => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip), getCookieName: () => "session",
     getSessionFromHeaders: headers => headers.cookie === cookie ? human : null, getSessionFromRequest: request => request.headers.cookie === cookie ? human : null }
   secrets.add(cookie); secrets.add(human.sessionId)
+  let appFetch
   const closeBackend = async () => {
-    await plugin?.stop(); plugin = undefined
-    await removeBridge?.(); removeBridge = undefined
-    await app?.close(); app = undefined
-    await manager?.shutdown(); manager = undefined
+    const errors = []
+    const runStep = async (fn) => { try { await fn() } catch (err) { errors.push(err) } }
+    await runStep(() => appFetch?.close()); appFetch = undefined
+    await runStep(() => managerRelay?.close()); managerRelay = undefined; managerEndpoint = undefined
+    await runStep(() => attestedFetch?.close()); attestedFetch = undefined
+    await runStep(() => plugin?.stop()); plugin = undefined
+    await runStep(() => removeBridge?.()); removeBridge = undefined
+    await runStep(() => app?.close()); app = undefined
+    await runStep(() => manager?.shutdown()); manager = undefined
     client = undefined; endpoint = undefined
+    if (errors.length) throw errors[0]
   }
   const http = async (suffix, payload, allowPending = false) => {
-    const response = await fetch(`${baseURL}/api/workspaces/${workspace.id}/missions${suffix}`, { method: "POST", headers: { cookie, "content-type": "application/json" },
+    assert(appFetch, "Expected attested Fastify HTTP client")
+    const response = await appFetch(`${baseURL}/api/workspaces/${workspace.id}/missions${suffix}`, { method: "POST", headers: { cookie, "content-type": "application/json" },
       body: JSON.stringify(payload), signal: AbortSignal.timeout(95_000) })
     const raw = await response.text()
     let body
@@ -432,7 +487,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await launch()
     manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(), settings,
       binaryResolver: { resolveDefault: () => ({ path: cli, label: "Owned scheduled product fixture" }) },
-      hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }) })
+      hostServiceLifecycleFactory: () => ({ discover: async () => managerEndpoint, ensure: async () => managerEndpoint }) })
     workspace = (await manager.create(project)).workspace
     const connection = await manager.getSharedServiceConnection(workspace.id), paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
     assert(path.relative(root, paths.config) && !path.relative(root, paths.config).startsWith(".."))
@@ -460,6 +515,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       scheduleSettingsActivation: new NativeScheduleSettingsActivation(controls, manager) })
     registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
+    appFetch = createAttestedFetch(baseURL, app.server.address().port, process.pid)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
     const legacy = values["legacy-bundle"]
     plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))
@@ -484,7 +540,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
          reported: id => calls.some(call => call.sessionID === id && call.reportStreamed), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
         business: doc => missionDocumentPassage(readOnlyStorage, doc, () => true).journal.snapshot(),
         nativeFlag: async enabled => {
-          const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
+          const response = await appFetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
           assert.equal(response.status, 200, "Owned fixture config API failed")
           await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).automations === enabled)
         } })
@@ -495,7 +551,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     if (values["convert-preparation"]) {
       const deletedID = await create("delete", { kind: "in", delayMs })
       assert.equal((await control(deletedID, "delete")).deleted, true)
-      const response = await fetch(`${baseURL}/api/workspaces/${workspace.id}/missions`, { headers: { cookie }, signal: AbortSignal.timeout(15000) })
+      const response = await appFetch(`${baseURL}/api/workspaces/${workspace.id}/missions`, { headers: { cookie }, signal: AbortSignal.timeout(15000) })
       assert.equal(response.status, 200)
       const panel = await response.json()
       assert(!panel.missions.some(mission => mission.id === deletedID) && !panel.summaries.some(mission => mission.id === deletedID))
@@ -634,7 +690,11 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       assert(!reportedInputs.has(pending.messageID)); assert(holdBusiness)
       await save("before-pending-crash", beforeCrash)
       const killedPID = await fixtureChildPid(child), owned = children.find(entry => entry.child === child)
-      child.kill("SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
+      assert(Number.isSafeInteger(killedPID) && killedPID > 0, "Expected owned child PID before hard kill")
+      await hardKillFixtureChild(child, owned.closed)
+      owned.hardKilled = true
+      await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
+      client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
       assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")
       const afterKill = snapshot(id)
@@ -807,7 +867,17 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       await closeBackend()
     } catch (error) { cleanupError = error; result.cleanupError = "backend-cleanup-failed" }
     try {
-      const stopped = await Promise.allSettled(children.map(entry => entry.child.exitCode === null && entry.child.signalCode === null ? stopFixtureChild(entry.child, entry.closed) : entry.closed))
+      const stopped = await Promise.allSettled(children.map(entry =>
+        entry.child.exitCode === null && entry.child.signalCode === null
+          ? stopFixtureChild(entry.child, entry.closed)
+          : entry.closed.then(() => {
+              if (entry.child.exitCode === 86) {
+                throw new Error(`Fixture supervisor ${entry.child.pid} exited with incomplete child tree termination (86)`)
+              }
+              if (!entry.hardKilled && entry.child.signalCode && entry.child.signalCode !== "SIGTERM") {
+                throw new Error(`Fixture supervisor ${entry.child.pid} terminated unexpectedly by signal ${entry.child.signalCode}`)
+              }
+            })))
       provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
       barrier.closeAllConnections(); if (barrier.listening) await new Promise(resolve => barrier.close(resolve))
       result.calls = calls

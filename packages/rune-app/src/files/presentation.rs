@@ -46,6 +46,25 @@ impl Presentation {
         self.receipt = 0;
         self.ready = false;
     }
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.image
+            .as_ref()
+            .and_then(rune_theme_codenomad::attachment::decoded_size)
+            .map_or(0, |[w, h]| {
+                (w as usize).saturating_mul(h as usize).saturating_mul(4)
+            })
+    }
+    pub(crate) fn evict_image(&mut self, wake: rune::Waker) -> usize {
+        let before = self.retained_bytes();
+        if before == 0 && self.image.is_none() {
+            return 0;
+        }
+        self.image = None;
+        self.receipt = 0;
+        self.ready = false;
+        self.cache = rune::ImageCache::new(wake);
+        before
+    }
     pub fn sync(&mut self, reader: &Reader, revision: u64) -> bool {
         if reader.target().is_none() {
             let changed = self.kind.is_some();

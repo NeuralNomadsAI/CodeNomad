@@ -55,7 +55,7 @@ fn button<S: 'static>(
                     .color(ink)
             })
         })
-        .build(kit(dark))
+        .build(&kit(dark))
         .disabled(item.disabled)
         .key(&key)
         .help(&label)

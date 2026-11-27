@@ -1,14 +1,19 @@
 // node --import tsx scripts/test-native-schedule-installation.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
-import { build } from "esbuild"
-import { OpenCode } from "@opencode/client"
-import { Service } from "@opencode/client/service"
+const esbuildBinSpec = process.platform === "win32"
+  ? `@esbuild/win32-${process.arch}/esbuild.exe`
+  : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+process.env.ESBUILD_BINARY_PATH = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+const { build } = await import(resolveWorktreePackage("esbuild"))
+const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
+const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 import { installDesktopPluginPresence } from "../packages/server/src/opencode/desktop-plugin-installation.ts"
 
@@ -57,17 +62,37 @@ export function desktopPlugin(presence,artifacts){return Plugin.define({id:"code
  }).pipe(Effect.scoped)});
 });}})}
 `)
-let child, closed, stopPresence
+const entryReal = realpathSync(entry)
+const repoRootReal = realpathSync(path.resolve("."))
+const nodeModulesReal = realpathSync(path.resolve("node_modules"))
+const withinDir = (base, target) => {
+  const rel = path.relative(base, target)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+const worktreeOnlyPlugin = {
+  name: "codenomad-worktree-only-resolve",
+  setup(buildApi) {
+    buildApi.onLoad({ filter: /.*/ }, args => {
+      const real = realpathSync(args.path)
+      if (real !== entryReal && !withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+        throw new Error(`Bundled module escapes worktree root: ${real}`)
+      }
+      return null
+    })
+  },
+}
+let child, closed, stopPresence, attestedFetch
 try {
   const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: bundleFile,
-    nodePaths: [path.resolve("node_modules")], metafile: true })
+    nodePaths: [path.resolve("node_modules")], plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
   assert(!Object.keys(built.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)), "host Effect and SDK must remain external")
-  const localProvider = await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile, metafile: true })
+  const localProvider = await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile,
+    plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
   assert(Object.values(localProvider.metafile.outputs).every(output => output.imports.length === 0), "provider artifact is dependency-free")
   const providerModule = await import(pathToFileURL(providerFile).href)
   assert.throws(() => providerModule.createNativeScheduleCarrierProvider().languageModel(), /schedule-carrier-language-unavailable/)
   const payload = readFileSync(bundleFile), provider = readFileSync(providerFile)
-  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data }, () => {}, provider)
+  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data }, () => {}, () => "", provider)
   const source = readFileSync(path.join(config, "plugins", "codenomad-missions.ts"), "utf8")
   const [, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)[1]}]`)
   child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
@@ -75,18 +100,38 @@ try {
   let logs = ""
   child.stdout.on("data", data => { logs += data }); child.stderr.on("data", data => { logs += data })
   let endpoint
+  const pid = await fixtureChildPid(child)
+  assert(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
   const deadline = Date.now() + 40_000
   while (!endpoint) {
     assert(child.exitCode === null && Date.now() < deadline, "private native startup deadline")
     if (existsSync(registrationFile)) {
-      const info = JSON.parse(readFileSync(registrationFile, "utf8"))
-      if (info.pid === await fixtureChildPid(child)) endpoint = await Service.discover({ file: registrationFile })
+      try {
+        const raw = JSON.parse(readFileSync(registrationFile, "utf8"))
+        if (raw.pid === pid && typeof raw.url === "string") {
+          const auth = raw.auth ?? (raw.password ? { type: "basic", username: raw.username ?? "opencode", password: raw.password } : undefined)
+          endpoint = { url: raw.url, auth }
+        }
+      } catch {}
     }
     if (!endpoint) await delay(100)
   }
-  assert.notEqual(new URL(endpoint.url).port, "28894")
-  const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
-  const info = await client.server.info()
+  const origin = new URL(endpoint.url).origin
+  const port = Number(new URL(endpoint.url).port)
+  assert.notEqual(String(port), "28894")
+  while (Date.now() < deadline) {
+    assert(child.exitCode === null, "private native exited before listening")
+    try { await verifyLoopbackListenerOwner(port, pid); break } catch { await delay(100) }
+  }
+  await verifyLoopbackListenerOwner(port, pid)
+  attestedFetch = createAttestedFetch(origin, port, pid)
+  const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
+  let info
+  while (!info) {
+    assert(child.exitCode === null && Date.now() < deadline, "private native ready deadline")
+    try { info = await client.server.info() } catch { await delay(100) }
+  }
+  assert.equal(info.pid, pid)
   const observe = () => client.rpc(rpc).observe({}, { location: { directory: project }, signal: AbortSignal.timeout(20_000) })
   const first = await observe(), second = await observe()
   assert.equal(first.active, true); assert.equal(first.manifestFrozen, true)
@@ -111,7 +156,10 @@ try {
   writeFileSync(path.join(root, "evidence.json"), JSON.stringify(evidence, null, 2))
   console.log(JSON.stringify({ completed: true, nativeVersion: info.version, root }))
 } finally {
-  await stopPresence?.()
-  if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-  await closed
+  let presenceError
+  await attestedFetch?.close().catch(() => {})
+  try { await stopPresence?.() } catch (error) { presenceError = error }
+  if (child && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
+  else await closed
+  if (presenceError) throw presenceError
 }

@@ -7,16 +7,19 @@
 pub mod agent_api;
 pub mod attachments;
 pub mod backend;
+pub mod blank_session_cleanup;
 pub mod catalog;
 pub mod content;
 pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod inbox;
 pub mod interruption_receipts;
 pub mod message_actions;
 pub mod missions;
 pub mod permission_mode;
+pub mod plugins;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
@@ -34,6 +37,7 @@ pub use server_path::basename as server_path_basename;
 pub use server_path::file_uri as server_file_uri;
 pub use server_path::same as same_server_path;
 pub mod stream;
+pub mod temporary_workspaces;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
@@ -62,6 +66,8 @@ mod files_write_tests;
 mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod inbox_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod prompt_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

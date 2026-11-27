@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "एकीकरण स्थापना गर्नुहोस्",
   "integrations.install.confirm": "{name} ({scope}) स्थापना गर्ने हो? कोड OpenCode मा तपाईंको अधिकारसहित चल्नेछ।",
   "integrations.install.error": "पुष्टि भएन। जाँच्न ताजा गर्नुहोस्।",
+  "settings.nav.integrations": "एकीकरणहरू",
 }

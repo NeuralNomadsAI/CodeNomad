@@ -1,14 +1,20 @@
 // node scripts/test-native-schedule-provider-registration.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
-import { build } from "esbuild"
-import { OpenCode } from "@opencode/client"
-import { Service } from "@opencode/client/service"
+const esbuildBinSpec = process.platform === "win32"
+  ? `@esbuild/win32-${process.arch}/esbuild.exe`
+  : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+process.env.ESBUILD_BINARY_PATH = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+const { build } = await import(resolveWorktreePackage("esbuild"))
+const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
+const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 
 const [cli, root] = process.argv.slice(2)
@@ -47,9 +53,28 @@ export default Plugin.define({id:"codenomad.provider-registration-qualification"
  });
 });}});
 `)
-const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: runtimeFile, nodePaths: [path.resolve("node_modules")], metafile: true })
+const entryReal = realpathSync(entry)
+const repoRootReal = realpathSync(path.resolve("."))
+const nodeModulesReal = realpathSync(path.resolve("node_modules"))
+const withinDir = (base, target) => {
+  const rel = path.relative(base, target)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+const worktreeOnlyPlugin = {
+  name: "codenomad-worktree-only-resolve",
+  setup(buildApi) {
+    buildApi.onLoad({ filter: /.*/ }, args => {
+      const real = realpathSync(args.path)
+      if (real !== entryReal && !withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+        throw new Error(`Bundled module escapes worktree root: ${real}`)
+      }
+      return null
+    })
+  },
+}
+const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: runtimeFile, nodePaths: [path.resolve("node_modules")], plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
 assert(!Object.keys(built.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)))
-await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile })
+await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile, plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin] })
 writeFileSync(path.join(root, "plugin", "package.json"), JSON.stringify({ name: "codenomad-provider-registration-qualification", type: "module", exports: { ".": "./index.mjs" } }))
 const artifact = file => ({ file, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") })
 const artifacts = { provider: artifact(providerFile), runtime: artifact(runtimeFile) }, requests = []
@@ -82,16 +107,41 @@ try {
     const child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const closed = new Promise(resolve => child.once("exit", resolve))
     child.stdout.resume(); child.stderr.resume()
+    let attestedFetch
     try {
+      const pid = await fixtureChildPid(child)
+      assert(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
       let endpoint
-      for (const deadline = Date.now() + 40_000; !endpoint;) {
+      const deadline = Date.now() + 40_000
+      while (!endpoint) {
         assert(child.exitCode === null && Date.now() < deadline, "owned service startup deadline")
-        if (existsSync(registrationFile) && JSON.parse(readFileSync(registrationFile, "utf8")).pid === await fixtureChildPid(child))
-          endpoint = await Service.discover({ file: registrationFile })
+        if (existsSync(registrationFile)) {
+          try {
+            const raw = JSON.parse(readFileSync(registrationFile, "utf8"))
+            if (raw.pid === pid && typeof raw.url === "string") {
+              const auth = raw.auth ?? (raw.password ? { type: "basic", username: raw.username ?? "opencode", password: raw.password } : undefined)
+              endpoint = { url: raw.url, auth }
+            }
+          } catch {}
+        }
         if (!endpoint) await delay(100)
       }
-      assert.notEqual(new URL(endpoint.url).port, "28894")
-      const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }), info = await client.server.info()
+      const origin = new URL(endpoint.url).origin
+      const port = Number(new URL(endpoint.url).port)
+      assert.notEqual(String(port), "28894")
+      while (Date.now() < deadline) {
+        assert(child.exitCode === null, "owned service exited before listening")
+        try { await verifyLoopbackListenerOwner(port, pid); break } catch { await delay(100) }
+      }
+      await verifyLoopbackListenerOwner(port, pid)
+      attestedFetch = createAttestedFetch(origin, port, pid)
+      const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
+      let info
+      while (!info) {
+        assert(child.exitCode === null && Date.now() < deadline, "owned service ready deadline")
+        try { info = await client.server.info() } catch { await delay(100) }
+      }
+      assert.equal(info.pid, pid)
       const qa = client.rpc(rpc), options = { location: { directory: project }, signal: AbortSignal.timeout(20_000) }
       const inspected = await qa.inspect({}, options)
       writeFileSync(path.join(directory, "catalog.json"), JSON.stringify(inspected, null, 2))
@@ -126,8 +176,9 @@ try {
         defaultUnchanged: true, carrierCreated: !!created.session, sessionID: created.session?.id, outcome, compactionIDs,
         technicalHooksFixture: mode === "healthy", remoteHTTP: requests.length })
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-      await closed
+      await attestedFetch?.close().catch(() => {})
+      if (child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
+      else await closed
     }
   }
   writeFileSync(path.join(root, "evidence.json"), JSON.stringify({ ...evidence, completed: true, allOwnedServicesStopped: true }, null, 2))

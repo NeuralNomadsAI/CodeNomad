@@ -4,21 +4,96 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
-import {build} from 'esbuild'
-import {OpenCode} from '@opencode/client'
-import {tsImport} from 'tsx/esm/api'
-import {nativePluginBuild} from '../../packages/server/scripts/native-plugin-build.mjs'
+import {fixtureChildPid, spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
+import {assertWorktreeModuleResolution,fixtureFetch,fixtureTarget,resolveWorktreePackage,withoutFixtureProxy,worktreeDependencyRoots} from '../native-fixture-http.mjs'
+import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
+import {fixtureSystemEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 import {privatePath} from './isolation.mjs'
 
-export async function preparePruning(root, config) {
+export async function preparePruning(root, config, buildEnv, { onBuilderSpawn } = {}) {
+  const {repoRootReal,nodeModulesReal}=worktreeDependencyRoots()
+  const esbuildUrl = resolveWorktreePackage('esbuild')
+  const esbuildBinSpec = process.platform === 'win32'
+    ? `@esbuild/win32-${process.arch}/esbuild.exe`
+    : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+  const esbuildBinaryPath = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+  // Pin ESBUILD_BINARY_PATH in the caller process before loading tsx so tsImport never honors an inherited external binary.
+  process.env.ESBUILD_BINARY_PATH = esbuildBinaryPath
+  const openCodeUrl = resolveWorktreePackage('@opencode/client')
+  const tsxUrl = resolveWorktreePackage('tsx/esm/api')
+  const navigationContractPath = fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/navigation-contract.ts', import.meta.url))
+  // Verify the actual transitive dependency resolved from navigation-contract.ts stays inside the worktree boundary.
+  assertWorktreeModuleResolution('zod', navigationContractPath)
+  const [{OpenCode},{tsImport}]=await Promise.all([
+    import(openCodeUrl),
+    import(tsxUrl),
+  ])
   root=privatePath(root);config=privatePath(config)
   const folder=privatePath(path.join(root,'pruning-build'))
   await mkdir(folder,{recursive:true})
   const outfile=path.join(folder,'plugin.mjs')
-  await build({...nativePluginBuild,
-    entryPoints:[fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/desktop-plugin.ts',import.meta.url))],outfile,
-    banner:{js:'// CodeNomad plugin IDs: ["codenomad-session-pruning"]\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);'},
+  const entryPoint=fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/desktop-plugin.ts',import.meta.url))
+  const pluginBuildUrl=new URL('../../packages/server/scripts/native-plugin-build.mjs',import.meta.url).href
+  const buildScript=`
+    import { realpathSync } from 'node:fs'
+    import path from 'node:path'
+    const [esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal] = process.argv.slice(1)
+    const isWithin = (base, target) => {
+      const rel = path.relative(base, target)
+      return rel === '' || (Boolean(rel) && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..')
+    }
+    const boundaryPlugin = {
+      name: 'codenomad-worktree-boundary',
+      setup(build) {
+        build.onLoad({ filter: /.*/, namespace: 'file' }, args => {
+          const resolved = realpathSync(args.path)
+          if (!isWithin(repoRootReal, resolved) && !isWithin(nodeModulesReal, resolved)) {
+            throw Error('Pruning bundle input resolved outside worktree boundary: ' + resolved)
+          }
+          return null
+        })
+      },
+    }
+    const [{ build }, { nativePluginBuild }] = await Promise.all([import(esbuildUrl), import(pluginBuildUrl)])
+    await build({
+      ...nativePluginBuild,
+      plugins: [...(nativePluginBuild.plugins ?? []), boundaryPlugin],
+      entryPoints: [entryPoint],
+      outfile,
+      banner: { js: '// CodeNomad plugin IDs: ["codenomad-session-pruning"]\\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
+    })
+  `
+  const group = process.platform !== 'win32'
+  const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()), ESBUILD_BINARY_PATH: esbuildBinaryPath })
+  const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal], {
+    cwd: root, env: isolatedBuildEnv, detached: group, gate: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })
+  const startedBy = new Date()
+  let buildStderr = ''
+  builder.stderr.on('data', chunk => { buildStderr = (buildStderr + chunk).slice(-32768) })
+  builder.stdout.resume()
+  const buildClosed = new Promise(resolve => {
+    builder.once('close', code => resolve(code))
+    builder.once('error', () => resolve(1))
+  })
+  const untrackBuilder = registerFixtureChild(() => stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }))
+  void buildClosed.finally(untrackBuilder)
+  try {
+    if (typeof onBuilderSpawn === 'function') {
+      await onBuilderSpawn({ supervisorPid: builder.pid, childPid: fixtureChildPid(builder), closed: buildClosed })
+    }
+  } catch (error) {
+    builder.abortGate?.()
+    await stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }).catch(() => {})
+    throw error
+  }
+  builder.releaseGate?.()
+  const buildCode = await Promise.race([
+    buildClosed,
+    new Promise(resolve => setTimeout(() => resolve(124), 60_000).unref()),
+  ])
+  if (buildCode === 124) await stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy })
+  assert.equal(buildCode, 0, `Isolated pruning plugin build failed (${buildCode}): ${buildStderr}`)
   const [{installPruningPresence},{awaitNativePlugin},{navigationWindowResultSchema}]=await Promise.all([
     tsImport('../../packages/server/src/opencode/pruning-installation.ts',import.meta.url),
     tsImport('../../packages/server/src/opencode/plugin-activation.ts',import.meta.url),
@@ -32,8 +107,15 @@ export async function preparePruning(root, config) {
   return {
     async activate(daemon,assertCurrent){
       current=assertCurrent;directory=privatePath(daemon.project)
-      client=OpenCode.make({baseUrl:daemon.url,headers:{authorization:daemon.authorization},fetch:(url,init)=>fetch(url,{...init,
-        signal:AbortSignal.any([...(init?.signal?[init.signal]:[]),AbortSignal.timeout(30_000)])})})
+      const transport=daemon.send??(async(input,init={})=>{
+        const request=input instanceof Request?input:new Request(input,init)
+        const target=fixtureTarget(request.url,daemon.url)
+        assert(target,'Pruning client cannot address a foreign OpenCode origin')
+        const headers=new Headers(request.headers)
+        if(daemon.authorization)headers.set('authorization',daemon.authorization)
+        return fixtureFetch(request,{headers})
+      })
+      client=OpenCode.make({baseUrl:daemon.url,fetch:(url,init)=>transport(new Request(url,init))})
       const location={directory},signal=AbortSignal.timeout(15_000)
       const entry=record=>record.data.map(item=>({id:item.id,status:item.state.status}))
       try{

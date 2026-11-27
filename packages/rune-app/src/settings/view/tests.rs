@@ -1,4 +1,5 @@
 use super::*;
+mod palettes_startup;
 use rune::{Env, Runtime};
 use serde_json::Value;
 
@@ -738,19 +739,19 @@ fn native_preferences_close_requires_discard_consent_from_both_paths() {
         spec().poll.unwrap()(s, 0.0, tx);
     });
     runtime.frame(0.02);
-    assert!(runtime.state.confirm_close);
+    assert!(runtime.state.confirm_close.is_some());
     assert!(runtime.find("file-decision-cancel").is_some());
     let (x, y) = runtime.find("file-decision-cancel").unwrap();
     runtime.pointer_down(x, y);
     runtime.pointer_up(x, y);
     runtime.frame(0.02);
-    assert!(!runtime.state.confirm_close && runtime.state.memory_editor.has_unsaved());
+    assert!(runtime.state.confirm_close.is_none() && runtime.state.memory_editor.has_unsaved());
     // Rune calls its OS close hook after hiding; the draft is held until the parent reopens.
     assert!(runtime.state.retain_editor_on_native_close());
     let editor = request.reopen.borrow_mut().take().unwrap();
     let restored =
         Window::new(shared, Rc::new(Cell::new(false))).with_close_request(request, Some(editor));
-    assert!(restored.confirm_close && restored.memory_editor.has_unsaved());
+    assert!(restored.confirm_close.is_some() && restored.memory_editor.has_unsaved());
     let mut runtime = Runtime::new(restored, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
     runtime.frame(0.02);
     let (x, y) = runtime.find("file-decision-confirm").unwrap();
@@ -883,7 +884,7 @@ fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web(
         },
         |s, cx| {
             let prefs = s.shared.borrow();
-            render_with(cx, &prefs, false, |_| {
+            render_with(cx, &prefs, false, false, |_| {
                 let mut layers = Vec::new();
                 s.behavior
                     .view(&s.shared, false, &mut layers, |s: &mut WebCard| {
