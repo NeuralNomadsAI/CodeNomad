@@ -120,6 +120,10 @@ pub fn external_link_key(field_key: &str) -> String {
     format!("ext-link:{}:{field_key}", field_key.len())
 }
 
+pub fn external_copy_key(field_key: &str) -> String {
+    format!("ext-copy:{}:{field_key}", field_key.len())
+}
+
 pub fn external_ack_key(field_key: &str) -> String {
     format!("ext-ack:{}:{field_key}", field_key.len())
 }
@@ -131,6 +135,84 @@ pub fn external_url(field: &Value) -> Option<String> {
     field["url"]
         .as_str()
         .and_then(|raw| codenomad_client::http::external_http_url(raw).map(|(url, _)| url))
+}
+
+/// Match Rune's `open_url::check` rules for HTTP(S) URLs so the Open button is only offered when
+/// Rune's launcher accepts the URL; otherwise the form falls back to a Copy link action.
+pub fn external_url_launchable(url: &str) -> bool {
+    const MAX_LAUNCHER_URL_LEN: usize = 8192;
+    let url = url.trim();
+    if url.is_empty()
+        || url.len() > MAX_LAUNCHER_URL_LEN
+        || url.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(c, '\\' | '"' | '<' | '>' | '`' | '^' | '{' | '|' | '}')
+        })
+    {
+        return false;
+    }
+    let bytes = url.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let (Some(&a), Some(&b)) = (bytes.get(i + 1), bytes.get(i + 2)) else {
+                return false;
+            };
+            if !a.is_ascii_hexdigit() || !b.is_ascii_hexdigit() || (a == b'0' && b == b'0') {
+                return false;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    let tail_start = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(tail_start);
+    if tail.contains(['[', ']']) || authority.contains('@') {
+        return false;
+    }
+    let port = if let Some(after_bracket) = authority.strip_prefix('[') {
+        let Some((ipv6, port)) = after_bracket.split_once(']') else {
+            return false;
+        };
+        if ipv6.len() < 2
+            || !ipv6.contains(':')
+            || ipv6.starts_with('.')
+            || ipv6.contains("..")
+            || !ipv6
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.'))
+        {
+            return false;
+        }
+        if !port.is_empty() && !port.starts_with(':') {
+            return false;
+        }
+        port.strip_prefix(':')
+    } else if authority.contains(['[', ']']) {
+        return false;
+    } else {
+        let (host, port) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        if host.is_empty()
+            || host.starts_with('.')
+            || host.contains("..")
+            || host.contains(['%', ':'])
+        {
+            return false;
+        }
+        port
+    };
+    port.is_none_or(|p| !p.is_empty() && p.parse::<u16>().is_ok())
 }
 
 pub fn valid_options_shape(field: &Value) -> bool {
@@ -1395,10 +1477,12 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
                 let mut remaining_preserved = Vec::new();
                 let mut remaining_preserved_selected = BTreeSet::new();
+                let mut promoted_preserved = HashSet::new();
                 for item in std::mem::take(&mut draft.preserved_custom) {
                     let was_selected = draft.preserved_custom_selected.contains(&item);
                     if is_newly_declared(&item) {
                         if was_selected {
+                            promoted_preserved.insert(item.clone());
                             draft.selected.insert(item);
                         }
                     } else if allowed.iter().any(|opt| opt.value == item.as_str()) {
@@ -1449,6 +1533,15 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                     }
                 }
                 if let Some(raw_items) = &mut draft.multiselect_order {
+                    if !promoted_preserved.is_empty() {
+                        for entry in raw_items.iter_mut() {
+                            if entry.source == MultiselectOrderSource::PreservedCustom
+                                && promoted_preserved.contains(&entry.value)
+                            {
+                                entry.source = MultiselectOrderSource::Selected;
+                            }
+                        }
+                    }
                     if !newly_selected_counts.is_empty() {
                         for entry in raw_items.iter_mut() {
                             if entry.source == MultiselectOrderSource::CustomText
@@ -1828,8 +1921,7 @@ fn validate_budgeted_with_deferred_inner(
                         && string_constraints::matches_string_constraints_budgeted(
                             field, "", budget,
                         )
-                        .map_err(|()| ValidationError::Unsupported)?
-                            != string_constraints::MatchOutcome::NoMatch
+                        .is_ok_and(|outcome| outcome != string_constraints::MatchOutcome::NoMatch)
                 } else {
                     d.has_string_value
                 }

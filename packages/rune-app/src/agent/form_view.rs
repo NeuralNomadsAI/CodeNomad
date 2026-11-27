@@ -799,52 +799,73 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                     let link_id = identity.clone();
                     let link_scope = scope.clone();
                     let link_url = url.clone();
+                    let copy_url = url.clone();
+                    let can_open = agent_forms::external_url_launchable(&url);
+                    let copy_label = t("remoteControl.pairing.copy");
+                    let copy_accessible = format!("{field_name}: {copy_label}");
                     let ack_id = identity.clone();
                     let mut children = Vec::new();
-                    children.push(form_controls::clear_choice_button(
-                        &agent_forms::external_link_key(key),
-                        link_label,
-                        &link_accessible,
-                        locked,
-                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
-                            let Some(seq) = s
-                                .agent
-                                .as_mut()
-                                .filter(|a| !a.forms_mutating())
-                                .and_then(|a| a.drafts.get_mut(&link_id))
-                                .map(|d| {
-                                    d.external_link_seq = d.external_link_seq.wrapping_add(1);
-                                    d.external_link_failed = false;
-                                    d.external_link_seq
-                                })
-                            else {
-                                return;
-                            };
-                            let cb_id = link_id.clone();
-                            let cb_scope = link_scope.clone();
-                            if tx
-                                .open_url_then(&link_url, move |s: &mut State, result, _| {
-                                    if s.current_scope(&cb_scope)
-                                        && let Some(d) =
-                                            s.agent.as_mut().and_then(|a| a.drafts.get_mut(&cb_id))
-                                        && d.external_link_seq == seq
-                                    {
-                                        d.external_link_failed = result.is_err();
-                                    }
-                                })
-                                .is_err()
-                                && let Some(d) =
-                                    s.agent.as_mut().and_then(|a| a.drafts.get_mut(&link_id))
-                                && d.external_link_seq == seq
-                            {
-                                d.external_link_failed = true;
-                            }
-                        }),
-                    ));
+                    if can_open {
+                        children.push(form_controls::clear_choice_button(
+                            &agent_forms::external_link_key(key),
+                            link_label,
+                            &link_accessible,
+                            locked,
+                            crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                                let Some(seq) = s
+                                    .agent
+                                    .as_mut()
+                                    .filter(|a| !a.forms_mutating())
+                                    .and_then(|a| a.drafts.get_mut(&link_id))
+                                    .map(|d| {
+                                        d.external_link_seq = d.external_link_seq.wrapping_add(1);
+                                        d.external_link_failed = false;
+                                        d.external_link_seq
+                                    })
+                                else {
+                                    return;
+                                };
+                                let cb_id = link_id.clone();
+                                let cb_scope = link_scope.clone();
+                                if tx
+                                    .open_url_then(&link_url, move |s: &mut State, result, _| {
+                                        if s.current_scope(&cb_scope)
+                                            && let Some(d) = s
+                                                .agent
+                                                .as_mut()
+                                                .and_then(|a| a.drafts.get_mut(&cb_id))
+                                            && d.external_link_seq == seq
+                                        {
+                                            d.external_link_failed = result.is_err();
+                                        }
+                                    })
+                                    .is_err()
+                                    && let Some(d) =
+                                        s.agent.as_mut().and_then(|a| a.drafts.get_mut(&link_id))
+                                    && d.external_link_seq == seq
+                                {
+                                    d.external_link_failed = true;
+                                }
+                            }),
+                        ));
+                    }
                     if d.external_link_failed {
                         children.push(form_controls::field_error(
                             &format!("{error_key}:link"),
                             t("toastHistory.openLinkError"),
+                        ));
+                    }
+                    if !can_open || d.external_link_failed {
+                        children.push(form_controls::clear_choice_button(
+                            &agent_forms::external_copy_key(key),
+                            copy_label,
+                            &copy_accessible,
+                            locked,
+                            crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                                if s.agent.as_ref().is_some_and(|a| !a.forms_mutating()) {
+                                    tx.copy(copy_url.as_str());
+                                }
+                            }),
                         ));
                     }
                     children.push(form_controls::checkbox_option(

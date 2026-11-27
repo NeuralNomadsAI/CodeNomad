@@ -25,6 +25,7 @@ pub(crate) mod wake_lock;
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_attachment::download as download_file;
+pub(crate) mod web_form_cap;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]

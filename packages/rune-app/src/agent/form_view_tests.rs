@@ -126,6 +126,7 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             let form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-m12".into(),
                 title: "Deployment check".into(),
                 fields: vec![
@@ -398,6 +399,7 @@ fn option_keys_do_not_alias_and_keep_value_identity_across_reorders_and_replacem
         let form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-alias".into(),
             title: "Hyphen check".into(),
             fields: vec![
@@ -501,6 +503,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         let form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-norm".into(),
             title: "Normalization".into(),
             fields: vec![
@@ -694,6 +697,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             let bad_form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-bad-opt".into(),
                 title: "Bad".into(),
                 fields: vec![malformed.clone()],
@@ -713,6 +717,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         let mut transition_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-kind-transition".into(),
             title: "Kind transition".into(),
             fields: vec![
@@ -764,6 +769,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
         let custom_multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-custom-multi".into(),
             title: "Custom tags".into(),
             fields: vec![
@@ -856,6 +862,7 @@ fn multiple_untitled_fields_render_distinct_visible_localized_captions_and_descr
             let form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-untitled".into(),
                 title: "Confirm rollout".into(),
                 fields: vec![
@@ -931,6 +938,7 @@ fn single_untitled_field_inherits_and_wraps_overlong_form_title_at_narrow_width(
         let form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-single".into(),
             title: long_title.into(),
             fields: vec![json!({
@@ -978,6 +986,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         let form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-kind-reseed".into(),
             title: "Kind transitions".into(),
             fields: vec![
@@ -1057,6 +1066,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         let multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-multi-edges".into(),
             title: "Multi edges".into(),
             fields: vec![
@@ -1206,6 +1216,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
                 let broken_form = Form {
                     tool: None,
                     infer_websearch: false,
+                    owner: Default::default(),
                     id: "form-unanswerable".into(),
                     title: "Broken".into(),
                     fields: vec![broken_field.clone()],
@@ -1239,6 +1250,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             let cond_form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-cond-unanswerable".into(),
                 title: "Conditional".into(),
                 fields: vec![
@@ -1295,6 +1307,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r6-a11y".into(),
             title: "Choices".into(),
             fields: vec![
@@ -1401,6 +1414,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let id_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r6-ident".into(),
             title: "Identical refresh".into(),
             fields: vec![
@@ -1540,6 +1554,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let prov_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r6-prov".into(),
             title: "Default provenance".into(),
             fields: vec![
@@ -1663,6 +1678,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let max1_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r6-max1".into(),
             title: "Single slot".into(),
             fields: vec![json!({
@@ -1726,6 +1742,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let promo_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r7-promo".into(),
             title: "Stable preserved focus".into(),
             fields: vec![json!({
@@ -1808,6 +1825,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             let imp_form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-r6-impossible".into(),
                 title: "Impossible".into(),
                 fields: vec![impossible_field.clone()],
@@ -1851,6 +1869,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let req_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r7-required".into(),
             title: "Required semantics".into(),
             fields: vec![
@@ -1972,6 +1991,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let hidden_multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r8-hidden-multi".into(),
             title: "Hidden multiselect".into(),
             fields: vec![json!({
@@ -2027,6 +2047,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let inf_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r8-inf".into(),
             title: "Unbounded number".into(),
             fields: vec![json!({
@@ -2084,6 +2105,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let empty_multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r8-empty-multi".into(),
             title: "Empty option value".into(),
             fields: vec![json!({
@@ -2123,6 +2145,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let promo_edit_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r8-promo-edit".into(),
             title: "Promote while editing".into(),
             fields: vec![json!({
@@ -2216,6 +2239,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             let val_form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-r8-validation".into(),
                 title: "Limits".into(),
                 fields: vec![
@@ -2316,6 +2340,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let hidden_opt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r9-hidden-opt".into(),
             title: "Hidden option provenance".into(),
             fields: vec![json!({
@@ -2364,6 +2389,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let hidden_invalid_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r9-hidden-invalid".into(),
             title: "Hidden blocker".into(),
             fields: vec![
@@ -2406,6 +2432,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let trailing_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r9-trailing".into(),
             title: "Trailing newline".into(),
             fields: vec![json!({
@@ -2451,6 +2478,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let clear_nav_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r9-clear-nav".into(),
             title: "Clear focus continuity".into(),
             fields: vec![
@@ -2531,6 +2559,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             let hm_form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-r10-multi-prov".into(),
                 title: "Multiselect wire provenance".into(),
                 fields: vec![json!({
@@ -2577,6 +2606,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let vis_to_hidden = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r10-hide".into(),
             title: "Visibility transition".into(),
             fields: vec![json!({
@@ -2633,6 +2663,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let invalid_hidden_multi = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r10-bad-hidden-multi".into(),
             title: "Invalid hidden default".into(),
             fields: vec![json!({
@@ -2670,6 +2701,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let promo_disable_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r10-promo-disable".into(),
             title: "Promote on custom=false".into(),
             fields: vec![json!({
@@ -2707,6 +2739,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
         let two_bools_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r10-web-radios".into(),
             title: "Confirmations".into(),
             fields: vec![
@@ -2775,6 +2808,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let guard_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-guard".into(),
             title: "Question".into(),
             fields: vec![json!({
@@ -2872,6 +2906,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let desc_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-desc".into(),
             title: "Setup".into(),
             fields: vec![
@@ -2956,6 +2991,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let hidden_opaque_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-hidden-opaque".into(),
             title: "Opaque reveal".into(),
             fields: vec![json!({
@@ -2995,6 +3031,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let cascade_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-cascade".into(),
             title: "Cascade".into(),
             fields: vec![
@@ -3064,6 +3101,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let constraint_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-constraints".into(),
             title: "Constraints".into(),
             fields: vec![
@@ -3159,6 +3197,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let bad_regex_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-bad-regex".into(),
             title: "Bad regex".into(),
             fields: vec![json!({
@@ -3177,6 +3216,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let empty_opt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-empty-opt".into(),
             title: "Optional default".into(),
             fields: vec![json!({
@@ -3234,6 +3274,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let blank_custom_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r11-blank-custom".into(),
             title: "Blank custom".into(),
             fields: vec![json!({
@@ -3289,6 +3330,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let dos_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-dos".into(),
             title: "Bounded pattern".into(),
             fields: vec![json!({
@@ -3309,6 +3351,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let parity_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-parity".into(),
             title: "Parity".into(),
             fields: vec![
@@ -3363,6 +3406,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let cond_bad_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-cond-bad".into(),
             title: "Conditional invalid".into(),
             fields: vec![
@@ -3421,6 +3465,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let hidden_rt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-hidden-rt".into(),
             title: "Hidden roundtrip".into(),
             fields: vec![
@@ -3475,6 +3520,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let opaque_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-opaque".into(),
             title: "Opaque paths".into(),
             fields: vec![
@@ -3520,6 +3566,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let custom_label_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r12-custom-labels".into(),
             title: "Custom labels".into(),
             fields: vec![
@@ -3594,6 +3641,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let r13_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r13".into(),
             title: "Round 13 parity".into(),
             fields: vec![
@@ -3708,6 +3756,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let huge_class_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r13-class-dos".into(),
             title: "Huge class".into(),
             fields: vec![json!({
@@ -3722,6 +3771,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let dense_class_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r13-class-ast".into(),
             title: "Dense class".into(),
             fields: vec![json!({
@@ -3739,6 +3789,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let lookahead_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-lookahead".into(),
             title: "Lookahead".into(),
             fields: vec![json!({
@@ -3768,6 +3819,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let bad_lookahead_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-bad-lookahead".into(),
             title: "Bad lookahead".into(),
             fields: vec![json!({
@@ -3789,6 +3841,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let fmt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-formats".into(),
             title: "Formats".into(),
             fields: vec![
@@ -3857,6 +3910,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let absent_hidden_ms = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-hidden-absent".into(),
             title: "Hidden absent".into(),
             fields: vec![
@@ -3897,6 +3951,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let explicit_empty_ms = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-hidden-empty".into(),
             title: "Hidden empty".into(),
             fields: vec![
@@ -3929,6 +3984,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let quote_ms_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r14-quotes".into(),
             title: "Literal quotes".into(),
             fields: vec![json!({
@@ -3962,6 +4018,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let match_dos_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-match-dos".into(),
             title: "Bounded match".into(),
             fields: vec![json!({
@@ -3992,6 +4049,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let group_assert_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-group-assert".into(),
             title: "Group assertion".into(),
             fields: vec![json!({
@@ -4012,6 +4070,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let bare_assert_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-bare-assert".into(),
             title: "Bare assertion".into(),
             fields: vec![json!({
@@ -4029,6 +4088,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let hidden_fmt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-hidden-formats".into(),
             title: "Hidden formats".into(),
             fields: vec![
@@ -4081,6 +4141,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let vis_ms_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-vis-ms".into(),
             title: "Visible multiselect".into(),
             fields: vec![
@@ -4137,6 +4198,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let nbsp_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r15-nbsp".into(),
             title: "Unicode whitespace".into(),
             fields: vec![json!({
@@ -4184,6 +4246,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let heavy_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-heavy".into(),
             title: "Heavy regex".into(),
             fields: heavy_fields,
@@ -4205,6 +4268,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let huge_ms_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-huge-ms".into(),
             title: "Oversized default".into(),
             fields: vec![json!({
@@ -4246,6 +4310,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let dt_mail_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-dt-mail".into(),
             title: "Date and email".into(),
             fields: vec![
@@ -4299,6 +4364,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let empty_str_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-empty-str".into(),
             title: "Empty default".into(),
             fields: vec![
@@ -4333,6 +4399,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let ordered_ms_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-ordered-ms".into(),
             title: "Ordered multiselect".into(),
             fields: vec![
@@ -4389,6 +4456,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
         let disjoint_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r16-disjoint".into(),
             title: "Disjoint keys".into(),
             fields: vec![
@@ -4453,6 +4521,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         let over_limit_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r17-overlimit".into(),
             title: "Over limit".into(),
             fields: vec![json!({
@@ -4503,6 +4572,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         let edit_order_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r17-order-edit".into(),
             title: "Order edit".into(),
             fields: vec![json!({
@@ -4531,6 +4601,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         let opt_hidden_min_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r17-hidden-min".into(),
             title: "Hidden minItems".into(),
             fields: vec![json!({
@@ -4615,6 +4686,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         let rfc2822_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r17-rfc2822".into(),
             title: "RFC 2822 date".into(),
             fields: vec![json!({
@@ -4652,6 +4724,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let custom_order_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-custom".into(),
             title: "Custom order".into(),
             fields: vec![
@@ -4694,6 +4767,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let vis_min_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-vis-min".into(),
             title: "Visible minItems".into(),
             fields: vec![json!({
@@ -4738,6 +4812,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let oversized_65_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-over65".into(),
             title: "Oversized 65".into(),
             fields: vec![json!({
@@ -4784,6 +4859,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let ext_year_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-ext-year".into(),
             title: "Extended year".into(),
             fields: vec![json!({
@@ -4837,6 +4913,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let hard_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-budget".into(),
             title: "Shared budget".into(),
             fields: hard_fields,
@@ -4873,6 +4950,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         let big_desc_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r18-big-desc".into(),
             title: "Big description".into(),
             fields: vec![json!({
@@ -4917,6 +4995,7 @@ fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared
         let two_yes_no = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r19-active".into(),
             title: "Confirmations".into(),
             fields: vec![
@@ -4981,6 +5060,7 @@ fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared
         let unpadded_dt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r19-unpadded-dt".into(),
             title: "Unpadded date".into(),
             fields: vec![json!({
@@ -5003,6 +5083,7 @@ fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared
         let cleared_empty_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r19-cleared-empty".into(),
             title: "Cleared empty".into(),
             fields: vec![
@@ -5045,6 +5126,7 @@ fn active_descendant_caption_unpadded_dates_cleared_empty_string_custom_declared
         let custom_declared_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r19-declared-custom".into(),
             title: "Custom declared".into(),
             fields: vec![
@@ -5112,6 +5194,7 @@ fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_of
         let unified_ms_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r20-unified-ms".into(),
             title: "Targets".into(),
             fields: vec![json!({
@@ -5171,6 +5254,7 @@ fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_of
         let db_prompt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r20-proxy-desc".into(),
             title: "Cleanup".into(),
             fields: vec![json!({
@@ -5210,6 +5294,7 @@ fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_of
         let opt_email_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r20-opt-email".into(),
             title: "Contact".into(),
             fields: vec![json!({
@@ -5237,6 +5322,7 @@ fn unified_multiselect_checkbox_custom_focus_proxy_prompt_clearable_email_gmt_of
         let gmt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r20-gmt".into(),
             title: "GMT offset".into(),
             fields: vec![json!({
@@ -5290,6 +5376,7 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
         let empty_custom_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r21-empty-custom".into(),
             title: "Mode".into(),
             fields: vec![
@@ -5336,6 +5423,7 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
         let empty_opt_ms = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r21-blank-opt".into(),
             title: "Choices".into(),
             fields: vec![json!({
@@ -5391,6 +5479,7 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
         let us_dt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r21-us-dt".into(),
             title: "US date".into(),
             fields: vec![json!({
@@ -5416,6 +5505,7 @@ fn empty_custom_default_blank_custom_empty_option_us_hyphen_date_and_single_pass
         let big_paste_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r21-paste".into(),
             title: "Paste".into(),
             fields: vec![json!({
@@ -5459,6 +5549,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
         let multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r22-dedup".into(),
             title: "Deploy".into(),
             fields: vec![json!({
@@ -5519,6 +5610,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
         let literal_quote_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r22-quotes".into(),
             title: "Quotes".into(),
             fields: vec![json!({
@@ -5544,6 +5636,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
         let opt_bad_pat_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r22-opt-pat".into(),
             title: "Profile".into(),
             fields: vec![
@@ -5587,6 +5680,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
         let big_opt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r22-opt-desc".into(),
             title: "Large options".into(),
             fields: vec![json!({
@@ -5667,6 +5761,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         let reveal_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r23-reveal".into(),
             title: "Instructions".into(),
             fields: vec![json!({
@@ -5767,6 +5862,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         let empty_default_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r23-empty-clear".into(),
             title: "Target".into(),
             fields: vec![json!({
@@ -5817,6 +5913,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         let focus_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r23-focus".into(),
             title: "Reply focus".into(),
             fields: vec![json!({
@@ -6045,6 +6142,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         let deferred_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r23-deferred".into(),
             title: "Deferred".into(),
             fields: vec![json!({
@@ -6161,6 +6259,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let retry_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-503".into(),
             title: "Retry".into(),
             fields: vec![json!({
@@ -6231,6 +6330,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let unicode_cap_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-unicode-cap".into(),
             title: "Unicode".into(),
             fields: vec![json!({
@@ -6284,6 +6384,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let escaped_cap_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-escaped-cap".into(),
             title: "Escaped".into(),
             fields: vec![json!({
@@ -6340,6 +6441,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let oor_dt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-oor-dt".into(),
             title: "Date".into(),
             fields: vec![json!({
@@ -6367,6 +6469,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let commit_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-commit".into(),
             title: "Deploy".into(),
             fields: vec![json!({
@@ -6412,6 +6515,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         let reveal_focus_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r24-reveal-focus".into(),
             title: "Choices".into(),
             fields: vec![
@@ -6455,6 +6559,7 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
         let two_def_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r25-attr".into(),
             title: "Two deferred".into(),
             fields: vec![
@@ -6545,6 +6650,7 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
         let rtl_lb_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r25-rtl-lb".into(),
             title: "RTL lookbehind".into(),
             fields: vec![json!({
@@ -6583,6 +6689,7 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
         let order_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r25-order".into(),
             title: "Order".into(),
             fields: vec![json!({
@@ -6665,6 +6772,7 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
         let ws_form = Form {
             tool: None,
             infer_websearch: true,
+            owner: Default::default(),
             id: "form-r25-ws".into(),
             title: "Web Search".into(),
             fields: vec![json!({
@@ -6708,6 +6816,7 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
         let dup_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r26-dup".into(),
             title: "Targets".into(),
             fields: vec![json!({
@@ -6780,6 +6889,7 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
         let repeat_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r26-repeat".into(),
             title: "Repeat".into(),
             fields: vec![json!({
@@ -6810,6 +6920,7 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
         let esc_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r26-esc".into(),
             title: "Escaped group".into(),
             fields: vec![json!({
@@ -6841,6 +6952,7 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
         let dotted_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r26-dot".into(),
             title: "Dotted keys".into(),
             fields: vec![
@@ -7068,6 +7180,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let multi65_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-multi65".into(),
             title: "Defaults".into(),
             fields: vec![json!({
@@ -7128,6 +7241,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let overflow_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-ovf".into(),
             title: "Overflow".into(),
             fields: vec![json!({
@@ -7193,6 +7307,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let order_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-order".into(),
             title: "Order".into(),
             fields: vec![json!({
@@ -7243,6 +7358,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let def_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-def1".into(),
             title: "Deferred".into(),
             fields: vec![json!({
@@ -7256,6 +7372,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let other_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-def2".into(),
             title: "Other".into(),
             fields: vec![json!({
@@ -7353,6 +7470,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let k_escape_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-kesc".into(),
             title: "Identity k".into(),
             fields: vec![json!({
@@ -7385,6 +7503,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let bad_named_ref = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-badk".into(),
             title: "Bad named ref".into(),
             fields: vec![json!({
@@ -7405,6 +7524,7 @@ fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_inter
         let gmt_colon_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r27-gmt-colon".into(),
             title: "GMT colon".into(),
             fields: vec![
@@ -7508,6 +7628,7 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         let empty_opts_dt = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r28-empty-opts-dt".into(),
             title: "Empty opts date-time".into(),
             fields: vec![
@@ -7579,6 +7700,7 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         let deferred_opt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r28-deferred-opt".into(),
             title: "Deferred optional".into(),
             fields: vec![
@@ -7700,6 +7822,7 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         let reject_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r28-async-reject".into(),
             title: "Async reject".into(),
             fields: vec![json!({
@@ -7821,6 +7944,7 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
             let form = Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form-r28-bounded".into(),
                 title: "Bounded".into(),
                 fields: vec![json!({
@@ -7855,6 +7979,7 @@ fn round28_utf8_date_empty_opts_deferred_clear_icase_async_reject_bounded_proven
         let transitioned = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r28-bounded".into(),
             title: "Bounded".into(),
             fields: vec![json!({
@@ -7894,6 +8019,7 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         let paste_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r29-paste".into(),
             title: "Paste bound".into(),
             fields: vec![json!({
@@ -7997,6 +8123,7 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         let ext_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r29-ext".into(),
             title: "External setup".into(),
             fields: vec![json!({
@@ -8079,6 +8206,7 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         let nullable_def_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r29-null-def".into(),
             title: "Nullable deferred".into(),
             fields: vec![
@@ -8130,6 +8258,7 @@ fn round29_clock_fallback_bounded_paste_external_nullable_deferred_stale_reject_
         let schema_v1 = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r29-schema".into(),
             title: "Schema update".into(),
             fields: vec![json!({
@@ -8247,6 +8376,7 @@ fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime
         let crlf_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r30-crlf".into(),
             title: "CRLF paste".into(),
             fields: vec![json!({
@@ -8300,6 +8430,7 @@ fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime
         let ime_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r30-ime".into(),
             title: "IME preedit".into(),
             fields: vec![json!({
@@ -8382,6 +8513,7 @@ fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime
         let rej_empty_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r30-rej-empty".into(),
             title: "Rejected empty".into(),
             fields: vec![
@@ -8488,6 +8620,7 @@ fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime
         let ampm_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r30-ampm".into(),
             title: "AM/PM date-time".into(),
             fields: vec![
@@ -8566,6 +8699,7 @@ fn round31_short_offset_datetime_and_exact_20k_multiselect_default() {
         let dt_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r31-dt".into(),
             title: "Short offset date-time".into(),
             fields: vec![
@@ -8625,6 +8759,7 @@ fn round31_short_offset_datetime_and_exact_20k_multiselect_default() {
         let multi_form = Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: "form-r31-20k".into(),
             title: "Exact 20k multiselect".into(),
             fields: vec![json!({
@@ -8673,6 +8808,325 @@ fn round31_short_offset_datetime_and_exact_20k_multiselect_default() {
         assert!(
             !has_state(find_input(&multi_tree, "custom-items"), "disabled"),
             "custom multiselect editor must remain enabled at exact 20,000-unit boundary"
+        );
+    });
+}
+
+#[test]
+fn round32_optional_bad_pattern_zero_backref_reduced_iso_external_copy_key_cap_and_preserved_promotion()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Optional free-text field with uncompilable `pattern: "["` stays omittable after
+        // typing and deleting back to blank.
+        let bad_pat_form = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r32-bad-pat".into(),
+            title: "Bad pattern optional".into(),
+            fields: vec![json!({
+                "key": "note",
+                "title": "Note",
+                "type": "string",
+                "required": false,
+                "pattern": "["
+            })],
+        };
+        let (state, _rx) = state_with_form(bad_pat_form.clone());
+        let mut rt = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "untouched optional field with uncompilable pattern must be omittable"
+        );
+        let (x, y) = rt.find("field-note").expect("note input rendered");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("a".into()),
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.0);
+        assert!(
+            has_state(
+                find_node(&rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "non-empty input under uncompilable pattern must disable Answer"
+        );
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Backspace,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "deleting back to blank on optional field with uncompilable pattern must re-enable Answer"
+        );
+        assert_eq!(
+            agent_forms::answer(&bad_pat_form, &rt.state.agent.as_ref().unwrap().drafts)
+                .expect("blank optional field with uncompilable pattern must omit"),
+            json!({})
+        );
+
+        // 2. Zero-count repeats must resolve escape/backref semantics before folding:
+        // `^\k<a>{0}$` without named captures matches `"k<a"` in JS (deferred to OpenCode),
+        // `^(?<a>x)\k<a>{0}$` matches `"x"`, and `^\k<missing>{0}(?<a>x)$` is invalid syntax.
+        let k_zero_form = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r32-k-zero".into(),
+            title: "Zero-repeat escape".into(),
+            fields: vec![json!({
+                "key": "opt",
+                "title": "Option",
+                "type": "string",
+                "required": true,
+                "options": [{"value": "k<a", "label": "k<a"}],
+                "pattern": r"^\k<a>{0}$"
+            })],
+        };
+        assert!(
+            agent_forms::supported(&k_zero_form),
+            "required closed field with option `k<a` and pattern `^\\k<a>{{0}}$` must be answerable"
+        );
+        let (k_state, _krx) = state_with_form(k_zero_form.clone());
+        let mut k_drafts = k_state.agent.unwrap().drafts;
+        k_drafts
+            .get_mut(&("form-r32-k-zero".into(), "opt".into()))
+            .unwrap()
+            .choose_option("k<a");
+        assert_eq!(
+            agent_forms::answer(&k_zero_form, &k_drafts).unwrap(),
+            json!({ "opt": "k<a" })
+        );
+        let k_named_field = json!({
+            "key": "opt",
+            "type": "string",
+            "required": true,
+            "pattern": r"^(?<a>x)\k<a>{0}$"
+        });
+        let mut d_ok = agent_forms::Draft::default();
+        d_ok.edit = rune::edit::TextEdit::new("x");
+        assert_eq!(
+            agent_forms::value(&k_named_field, &d_ok).unwrap(),
+            Some(json!("x"))
+        );
+        let mut d_bad = agent_forms::Draft::default();
+        d_bad.edit = rune::edit::TextEdit::new("xx");
+        assert!(agent_forms::value(&k_named_field, &d_bad).is_err());
+        let k_missing_field = json!({
+            "key": "opt",
+            "type": "string",
+            "required": true,
+            "pattern": r"^\k<missing>{0}(?<a>x)$"
+        });
+        assert!(agent_forms::value(&k_missing_field, &d_ok).is_err());
+        let backref_90_field = json!({
+            "key": "opt",
+            "type": "string",
+            "required": true,
+            "pattern": r"^\90{0}$"
+        });
+        let mut d_nine = agent_forms::Draft::default();
+        d_nine.edit = rune::edit::TextEdit::new("9");
+        assert_eq!(
+            agent_forms::value(&backref_90_field, &d_nine).unwrap(),
+            Some(json!("9"))
+        );
+
+        // 3. Reduced-precision ISO date-times (`2026-11T14:30Z`, `2026T14:30Z`) must validate
+        // instead of blocking hidden defaults; invalid months/hours still fail.
+        for valid in ["2026-11T14:30Z", "2026T14:30Z", "2026-11T14:30:00+01:00"] {
+            let dt_form = Form {
+                tool: None,
+                infer_websearch: false,
+                owner: Default::default(),
+                id: "form-r32-iso".into(),
+                title: "Reduced ISO".into(),
+                fields: vec![json!({
+                    "key": "when",
+                    "title": "When",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": valid
+                })],
+            };
+            let (dt_state, _drx) = state_with_form(dt_form.clone());
+            assert_eq!(
+                agent_forms::answer(&dt_form, &dt_state.agent.as_ref().unwrap().drafts)
+                    .unwrap_or_else(|e| panic!("expected `{valid}` to validate, got {e:?}")),
+                json!({ "when": valid })
+            );
+        }
+        let invalid_dt_field = json!({
+            "key": "when",
+            "type": "string",
+            "format": "date-time",
+            "required": true
+        });
+        for invalid in ["2026-13T14:30Z", "2026-11T25:00Z"] {
+            let mut d = agent_forms::Draft::default();
+            d.edit = rune::edit::TextEdit::new(invalid);
+            assert!(
+                agent_forms::value(&invalid_dt_field, &d).is_err(),
+                "invalid reduced ISO `{invalid}` must still be rejected"
+            );
+        }
+
+        // 4. External URL with query brackets (`https://example.com/auth?scopes[]=basic`) is
+        // refused by Rune's launcher: omit the broken Open button, offer Copy link fallback, and
+        // allow acknowledgement + submission.
+        let bracket_url = "https://example.com/auth?scopes[]=basic";
+        let ext_form = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r32-ext".into(),
+            title: "External auth".into(),
+            fields: vec![json!({
+                "key": "auth",
+                "title": "Sign in",
+                "type": "external",
+                "url": bracket_url
+            })],
+        };
+        assert!(agent_forms::supported(&ext_form));
+        assert!(!agent_forms::external_url_launchable(bracket_url));
+        let (ext_state, _erx) = state_with_form(ext_form.clone());
+        let mut ext_rt = Runtime::new(ext_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        let clipboard = rune::clipboard::memory();
+        ext_rt.use_clipboard(&clipboard);
+        ext_rt.frame(0.0);
+        assert!(
+            ext_rt
+                .find(&agent_forms::external_link_key("auth"))
+                .is_none(),
+            "unlaunchable HTTP(S) external URL must not render a guaranteed-to-fail Open button"
+        );
+        let copy_key = agent_forms::external_copy_key("auth");
+        let (cx, cy) = ext_rt
+            .find(&copy_key)
+            .expect("unlaunchable external URL must render Copy link fallback");
+        ext_rt.pointer_down(cx, cy);
+        ext_rt.pointer_up(cx, cy);
+        ext_rt.frame(0.0);
+        assert_eq!(
+            clipboard.text().as_ref().map(|v| v.as_str()),
+            Some(bracket_url),
+            "Copy link fallback must copy the exact external URL"
+        );
+        let (ax, ay) = ext_rt
+            .find(&agent_forms::external_ack_key("auth"))
+            .expect("external acknowledgement checkbox rendered");
+        ext_rt.pointer_down(ax, ay);
+        ext_rt.pointer_up(ax, ay);
+        ext_rt.frame(0.0);
+        assert_eq!(
+            agent_forms::answer(&ext_form, &ext_rt.state.agent.as_ref().unwrap().drafts).unwrap(),
+            json!({ "auth": true })
+        );
+
+        // 6. Oversized multiline Key::Text is bounded in on_input_key before entering TextEdit.
+        let cap_form = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r32-key-cap".into(),
+            title: "Key cap".into(),
+            fields: vec![json!({
+                "key": "body",
+                "title": "Body",
+                "type": "string"
+            })],
+        };
+        let (cap_state, _crx) = state_with_form(cap_form);
+        let mut cap_rt = Runtime::new(cap_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        cap_rt.frame(0.0);
+        let (bx, by) = cap_rt.find("field-body").expect("body input rendered");
+        cap_rt.pointer_down(bx, by);
+        cap_rt.pointer_up(bx, by);
+        cap_rt.frame(0.0);
+        cap_rt.key(rune::KeyEvent {
+            key: rune::Key::Text("a\n".repeat(25_000)),
+            mods: rune::Mods::default(),
+        });
+        cap_rt.frame(0.0);
+        let body_edit = &cap_rt
+            .state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r32-key-cap".into(), "body".into()))
+            .unwrap()
+            .edit;
+        assert_eq!(
+            body_edit.text.encode_utf16().count(),
+            rune_theme_codenomad::form_controls::MAX_FORM_EDITOR_UTF16
+        );
+        assert_eq!(
+            body_edit.history_len().0,
+            1,
+            "pre-editor key cap must keep a single bounded undo step"
+        );
+
+        // 7. Promoting a preserved custom multiselect value (`"a,b"`, count 2) to a declared
+        // option on refresh must retag the existing ordered entries in place and preserve count.
+        let ms_v1 = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r32-ms-promo".into(),
+            title: "Preserved promotion".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "required": true,
+                "custom": true,
+                "minItems": 3,
+                "options": [{"value": "x", "label": "X"}],
+                "default": ["x", "a,b", "a,b"]
+            })],
+        };
+        let mut ms_drafts = agent_forms::Drafts::default();
+        agent_forms::seed(std::slice::from_ref(&ms_v1), &mut ms_drafts);
+        assert_eq!(
+            agent_forms::answer(&ms_v1, &ms_drafts).unwrap(),
+            json!({ "tags": ["x", "a,b", "a,b"] })
+        );
+        let ms_v2 = Form {
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "required": true,
+                "custom": true,
+                "minItems": 3,
+                "options": [
+                    {"value": "x", "label": "X"},
+                    {"value": "a,b", "label": "A,B"}
+                ],
+                "default": ["x", "a,b", "a,b"]
+            })],
+            ..ms_v1
+        };
+        agent_forms::seed(std::slice::from_ref(&ms_v2), &mut ms_drafts);
+        assert_eq!(
+            agent_forms::answer(&ms_v2, &ms_drafts)
+                .expect("promoting preserved custom value must preserve multiplicity and satisfy minItems: 3"),
+            json!({ "tags": ["x", "a,b", "a,b"] })
         );
     });
 }

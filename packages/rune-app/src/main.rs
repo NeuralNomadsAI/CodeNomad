@@ -205,6 +205,7 @@ fn load_loopback_scene(s: &mut State) {
     s.phase = Phase::Ready;
 }
 fn setup(s: &mut State, wake: rune::Waker) {
+    platform::web_form_cap::install();
     #[cfg(target_arch = "wasm32")]
     let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
@@ -329,6 +330,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         && chat::reader::renderer_ready(s, tx);
     let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
+    platform::web_form_cap::sync(agent::focused_form_editor_utf16(s));
     changed |= platform::titlebar::poll(s);
     #[cfg(target_arch = "wasm32")]
     {

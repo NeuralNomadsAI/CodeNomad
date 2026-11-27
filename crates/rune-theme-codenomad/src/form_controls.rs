@@ -816,10 +816,37 @@ pub fn form_textarea<S: 'static>(
     if !disabled {
         let access = std::rc::Rc::new(on_edit);
         let edit_access = std::rc::Rc::clone(&access);
+        let key_access = std::rc::Rc::clone(&access);
         let paste_access = std::rc::Rc::clone(&access);
         let change_access = std::rc::Rc::clone(&access);
         input = input
             .on_edit(move |s: &mut S| edit_access(s))
+            .on_input_key(move |s: &mut S, ev, _| {
+                if ev.mods.ctrl || ev.mods.cmd {
+                    return false;
+                }
+                let incoming: &str = match &ev.key {
+                    rune::Key::Text(t) if !ev.mods.alt && !t.is_empty() => t.as_str(),
+                    rune::Key::Enter if ev.mods.shift || ev.mods.alt => "\n",
+                    _ => return false,
+                };
+                let edit = key_access(s);
+                clamp_form_text_edit(edit);
+                let (sel_start, sel_end) = safe_edit_range(edit);
+                let kept_utf16 = edit.text[..sel_start].encode_utf16().count()
+                    + edit.text[sel_end..].encode_utf16().count();
+                let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
+                let prefix_len = utf16_normalized_paste_prefix_byte_len(incoming, remaining);
+                if prefix_len == incoming.len() {
+                    return false;
+                }
+                if prefix_len > 0 {
+                    edit.insert(&incoming[..prefix_len]);
+                } else if sel_start != sel_end {
+                    edit.insert("");
+                }
+                true
+            })
             .on_input_paste(move |s: &mut S, content, _| {
                 let raw = content.text();
                 if raw.is_empty() {
@@ -827,7 +854,7 @@ pub fn form_textarea<S: 'static>(
                 }
                 let edit = paste_access(s);
                 clamp_form_text_edit(edit);
-                let (sel_start, sel_end) = edit.range();
+                let (sel_start, sel_end) = safe_edit_range(edit);
                 let kept_utf16 = edit.text[..sel_start].encode_utf16().count()
                     + edit.text[sel_end..].encode_utf16().count();
                 let remaining = MAX_FORM_EDITOR_UTF16.saturating_sub(kept_utf16);
@@ -842,6 +869,12 @@ pub fn form_textarea<S: 'static>(
                 }
                 true
             })
+            // Pinned Rune 4918969 routes native Ime::Commit directly to TextEdit::ime with no
+            // pre-commit hook on text_input (App::on_ime only runs when no text_input has focus).
+            // Browser replacements are bounded in capture phase before bridge.js reads the DOM
+            // textarea; here clamp_form_text_edit immediately drops any oversized native commit's
+            // text, blocks, and undo history in the same event turn (upgrade path: add
+            // on_input_ime or TextEdit max-length enforcement in Rune).
             .on_input_change(move |s: &mut S, _| {
                 clamp_form_text_edit(change_access(s));
             });

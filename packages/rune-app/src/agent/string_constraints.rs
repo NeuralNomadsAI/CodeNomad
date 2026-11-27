@@ -1139,43 +1139,56 @@ fn is_valid_date_time(value: &str) -> bool {
         return false;
     }
     // Use one deterministic parser across desktop and wasm32 so both targets agree on every
-    // ISO-8601, numeric slash/hyphen, and RFC 2822 / month-name date-time string.
-    let iso_candidate = parse_iso_year_prefix(s).filter(|&(_, ylen)| {
-        let tail = &s.as_bytes()[ylen..];
-        tail.is_empty() || tail[0] == b'-'
-    });
-    let Some((year, ylen)) = iso_candidate else {
-        return parse_numeric_date_time(s).is_some() || parse_named_month_date_time(s).is_some();
-    };
-    let rest_after_year = &s[ylen..];
-    if rest_after_year.is_empty() {
-        return within_js_date_range(year, 1, 1, 0, 0);
+    // ISO-8601 (including reduced-precision YYYY / YYYY-MM with time), numeric slash/hyphen, and
+    // RFC 2822 / month-name date-time string.
+    if let Some((year, ylen)) = parse_iso_year_prefix(s) {
+        let rest_after_year = &s[ylen..];
+        if rest_after_year.is_empty() {
+            return within_js_date_range(year, 1, 1, 0, 0);
+        }
+        let first = rest_after_year.as_bytes()[0];
+        if first == b'-' {
+            let after_y_dash = &rest_after_year[1..];
+            let Some((month, after_month)) = take_1_or_2_digits(after_y_dash) else {
+                return false;
+            };
+            if !(1..=12).contains(&month) {
+                return false;
+            }
+            if after_month.is_empty() {
+                return within_js_date_range(year, month, 1, 0, 0);
+            }
+            let (day, after_date) = if let Some(after_m_dash) = after_month.strip_prefix('-') {
+                let Some((day, after_d)) = take_1_or_2_digits(after_m_dash) else {
+                    return false;
+                };
+                if !(1..=days_in_month_i64(year, month)).contains(&day) {
+                    return false;
+                }
+                (day, after_d)
+            } else {
+                (1, after_month)
+            };
+            if after_date.is_empty() {
+                return within_js_date_range(year, month, day, 0, 0);
+            }
+            return parse_iso_time_tail(year, month, day, after_date);
+        }
+        if matches!(first, b'T' | b't') {
+            return parse_iso_time_tail(year, 1, 1, rest_after_year);
+        }
+        if matches!(first, b' ' | b',') && parse_iso_time_tail(year, 1, 1, rest_after_year) {
+            return true;
+        }
     }
-    let Some(after_y_dash) = rest_after_year.strip_prefix('-') else {
-        return false;
-    };
-    let Some((month, after_month)) = take_1_or_2_digits(after_y_dash) else {
-        return false;
-    };
-    if !(1..=12).contains(&month) {
-        return false;
-    }
-    if after_month.is_empty() {
-        return within_js_date_range(year, month, 1, 0, 0);
-    }
-    let Some(after_m_dash) = after_month.strip_prefix('-') else {
-        return false;
-    };
-    let Some((day, after_date)) = take_1_or_2_digits(after_m_dash) else {
-        return false;
-    };
-    if !(1..=days_in_month_i64(year, month)).contains(&day) {
-        return false;
-    }
-    if after_date.is_empty() {
+    parse_numeric_date_time(s).is_some() || parse_named_month_date_time(s).is_some()
+}
+
+fn parse_iso_time_tail(year: i64, month: u32, day: u32, after_date: &str) -> bool {
+    let b = after_date.as_bytes();
+    if b.is_empty() {
         return within_js_date_range(year, month, day, 0, 0);
     }
-    let b = after_date.as_bytes();
     let (time_rest, allow_ampm) = if matches!(b[0], b'T' | b't') {
         (&after_date[1..], false)
     } else if matches!(b[0], b' ' | b',') {
@@ -1280,10 +1293,13 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
                 .and_then(take_1_or_2_digits)
                 .filter(|&(m, _)| (1..=12).contains(&m))
                 .and_then(|(m, rest)| {
-                    rest.strip_prefix('-')
-                        .and_then(take_1_or_2_digits)
-                        .filter(|&(d, _)| (1..=days_in_month_i64(year, m)).contains(&d))
-                        .map(|(_, after_d)| after_d)
+                    if let Some(after_m_dash) = rest.strip_prefix('-') {
+                        take_1_or_2_digits(after_m_dash)
+                            .filter(|&(d, _)| (1..=days_in_month_i64(year, m)).contains(&d))
+                            .map(|(_, after_d)| after_d)
+                    } else {
+                        Some(rest)
+                    }
                 })
                 .is_some_and(|after_d| {
                     let sep_ok = after_d.starts_with(' ') || after_d.starts_with(',');
@@ -1826,7 +1842,9 @@ impl Parser {
             return Err(CompileError::InvalidSyntax);
         }
         self.charge_node()?;
-        if (min == 0 && max == Some(0)) || matches!(expr, Expr::Empty) {
+        if (min == 0 && max == Some(0) && !expr_has_captures_or_backrefs(&expr))
+            || matches!(expr, Expr::Empty)
+        {
             Ok(Expr::Empty)
         } else {
             Ok(Expr::Repeat {

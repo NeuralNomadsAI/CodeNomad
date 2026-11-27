@@ -170,6 +170,7 @@ pub(crate) fn focused_control_key(
                 Some("external") => {
                     agent_forms::external_url(field).is_some()
                         && (key == agent_forms::external_link_key(field_key)
+                            || key == agent_forms::external_copy_key(field_key)
                             || key == agent_forms::external_ack_key(field_key))
                 }
                 Some("string") => {
@@ -202,6 +203,29 @@ pub(crate) fn focused_control_key(
             if matched {
                 return Some((key.to_string(), Some(region)));
             }
+        }
+    }
+    None
+}
+pub(crate) fn focused_form_editor_utf16(s: &crate::State) -> Option<usize> {
+    let a = s.agent.as_ref()?;
+    let f = a.forms.iter().find(|f| f.id == a.selected)?;
+    let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
+    for field in active_fields
+        .into_iter()
+        .filter(|field| field["hidden"] != true)
+    {
+        let Some(key) = field["key"].as_str() else {
+            continue;
+        };
+        let Some(d) = a.drafts.get(&(f.id.clone(), key.to_string())) else {
+            continue;
+        };
+        if d.edit.focused {
+            return Some(d.edit.text.encode_utf16().count());
+        }
+        if d.custom.focused {
+            return Some(d.custom.text.encode_utf16().count());
         }
     }
     None
@@ -755,15 +779,25 @@ impl Ui {
                         })
                     });
                 }
-                self.act(Action::Answer(id.into(), answer, fields))
+                self.act(Action::Answer(
+                    id.into(),
+                    answer,
+                    fields,
+                    form.owner.clone(),
+                ))
             }
         }
     }
     pub fn cancel_form(&mut self, id: String) {
-        if self.forms.iter().any(|f| f.id == id) {
+        if let Some(owner) = self
+            .forms
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| f.owner.clone())
+        {
             self.pending_deferred_submission = None;
             self.pending_field_rejection = None;
-            self.act(Action::Cancel(id));
+            self.act(Action::Cancel(id, owner));
         }
     }
     pub(crate) fn reconcile_custom_focus(&mut self) -> bool {
@@ -1038,7 +1072,7 @@ impl Ui {
                     self.sync_error();
                 }
             }
-            Action::Answer(_, _, _) | Action::Cancel(_) => {
+            Action::Answer(_, _, _, _) | Action::Cancel(_, _) => {
                 if self.forms_locked() {
                     return;
                 }

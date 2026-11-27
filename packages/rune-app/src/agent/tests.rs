@@ -28,6 +28,7 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
             fields: vec![],
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
         }]),
     };
     let mut s = crate::init();
@@ -122,6 +123,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
             snapshot(vec![Form {
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
                 id: "form_pending".into(),
                 title: "Pending question".into(),
                 fields: vec![],
@@ -253,11 +255,12 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
         fields: vec![],
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
     });
     ui.cancel_form("live_form".into());
     assert!(matches!(
         form_incoming.try_recv(),
-        Ok(super::PendingJob::Act(agent_api::Action::Cancel(id), 2)) if id == "live_form"
+        Ok(super::PendingJob::Act(agent_api::Action::Cancel(id, _), 2)) if id == "live_form"
     ));
     assert!(ui.forms_lane.busy);
     ui.models.push(model.clone());
@@ -624,6 +627,7 @@ fn native_questions_keep_typed_defaults_conditions_and_validation() {
     let form = Form {
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
         id: "form_one".into(),
         title: "Synthetic".into(),
         fields: vec![
@@ -702,6 +706,32 @@ fn controls_reject_foreign_pending_and_strip_model_configuration() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+async fn accept_global_forms_empty(http: &crate::files::test_http::Http) {
+    let worktrees = http.accept().await;
+    assert!(
+        worktrees
+            .header
+            .starts_with("GET /api/workspaces/owned/worktrees "),
+        "{}",
+        worktrees.header
+    );
+    worktrees
+        .reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+        .await;
+    let pending = http.accept().await;
+    assert!(
+        pending
+            .header
+            .starts_with("GET /api/workspaces/owned/pending-requests?"),
+        "{}",
+        pending.header
+    );
+    pending
+        .reply(200, json!({"supported": true, "directories": []}))
+        .await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
     use crate::files::test_http::{Http, wait};
@@ -716,8 +746,9 @@ fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
         ui.online = true;
 
         // Initial refresh(true) reads session + pending concurrently; once polled, catalog starts on its own lane.
-        let (mut got_session, mut got_perm, mut got_form) = (false, false, false);
-        while !got_session || !got_perm || !got_form {
+        let (mut got_session, mut got_perm, mut got_form, mut got_global) =
+            (false, false, false, false);
+        while !got_session || !got_perm || !got_form || !got_global {
             let req = http.accept().await;
             if req
                 .header
@@ -741,6 +772,19 @@ fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
             {
                 got_form = true;
                 req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_global = true;
+                req.reply(200, json!({"supported": true, "directories": []}))
+                    .await;
             } else {
                 panic!("unexpected initial request: {}", req.header);
             }
@@ -782,8 +826,9 @@ fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
         assert!(!ui.stopping);
         assert!(!ui.error);
 
-        let (mut got_session, mut got_perm, mut got_form) = (false, false, false);
-        while !got_session || !got_perm || !got_form {
+        let (mut got_session, mut got_perm, mut got_form, mut got_global) =
+            (false, false, false, false);
+        while !got_session || !got_perm || !got_form || !got_global {
             let req = http.accept().await;
             if req
                 .header
@@ -807,6 +852,19 @@ fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
             {
                 got_form = true;
                 req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_global = true;
+                req.reply(200, json!({"supported": true, "directories": []}))
+                    .await;
             } else {
                 panic!("unexpected post-stop request: {}", req.header);
             }
@@ -852,8 +910,9 @@ fn permission_and_form_reply_bypass_blocked_catalogue_read() {
         let perm_body = json!({"data":[{"id":"perm_1","sessionID":"session","action":"bash","resources":["git status"]}]});
         let form_body = json!({"data":[{"id":"form_1","sessionID":"session","title":"Confirm","fields":[{"type":"string","key":"value"}]}]});
 
-        let (mut got_session, mut got_perm, mut got_form) = (false, false, false);
-        while !got_session || !got_perm || !got_form {
+        let (mut got_session, mut got_perm, mut got_form, mut got_global) =
+            (false, false, false, false);
+        while !got_session || !got_perm || !got_form || !got_global {
             let req = http.accept().await;
             if req
                 .header
@@ -877,6 +936,19 @@ fn permission_and_form_reply_bypass_blocked_catalogue_read() {
             {
                 got_form = true;
                 req.reply(200, form_body.clone()).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_global = true;
+                req.reply(200, json!({"supported": true, "directories": []}))
+                    .await;
             } else {
                 panic!("unexpected initial request: {}", req.header);
             }
@@ -966,6 +1038,7 @@ fn permission_and_form_reply_bypass_blocked_catalogue_read() {
                 .starts_with("GET /workspaces/owned/instance/api/session/session/form ")
         );
         refresh_form.reply(200, json!({"data":[]})).await;
+        accept_global_forms_empty(&http).await;
         while ui.forms_lane.busy {
             wait(wake_rx.recv()).await.unwrap();
             ui.poll();
@@ -1018,8 +1091,9 @@ fn rejected_form_reply_unlocks_draft_editing_before_followup_snapshot_finishes()
             }]
         });
 
-        let (mut got_session, mut got_perm, mut got_form) = (false, false, false);
-        while !got_session || !got_perm || !got_form {
+        let (mut got_session, mut got_perm, mut got_form, mut got_global) =
+            (false, false, false, false);
+        while !got_session || !got_perm || !got_form || !got_global {
             let req = http.accept().await;
             if req
                 .header
@@ -1043,6 +1117,19 @@ fn rejected_form_reply_unlocks_draft_editing_before_followup_snapshot_finishes()
             {
                 got_form = true;
                 req.reply(200, form_body.clone()).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_global = true;
+                req.reply(200, json!({"supported": true, "directories": []}))
+                    .await;
             } else {
                 panic!("unexpected initial request: {}", req.header);
             }
@@ -1124,6 +1211,7 @@ fn rejected_form_reply_unlocks_draft_editing_before_followup_snapshot_finishes()
             .text = fixed.clone();
 
         held_refresh.reply(200, form_body).await;
+        accept_global_forms_empty(&http).await;
         while ui.forms_locked() {
             wait(wake_rx.recv()).await.unwrap();
             ui.poll();
@@ -1156,8 +1244,8 @@ fn pending_requests_publish_and_accept_replies_while_session_read_stalls() {
 
         let perm_body = json!({"data":[{"id":"perm_1","sessionID":"session","action":"bash","resources":["git status"]}]});
         let mut held_session = None;
-        let (mut got_perm, mut got_form) = (false, false);
-        while held_session.is_none() || !got_perm || !got_form {
+        let (mut got_perm, mut got_form, mut got_global) = (false, false, false);
+        while held_session.is_none() || !got_perm || !got_form || !got_global {
             let req = http.accept().await;
             if req
                 .header
@@ -1176,6 +1264,19 @@ fn pending_requests_publish_and_accept_replies_while_session_read_stalls() {
             {
                 got_form = true;
                 req.reply(200, json!({"data":[]})).await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/worktrees ")
+            {
+                req.reply(200, json!({"worktrees": [{"directory": "/private"}]}))
+                    .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/owned/pending-requests?")
+            {
+                got_global = true;
+                req.reply(200, json!({"supported": true, "directories": []}))
+                    .await;
             } else {
                 panic!("unexpected initial request: {}", req.header);
             }
@@ -1461,6 +1562,7 @@ fn permission_events_never_invalidate_or_starve_in_flight_forms_read() {
             fields: vec![],
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
         }]),
         initial_form_gen,
     ))
@@ -1947,6 +2049,7 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
             fields: vec![],
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
         }]),
         form_gen,
     ))
@@ -1988,6 +2091,7 @@ fn uncertain_reply_failure_without_sse_keeps_lock_until_read_and_unblocks_on_mis
             fields: vec![],
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
         }]),
         retry_form_gen,
     ))
