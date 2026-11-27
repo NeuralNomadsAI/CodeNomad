@@ -10,7 +10,8 @@
 }
 
 .git-change-section-header:hover,
-.session-goal-line .window-icon-button:hover:not([aria-disabled="true"]) {
+.session-goal-line .window-icon-button:hover:not([aria-disabled="true"]),
+.session-automation-row .window-icon-button:hover:not([aria-disabled="true"]) {
   background-color: var(--surface-secondary);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }

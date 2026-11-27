@@ -1,0 +1,153 @@
+/* The shown session's /automation rows above the Status sections
+   (components/session/session-automations-block.tsx). */
+.session-automations-block {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-base);
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.session-automation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding-block: 0.25rem;
+  padding-inline: 0.75rem 0.5rem;
+}
+
+.session-automation-row + .session-automation-row,
+.session-automations-done-toggle + .session-automation-row,
+.session-automations-done-toggle {
+  border-top: 1px solid var(--border-base);
+}
+
+.session-automation-summary {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-automation-summary:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.session-automation-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-automation-meta {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-automation-row .window-icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.session-automation-row .window-icon-button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+}
+
+.session-automations-done-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  padding-block: 0.25rem;
+  padding-inline: 0.75rem 0.5rem;
+  border: 0;
+  border-top: 1px solid var(--border-base);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-automations-done-toggle:first-child {
+  border-top: 0;
+}
+
+.session-automations-done-toggle:hover {
+  color: var(--text-primary);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+
+.session-automations-done-toggle:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.session-automations-done-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  transition: transform 0.12s ease;
+}
+
+.session-automations-done-toggle[aria-expanded="true"] .session-automations-done-chevron {
+  transform: rotate(90deg);
+}
+
+.session-automation-tooltip {
+  max-width: min(22rem, calc(100vw - 24px));
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.session-automation-tooltip-meta {
+  margin-top: var(--space-xs);
+  color: var(--text-secondary);
+}
+
+.session-automation-detail-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin-bottom: var(--space-md);
+  font-size: 0.75rem;
+}
+
+.session-automation-detail-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.session-automation-detail-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-automation-detail-section + .session-automation-detail-section {
+  margin-top: var(--space-md);
+}
+
+.session-automation-detail-heading {
+  margin-bottom: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+}

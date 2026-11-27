@@ -32,6 +32,7 @@ import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
+import { registerSessionAutomationsRoutes } from "./routes/session-automations"
 import { registerSessionFavoritesRoutes } from "./routes/session-favorites"
 import { registerSessionCleanupRoute } from "./routes/session-cleanup"
 import { SessionCleanupFence } from "./session-cleanup-fence"
@@ -609,6 +610,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, permissionModes })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
+  registerSessionAutomationsRoutes(app, { workspaceManager: deps.workspaceManager })
   const sessionCleanup = deps.sessionPermissions?.cleanup ?? new SessionCleanupFence()
   if (!deps.sessionPermissions) {
     const stopPermissionRefresh = connectSessionPermissionRefresh(deps.eventBus, deps.workspaceManager, permissionModes,

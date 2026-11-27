@@ -1,0 +1,87 @@
+import type { SessionAutomationAction } from "../../../server/src/opencode/automation-contract"
+import { backendOf } from "../lib/backend-client"
+import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
+import { tGlobal } from "../lib/i18n"
+import { showToastNotification } from "../lib/notifications"
+import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { createSessionAutomationsStore } from "./session-automations-store"
+
+const EXECUTION_SETTLED_EVENTS = new Set([
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+])
+
+// The signal leaves the shared background budget's queue or aborts the request once the Session is hidden.
+export const sessionAutomations = createSessionAutomationsStore(
+  (instanceId, sessionId, signal) => backendOf(instanceId).api.fetchSessionAutomations(instanceId, sessionId, signal),
+  { signal: id => serverEvents.signalForInstance(id) },
+)
+
+// Changes created/updated during a turn or while the stream was down are re-read for demanded Sessions.
+const reconnects = createEventRefreshScheduler((instanceId, signal) =>
+  signal.aborted ? undefined : sessionAutomations.refreshDemanded(instanceId))
+
+serverEvents.on("instance.event", (event) => {
+  if (event.type !== "instance.event") return
+  const native = event.event as { type: string; data?: { sessionID?: unknown } }
+  if (native.type === "session.deleted" && typeof native.data?.sessionID === "string") {
+    sessionAutomations.forget(event.instanceId, native.data.sessionID)
+  } else if (EXECUTION_SETTLED_EVENTS.has(native.type) && typeof native.data?.sessionID === "string") {
+    void sessionAutomations.refresh(event.instanceId, native.data.sessionID)
+  } else if (native.type === "server.connected") {
+    reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
+  }
+})
+
+serverEvents.on("instance.eventStatus", (event) => {
+  if (event.type === "instance.eventStatus" && event.status === "connected") {
+    reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
+  }
+})
+
+serverEvents.onOpen(backendId => void sessionAutomations.refreshDemanded(undefined, backendId))
+
+serverEvents.on("workspace.stopped", (event) => {
+  if (event.type !== "workspace.stopped") return
+  reconnects.cancel(event.workspaceId)
+  sessionAutomations.clearInstance(event.workspaceId)
+})
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void sessionAutomations.refreshDemanded()
+  })
+}
+
+/** Pause, resume, or delete one automation owned by the Session; failures show a notice. */
+export function runSessionAutomationAction(
+  instanceId: string,
+  sessionId: string,
+  automationId: string,
+  action: SessionAutomationAction,
+): Promise<boolean> {
+  let ok = false
+  return sessionAutomations.run(instanceId, sessionId, automationId, async () => {
+    try {
+      const api = backendOf(instanceId).api
+      const result = action === "pause"
+        ? await api.pauseSessionAutomation(instanceId, sessionId, automationId)
+        : action === "resume"
+          ? await api.resumeSessionAutomation(instanceId, sessionId, automationId)
+          : await api.deleteSessionAutomation(instanceId, sessionId, automationId)
+      if (result.status !== "ok") {
+        throw new Error(result.error || tGlobal("instanceShell.automations.error"))
+      }
+      ok = true
+    } catch (error) {
+      showToastNotification({
+        category: "sessions",
+        title: tGlobal("instanceShell.automations.error"),
+        message: getOpencodeErrorMessage(error, tGlobal("instanceShell.automations.error")),
+        variant: "error",
+      })
+    }
+  }).then(() => ok)
+}
