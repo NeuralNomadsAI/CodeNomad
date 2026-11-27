@@ -235,7 +235,15 @@ export class MissionDocumentPassageEngine {
     if (!doc?.pending || doc.pending.id !== passageID) throw new Error("Passage changed during admission")
     if (admission.kind === "not-started") {
       if (doc.pending.admittedAt !== null || doc.pending.admissionAttempted) return "unknown"
-      const settled = await this.change(locked, doc, next => changes.settle(next, doc!.pending!.id, "failed", this.ports.now(), true), admission.current)
+      const at = Math.max(this.ports.now(), doc.pending.createdAt, doc.history.at(-1)?.settledAt ?? 0)
+      const settled = await this.change(locked, doc, next => {
+        const preparedCutoff = Math.max(0, ...next.calendars.map(item => item.wakePreparing?.dueAt ?? 0))
+        changes.settle(next, doc!.pending!.id, "failed", at, true)
+        if (next.calendars.some(item => item.role === "principal") && (preparedCutoff > 0 || next.fanIn && !next.fanIn.completed)) {
+          next.fanIn = this.windowValue(next, Math.max(at, preparedCutoff), true)
+        }
+      }, admission.current)
+      await this.closeSuppressedWindow(locked, settled)
       await this.ports.retired?.(doc)
       await this.ports.cleanup?.(settled, locked)
       return "settled"
@@ -306,8 +314,9 @@ export class MissionDocumentPassageEngine {
   }
   private async consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false,
     read?: SlotNews) {
-    // Overlapping wakes are decided at their slot; without a complete read they stay unconsumed.
-    const overlap = !!doc.fanIn?.overlap && wakes.length > 0 && coalesces(doc)
+    // Overlapping wakes are decided at their slot while the schedule can still defer a launch;
+    // a blocked or paused/stopped schedule cannot defer, so keep only the native wake proof.
+    const overlap = !!doc.fanIn?.overlap && wakes.length > 0 && coalesces(doc) && doc.state === "running" && !doc.blocked
     const slot = overlap ? read ?? await this.slotNews(doc) : undefined
     if (overlap && !slot) return doc
     return this.change(locked, doc, next => {
