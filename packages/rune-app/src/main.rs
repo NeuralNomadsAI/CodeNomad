@@ -77,6 +77,7 @@ struct State {
     command_palette: shell::command_palette::Palette,
     tab_rename: shell::tab_rename::Rename,
     temporary: shell::temporary::Host,
+    blank_cleanup: shell::blank_cleanup::Host,
     workspace_open: shell::workspace_open::Host,
     status_permissions: shell::status_permissions::Permissions,
     status_services: shell::status_services::Services,
@@ -165,6 +166,7 @@ fn init() -> State {
         command_palette: Default::default(),
         tab_rename: Default::default(),
         temporary: Default::default(),
+        blank_cleanup: Default::default(),
         workspace_open: Default::default(),
         status_permissions: Default::default(),
         status_services: Default::default(),
@@ -359,6 +361,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= shell::status_services::poll(s, now, tx);
     changed |= shell::status_usage::poll(s, now, tx);
     changed |= shell::temporary::poll(s, tx);
+    changed |= shell::blank_cleanup::poll(s, tx);
     changed |= shell::workspace_open::poll(s);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {

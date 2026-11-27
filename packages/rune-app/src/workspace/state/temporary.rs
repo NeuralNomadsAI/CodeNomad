@@ -358,6 +358,7 @@ pub(crate) fn finish_discarded(
         ui.changed();
     }
     if release_on_server {
+        crate::shell::blank_cleanup::abort_for_project(s, &stashed.project.id);
         let backend = stashed.backend.clone();
         let project_id = stashed.project.id.clone();
         platform::spawn(async move {
@@ -575,6 +576,19 @@ pub(crate) fn detach_dead_temporary(s: &mut State, tab_key: &str, tx: &mut Tx) -
     if blocked {
         return false;
     }
+    if let Some(project_id) = s.workspace.as_ref().and_then(|ui| {
+        let index = ui.entries.iter().position(|item| item.key == tab_key)?;
+        if ui.active == index {
+            s.screen
+                .launcher()
+                .and_then(|l| l.project.as_ref())
+                .map(|p| p.id.clone())
+        } else {
+            ui.entries[index].project.as_ref().map(|p| p.id.clone())
+        }
+    }) {
+        crate::shell::blank_cleanup::abort_for_project(s, &project_id);
+    }
     crate::shell::temporary::dismiss_for_tab(s, tab_key);
     tabs::detach_local_without_release(s, tab_key, true, tx);
     true
@@ -621,6 +635,7 @@ pub(crate) fn detach_stopped_temporary(
     if keys.is_empty() {
         return false;
     }
+    crate::shell::blank_cleanup::abort_for_project(s, workspace_id);
     for tab_key in keys {
         crate::shell::temporary::dismiss_for_tab(s, &tab_key);
         tabs::detach_local_without_release(s, &tab_key, keep_drafts, tx);

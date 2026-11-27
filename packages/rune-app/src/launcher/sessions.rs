@@ -341,6 +341,7 @@ pub(super) fn retry_mission_conversation(s: &mut State, id: String) {
 }
 
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
+    crate::shell::blank_cleanup::abort_for_session(s, &id);
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -362,7 +363,7 @@ fn choose_from(
 }
 fn choose_from_inner(
     s: &mut State,
-    candidates: Vec<(String, Option<usize>)>,
+    mut candidates: Vec<(String, Option<usize>)>,
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
@@ -387,6 +388,13 @@ fn choose_from_inner(
     };
     if l.pending {
         return;
+    }
+    candidates.retain(|(id, _)| !crate::shell::blank_cleanup::is_deleting_session(s, &p.id, id));
+    if candidates.is_empty() {
+        return;
+    }
+    for (id, _) in &candidates {
+        crate::shell::blank_cleanup::abort_for_session(s, id);
     }
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {

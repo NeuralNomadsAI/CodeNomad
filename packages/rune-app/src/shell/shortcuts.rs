@@ -14,6 +14,18 @@ const APP_TAB_IDS: [&str; 9] = [
     "app-tab-9",
 ];
 
+const SESSION_TAB_IDS: [&str; 9] = [
+    "session-tab-1",
+    "session-tab-2",
+    "session-tab-3",
+    "session-tab-4",
+    "session-tab-5",
+    "session-tab-6",
+    "session-tab-7",
+    "session-tab-8",
+    "session-tab-9",
+];
+
 pub(super) fn modal_open(s: &State) -> bool {
     #[cfg(target_arch = "wasm32")]
     if crate::platform::pairing::required(s) {
@@ -24,6 +36,7 @@ pub(super) fn modal_open(s: &State) -> bool {
         return true;
     }
     settings::blocks_shell_shortcuts(s)
+        || super::blank_cleanup::is_open(s)
         || super::temporary::is_open(s)
         || super::tab_rename::is_open(s)
         || super::command_palette::is_open(s)
@@ -120,7 +133,7 @@ pub(super) fn has_active_session(s: &State) -> bool {
 fn home_focus_allows_browse(tx: &Tx) -> bool {
     match tx.focused() {
         None => true,
-        Some("browse" | "open-folder" | "new-temporary-tab") => true,
+        Some("browse" | "open-folder" | "new-temporary-tab" | "refresh-projects") => true,
         Some(key) => key.starts_with("project-") && !key.starts_with("project-tabs-"),
     }
 }
@@ -146,10 +159,12 @@ enum Action {
     InstancePrev,
     InstanceNext,
     AppTab(usize),
+    SessionTab(usize),
     SessionNew,
     SessionPrev,
     SessionNext,
     CloseSession,
+    CleanupBlankSessions,
 }
 
 fn reserved_shell_key(event: &KeyEvent) -> bool {
@@ -179,6 +194,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     let has_workspace = s.workspace.is_some();
     let project_open = has_project(s);
     let session_open = project_open && has_active_session(s);
+    let can_cleanup_blank = super::blank_cleanup::can_start(s);
     let Some(action) = settings::match_shortcut(s, event, tx, |matches| {
         if matches("open-command-palette") {
             return Some(Action::OpenCommandPalette);
@@ -205,16 +221,14 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
                 }
             }
         }
-        // Match Solid's registration priority: setupTabKeyboardShortcuts, then registerNavigationShortcuts.
+        // Match Solid's registration priority: setupTabKeyboardShortcuts,
+        // then registerNavigationShortcuts, then commandHotkeyDefinitions.
         if project_open && matches("session-new") {
             return Some(Action::SessionNew);
         }
         if has_workspace {
             if matches("new-instance") {
                 return Some(Action::NewInstance);
-            }
-            if matches("new-temporary-instance") {
-                return Some(Action::NewTemporaryInstance);
             }
             if matches("close-instance") {
                 return Some(Action::CloseInstance);
@@ -223,10 +237,15 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if session_open && matches("close-session") {
             return Some(Action::CloseSession);
         }
-        if has_workspace {
-            if let Some(index) = APP_TAB_IDS.iter().position(|id| matches(id)) {
+        for index in 0..9 {
+            if has_workspace && matches(APP_TAB_IDS[index]) {
                 return Some(Action::AppTab(index));
             }
+            if project_open && matches(SESSION_TAB_IDS[index]) {
+                return Some(Action::SessionTab(index));
+            }
+        }
+        if has_workspace {
             if matches("instance-prev") {
                 return Some(Action::InstancePrev);
             }
@@ -241,6 +260,12 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if matches("session-next") {
                 return Some(Action::SessionNext);
             }
+        }
+        if has_workspace && matches("new-temporary-instance") {
+            return Some(Action::NewTemporaryInstance);
+        }
+        if project_open && can_cleanup_blank && matches("cleanup-blank-sessions") {
+            return Some(Action::CleanupBlankSessions);
         }
         None
     }) else {
@@ -285,14 +310,32 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         Action::InstancePrev => workspace::select_relative(s, false, tx),
         Action::InstanceNext => workspace::select_relative(s, true, tx),
         Action::AppTab(index) => workspace::select_index(s, index, tx),
+        Action::SessionTab(index) => select_session_index(s, index, tx),
         Action::SessionNew => launcher::create_blank(s),
         Action::SessionPrev => select_relative_session(s, false, tx),
         Action::SessionNext => select_relative_session(s, true, tx),
         Action::CloseSession => {
             launcher::close_session(s, tx);
         }
+        Action::CleanupBlankSessions => {
+            super::blank_cleanup::open_confirm(s, None, tx);
+        }
     }
     true
+}
+
+pub(super) fn select_session_index(s: &mut State, index: usize, tx: &mut Tx) {
+    if !launcher::can_change_session(s) || s.screen.launcher().is_none_or(|l| l.pending) {
+        return;
+    }
+    let Some(target) = s
+        .screen
+        .launcher()
+        .and_then(|l| sidebar::visible_session_ids(l).into_iter().nth(index))
+    else {
+        return;
+    };
+    launcher::choose(s, target, tx);
 }
 
 pub(super) fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {

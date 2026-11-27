@@ -522,12 +522,11 @@ fn detach_entry(s: &mut State, id: &str, keep_drafts: bool, release_on_server: b
             }
         }
     }
-    if release_on_server && let (Some(backend), Some(project)) = (removed.binding, removed.project)
-    {
-        platform::spawn(async move {
-            let _ = backend.release_project(&project.id).await;
-        });
-    }
+    let release_target = if release_on_server {
+        removed.binding.zip(removed.project)
+    } else {
+        None
+    };
     for (saved, session_id, attempt_id) in propagate_locks {
         for entry in &mut ui.entries {
             if matches!(&entry.saved, Tab::Workspace(current) if same_project(current, &saved)
@@ -551,6 +550,12 @@ fn detach_entry(s: &mut State, id: &str, keep_drafts: bool, release_on_server: b
         ui.active.min(ui.entries.len() - 1)
     };
     ui.changed();
+    if let Some((backend, project)) = release_target {
+        crate::shell::blank_cleanup::abort_for_project(s, &project.id);
+        platform::spawn(async move {
+            let _ = backend.release_project(&project.id).await;
+        });
+    }
     if let Some(attempt_id) = propagate_to_active
         && s.composer.unconfirmed_state().is_none()
     {

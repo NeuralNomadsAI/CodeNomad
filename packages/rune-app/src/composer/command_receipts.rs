@@ -54,6 +54,12 @@ impl CommandReceipts {
         };
         self.held.values().any(|attempt| attempt.target == target)
     }
+
+    pub(crate) fn has_for_session(&self, session_id: &str) -> bool {
+        self.held
+            .values()
+            .any(|attempt| attempt.target.1 == session_id)
+    }
 }
 
 pub(super) fn repeats(s: &State) -> bool {

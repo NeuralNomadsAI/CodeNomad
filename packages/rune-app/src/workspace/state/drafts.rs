@@ -318,6 +318,7 @@ pub fn note_unconfirmed(s: &mut State, attempt_id: &str) {
         note_unconfirmed_for(s, &mut ui, &saved, &key, attempt_id);
     }
     s.workspace = Some(ui);
+    crate::shell::blank_cleanup::abort_if_protected(s);
 }
 
 pub fn has_unconfirmed(s: &State) -> bool {
@@ -488,6 +489,7 @@ pub fn capture(s: &mut State) {
     }
     ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
+    crate::shell::blank_cleanup::abort_if_protected(s);
 }
 
 pub fn unconfirmed_drafts_full(s: &State) -> bool {
@@ -583,6 +585,7 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 }
 
 pub fn bound(s: &mut State, backend: &Backend) -> String {
+    crate::shell::blank_cleanup::abort_for_session(s, &backend.session);
     crate::composer::recall::restore(s);
     capture(s);
     let same_session =

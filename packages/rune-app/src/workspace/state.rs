@@ -5,6 +5,8 @@ pub use tabs::{
     new_tab, rename_tab, select, select_index, select_relative, tab_rename_seed,
 };
 
+mod cleanup;
+pub(crate) use cleanup::{remove_cleaned_session, session_cleanup_protected};
 mod drafts;
 mod notification;
 mod observation;
