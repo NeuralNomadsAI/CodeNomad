@@ -20,7 +20,7 @@ Ask an agent in any project conversation, including a subagent or scheduled run,
 
 Agents can read every Mission in the project, including yours, from any owned conversation. Read-only project views cover tasks, results, cleanup, scheduled passages and source choices; browsing never starts or retries work.
 
-Agents can also diagnose scheduling, prepare its settings while preserving explicit OFF, resume a confirmed partial edit with its original request, and create or control daily schedules.
+Agents can also diagnose scheduling, prepare its settings while preserving explicit OFF, and resume a confirmed partial edit with its original request.
 
 For one-time Missions, agents can start, resume, pause gracefully, interrupt immediately, stop, edit, delete, resume coordination after failure, request a missing report or ask for an update. This includes Missions you created, with the same admission and revision checks as the panel. Deletion follows your managed-session deletion preference unless explicitly overridden. Unconfirmed controls and cleanup keep their original identity; agents read the saved status before explicitly continuing a confirmed partial action.
 
@@ -68,6 +68,10 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 **Start automatically** is outside Scheduling and off by default. Leave it off to create a paused Mission, then use ▶ **Start** in the header. Turn it on to request Start after creation is confirmed, with the ordinary checks and automatic scheduling preparation.
 
+### Keep coordinator active with /goal {#coordinator-goal}
+
+**Keep coordinator active with /goal** is available for one-time Missions and off by default. When enabled, starting the Mission arms OpenCode `/goal` on the coordinator, pausing and resuming the Mission pauses and resumes that goal, and finishing or stopping clears it. If OpenCode restarts while the Mission is running, Missions resumes the restart-paused goal automatically (including when CodeNomad is closed, if OpenCode automations are enabled), while leaving manual, stall, or round-limit pauses untouched. The live goal status and controls appear in the Mission overview.
+
 ## Scheduling {#daily-schedules}
 
 ### Criteria {#native-scheduling}
@@ -110,15 +114,9 @@ In **Followed conversations**, use **Add conversation** and choose a conversatio
 
 Choose **New commits on a local branch** to watch a local Git ref, or **New commits on a remote branch** and enter the branch name (for example `dev`). The remote check reads the detected repository directly, without a local fetch. Several commits between checks produce one passage.
 
-### Existing daily schedules {#existing-daily-schedules}
-
-Agents can find and control these schedules from any conversation belonging to the same project, including another worktree.
-
-Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.
-
 ## Follow the tree and read results {#tracking}
 
-The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory.
+The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory. One-time and recurring Missions share one list, latest activity first; a running scheduled run comes first.
 
 The eye toggles **Summary** in the central reader and follows your selection while pressed. Use **Open conversation** to go to the coordinator or selected task. **More actions** (⋯) contains the applicable update, interruption, save-configuration and edit commands.
 
@@ -163,15 +161,17 @@ While CodeNomad is running, agents can search saved conversations in this projec
 
 ## Closing CodeNomad and restarting services {#lifetime}
 
-Closing a project or CodeNomad does not stop native OpenCode work. Armed native schedules can run with CodeNomad closed while the service and execution host are available. A healthy native schedule resumes its calendar after a service restart; explicit pauses, stops and unresolved outcomes keep their barriers. Existing daily schedules require Resume after a restart.
+Closing a project or CodeNomad does not stop native OpenCode work. Armed native schedules can run with CodeNomad closed while the service and execution host are available. A healthy native schedule resumes its calendar after a service restart; explicit pauses, stops and unresolved outcomes keep their barriers.
 
 Some coordination and recovery actions need the CodeNomad backend.
+
+A running one-time Mission keeps assigning its tasks and delivering their reports while no CodeNomad window has the project open. Environment variables and permission settings changed in CodeNomad apply to those conversations again once the project is open.
 
 ## Pause, Stop and unconfirmed actions {#controls-recovery}
 
 One-time **Pause** lets current steps finish without starting new work. **Interrupt now** requests immediate interruption. **Stop** is terminal and asks for confirmation. Native schedule Pause closes future admission and requests interruption of its current passage. Tool effects may continue after an interruption; inspect partial results.
 
-Keep an unconfirmed action's original request. Use the offered **Check status**, **Refresh saved request** or retry control; do not create a replacement to bypass uncertainty.
+Keep an unconfirmed action's original request: while a native schedule or editor view is open, CodeNomad rereads it automatically until it settles and automatically retries only an exact recorded partial preparation. Use **Check status** for one-time Mission controls, and **Refresh mission map** for ordinary one-time creation when offered; do not create a replacement to bypass uncertainty. A native schedule offers **Check status** in its **More actions** menu.
 
 An interrupted or failed one-time Mission can offer **Recover interrupted mission**. Eligible tasks offer missing-report recovery.
 

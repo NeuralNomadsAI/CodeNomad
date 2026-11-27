@@ -40,7 +40,7 @@ async function setup(page: Page, options: { enabled?: boolean; lose?: "create" |
   const failedRequests: Array<{ method: string; path: string }> = []
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
     compareAndSet: async (key, value) => { values.set(key, structuredClone(value)) } }, "project", "/fixture")
-  let doc: MissionDocument, enabled = options.enabled ?? true, receipt: any
+  let doc: MissionDocument, enabled = options.enabled ?? true, receipt: any, proof = true
   let activationGate: Promise<void> | undefined
   const result = () => ({ ...missionScheduleView(doc), pending: false,
     document: { ...missionScheduleView(doc).document, control: receipt } })
@@ -64,11 +64,15 @@ async function setup(page: Page, options: { enabled?: boolean; lose?: "create" |
   await page.route("**/api/workspaces/fixture/missions/**", async route => {
     const request = route.request(), target = new URL(request.url()).pathname
     if (request.method() === "GET") {
-      reads.push(new URL(request.url()))
+      const link = new URL(request.url())
+      reads.push(link)
       if (target.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" },
         api: { available: true }, enabled, origin: null, activation: { available: true,
           targets: [{ scope: "global", path: "/private/config/opencode.jsonc" }] } } })
-      if (target.endsWith("/schedule-settings")) return route.fulfill({ json: { document: missionDocumentSummary(doc) } })
+      if (target.endsWith("/schedule-settings")) return route.fulfill({ json: { document: proof ? missionDocumentSummary(doc)
+        : { ...missionDocumentSummary(doc), scheduleActivation: null } } })
+      if (!proof && (link.searchParams.has("requestID") || target.includes("/requests/")))
+        return route.fulfill({ status: 503, json: { ...result(), pending: true, code: "schedule-pending", document: { ...result().document, control: null } } })
       return route.fulfill({ json: result() })
     }
     assert.equal(request.method(), "POST")
@@ -119,7 +123,8 @@ async function setup(page: Page, options: { enabled?: boolean; lose?: "create" |
   await page.waitForFunction(realEditor => realEditor ? (window as any).realCreationStartFixture : (window as any).creationStartFixture, !!options.realEditor)
   if (options.realEditor) { await openMissionProfiles(page); await waitForCatalog() }
   else page.off("requestfinished", remember)
-  return { posts, reads, failedRequests, errors, waitForCatalog, get revision() { return doc.revision }, set activationGate(value: Promise<void>) { activationGate = value } }
+  return { posts, reads, failedRequests, errors, waitForCatalog, get revision() { return doc.revision },
+    set proof(value: boolean) { proof = value }, set activationGate(value: Promise<void>) { activationGate = value } }
 }
 const save = (page: Page, requested = true) => page.evaluate(({ configuration, requested }) =>
   (window as any).creationStartFixture.save(configuration, requested), { configuration, requested })
@@ -144,9 +149,6 @@ test("unchecked creation stays paused and recovered creation never autostarts", 
     const page = await browser.newPage(), f = await setup(page, { lose })
     try {
       await save(page, !!lose)
-      if (lose) {
-        await page.evaluate(() => (window as any).creationStartFixture.reconcile())
-      }
       await saved(page)
       assert.deepEqual(f.posts.map(post => post.action), ["create"])
       assert.deepEqual(f.errors, [])
@@ -154,15 +156,22 @@ test("unchecked creation stays paused and recovered creation never autostarts", 
   }
 })
 
-test("lost activation remains retained on remount; receipt recovery leaves Play explicit", async () => {
-  const page = await browser.newPage(), f = await setup(page, { enabled: false, lose: "activation" })
+test("lost activation remains retained on remount; automatic receipt recovery leaves Play explicit", async () => {
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page, { enabled: false, lose: "activation" })
   try {
+    f.proof = false
+    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname.endsWith("/schedule-settings"))
     const saving = save(page)
-    await saving; await saved(page)
+    await saving; await saved(page); await pendingRead
     assert.equal(await page.evaluate(() => (window as any).creationStartFixture.held()?.phase), "activation")
     await page.evaluate(() => (window as any).creationStartFixture.mount(false))
     await page.evaluate(() => (window as any).creationStartFixture.mount(true))
-    await page.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    assert.equal(await page.evaluate(() => (window as any).creationStartFixture.held()?.phase), "activation")
+    f.proof = true
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).creationStartFixture.held()?.phase === "publication")
     assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation"])
     assert.deepEqual(f.errors, [])
@@ -187,8 +196,10 @@ test("view departure after activation dispatch fences its direct Play continuati
 test("lost scheduled Play keeps its exact original control across helper disposal and remount", async () => {
   const page = await browser.newPage(), f = await setup(page, { lose: "play" })
   try {
+    f.proof = false
     await save(page); await saved(page)
     const held = await page.evaluate(() => (window as any).creationStartFixture.held())
+    assert.equal(held.phase, "control")
     assert.equal(held.action, "play"); assert.equal(held.requestID, f.posts[2].requestID)
     await page.evaluate(() => (window as any).creationStartFixture.mount(false))
     await page.evaluate(() => (window as any).creationStartFixture.mount(true))
@@ -200,6 +211,7 @@ test("lost scheduled Play keeps its exact original control across helper disposa
 
 test("real editor adopts discovered project before creation; lost Play remains recoverable by current-project controls after remount", async () => {
   const page = await browser.newPage({ viewport: { width: 800, height: 1200 } })
+  await page.clock.install({ time: Date.now() })
   const f = await setup(page, { realEditor: true, lose: "play" })
   try {
     const form = page.locator("form.mission-editor"), originalForm = await form.elementHandle()
@@ -218,8 +230,11 @@ test("real editor adopts discovered project before creation; lost Play remains r
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await form.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Fixture model" }).waitFor({ state: "attached" })
+    f.proof = false
+    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID"))
     await form.getByRole("button", { name: "Create", exact: true }).click()
-    await form.waitFor({ state: "detached" }); await saved(page)
+    await form.waitFor({ state: "detached" }); await saved(page); await pendingRead
 
     assert.deepEqual(f.posts.map(post => [post.action, post.target]), [
       ["create", "/api/workspaces/fixture/missions/scheduled"],
@@ -232,27 +247,33 @@ test("real editor adopts discovered project before creation; lost Play remains r
     assert.equal(retained.phase, "control"); assert.equal(retained.action, "play")
     assert.equal(retained.requestID, play.requestID); assert.equal(retained.expectedRevision, play.expectedRevision)
     assert.equal(await page.evaluate(() => (window as any).realCreationStartFixture.orphaned()), undefined)
-    assert.equal(f.reads.filter(url => url.searchParams.has("requestID")).length, 0, "lost Play must wait for explicit receipt recovery")
 
     await page.evaluate(() => (window as any).realCreationStartFixture.mountControls(false))
     await page.getByRole("region", { name: "Created mission controls", exact: true }).waitFor({ state: "detached" })
+    const remountRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID"))
     await page.evaluate(() => (window as any).realCreationStartFixture.mountControls(true))
     const controls = page.getByRole("region", { name: "Created mission controls", exact: true })
-    await controls.waitFor()
+    await controls.waitFor(); await remountRead
     const remounted = JSON.parse(await controls.locator("[data-held-control]").innerText())
+    assert.equal(remounted.phase, "control")
     assert.equal(remounted.requestID, play.requestID); assert.equal(remounted.expectedRevision, play.expectedRevision)
-    await controls.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    f.proof = true
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).realCreationStartFixture.held()?.phase === "publication")
 
     const receiptReads = f.reads.filter(url => url.searchParams.has("requestID"))
-    assert.equal(receiptReads.length, 1)
-    assert.equal(receiptReads[0].pathname, "/api/workspaces/fixture/missions/msn_created/schedule")
-    assert.equal(receiptReads[0].searchParams.get("requestID"), play.requestID)
-    assert.equal(receiptReads[0].searchParams.get("directory"), "/fixture")
+    assert.ok(receiptReads.length >= 2)
+    for (const read of receiptReads) {
+      assert.equal(read.pathname, "/api/workspaces/fixture/missions/msn_created/schedule")
+      assert.equal(read.searchParams.get("requestID"), play.requestID)
+      assert.equal(read.searchParams.get("directory"), "/fixture")
+    }
     const recovered = await page.evaluate(() => (window as any).realCreationStartFixture.held())
     assert.equal(recovered.requestID, play.requestID); assert.equal(recovered.minimumRevision, f.revision)
     assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation", "play"], "receipt recovery must never send another Play")
-    assert.deepEqual(f.failedRequests, [{ method: "POST", path: "/api/workspaces/fixture/missions/msn_created/schedule" }])
+    assert.deepEqual(f.failedRequests.filter(request => request.method === "POST"),
+      [{ method: "POST", path: "/api/workspaces/fixture/missions/msn_created/schedule" }])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

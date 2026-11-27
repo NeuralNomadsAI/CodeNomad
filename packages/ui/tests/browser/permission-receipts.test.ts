@@ -325,6 +325,29 @@ test("expanded unanchored receipts participate in latest, anchor and manual scro
   } finally { await page.close() }
 })
 
+test("user, queued and non-assistant rows never query permission receipts or show a failure banner", async () => {
+  const page = await browser.newPage()
+  try {
+    const queries: string[] = []
+    const errors = await prepare(page, route => {
+      queries.push(new URL(route.request().url()).searchParams.toString())
+      return route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"offline"}' })
+    })
+    await page.goto(`${url}?withNonAssistant`)
+    await page.locator('[data-permission-message="message-a"] .permission-receipts-error').waitFor()
+    await page.getByText("Prompt utilisateur", { exact: true }).waitFor()
+    await page.getByText("Prompt en file", { exact: true }).waitFor()
+    await page.waitForTimeout(100)
+    assert.ok(queries.some(query => query === "messageId=message-a"))
+    assert.ok(queries.every(query => query === "messageId=message-a" || query === "unanchored=true"),
+      `unexpected receipt queries: ${queries.join(", ")}`)
+    for (const id of ["user-1", "queued-1", "compaction-1"]) {
+      assert.equal(await page.locator(`[data-permission-message="${id}"]`).count(), 0)
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const) {
   test(`long permission resources and reasons wrap with reachable pagination at ${width}px in ${theme}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 800 } })

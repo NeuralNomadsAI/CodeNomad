@@ -160,6 +160,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "Только чтение",
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
   "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
+  "filesPanel.saveConflict": "Файл на диске изменился во время сохранения. Обновите или сохраните ещё раз.",
+  "filesPanel.saveTooLarge": "Файл слишком велик для сохранения.",
   "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние изменения.",
   "filesPanel.image.before": "До",
   "filesPanel.image.after": "После",

@@ -22,7 +22,7 @@ test("five real API calls retain only two secondary slots until streams cancel",
   try {
     await page.addInitScript("window.__name=f=>f"); await page.goto(url)
     const result = await page.evaluate(async () => {
-      const { serverApi } = await import("/src/lib/api-client.ts"), { backgroundReads } = await import("/src/lib/background-read-queue.ts")
+      const { serverApi } = await import("/src/lib/api-client.ts"), { missionReads } = await import("/src/lib/background-read-queue.ts")
       const original = globalThis.fetch, abort = new AbortController()
       let starts = 0, cancels = 0, entered!: () => void
       const ready = new Promise<void>(resolve => { entered = resolve })
@@ -34,7 +34,7 @@ test("five real API calls retain only two secondary slots until streams cancel",
         await new Promise(resolve => setTimeout(resolve, 0))
         const beforeCancel = starts
         abort.abort(); const settled = await Promise.allSettled(calls)
-        await backgroundReads.run(new AbortController().signal, async () => {}) // cancellation has actually released the slots
+        await missionReads.run(new AbortController().signal, async () => {}) // cancellation has actually released the slots
         return { beforeCancel, starts, cancels, rejected: settled.filter(value => value.status === "rejected").length }
       } finally { abort.abort(); await Promise.allSettled(calls); globalThis.fetch = original }
     })
@@ -48,7 +48,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`expired ${mode} cl
   try {
     await page.addInitScript("window.__name=f=>f"); await page.goto(url)
     const result = await page.evaluate(async mode => {
-      const { serverApi } = await import("/src/lib/api-client.ts"), { backgroundReads } = await import("/src/lib/background-read-queue.ts")
+      const { serverApi } = await import("/src/lib/api-client.ts"), { missionReads } = await import("/src/lib/background-read-queue.ts")
       const original = globalThis.fetch
       let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
       const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject }), deadline = performance.now() + 200
@@ -59,7 +59,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`expired ${mode} cl
       }
       const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", "review", { offset: 0 }, { projectID: "project", current: () => true, deadline }))
       let markerStarted = false, startedAfterDeadline = false, startedWhileDeferred = false
-      const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
+      const marker = missionReads.run(AbortSignal.timeout(1000), async () => {
         markerStarted = true; startedAfterDeadline = performance.now() >= deadline; startedWhileDeferred = !released
       }).then(() => true, () => false)
       try {
@@ -69,7 +69,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`expired ${mode} cl
       } finally {
         released = true; rejectCancel(new Error("late cancellation rejection"))
         await Promise.allSettled(calls); await marker
-        await backgroundReads.run(new AbortController().signal, async () => {})
+        await missionReads.run(new AbortController().signal, async () => {})
         globalThis.fetch = original
       }
     }, mode)

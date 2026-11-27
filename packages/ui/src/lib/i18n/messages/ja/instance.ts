@@ -160,6 +160,8 @@ export const instanceMessages = {
   "filesPanel.readOnly": "読み取り専用",
   "filesPanel.binary": "このバイナリファイルはプレビューできません。",
   "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
+  "filesPanel.saveConflict": "保存中にディスク上のファイルが変更されました。更新するか、もう一度保存してください。",
+  "filesPanel.saveTooLarge": "ファイルが大きすぎて保存できません。",
   "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",
   "filesPanel.image.before": "変更前",
   "filesPanel.image.after": "変更後",

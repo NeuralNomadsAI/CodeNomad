@@ -6,7 +6,6 @@ import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { panelMissions, routeMissionTasks } from "./mission-content-fixture"
@@ -52,8 +51,6 @@ async function open(context: BrowserContextOptions, missions: MissionMap[], sele
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
-      projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
     return route.fulfill({ json: {} })
   })
   await events.route(page)
@@ -164,8 +161,12 @@ for (const variant of [
       await settle(page)
       for (const edge of await railEnds(page)) assert.ok(edge.gaps.every(gap => gap <= 0.75), `after scroll ${edge.edge}: ${edge.gaps}`)
       // Full-width rollover and the row button stay interactive beneath the rail.
+      // The tree renders the rows in view: its last task mounts once the panel reaches the tree's end.
+      await page.locator(".mission-tree").evaluate(tree => tree.scrollIntoView({ block: "end" }))
       const row = page.locator('.mission-tree-node[data-task-key="cleanup"]')
       await row.scrollIntoViewIfNeeded()
+      await settle(page)
+      for (const edge of await railEnds(page)) assert.ok(edge.gaps.every(gap => gap <= 0.75), `at the tree end ${edge.edge}: ${edge.gaps}`)
       await page.waitForFunction(() => getComputedStyle(document.querySelector(".mission-tree-list")!).pointerEvents !== "none")
       const box = (await row.boundingBox())!
       const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".mission-tree-node")?.getAttribute("data-task-key"), { x: box.x + box.width / 2, y: box.y + box.height / 2 })

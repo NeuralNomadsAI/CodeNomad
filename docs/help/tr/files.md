@@ -30,7 +30,7 @@ Workspace `.mmd` dosyaları diyagram olarak açılır. Düzenlemek için **Kayna
 Masaüstü uygulaması bir taslak kurtarma penceresi açarsa pencereyi kapatmadan önce listedeki değişiklikleri **Kopyala** ile saklayın.
 4. Dosya harici olarak değiştiyse üzerine yazma onayını inceleyin; taslağınızı bu değişikliğin üzerine yazmadan saklamak için **İptal** öğesini seçin.
 
-Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyasındaki gerçek dosyaya yazar; istem göndermez veya düzenlemeyi stage/commit etmez. Çakışma penceresi **Dosya agent tarafından değiştirildi. Agent'ın değişikliklerinin üzerine yazılsın mı?** der; diğer harici yazıcıların değişikliklerine de aynı özeni gösterin.
+Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyasındaki gerçek dosyaya yazar; istem göndermez veya düzenlemeyi stage/commit etmez. Çakışma penceresi **Dosya agent tarafından değiştirildi. Agent'ın değişikliklerinin üzerine yazılsın mı?** der; diğer harici yazıcıların değişikliklerine de aynı özeni gösterin. Kaydetme, dosyayı değiştirmeden önce sürümünü denetler; kaydetme sırasında bir değişiklik algılanırsa kaydetme reddedilir ve taslağınız korunur; böylece **Yenile** veya yeniden **Kaydet** seçebilirsiniz.
 
 **Önceki durumu geri yükle** açıksa, masaüstü uygulamasını yeniden başlattıktan sonra aynı projede ve çalışma ağacında aynı dosyayı açarak taslağınızı geri yükleyin. Dosya diskte değişmişse CodeNomad taslağı korur ve çakışmayı gösterir. Özgün dosya yalnızca açıkça kaydettiğinizde değişir. Her masaüstü profili toplam 256 KiB içinde en çok 32 taslak tutar. Taslak saklanamadığı için pencere açık kalırsa taslağı atmadan önce değişiklikleri kaydedin veya kopyalayın. **Yenile**, taslağı atmadan önce onay ister.
 

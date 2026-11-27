@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import type { MissionListResponse, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import type { MissionTaskPageResponse, MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { createMissionContentStore } from "./mission-content-store"
-import { createMissionStore } from "./mission-store"
+import { listedMissionStore, type MissionListing } from "./mission-store.test-fixture"
 import { MissionTaskPageReadError } from "../lib/mission-task-page-read"
 import { raceTaskRead } from "../lib/mission-task-read-lifetime"
 import { answerTaskRequest, createTaskPageCache, failTaskRequest, mergeTaskPages, missionBodyRevision, taskRequestsOf } from "./mission-task-pages"
@@ -26,8 +26,8 @@ const compact = (value: Plan): MissionPanelMap => ({ version: 1, id: "msn_wide",
   bodies: {}, actorEvidence: { reportOwed: [], callOpen: [] },
   tasks: [...new Set([...value.keys.slice(0, 50), ...value.blocked ?? []])].map(key => row(value, key)).sort((left, right) => left.order! - right.order!),
   taskPage: taskPage(value, 0, Math.min(50, value.keys.length)) } as MissionPanelMap)
-const listed = (value: Plan): MissionListResponse => ({ available: true, version: 1, projectID: "project-1", generatedAt: 1, discardedEvents: 0,
-  activity: { generatedAt: 1, missions: [] }, missions: [compact(value)] })
+const listed = (value: Plan): Extract<MissionListing, { available: true }> => ({ available: true, projectID: "project-1", generatedAt: 1, discardedEvents: 0,
+  missions: [compact(value)] })
 /** The tasks route over `current()`: its page, or the refusal of another order. */
 const pages = (current: () => Plan, calls: MissionTaskRequest[]) => async (_instanceId: string, missionId: string, request: MissionTaskRequest, _scope?: unknown): Promise<MissionTaskPageResponse> => {
   calls.push(request)
@@ -36,7 +36,7 @@ const pages = (current: () => Plan, calls: MissionTaskRequest[]) => async (_inst
   const offset = request.offset ?? 0, keys = request.offset !== undefined ? value.keys.slice(offset, offset + 50) : value.keys.filter(key => request.keys?.includes(key))
   return { ...base, taskPage: taskPage(value, offset, request.offset !== undefined ? offset + keys.length : offset), tasks: keys.map(key => row(value, key)), reports: [] }
 }
-const keys = (store: ReturnType<typeof createMissionStore>) => store.state("instance-1").missions[0].tasks.map(task => task.key)
+const keys = (store: ReturnType<typeof listedMissionStore>) => store.state("instance-1").missions[0].tasks.map(task => task.key)
 
 test("pre-aborted task work observes a late rejection instead of leaking an unhandled promise", async () => {
   const abort = new AbortController(); abort.abort()
@@ -48,7 +48,7 @@ test("connection and wanted-mission transitions fence task reads without droppin
   const value = plan(150), calls: MissionTaskRequest[] = [], route = pages(() => value, calls)
   let release!: () => void, entered!: () => void, current!: () => boolean, signal!: AbortSignal
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
-  const store = createMissionStore(async () => listed(value), async (...args) => {
+  const store = listedMissionStore(() => listed(value), async (...args) => {
     current = args[3].current; signal = args[3].signal; entered(); await gate; return route(...args)
   })
   await store.ensure("instance-1")
@@ -64,7 +64,7 @@ test("connection and wanted-mission transitions fence task reads without droppin
   assert.equal(store.state("instance-1").taskReads, undefined)
 
   let fail = true, attempts = 0
-  const changed = createMissionStore(async () => listed(value), async (...args) => {
+  const changed = listedMissionStore(() => listed(value), async (...args) => {
     attempts++; if (fail) throw new MissionTaskPageReadError("changed"); return route(...args)
   })
   changed.want("instance-1", "reader", "msn_wide"); await changed.ensure("instance-1")
@@ -85,7 +85,7 @@ test("a task read released by its last wanted owner cannot publish", async () =>
   const value = plan(120), calls: MissionTaskRequest[] = [], route = pages(() => value, calls)
   let release!: () => void, entered!: () => void
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
-  const store = createMissionStore(async () => listed(value), async (...args) => { entered(); await gate; return route(...args) })
+  const store = listedMissionStore(() => listed(value), async (...args) => { entered(); await gate; return route(...args) })
   await store.ensure("instance-1"); store.want("instance-1", "selection", "msn_wide")
   const pending = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
   await started; store.want("instance-1", "selection", undefined); release()
@@ -96,7 +96,7 @@ test("queued reads keep their wanted lifetime and a newer revision does not rere
   let value = plan(150), sends = 0, release!: () => void, entered!: () => void
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
   const route = pages(() => value, [])
-  const store = createMissionStore(async () => listed(value), async (...args) => { sends++; entered(); await gate; return route(...args) })
+  const store = listedMissionStore(() => listed(value), async (...args) => { sends++; entered(); await gate; return route(...args) })
   store.setDemand("instance-1", true); store.want("instance-1", "selection", "msn_wide"); await store.ensure("instance-1")
   const running = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
   await started
@@ -113,7 +113,7 @@ test("last-owner A→B→A never resurrects a queued or running lifetime; concur
   const value = plan(150), route = pages(() => value, [])
   let release!: () => void, entered!: () => void, oldCurrent!: () => boolean, sends = 0
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
-  const store = createMissionStore(async () => listed(value), async (...args) => {
+  const store = listedMissionStore(() => listed(value), async (...args) => {
     sends++; if (sends === 1) { oldCurrent = args[3].current; entered(); await gate }
     return route(...args)
   })
@@ -141,7 +141,7 @@ test("releasing one of two applicable owners preserves the existing in-flight re
   const value = plan(120), route = pages(() => value, [])
   let release!: () => void, entered!: () => void, current!: () => boolean
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
-  const store = createMissionStore(async () => listed(value), async (...args) => { current = args[3].current; entered(); await gate; return route(...args) })
+  const store = listedMissionStore(() => listed(value), async (...args) => { current = args[3].current; entered(); await gate; return route(...args) })
   store.want("instance-1", "selection", "msn_wide"); store.want("instance-1", "reader", "msn_wide", true); await store.ensure("instance-1")
   const pending = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
   await started; store.want("instance-1", "selection", "other")
@@ -176,7 +176,7 @@ test("a failed reread and an unrelated successful page never let an older row ov
   const calls: MissionTaskRequest[] = []
   let fail = false
   const route = pages(() => value, calls)
-  const store = createMissionStore(async () => listed(value), async (...args) => {
+  const store = listedMissionStore(() => listed(value), async (...args) => {
     if (fail && args[2].offset === 50) throw new Error("temporary failure")
     return route(...args)
   })
@@ -216,7 +216,7 @@ test("a read further merges its page into the listed map, coalesced, and a failu
   const value = plan(150), calls: MissionTaskRequest[] = []
   let fail = false
   const route = pages(() => value, calls)
-  const store = createMissionStore(async () => listed(value), async (...args) => { if (fail) throw new Error("offline"); return route(...args) })
+  const store = listedMissionStore(() => listed(value), async (...args) => { if (fail) throw new Error("offline"); return route(...args) })
   store.want("instance-1", "reader", "msn_wide")
   await store.ensure("instance-1")
   assert.equal(keys(store).length, 50)
@@ -235,11 +235,11 @@ test("a read further merges its page into the listed map, coalesced, and a failu
   assert.equal(store.state("instance-1").taskReads, undefined)
 })
 
-test("a map that moves on reads its recorded pages again, and another order refuses a read, which the next list read repeats", async () => {
+test("a map that moves on reads its recorded pages again, and another order refuses a read, which the map's next adoption repeats", async () => {
   let value = plan(120)
   const calls: MissionTaskRequest[] = []
   let lists = 0
-  const store = createMissionStore(async () => { lists++; return listed(value) }, pages(() => value, calls))
+  const store = listedMissionStore(() => { lists++; return listed(value) }, pages(() => value, calls))
   store.want("instance-1", "reader", "msn_wide")
   await store.ensure("instance-1")
   await store.loadTasks("instance-1", "msn_wide", { keys: ["task-119"] })
@@ -262,9 +262,12 @@ test("a map that moves on reads its recorded pages again, and another order refu
   // A plan change moves the order: the read the server refuses lists again, which reads it again in the new order.
   const before = lists
   value = plan(120, 3, ["aaa-first"])
-  await store.loadTasks("instance-1", "msn_wide", { offset: 100 })
+  assert.equal(await store.loadTasks("instance-1", "msn_wide", { offset: 100 }), "reordered")
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(lists > before, "the refusal read the rows again")
+  // The map's owner adopts it in its new order, which reads the recorded pages again.
+  await store.refresh("instance-1")
   for (let attempt = 0; attempt < 5 && keys(store).length < 121; attempt++) await store.loadTasks("instance-1", "msn_wide", { offset: 100 })
-  assert.ok(lists > before, "the refusal read the list again")
   assert.ok(calls.some(call => call.order === orderOf(value)))
   assert.deepEqual(keys(store), value.keys, "every task once, in the new order")
 })
@@ -272,7 +275,7 @@ test("a map that moves on reads its recorded pages again, and another order refu
 test("a failed read stays shown through unrelated successes until a read answers it", async () => {
   const value = plan(200), failing = new Set([100])
   const route = pages(() => value, [])
-  const store = createMissionStore(async () => listed(value), async (...args) => {
+  const store = listedMissionStore(() => listed(value), async (...args) => {
     if (args[2].offset !== undefined && failing.has(args[2].offset)) throw new Error("offline")
     return route(...args)
   })
@@ -322,7 +325,7 @@ test("clearing an instance fences a read further still running", async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   const route = pages(() => value, [])
-  const store = createMissionStore(async () => listed(value), async (...args) => { await gate; return route(...args) })
+  const store = listedMissionStore(() => listed(value), async (...args) => { await gate; return route(...args) })
   store.want("instance-1", "reader", "msn_wide")
   await store.ensure("instance-1")
   const read = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
@@ -336,7 +339,6 @@ test("clearing an instance fences a read further still running", async () => {
 
 test("task pages retain whole document, original editor request and document-only cleanup metadata", async () => {
   const value = plan(120), response = listed(value)
-  assert.ok(response.available)
   const map = response.missions[0]
   map.document = { revision: 4, configurationGeneration: 2, timeGeneration: 1, state: "paused", firstPlayedAt: null,
     launchedCount: 0, everCreatedTask: false, firstPlay: null, scheduleActivation: null,
@@ -345,7 +347,7 @@ test("task pages retain whole document, original editor request and document-onl
     bodies: { objective: { characters: 20, digest: "original_digest" } } }]
   response.cleanups = [{ missionID: "msn_deleted", deletionID: "evt_deleted", requestID: "original_delete", expectedRevision: 3,
     deleteManagedSessions: false, objective: "Deleted", removed: 0, retained: 0, pending: 0, documentPending: true, reasons: [], createdAt: 3 }]
-  const before = structuredClone(response), store = createMissionStore(async () => response, pages(() => value, []))
+  const before = structuredClone(response), store = listedMissionStore(() => response, pages(() => value, []))
   store.want("instance-1", "reader", map.id)
   await store.ensure("instance-1")
   assert.equal(await store.loadTasks("instance-1", map.id, { offset: 50 }), "read")

@@ -1,12 +1,12 @@
 // node scripts/test-native-mission-schedule-list.mjs <absolute-isolated-cli>
 import assert from "node:assert/strict"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { writeFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { build } from "esbuild"
 import { withProductRuntime } from "./native-product-fixture.mjs"
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
-import { buildNativeScheduleFoundation } from "../packages/server/scripts/build-native-schedule-foundation.mjs"
 
 const [cli] = process.argv.slice(2)
 const method = { input: { type: "object" }, output: { type: "object" } }
@@ -16,15 +16,15 @@ const definition = { id: "codenomad.schedule-list-qualification", methods: {
 
 await withProductRuntime(cli, async ({ root }) => {
   const directory = path.join(root, "qualification-plugin")
-  const artifacts = await buildNativeScheduleFoundation(path.join(root, "artifacts"))
-  const result = await build({ ...nativePluginBuild, metafile: true, outfile: path.join(directory, "index.mjs"),
+  const file = path.join(directory, "index.mjs")
+  const result = await build({ ...nativePluginBuild, metafile: true, outfile: file,
     entryPoints: [fileURLToPath(new URL("../packages/server/src/opencode/missions/native-mission-schedule-list-native-fixture.ts", import.meta.url))] })
   assert(!Object.keys(result.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)))
   await writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "codenomad-schedule-list-qualification", version: "1.0.0", type: "module", exports: { ".": "./index.mjs" } }))
-  return { plugins: [{ package: directory, options: artifacts }], experimental: { schedules: true } }
+  const runtime = { file, sha256: createHash("sha256").update(await readFile(file)).digest("hex") }
+  return { plugins: [{ package: directory, options: { runtime } }] }
 }, async ({ client, root, requests }) => {
   const info = await client.server.info()
-  assert.equal(info.version, "2.2.3")
   const rpc = client.rpc(definition), options = { location: { directory: root }, signal: AbortSignal.timeout(20_000) }
   const seed = await rpc.seed({}, options)
   assert.equal(seed.count, 10); assert.equal(seed.tombstone, "display_01"); assert.equal(seed.armed, "display_08")

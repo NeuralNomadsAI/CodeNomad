@@ -5,7 +5,7 @@ import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwne
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 const esbuildBinSpec = process.platform === "win32"
   ? `@esbuild/win32-${process.arch}/esbuild.exe`
@@ -34,7 +34,7 @@ writeFileSync(path.join(config, "opencode.json"), JSON.stringify({ snapshots: fa
 writeFileSync(path.join(config, "service.json"), JSON.stringify({ hostname: "127.0.0.1", port: 0, disabled: false }))
 const registrationFile = path.join(env.XDG_STATE_HOME, "opencode", "service.json")
 const rpc = { id: "codenomad.installation-qualification", methods: { observe: { input: { type: "object" }, output: { type: "object" } } }, events: {} }
-const entry = path.join(root, "entry.mjs"), bundleFile = path.join(root, "fixture.mjs"), providerFile = path.join(root, "provider.mjs")
+const entry = path.join(root, "entry.mjs"), bundleFile = path.join(root, "fixture.mjs")
 const acquisitionSource = path.resolve("packages/server/src/opencode/missions/native-schedule-installation.ts")
 writeFileSync(entry, `import assert from "node:assert/strict";
 import { Plugin, Rpc } from "@opencode/plugin/effect";
@@ -58,7 +58,7 @@ export function desktopPlugin(presence,artifacts){return Plugin.define({id:"code
    let refused=false;try{assertCurrent()}catch{refused=true}assert(refused);negatives.push(refused);
   }}finally{writeFileSync(installation.registrationFile,raw)}
   assert.equal(assertCurrent(),true);
-  return {installation,active,priorReleased,setup,graph:{state:global.state,urls:server.urls(),pid:process.pid},negatives,manifestFrozen:Object.isFrozen(installation)&&Object.isFrozen(installation.provider)&&Object.isFrozen(installation.runtime)};
+  return {installation,active,priorReleased,setup,graph:{state:global.state,urls:server.urls(),pid:process.pid},negatives,manifestFrozen:Object.isFrozen(installation)&&Object.isFrozen(installation.runtime)};
  }).pipe(Effect.scoped)});
 });}})}
 `)
@@ -86,13 +86,8 @@ try {
   const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: bundleFile,
     nodePaths: [path.resolve("node_modules")], plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
   assert(!Object.keys(built.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)), "host Effect and SDK must remain external")
-  const localProvider = await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile,
-    plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
-  assert(Object.values(localProvider.metafile.outputs).every(output => output.imports.length === 0), "provider artifact is dependency-free")
-  const providerModule = await import(pathToFileURL(providerFile).href)
-  assert.throws(() => providerModule.createNativeScheduleCarrierProvider().languageModel(), /schedule-carrier-language-unavailable/)
-  const payload = readFileSync(bundleFile), provider = readFileSync(providerFile)
-  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data }, () => {}, () => "", provider)
+  const payload = readFileSync(bundleFile)
+  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data })
   const source = readFileSync(path.join(config, "plugins", "codenomad-missions.ts"), "utf8")
   const [, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)[1]}]`)
   child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
@@ -137,7 +132,7 @@ try {
   assert.equal(first.active, true); assert.equal(first.manifestFrozen, true)
   assert.deepEqual(first.setup, { global: false, server: false }, "private services belong to the fresh RPC graph")
   assert.equal(first.installation.registrationFile, registrationFile)
-  assert.deepEqual({ provider: first.installation.provider, runtime: first.installation.runtime }, artifacts)
+  assert.deepEqual({ runtime: first.installation.runtime }, artifacts)
   assert.equal(first.graph.pid, await fixtureChildPid(child))
   assert.equal(first.graph.state, path.dirname(registrationFile))
   assert(first.graph.urls.some(url => new URL(url).href === new URL(endpoint.url).href))

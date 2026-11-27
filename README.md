@@ -92,7 +92,7 @@ npx @neuralnomads/codenomad-dev --password "your-password" --launch
 
 ## OpenCode V2 and upgrading from 0.19.x
 
-This branch **requires OpenCode V2 2.3.2 or later** (2.3.2 recommended) for Mission Automations. See [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts) and the [OpenCode setup guide](https://neuralnomadsai.github.io/CodeNomad/en/opencode.html) for release requirements.
+This branch **requires OpenCode V2 2.4.0 or later** (2.4.1 recommended) for Mission Automations and the browser tools. See [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts) and the [OpenCode setup guide](https://neuralnomadsai.github.io/CodeNomad/en/opencode.html) for release requirements.
 
 - **One shared OpenCode service** owns sessions and messages. Closing a CodeNomad tab, window, or backend leaves that service running. Desktop tabs, drafts, and layout are restored separately for each window.
 - **Use an existing CLI or install from CodeNomad.** Executables on `PATH` are preferred; the setup screen also supports a selected executable and a shared user npm installation. The former private CodeNomad OpenCode installation is no longer used.
@@ -166,7 +166,7 @@ Add SideCar as:
 
 ## Requirements
 
-- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.3.2 minimum and recommended. Install/select it through desktop setup or provide a compatible CLI on the server host.
+- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.4.0 minimum, 2.4.1 recommended. Install/select it through desktop setup or provide a compatible CLI on the server host.
 - **[Git](https://git-scm.com/downloads)** — a prerequisite for full functionality (repository identity, Git operations and worktrees). Git must be executable in the CodeNomad backend's `PATH`; it is not bundled with the desktop installers.
 - **Node.js and npm** — required for the standalone npm server and source builds; desktop releases include their own (Electron's integrated Node or Tauri's bundled Node, with npm). Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version).
 

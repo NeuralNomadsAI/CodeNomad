@@ -11,7 +11,7 @@ import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied,
   addPendingForm, sendFormReply, sendFormCancel,
-  incompletePendingRecovery, clearReloadableInstanceState,
+  incompletePendingRecovery, clearReloadableInstanceState, activeInstanceId, setActiveInstanceId,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
@@ -1200,4 +1200,29 @@ test("activating a session in a directory the last recovery never covered trigge
     assert.ok(batches.flat().includes(`${h.directory}/unscanned-tree`),
       "session activation must scan the session's own directory")
   } finally { h.cleanup() }
+})
+
+test("the shown project's recovery does not wait behind occupied background reads", async () => {
+  const shown = harness("/pending-shown"), other = harness("/pending-other")
+  const hold = deferred<void>(), previous = activeInstanceId()
+  const blockers = [0, 1].map(() => backgroundReads.run(new AbortController().signal, () => hold.promise))
+  try {
+    const read: string[] = []
+    serverApi.getPendingRequests = async (id, directories) => {
+      read.push(id)
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    setActiveInstanceId(shown.id)
+    const waiting = syncPendingRequests(other.id)
+    await syncPendingRequests(shown.id)
+    assert.deepEqual(read, [shown.id])
+    hold.resolve()
+    await Promise.all([...blockers, waiting])
+    assert.deepEqual(read, [shown.id, other.id])
+  } finally {
+    hold.resolve()
+    setActiveInstanceId(previous)
+    await Promise.allSettled(blockers)
+    other.cleanup(); shown.cleanup()
+  }
 })

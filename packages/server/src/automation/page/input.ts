@@ -99,13 +99,13 @@ async function viewportCentre(session: PageSession): Promise<Point> {
 }
 
 /** Polls the page for text, in its rendered text or in labels, titles, placeholders and values. */
-export async function waitForText(session: PageSession, text: string, gone: boolean, timeoutMs: number): Promise<{ found: boolean; waitedMs: number }> {
+export async function waitForText(session: PageSession, text: string, gone: boolean, timeoutMs: number, literal = false): Promise<{ found: boolean; waitedMs: number }> {
   const started = Date.now()
   for (;;) {
     const root = await session.driver.call("document-root", undefined, [])
     await session.checkpoint()
     const objectId = root.handle
-    const found = typeof objectId === "string" && await callOn(session, "the page", objectId, "contains", [text]) === true
+    const found = typeof objectId === "string" && await callOn(session, "the page", objectId, literal ? "body-text-includes" : "contains", [text]) === true
     const waitedMs = Date.now() - started
     if (found !== gone) return { found, waitedMs }
     if (waitedMs >= timeoutMs) {

@@ -54,14 +54,13 @@ import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
+import { registerNativeBrowserRoutes } from "./routes/native-browser"
+import { NativeBrowserAttachments } from "../opencode/native-browser/attachments"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { connectMissionActivityCache, MissionActivityCache } from "../missions/activity-cache"
 import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
 import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
-import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
-import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
-import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-manual"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
@@ -577,6 +576,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
+  const nativeBrowser = new NativeBrowserAttachments({ workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, nativeParent: deps.nativeParent, logger: deps.logger })
+  registerNativeBrowserRoutes(app, { attachments: nativeBrowser, localUiRequest: backendUiAccess.localUiRequest })
+  app.addHook("onClose", async () => nativeBrowser.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   const missionActivityCache = new MissionActivityCache()
   const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
@@ -587,12 +589,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })
-  registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
-  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,
-    remoteDevices: deps.remoteControlManager })
-  registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: forgeWorkItems })

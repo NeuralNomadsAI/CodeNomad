@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "{name} ausblenden",
   "transcriptFilters.expand": "{name} aufklappen",
   "transcriptFilters.collapse": "{name} zuklappen",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "Sitzungsliste öffnen",
-  "messageListHeader.metrics.usedLabel": "Benutzt",
-  "messageListHeader.metrics.availableLabel": "Verfügbar",
-  "messageListHeader.commandPalette.ariaLabel": "Befehlspalette öffnen",
-  "messageListHeader.commandPalette.button": "Befehlspalette",
-  "messageListHeader.connection.connected": "Verbunden",
-  "messageListHeader.connection.connecting": "Wird verbunden...",
-  "messageListHeader.connection.disconnected": "Getrennt",
 
   "messageSection.empty.logoAlt": "CodeNomad Logo",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -261,7 +253,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "Anfrage wurde abgebrochen",
   "messageItem.errors.unknownFallback": "Unbekannter Fehler aufgetreten",
 
-  "attachmentChip.removeAriaLabel": "Anhang entfernen",
 
   "expandButton.toggleAriaLabel": "Höhe der Chat-Eingabe umschalten",
 

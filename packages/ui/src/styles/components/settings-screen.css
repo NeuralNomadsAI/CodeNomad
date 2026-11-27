@@ -452,7 +452,9 @@
 
 @container chat-settings (min-width: 42rem) {
   .settings-expansion-presets {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
   }
 }
 

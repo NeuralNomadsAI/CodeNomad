@@ -73,8 +73,10 @@ Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrich
 ## Dateien aus Antworten öffnen {#open-files-from-replies}
 
 1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
-2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
-3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
+2. Auch ein als einfacher Text oder in Inline-Code geschriebener Pfad wird zu einem Link, sobald bekannt ist, dass der Worktree der Unterhaltung die Datei enthält – auch Dateinamen in jedem Schriftsystem; nicht vorhandene Pfade bleiben einfacher Text. In der Desktop-App werden bei einem Projekt auf diesem Computer auch Ordner zu Links.
+3. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
+4. In der Desktop-App behält die Dateivorschau bei einem Projekt auf diesem Computer die Textdateien und Bilder, die sie anzeigen kann. Ordner, andere Dateien (Videos, PDFs …), Pfade außerhalb des Worktrees und `file:`-Links werden mit Ihrem System geöffnet, wie immer bei Strg/⌘-Klick und Mittelklick; kann etwas nicht geöffnet werden, erscheint ein Fehler.
+5. Anderswo behalten Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees das normale Linkverhalten.
 
 ## Befehle und Shell-Modus {#commands-shell}
 

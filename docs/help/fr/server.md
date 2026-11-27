@@ -8,7 +8,7 @@ L’accès par navigateur ou tablette ne déplace pas l’exécution hors de l�
 
 1. Installez Node.js 24 LTS et npm.
 2. Placez Git dans le **PATH du processus backend**. Git dans WSL seul ne suffit pas pour un backend Windows.
-3. Installez ou sélectionnez OpenCode : **2.3.0** est le minimum requis. Consultez la [configuration d’OpenCode](opencode.md).
+3. Installez ou sélectionnez OpenCode : **2.4.0** est le minimum requis. Consultez la [configuration d’OpenCode](opencode.md).
 4. Choisissez le dossier depuis lequel démarrer le serveur, ou passez explicitement `--workspace-root`.
 
 Sans Git, les conversations restent disponibles uniquement dans le dossier physique explicitement ouvert ; les opérations Git et worktree échouent. Installez Git et redémarrez le backend après une modification de PATH. Une racine d’espace de travail limite l’ouverture/la navigation, pas l’exécution de l’agent : voir [Sécurité](security.md).
@@ -80,7 +80,7 @@ Les options remplacent leurs équivalents d’environnement. Les options à vale
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false` ; autorise la navigation sur tout le système de fichiers. Ce n’est pas un réglage de bac à sable pour l’agent. |
 | `--config <path>` | `CLI_CONFIG` | Valeur active résolue par défaut : `~/.config/codenomad/config.yaml`. Accepte un répertoire ou un fichier YAML pour un emplacement explicite. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info` ; niveaux documentés : `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout` ; sinon écrit dans le fichier choisi. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, plus `logs/server.log` à côté du fichier de configuration ; un fichier choisi remplace les deux. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad` ; nom d’utilisateur d’authentification à l’exécution. Un fichier d’authentification conserve son nom enregistré quand aucun mot de passe d’exécution ne le remplace. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Non défini ; mot de passe limité à l’exécution, prioritaire sur le fichier d’authentification géré. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session` ; les caractères autres que lettres, chiffres, `_` et `-` deviennent `_`. |

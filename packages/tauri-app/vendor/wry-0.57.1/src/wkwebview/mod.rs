@@ -4,6 +4,8 @@
 
 mod download;
 #[cfg(target_os = "macos")]
+pub(crate) mod file_panels;
+#[cfg(target_os = "macos")]
 mod drag_drop;
 mod navigation;
 #[cfg(feature = "mac-proxy")]

@@ -19,7 +19,7 @@ function fixture(t: test.TestContext) {
     writeFileSync(file, bytes)
     return { file, sha256: createHash("sha256").update(bytes).digest("hex") }
   }
-  const artifacts = { provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
+  const artifacts = { runtime: artifact("runtime.mjs") }
   const identity = { id: "owned-service", pid: process.pid, url: "http://127.0.0.1:1", version: "99.7.0-compatible" }
   const registrationFile = path.join(state, "service-owned-channel.json")
   const register = (overrides = {}) => writeFileSync(registrationFile, JSON.stringify({ ...identity, password: "fixture-private", ...overrides }))
@@ -52,7 +52,6 @@ test("arming acquires the exact channel using official discover, without lifecyc
   const result = await Effect.runPromise(f.provide(Effect.scoped(Effect.gen(function* () {
     const acquired = yield* acquireNativeScheduleInstallation(f.artifacts)
     assert.equal(acquired.assertCurrent(), true)
-    assert(Object.isFrozen(acquired.installation.provider))
     return acquired
   }))))
   assert.deepEqual(result.installation, { registrationFile: f.registrationFile, ...f.artifacts })
@@ -106,9 +105,13 @@ test("arming guards retain exact native graph, process identity, URLs and artifa
     f.register({ id: "replaced" }); assert.throws(assertCurrent)
     f.register()
     assert.equal(assertCurrent(), true)
-    writeFileSync(f.artifacts.provider.file, "corrupt")
+    assert.equal(assertCurrent(), true)
+    writeFileSync(f.artifacts.runtime.file, "corrupt")
     assert.throws(assertCurrent)
+    writeFileSync(f.artifacts.runtime.file, "runtime.mjs")
   }))))
+  const withoutProvider = await Effect.runPromise(f.provide(Effect.scoped(acquireNativeScheduleInstallation({ runtime: f.artifacts.runtime }))))
+  assert.deepEqual(withoutProvider.installation, { registrationFile: f.registrationFile, runtime: f.artifacts.runtime })
 })
 
 test("arming bounds discovery and never exposes a guard after timeout", async t => {

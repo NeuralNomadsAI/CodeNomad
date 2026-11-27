@@ -1,12 +1,24 @@
 import { Context, Effect, Option, Predicate, Schema, Scope } from "effect"
 import { Location } from "@opencode/schema/location"
 import { acquireNativePassageObservation, type NativePassageObservation } from "./native-passage-observation"
-import { nativeLocationEntry } from "./native-service-clock"
 import type { MissionNativeRunner } from "./native-service-adapter"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const locationsTag = tag("@opencode/example/LocationServiceMap"), locationTag = tag("@opencode/Location")
 const databaseTag = tag("@opencode/storage/Database"), sessionTag = tag("@opencode/Session")
+
+/** The native map hashes keys with the service's own effect copy, so this bundle's
+ * MutableHashMap.get misses structurally equal refs (observed against 2.0.26; the same
+ * Effect 4.0.1 host through 2.1.0).
+ * Scan the native iterator by Location.Ref fields; native lookups keep using `ref`. */
+function nativeLocationEntry(state: { _tag: string; map?: Iterable<readonly [Location.Ref, unknown]> } | undefined,
+  ref: Location.Ref): Option.Option<unknown> {
+  if (state?._tag !== "Open" || !state.map) return Option.none()
+  for (const [key, value] of state.map) {
+    if (key.directory === ref.directory && key.workspaceID === ref.workspaceID) return Option.some(value)
+  }
+  return Option.none()
+}
 
 /** Only the explicitly selected source's Location is borrowed, for this RPC's
  * lifetime. Global Session/Database stay pinned to the receiving service graph. */

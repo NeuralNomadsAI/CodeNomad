@@ -1,3 +1,7 @@
+.mission-editor input:not([type="checkbox"]) {
+  min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
+  color: var(--text-primary); background: var(--surface-field); border: 1px solid var(--border-base); border-radius: 0;
+}
 /* Compact, directly visible configuration fields. */
 .mission-editor .mission-create-field { display: grid; grid-template-columns: minmax(6em, 30%) minmax(0, 1fr); align-items: start; gap: var(--space-sm); }
 .mission-editor .mission-create-field > span { padding-block: var(--space-xs); overflow-wrap: anywhere; }
@@ -10,8 +14,10 @@
 .mission-create-option { margin-block: var(--space-md); }
 .mission-editor .mission-scheduling { border-block-start: 1px solid var(--border-base); padding-block-start: var(--space-sm); margin-block-start: var(--space-md); }
 .mission-editor .mission-create-template > label { margin-block-end: var(--space-xs); }
-.mission-editor .mission-create-autostart { display: flex; align-items: center; gap: var(--space-sm); margin-block: var(--space-md); }
-.mission-create-autostart > input { flex: none; }
+.mission-editor .mission-create-autostart,
+.mission-editor .mission-create-coordinator-goal { display: flex; align-items: center; gap: var(--space-sm); margin-block: var(--space-md); }
+.mission-create-autostart > input,
+.mission-create-coordinator-goal > input { flex: none; }
 /* The project's native nesting depth (mission-subagent-depth.tsx) is a Delegation row. */
 .mission-editor .mission-depth .window-actions { display: flex; gap: var(--space-xs); }
 

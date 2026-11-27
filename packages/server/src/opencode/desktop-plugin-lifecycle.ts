@@ -50,7 +50,6 @@ export class DesktopPluginLifecycle {
   constructor(
     private readonly feature: DesktopPluginFeature,
     private readonly readBundle = () => readPayload(feature, "plugin.mjs"),
-    private readonly readProvider = () => readPayload("missions", "provider.mjs"),
   ) {}
 
   async start(paths: DesktopPluginPaths): Promise<void> {
@@ -83,9 +82,7 @@ export class DesktopPluginLifecycle {
           current()
           const bundle = await this.readBundle()
           current()
-          const provider = this.feature === "missions" ? await this.readProvider() : undefined
-          current()
-          return installDesktopPluginPresence(this.feature, bundle, paths, current, () => this.leaseContent, provider)
+          return installDesktopPluginPresence(this.feature, bundle, paths, current, () => this.leaseContent)
         }),
       }
       this.installations.set(key, entry)

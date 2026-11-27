@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { Effect } from "effect"
 
-// Match the native decision evidence read bound (native-human-evidence.ts).
+// One deadline for a whole human-gate call: acquisition and its nested reads.
 export const NATIVE_HUMAN_ANSWER_TIMEOUT_MS = 10_000
 type Runner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
 /** Interrupt and join the native operation before its invocation can retire. */

@@ -43,7 +43,8 @@ import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
 import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
-import { BackgroundReadQueue, backgroundReads } from "../lib/background-read-queue"
+import { BackgroundReadQueue } from "../lib/background-read-queue"
+import { prioritizedRead } from "../lib/prioritized-read"
 import { normalizeWorkspacePath, workspaceIdentity } from "./app-session-reconciliation"
 import { capturePendingRecoveryNotices, claimPendingRecoveryNotice, recordPendingRecoveryFailure } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
@@ -424,7 +425,8 @@ async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: Ab
       try { return await run(signal) }
       finally { clearTimeout(timeout) }
     }
-    return await (background ? backgroundReads.run(signal, timed) : timed())
+    // The shown project's questions and permissions never wait behind other projects' scans.
+    return await (background ? prioritizedRead(() => activeInstanceId() === instanceId, signal, timed) : timed())
   } finally {
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {

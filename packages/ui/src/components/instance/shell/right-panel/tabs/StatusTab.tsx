@@ -6,6 +6,7 @@ import {
   SortableProvider,
   closestCenter,
   createSortable,
+  transformStyle,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
@@ -59,7 +60,8 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
   const regionLabelId = createUniqueId()
   const tooltip = () => props.section.tooltip ?? props.t(props.section.tooltipKey)
   return (
-    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}
+    <div ref={sortable.ref} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}
+      style={transformStyle(sortable.transform)}
       data-status-section={props.section.id}>
       <Accordion.Item value={props.section.id} class="right-panel-accordion-item">
         <Accordion.Header class="right-panel-accordion-header-row">
@@ -84,7 +86,11 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
               </Tooltip.Portal>
             </Tooltip>
           }>{(info) => info()()}</Show>
-          <GripVertical class="right-panel-section-grip" aria-hidden="true" />
+          <span class="right-panel-section-grip" data-drag-handle aria-hidden="true"
+            title={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+            {...sortable.dragActivators}>
+            <GripVertical />
+          </span>
         </Accordion.Header>
         <Show when={props.section.regionLabel}>
           {(name) => <span id={regionLabelId} class="sr-only">{name()}</span>}

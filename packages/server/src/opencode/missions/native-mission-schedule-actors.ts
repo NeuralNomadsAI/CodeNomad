@@ -17,7 +17,7 @@ import { interruptNativeMissionActor, interruptedMissionConversations, missionAc
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import { sameLocation } from "../compatibility/location"
 import { readAutonomousMissionEnvironment } from "./autonomous-environment"
-import { nativeScheduleDocumentKey, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
+import { nativeScheduleDocumentKey, nativeScheduleRuntimeIdentity, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { scheduledPassageMarker } from "./native-scheduled-passage-business"
@@ -63,9 +63,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
 ) {
   const placed = yield* Effect.serviceOption(locationTag), graph = yield* Effect.context<never>()
   if (Option.isNone(placed)) throw new Error("Scheduled actor Location unavailable")
-  const location = structuredClone(ctx.location), manifest = { registrationFile: installation.registrationFile,
-    provider: { file: installation.provider.file, sha256: installation.provider.sha256 },
-    runtime: { file: installation.runtime.file, sha256: installation.runtime.sha256 } }
+  const location = structuredClone(ctx.location), manifest = nativeScheduleRuntimeIdentity(installation)
   const identity = readNativeScheduleIncarnation(manifest.registrationFile)
   const incarnation = nativeScheduleIncarnationGuard(manifest.registrationFile, identity)
   const retired = new AbortController()
@@ -122,7 +120,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       if (!pending || pending.missionID !== input.missionID || pending.coordinatorSessionID !== coordinatorID
         || !isDeepStrictEqual(marker(coordinator)?.document, scheduledPassageMarker(doc))
         || marker(coordinator)?.missionID !== pending.missionID || !doc.calendarOwner
-        || !isDeepStrictEqual(doc.calendarOwner.installation, manifest)) throw new Error("Scheduled actor pending differs")
+        || !isDeepStrictEqual(nativeScheduleRuntimeIdentity(doc.calendarOwner.installation), manifest)) throw new Error("Scheduled actor pending differs")
       const passage = missionDocumentPassage(storage, doc, live), before = await passage.journal.snapshot()
       const mission = before.missions[0], operation = structuredClone(mission?.control)
       const target = operation?.targets.find(target => target.sessionID === input.sessionID)
@@ -141,7 +139,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
           || fresh.pending.coordinatorSessionID !== coordinatorID || fresh.pending.messageID !== pending.messageID
           || fresh.pending.configurationGeneration !== pending.configurationGeneration || fresh.pending.timeGeneration !== pending.timeGeneration
           || !isDeepStrictEqual(fresh.pending.configuration, frozen) || !isDeepStrictEqual(fresh.pending.checkpoints, pending.checkpoints)
-          || !isDeepStrictEqual(fresh.calendarOwner?.installation, manifest)
+          || !fresh.calendarOwner || !isDeepStrictEqual(nativeScheduleRuntimeIdentity(fresh.calendarOwner.installation), manifest)
           || !isDeepStrictEqual(fresh.calendarOwner?.profileSource, doc.calendarOwner!.profileSource)
           || !isDeepStrictEqual(fresh.calendarOwner?.placement, doc.calendarOwner!.placement)
           || (action === "start" ? !["running", "finished"].includes(fresh.state) || fresh.pending.admittedAt === null || !!fresh.deletion || !!fresh.blocked

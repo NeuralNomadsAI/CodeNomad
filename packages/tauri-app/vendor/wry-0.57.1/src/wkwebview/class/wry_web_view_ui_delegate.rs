@@ -250,6 +250,13 @@ define_class!(
       handler: &block2::Block<dyn Fn(*const NSArray<NSURL>)>,
     ) {
       unsafe {
+        // CodeNomad: a panel the page opens during an agent's page action is cancelled unseen.
+        if crate::wkwebview::file_panels::file_panels_refused(
+          _webview as *const WryWebView as *const std::ffi::c_void,
+        ) {
+          (*handler).call((null_mut(),));
+          return;
+        }
         if let Some(mtm) = MainThreadMarker::new() {
           let open_panel = NSOpenPanel::openPanel(mtm);
           open_panel.setCanChooseFiles(true);

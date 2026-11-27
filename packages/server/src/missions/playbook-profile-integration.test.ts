@@ -4,7 +4,6 @@ import { MissionControl } from "./control"
 import type { MissionCreateInput, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import { MissionJournal, parseMissionEvent, type MissionStorage } from "./journal"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
-import { authorityIntentSchema, MISSION_AUTHORITY_POLICY } from "./authority-protocol"
 import { validateMissionProfileCatalog, type MissionProfiles } from "./playbook-profiles"
 import type { MissionJsonValue } from "./model"
 
@@ -122,12 +121,7 @@ test("historical absent profiles remain absent; malformed durable profiles are r
   assert.equal(parseMissionEvent({ ...event, profiles: { coordinator: { model: { providerID: "owned", id: "large", forged: true } } } }), undefined)
 })
 
-test("native RPC and signed human intent carry the same profile contract", () => {
+test("the native RPC carries the profile contract", () => {
   assert.ok("profiles" in CODENOMAD_MISSIONS_RPC.methods.create.input.properties)
   assert.ok("profiles" in CODENOMAD_MISSIONS_RPC.methods.create.output.properties.mission.properties)
-  const signed = { version: 1, policy: MISSION_AUTHORITY_POLICY, method: "create", missionID: "mission-profile", projectID: "project-profile",
-    authorityID: "authority-profile", keyID: "key-profile", profileID: "profile", executionHost: "local", projectCanonical: "/owned",
-    namespace: "c8cb8d62-a104-40ca-a9ba-d205c2a4a7cd", coordinatorSessionID: "ses_lead", roots: [{ mode: "directory-only", directory: "/owned" }],
-    epoch: 0, expectedRevision: 0, requestID: "signed-create", payload: { objective: "Signed profiles", template: "wayfinder", prepared: true, profiles } }
-  assert.deepEqual(authorityIntentSchema.parse(signed).payload, signed.payload)
 })

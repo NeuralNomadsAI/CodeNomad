@@ -26,7 +26,5 @@ export async function openMissionTask(instanceId: string, scope: string, mission
   markMissionTasksSeen(JSON.stringify([scope, owner.projectID]), owner.id, [task])
   navigateMissionProjectView(instanceId, { reader: { missionId: owner.id, kind: "task", itemId: task.id, recurrence },
     selectedTask: { missionId: owner.id, taskId: task.id }, ...(recurrence
-      ? recurrence.owner === "scheduled" ? { selectedScheduled: recurrence.scheduleID, selectedRecurrence: undefined, selected: undefined }
-        : { selectedRecurrence: recurrence.scheduleID, selectedScheduled: undefined, selected: undefined }
-        : { selected: owner.id, selectedScheduled: undefined, selectedRecurrence: undefined }) }, intent)
+      ? { selectedScheduled: recurrence.scheduleID, selected: undefined } : { selected: owner.id, selectedScheduled: undefined }) }, intent)
 }

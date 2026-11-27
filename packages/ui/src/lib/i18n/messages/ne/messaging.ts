@@ -105,14 +105,6 @@ export const messagingMessages = {
   "transcriptFilters.hide": "{name} लुकाउनुहोस्",
   "transcriptFilters.expand": "{name} विस्तार गर्नुहोस्",
   "transcriptFilters.collapse": "{name} खुम्च्याउनुहोस्",
-  "messageListHeader.sidebar.openSessionListAriaLabel": "सत्र सूची खोल्नुहोस्",
-  "messageListHeader.metrics.usedLabel": "प्रयोग गरिएको",
-  "messageListHeader.metrics.availableLabel": "उपलब्ध",
-  "messageListHeader.commandPalette.ariaLabel": "कमाण्ड प्यालेट खोल्नुहोस्",
-  "messageListHeader.commandPalette.button": "कमाण्ड प्यालेट",
-  "messageListHeader.connection.connected": "जडान भयो",
-  "messageListHeader.connection.connecting": "जडान गर्दै...",
-  "messageListHeader.connection.disconnected": "विच्छेद भयो",
 
   "messageSection.empty.logoAlt": "CodeNomad लोगो",
   "messageSection.empty.brandTitle": "CodeNomad",
@@ -261,7 +253,6 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "अनुरोध रद्द गरियो",
   "messageItem.errors.unknownFallback": "अज्ञात त्रुटि भयो",
 
-  "attachmentChip.removeAriaLabel": "संलग्नक हटाउनुहोस्",
 
   "expandButton.toggleAriaLabel": "च्याट इनपुट उचाइ टगल गर्नुहोस्",
 
