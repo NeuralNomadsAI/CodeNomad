@@ -160,11 +160,12 @@ try {
     ownedBrowser?.setTargetPid(nextPid, currentTargetStartId)
     await previousFetch?.close().catch(() => {})
   }
-  const attestedGet = async (pathname, ctx) => {
+  const attestedGet = async (pathname, ctx, {signal} = {}) => {
     const cookie = await cookieHeaderFor(ctx)
+    const timeout = AbortSignal.timeout(15000)
     return attestedFetch(new URL(pathname, url).href, {
       headers: cookie ? {cookie} : undefined,
-      signal: AbortSignal.timeout(15000),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     })
   }
   const android=mobileContext(browser)
