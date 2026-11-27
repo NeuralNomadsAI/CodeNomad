@@ -582,9 +582,9 @@ try {
   console.error(result.error)
   process.exitCode = 1
 } finally {
-  await rustPruning?.close()
-  await missionsPresence?.()
-  await removeRuntime()
-  await writeJson(`${mode}.json`, result)
+  const settled = await Promise.allSettled([rustPruning?.close(), missionsPresence?.(), removeRuntime()])
+  await writeJson(`${mode}.json`, result).catch(() => {})
   console.log(`${mode}: ${result.error ? "FAILED" : "identical"} → ${path.join(out, `${mode}.json`)}`)
+  const failed = settled.find(item => item.status === "rejected")
+  if (failed && !result.error) throw failed.reason
 }

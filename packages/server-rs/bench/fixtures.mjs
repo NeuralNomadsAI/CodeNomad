@@ -132,6 +132,12 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "return", "throw", "case", "delete", "void", "typeof", "yield", "await",
   "in", "instanceof", "of", "new", "else", "do", "export", "default",
 ])
+const EXPR_BRACE_PRECEDER_PUNCTS = new Set([
+  "(", "[", ",", ":", "?", "=", "+", "-", "*", "/", "%", "&", "|", "^", "!", "~", "<", ">",
+])
+const EXPR_BRACE_PRECEDER_KEYWORDS = new Set([
+  "return", "throw", "yield", "await", "typeof", "void", "delete", "in", "instanceof", "of", "new", "case", "default",
+])
 const STATEMENT_PAREN_KEYWORDS = new Set(["if", "while", "for", "with"])
 
 function decodeJsString(raw) {
@@ -174,10 +180,22 @@ function tokenizeEsm(code) {
   const tokens = []
   const templateBraceStack = []
   const parenHeaderStack = []
+  const braceKindStack = []
   let i = 0
   if (code.startsWith("#!")) {
     const nl = code.indexOf("\n")
     i = nl === -1 ? code.length : nl + 1
+  }
+  const opensExprBrace = () => {
+    const prev = tokens.at(-1)
+    if (!prev) return false
+    if (prev.type === "template-head") return true
+    if (prev.type === "ident") return EXPR_BRACE_PRECEDER_KEYWORDS.has(prev.value)
+    if (prev.type === "punct") {
+      if (prev.value === ">" && tokens.at(-2)?.type === "punct" && tokens.at(-2)?.value === "=") return false
+      return EXPR_BRACE_PRECEDER_PUNCTS.has(prev.value)
+    }
+    return false
   }
   const canStartRegex = () => {
     const prev = tokens.at(-1)
@@ -185,6 +203,7 @@ function tokenizeEsm(code) {
     if (prev.type === "ident") return REGEX_PREFIX_KEYWORDS.has(prev.value)
     if (prev.type === "punct") {
       if (prev.value === ")") return prev.headerClose === true
+      if (prev.value === "}") return prev.exprClose !== true
       return prev.value !== "]" && prev.value !== "++" && prev.value !== "--"
     }
     return false
@@ -238,37 +257,46 @@ function tokenizeEsm(code) {
       i = scanTemplateChunk(i)
       continue
     }
-    if (ch === "{" && templateBraceStack.length > 0) {
-      templateBraceStack[templateBraceStack.length - 1] += 1
+    if (ch === "{") {
+      if (templateBraceStack.length > 0) templateBraceStack[templateBraceStack.length - 1] += 1
+      braceKindStack.push(opensExprBrace())
       tokens.push({ type: "punct", value: "{", start: i, end: i + 1 })
       i += 1
       continue
     }
-    if (ch === "}" && templateBraceStack.length > 0) {
-      if (templateBraceStack.at(-1) === 0) {
+    if (ch === "}") {
+      if (templateBraceStack.length > 0 && templateBraceStack.at(-1) === 0) {
         templateBraceStack.pop()
         i = scanTemplateChunk(i)
         continue
       }
-      templateBraceStack[templateBraceStack.length - 1] -= 1
-      tokens.push({ type: "punct", value: "}", start: i, end: i + 1 })
+      if (templateBraceStack.length > 0) templateBraceStack[templateBraceStack.length - 1] -= 1
+      const exprClose = braceKindStack.pop() ?? false
+      tokens.push({ type: "punct", value: "}", start: i, end: i + 1, exprClose })
       i += 1
       continue
     }
     if (ch === "/" && canStartRegex()) {
       let j = i + 1
       let inClass = false
+      let closed = false
       while (j < code.length) {
         const c = code[j]
+        if (c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029") break
         if (c === "\\") { j += 2; continue }
         if (c === "[") { inClass = true; j += 1; continue }
         if (c === "]") { inClass = false; j += 1; continue }
-        if (c === "/" && !inClass) { j += 1; break }
+        if (c === "/" && !inClass) { j += 1; closed = true; break }
         j += 1
       }
-      while (j < code.length && /[A-Za-z]/.test(code[j])) j += 1
-      tokens.push({ type: "regex", start: i, end: j })
-      i = j
+      if (closed) {
+        while (j < code.length && /[A-Za-z]/.test(code[j])) j += 1
+        tokens.push({ type: "regex", start: i, end: j })
+        i = j
+        continue
+      }
+      tokens.push({ type: "punct", value: "/", start: i, end: i + 1 })
+      i += 1
       continue
     }
     if (/[A-Za-z_$]/.test(ch) || ch.charCodeAt(0) >= 0x80) {
@@ -343,8 +371,10 @@ function collectEsmSpecifierTokens(tokens) {
           if (cur.type === "punct" && cur.value === "{") { braceDepth += 1; continue }
           if (cur.type === "punct" && cur.value === "}") { braceDepth -= 1; if (braceDepth < 0) break; continue }
           if (braceDepth > 0) continue
-          if (j > k + 1 && cur.type === "ident" && cur.value === "from") {
-            if (tokens[j + 1]?.type === "string") specifiers.push(tokens[j + 1])
+          if (j > k + 1 && cur.type === "ident" && cur.value === "from"
+            && !(tokens[j - 1]?.type === "ident" && tokens[j - 1].value === "as")
+            && tokens[j + 1]?.type === "string") {
+            specifiers.push(tokens[j + 1])
             break
           }
           if (cur.type === "punct" && cur.value !== "*" && cur.value !== ",") break

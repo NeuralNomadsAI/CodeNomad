@@ -4,7 +4,10 @@ import assert from "node:assert/strict"
 import { readFile, realpath } from "node:fs/promises"
 import tls from "node:tls"
 import { fileURLToPath } from "node:url"
-import { dist, ensureDist, fromDist } from "./fixtures.mjs"
+import { sanitizeBenchEnvPath } from "./private-profile.mjs"
+
+await sanitizeBenchEnvPath(process.env)
+const { dist, ensureDist, fromDist } = await import("./fixtures.mjs")
 ensureDist()
 
 if (process.env.CNRS_FIXTURE_URL) {

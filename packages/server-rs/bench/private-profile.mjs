@@ -1,7 +1,6 @@
 // Canonical path fence for the headless comparison bench. Refuse before spawning.
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { statSync } from "node:fs"
 import { lstat, readFile, readlink, realpath } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -17,12 +16,20 @@ const below = (root, file) => {
 const unsafeRoots = [...new Set([os.homedir(), os.userInfo().homedir])]
 
 const LOCAL_WINDOWS_DRIVE_TYPES = new Set(["Fixed", "Ram"])
-const NETWORK_UNIX_FS_TYPES = new Set([
-  "nfs", "nfs4", "cifs", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "davfs",
-  "afs", "ceph", "glusterfs", "lustre", "ncpfs", "autofs", "fuse.rclone", "afpfs", "webdav",
+const LOCAL_LINUX_FS_TYPES = new Set([
+  "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "tmpfs", "ramfs",
+  "overlay", "overlayfs", "f2fs", "jfs", "reiserfs", "vfat", "msdos",
+  "exfat", "ntfs", "ntfs3", "apfs", "hfs", "hfsplus", "squashfs",
+  "erofs", "bcachefs", "nilfs2", "udf", "rootfs",
 ])
+const LOCAL_DARWIN_FS_TYPES = new Set(["apfs", "hfs", "ufs", "msdos", "exfat", "ntfs", "tmpfs"])
 const windowsDriveTypeCache = new Map()
 const OPENCODE_BIN_NAMES = ["opencode2", "opencode"]
+
+const systemPowerShell = () => path.join(
+  process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
+  "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
+)
 
 export async function outsideUserHome(directory) {
   const resolved = await realpath(directory)
@@ -47,7 +54,7 @@ async function queryWindowsDriveTypes(letters) {
     for (const letter of missing) assert(/^[A-Z]$/.test(letter), `Invalid Windows drive letter: ${letter}`)
     const list = missing.map(l => `'${l}'`).join(",")
     const { stdout } = await execFileAsync(
-      "powershell.exe",
+      systemPowerShell(),
       ["-NoProfile", "-NonInteractive", "-Command", `@(${list}) | ForEach-Object { "$_=$([System.IO.DriveInfo]::new($_).DriveType)" }`],
       { windowsHide: true, timeout: 20_000 },
     )
@@ -63,12 +70,11 @@ function decodeMountEscape(raw) {
   return raw.replace(/\\([0-7]{3})/g, (_, oct) => String.fromCharCode(Number.parseInt(oct, 8)))
 }
 
-async function detectUnixMountFsType(targetPath, readMounts = () => readFile("/proc/mounts", "utf8")) {
-  let content
-  try { content = await readMounts() } catch { return null }
+async function detectLinuxMountFsType(targetPath, readMounts = () => readFile("/proc/mounts", "utf8")) {
+  const content = await readMounts()
   let bestMount = ""
   let bestFsType = null
-  for (const line of content.split(/\r?\n/)) {
+  for (const line of String(content).split(/\r?\n/)) {
     if (!line) continue
     const parts = line.split(" ")
     if (parts.length < 3) continue
@@ -79,6 +85,24 @@ async function detectUnixMountFsType(targetPath, readMounts = () => readFile("/p
     }
   }
   return bestFsType
+}
+
+async function detectDarwinMountMeta(targetPath, readDarwinMounts) {
+  const content = readDarwinMounts
+    ? await readDarwinMounts()
+    : (await execFileAsync("/sbin/mount", [], { timeout: 5_000 })).stdout
+  let bestMount = ""
+  let bestMeta = null
+  for (const line of String(content).split(/\r?\n/)) {
+    const match = /\son\s(.+?)\s\(([^)]+)\)$/.exec(line)
+    if (!match) continue
+    const [, mountPoint, meta] = match
+    if (within(mountPoint, targetPath) && mountPoint.length >= bestMount.length) {
+      bestMount = mountPoint
+      bestMeta = meta.split(",").map(part => part.trim().toLowerCase())
+    }
+  }
+  return bestMeta
 }
 
 async function assertLocalVolume(targetPath, options = {}) {
@@ -97,33 +121,40 @@ async function assertLocalVolume(targetPath, options = {}) {
     return
   }
   if (platform === "linux" || options.readMounts) {
-    const fsType = await detectUnixMountFsType(targetPath, options.readMounts)
-    if (fsType && NETWORK_UNIX_FS_TYPES.has(fsType)) {
+    let fsType
+    try {
+      fsType = await detectLinuxMountFsType(targetPath, options.readMounts)
+    } catch (error) {
       throw new assert.AssertionError({
-        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, filesystem is ${fsType})`,
+        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, mount check failed: ${error?.message ?? error})`,
+      })
+    }
+    if (!fsType || !LOCAL_LINUX_FS_TYPES.has(fsType)) {
+      throw new assert.AssertionError({
+        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, filesystem is ${fsType ?? "unknown"})`,
       })
     }
     return
   }
-  if (platform === "darwin") {
-    const { stdout } = await execFileAsync("/sbin/mount", [], { timeout: 5_000 }).catch(() => ({ stdout: "" }))
-    let bestMount = ""
-    let bestMeta = null
-    for (const line of String(stdout).split(/\r?\n/)) {
-      const match = /\son\s(.+?)\s\(([^)]+)\)$/.exec(line)
-      if (!match) continue
-      const [, mountPoint, meta] = match
-      if (within(mountPoint, targetPath) && mountPoint.length >= bestMount.length) {
-        bestMount = mountPoint
-        bestMeta = meta.split(",").map(part => part.trim().toLowerCase())
-      }
-    }
-    if (bestMeta && (!bestMeta.includes("local") || NETWORK_UNIX_FS_TYPES.has(bestMeta[0]))) {
+  if (platform === "darwin" || options.readDarwinMounts) {
+    let meta
+    try {
+      meta = await detectDarwinMountMeta(targetPath, options.readDarwinMounts)
+    } catch (error) {
       throw new assert.AssertionError({
-        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, filesystem is ${bestMeta[0] ?? "remote"})`,
+        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, mount check failed: ${error?.message ?? error})`,
       })
     }
+    if (!meta || !meta.includes("local") || !LOCAL_DARWIN_FS_TYPES.has(meta[0])) {
+      throw new assert.AssertionError({
+        message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, filesystem is ${meta?.[0] ?? "unknown"})`,
+      })
+    }
+    return
   }
+  throw new assert.AssertionError({
+    message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, unsupported platform ${platform})`,
+  })
 }
 
 export async function assertPrivateOpenCodeExecutable(executable, options = {}) {
@@ -135,26 +166,42 @@ export async function assertPrivateOpenCodeExecutable(executable, options = {}) 
   const forbidden = await forbiddenHomeRoots(options.env)
   const normalized = path.resolve(executable)
   assert(!forbidden.some(home => within(home, normalized)), `Refused: OpenCode executable must be outside the user's home (${executable})`)
-  await assertLocalVolume(normalized, options)
-  const resolved = await canonical(normalized)
+  let resolved
+  try {
+    resolved = await canonical(normalized)
+  } catch (error) {
+    await assertLocalVolume(normalized, options)
+    throw error
+  }
   if (platform === "win32" && !isDriveQualifiedWindowsPath(resolved)) {
     throw new assert.AssertionError({ message: `Refused: OpenCode executable resolves to a non-local path (${resolved})` })
   }
   assert(!forbidden.some(home => within(home, resolved)), `Refused: OpenCode executable resolves inside the user's home (${resolved})`)
-  await assertLocalVolume(resolved, options)
+  await assertLocalVolume(normalized, options)
+  if (resolved !== normalized) await assertLocalVolume(resolved, options)
   return resolved
 }
 
-function directoryContainsOpenCode(directory, platform, pathext) {
+async function directoryExposesDisallowedOpenCode(directory, { platform, pathext, forbidden, allowedRoot, options }) {
   const extensions = platform === "win32"
     ? [...new Set(["", ...(pathext || ".COM;.EXE;.BAT;.CMD").toLowerCase().split(";").filter(Boolean)])]
     : [""]
+  const resolvedDir = await canonical(directory).catch(() => null)
+  const inAllowedRoot = Boolean(allowedRoot && resolvedDir && within(allowedRoot, resolvedDir))
   for (const name of OPENCODE_BIN_NAMES) {
     for (const ext of extensions) {
       const candidate = path.join(directory, `${name}${ext}`)
-      try {
-        if (statSync(candidate).isFile()) return true
-      } catch { /* Missing or inaccessible candidate. */ }
+      const info = await lstat(candidate).catch(() => null)
+      if (!info) continue
+      if (!info.isFile() && !info.isSymbolicLink()) continue
+      if (!inAllowedRoot) return true
+      const resolvedTarget = await canonical(candidate).catch(() => null)
+      if (!resolvedTarget) return true
+      if (platform === "win32" && !isDriveQualifiedWindowsPath(resolvedTarget)) return true
+      if (forbidden.some(home => within(home, resolvedTarget))) return true
+      if (!within(allowedRoot, resolvedTarget)) return true
+      const targetLocal = await assertLocalVolume(resolvedTarget, options).then(() => true, () => false)
+      if (!targetLocal) return true
     }
   }
   return false
@@ -172,7 +219,9 @@ export async function sanitizeBenchPath(rawPath = process.env.PATH, options = {}
     .filter(Boolean)
 
   if (platform === "win32" && !options.probeDriveType) {
-    const letters = rawEntries.filter(isDriveQualifiedWindowsPath).map(entry => entry[0].toUpperCase())
+    const letters = rawEntries
+      .filter(entry => isDriveQualifiedWindowsPath(entry) && !forbidden.some(home => within(home, path.resolve(entry))))
+      .map(entry => entry[0].toUpperCase())
     if (letters.length > 0) await queryWindowsDriveTypes(letters).catch(() => {})
   }
 
@@ -182,16 +231,19 @@ export async function sanitizeBenchPath(rawPath = process.env.PATH, options = {}
     if (platform === "win32" && !isDriveQualifiedWindowsPath(entry)) continue
     const normalized = path.resolve(entry)
     if (forbidden.some(home => within(home, normalized))) continue
-    const localInput = await assertLocalVolume(normalized, options).then(() => true, () => false)
-    if (!localInput) continue
     const resolved = await canonical(normalized).catch(() => null)
     if (!resolved) continue
     if (platform === "win32" && !isDriveQualifiedWindowsPath(resolved)) continue
     if (forbidden.some(home => within(home, resolved))) continue
-    const localResolved = await assertLocalVolume(resolved, options).then(() => true, () => false)
+    const localInput = await assertLocalVolume(normalized, options).then(() => true, () => false)
+    if (!localInput) continue
+    const localResolved = resolved === normalized
+      ? true
+      : await assertLocalVolume(resolved, options).then(() => true, () => false)
     if (!localResolved) continue
-    const inAllowedRoot = allowedRoot ? within(allowedRoot, resolved) : false
-    if (!inAllowedRoot && (directoryContainsOpenCode(normalized, platform, pathext) || directoryContainsOpenCode(resolved, platform, pathext))) {
+    const checkOpts = { platform, pathext, forbidden, allowedRoot, options }
+    if (await directoryExposesDisallowedOpenCode(normalized, checkOpts)
+      || (resolved !== normalized && await directoryExposesDisallowedOpenCode(resolved, checkOpts))) {
       continue
     }
     kept.push(entry)
@@ -223,10 +275,6 @@ export async function assertSafeBenchPath(env, allowedRoot, options = {}) {
     const rawPath = env[key]
     if (typeof rawPath !== "string" || !rawPath) continue
     const entries = rawPath.split(delimiter).map(e => e.trim().replace(/^"|"$/g, "")).filter(Boolean)
-    if (platform === "win32" && !options.probeDriveType) {
-      const letters = entries.filter(isDriveQualifiedWindowsPath).map(e => e[0].toUpperCase())
-      if (letters.length > 0) await queryWindowsDriveTypes(letters).catch(() => {})
-    }
     for (const entry of entries) {
       assert(path.isAbsolute(entry), `Refused: bench PATH contains a relative entry (${entry})`)
       if (platform === "win32") {
@@ -234,16 +282,17 @@ export async function assertSafeBenchPath(env, allowedRoot, options = {}) {
       }
       const normalized = path.resolve(entry)
       assert(!forbidden.some(home => within(home, normalized)), `Refused: bench PATH contains user home entry (${entry})`)
-      await assertLocalVolume(normalized, options)
       const resolved = await canonical(normalized)
       if (platform === "win32") {
         assert(isDriveQualifiedWindowsPath(resolved), `Refused: bench PATH entry resolves to non-local path (${resolved})`)
       }
       assert(!forbidden.some(home => within(home, resolved)), `Refused: bench PATH entry resolves inside user home (${resolved})`)
-      await assertLocalVolume(resolved, options)
-      const inAllowed = canonicalAllowed ? within(canonicalAllowed, resolved) : false
+      await assertLocalVolume(normalized, options)
+      if (resolved !== normalized) await assertLocalVolume(resolved, options)
+      const checkOpts = { platform, pathext, forbidden, allowedRoot: canonicalAllowed, options }
       assert(
-        inAllowed || (!directoryContainsOpenCode(normalized, platform, pathext) && !directoryContainsOpenCode(resolved, platform, pathext)),
+        !(await directoryExposesDisallowedOpenCode(normalized, checkOpts))
+          && (resolved === normalized || !(await directoryExposesDisallowedOpenCode(resolved, checkOpts))),
         `Refused: bench PATH entry exposes external OpenCode (${entry})`,
       )
     }
