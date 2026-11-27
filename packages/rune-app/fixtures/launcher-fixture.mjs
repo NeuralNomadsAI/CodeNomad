@@ -66,7 +66,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   if(outerSignal){
     process.off('SIGINT',dispatchOuterSignal)
     process.off('SIGTERM',dispatchOuterSignal)
-    const finalResult=publishWorkerProof({workerProfile,exit:null,workerStarted:false,outerSignal})
+    const finalResult=publishWorkerProof({workerProfile,workerStarted:false,outerSignal})
     process.exit(finalResult)
   }
   const graceMs=webAndroid?150000:25000
@@ -77,7 +77,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       startAck.close()
       process.off('SIGINT',dispatchOuterSignal)
       process.off('SIGTERM',dispatchOuterSignal)
-      const finalResult=publishWorkerProof({workerProfile,exit:null,workerStarted:false,outerSignal})
+      const finalResult=publishWorkerProof({workerProfile,workerStarted:false,outerSignal})
       process.exit(finalResult)
     }
     const workerEnv={
@@ -172,7 +172,13 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     process.off('SIGINT',dispatchOuterSignal)
     process.off('SIGTERM',dispatchOuterSignal)
     console.error(spawnError?.message??spawnError)
-    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false,outerSignal})
+    const finalResult=publishWorkerProof({
+      workerProfile,
+      supervisorExit:process.platform==='win32'?{code:null,signal:null,error:spawnError}:null,
+      bridgeExit:process.platform==='win32'?null:{code:null,signal:null,error:spawnError},
+      workerStarted:false,
+      outerSignal,
+    })
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
@@ -232,7 +238,8 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   process.off('SIGINT',dispatchOuterSignal)
   process.off('SIGTERM',dispatchOuterSignal)
   startAck.close()
-  let supervisorExit=null
+  let supervisorExit=process.platform==='win32'?exit:null
+  let bridgeExit=process.platform==='win32'?null:exit
   if(process.platform!=='win32'){
     const reportLine=bridgeReportRaw.split(/\r?\n/).find(line=>line.trim().length>0)
     let bridgeReport=null
@@ -240,13 +247,16 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     if(bridgeReport){
       if(bridgeReport.escalated)escalatedStop=true
       if(bridgeReport.stopError&&!stopError)stopError=Error(bridgeReport.stopError)
-      if(bridgeReport.error&&!exit?.error)exit={code:null,signal:null,error:Error(bridgeReport.error)}
-      supervisorExit={code:bridgeReport.exitCode??null,signal:bridgeReport.exitSignal??null}
+      supervisorExit={
+        code:bridgeReport.exitCode??null,
+        signal:bridgeReport.exitSignal??null,
+        ...(bridgeReport.error?{error:Error(bridgeReport.error)}:{}),
+      }
     }else if(!unconfirmedStop&&!stopError&&!exit?.error){
       unconfirmedStop=true
     }
   }
-  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:startAck.hasStarted(),escalatedStop,unconfirmedStop,stopError,outerSignal,supervisorExit})
+  const finalResult=publishWorkerProof({workerProfile,supervisorExit,bridgeExit,workerStarted:startAck.hasStarted(),escalatedStop,unconfirmedStop,stopError,outerSignal})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')

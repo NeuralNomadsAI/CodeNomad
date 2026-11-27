@@ -162,6 +162,7 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
   ]
   const exactFrames = expected.map(e => ({
     requestId: 'sse-1',
+    type: 'instance.event',
     nativeType: 'session.text.delta',
     assistantMessageID: e.assistantMessageID,
     instanceId: e.workspaceId,
@@ -173,20 +174,28 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
   assert.throws(() => assertExactInjectedMultiset([exactFrames[0], exactFrames[0]], 'sse-1', expected))
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
-    {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-stray', instanceId: 'ws-1', sessionID: 'ses_tab_1', delta: 'Tab 1'},
+    {requestId: 'sse-1', type: 'instance.event', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-stray', instanceId: 'ws-1', sessionID: 'ses_tab_1', delta: 'Tab 1'},
   ], 'sse-1', expected))
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
-    {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-wrong', sessionID: 'ses_tab_1', delta: 'Tab 1'},
+    {requestId: 'sse-1', type: 'instance.event', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-wrong', sessionID: 'ses_tab_1', delta: 'Tab 1'},
   ], 'sse-1', expected))
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
-    {requestId: 'sse-1', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-1', sessionID: 'ses_tab_2', delta: 'Tab 1'},
+    {requestId: 'sse-1', type: 'instance.event', nativeType: 'session.text.delta', assistantMessageID: 'sse-live-1', instanceId: 'ws-1', sessionID: 'ses_tab_2', delta: 'Tab 1'},
   ], 'sse-1', expected))
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], requestId: 'sse-2'},
     exactFrames[1],
   ], 'sse-1', expected))
+  assert.throws(() => assertExactInjectedMultiset([
+    {...exactFrames[0], type: 'workspace.event'},
+    exactFrames[1],
+  ], 'sse-1', expected), /expected instance\.event/)
+  assert.throws(() => assertExactInjectedMultiset([
+    {...exactFrames[0], type: null},
+    exactFrames[1],
+  ], 'sse-1', expected), /expected instance\.event/)
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
     {...exactFrames[0], assistantMessageID: ['sse-live-1']},

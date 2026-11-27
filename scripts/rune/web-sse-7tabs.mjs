@@ -110,6 +110,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
   const actualFrames = frames.filter(f => f.nativeType === 'session.text.delta')
   for (const frame of actualFrames) {
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
+    assert.equal(frame.type, 'instance.event', `Injected SSE frame for ${frame.assistantMessageID} had envelope type ${frame.type}, expected instance.event`)
     assert.equal(typeof frame.assistantMessageID, 'string', 'Injected SSE frame assistantMessageID must be a string')
     assert.equal(typeof frame.instanceId, 'string', 'Injected SSE frame instanceId must be a string')
     assert.equal(typeof frame.sessionID, 'string', 'Injected SSE frame sessionID must be a string')
@@ -477,7 +478,7 @@ async function runBench() {
       try { parsed = JSON.parse(event.data) } catch {}
       cdpSseFrames.push({
         requestId: event.requestId,
-        type: parsed?.type ?? event.eventName,
+        type: parsed?.type ?? null,
         instanceId: parsed?.instanceId ?? null,
         nativeType: parsed?.event?.type ?? null,
         sessionID: parsed?.event?.data?.sessionID ?? null,
@@ -744,6 +745,7 @@ async function runBench() {
       while (Date.now() < deadline) {
         const matchedEntries = initialExpectedEntries.filter(entry => cdpSseFrames.some(f =>
           f.requestId === sseRequestId
+          && f.type === 'instance.event'
           && f.nativeType === 'session.text.delta'
           && f.assistantMessageID === entry.assistantMessageID
           && f.instanceId === entry.workspaceId
@@ -771,6 +773,7 @@ async function runBench() {
       while (Date.now() < deadline) {
         const hit = cdpSseFrames.find(f =>
           f.requestId === sseRequestId
+          && f.type === 'instance.event'
           && f.nativeType === 'session.text.delta'
           && f.assistantMessageID === assistantMessageID
           && f.instanceId === workspaceId
