@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Выберите доступный источник проекта или корректные явные пути файлов.",
   "missions.scheduling.error.empty": "У этого календаря нет будущего времени.",
   "missions.scheduling.error.capability": "Планирование недоступно. Сохраните черновик или удалите критерии запуска.",
+  "missions.scheduling.error.unsupported": "Эти условия запуска нельзя запланировать.",
   "missions.scheduleList.activationRefused.layer.project": "Конфигурация проекта",
   "missions.scheduleList.activationRefused.layer.global": "Глобальная конфигурация",
   "missions.scheduleList.activationRefused.layer.inherited": "Унаследованная конфигурация",

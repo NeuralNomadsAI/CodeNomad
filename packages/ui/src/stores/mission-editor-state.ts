@@ -18,11 +18,14 @@ export interface MissionEditorDraft {
   startOnCreation?: boolean
   coordinatorGoal?: boolean
   coordinatorSessionID?: string
+  /** The programming a recurring creation saves: the same one however often the form is submitted. */
+  calendarID?: string
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
   deleteAutoSubmitted?: boolean; deleteError?: string
 }
 
-export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }
+/** `calendar`: the creation form edits this existing programmed Mission. */
+export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; calendar?: string; draft?: Readonly<MissionEditorDraft> }
 
 // Window memory only, keyed by panel scope: the open editor outlives the panel
 // (another right-panel tab) and a hidden project, never a restart, and never

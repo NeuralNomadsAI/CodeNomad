@@ -84,8 +84,9 @@ export function missionCalendars(client: Client, location: { directory: string; 
           ...(latest ? { last: { ...last(latest)!, at: latest.lastRunAt! } } : {}) }
       }).sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id))
     },
-    /** Creates the calendar's Automations, or replaces them: its identity, and so its latest Mission and checkpoints, stay. */
-    async save(calendar: string, automations: readonly MissionCalendarAutomation[]): Promise<void> {
+    /** Creates the calendar's Automations, or replaces them: its identity, and so its latest Mission and checkpoints, stay.
+     * `paused` creates a new calendar paused. */
+    async save(calendar: string, automations: readonly MissionCalendarAutomation[], paused = false): Promise<void> {
       missionCalendarIDSchema.parse(calendar)
       if (!automations.length) throw new Error("Mission calendar needs a rule")
       await ensureCarrier()
@@ -99,7 +100,7 @@ export function missionCalendars(client: Client, location: { directory: string; 
         throw error
       }
       // A paused calendar stays paused through an edit.
-      if (previous.length && previous.every(info => info.status !== "active"))
+      if (previous.length ? previous.every(info => info.status !== "active") : paused)
         for (const automationID of created) await client.experimental.automation.pause({ automationID }, options)
       for (const info of previous) await client.experimental.automation.delete({ automationID: info.id }, options)
     },

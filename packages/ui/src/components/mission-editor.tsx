@@ -9,6 +9,7 @@ import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/mission-mutation"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
   consumeMissionCreation, reconcileMissionCreation, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
@@ -51,7 +52,8 @@ export function MissionEditor(props: {
   instanceId: string; directory?: string; viewDirectory?: string; projectID?: string; action: MissionEditorAction
   active?: () => boolean
   captureOperation?: () => (() => boolean)
-  onSaved: (mission?: MissionPanelMap, scheduleID?: string) => void; onCancel: () => void
+  /** `missionID`: the Mission a saved programming is right now. */
+  onSaved: (mission?: MissionPanelMap, scheduleID?: string, missionID?: string) => void; onCancel: () => void
   onOpenPreferences?: () => void
   /** Opens the selected playbook's details under the chosen task-session policy. */
   onShowPlaybook?: (template: MissionPanelMap["template"], taskMode: MissionTaskMode) => void
@@ -287,13 +289,14 @@ export function MissionEditor(props: {
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
   let requestId = held?.requestId ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
+  const calendarID = action.calendar ?? draft?.calendarID ?? `cal_${generateUUID().replaceAll("-", "")}`
   const locked = () => !creationReady() || defaultsRefreshing() || busy() || prefilling() || !schedule.ready() || schedule.conflict() || schedule.reading()
   // Only an idle draft is kept: a request in flight or held settles through its own hold.
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
     watched: watched(), objective: objective(), notes: notes(), template: template(), profiles: copyMissionProfiles(profiles()),
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), draftId, selectedModel: selectedModel(), savedBaselines: savedBaselines(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
-    requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
+    requestId, lastPayload, calendarID, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
     coordinatorGoal: coordinatorGoal(),
     ...(coordinatorSessionID() !== undefined ? { coordinatorSessionID: coordinatorSessionID() } : {}),
     deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
@@ -357,11 +360,17 @@ export function MissionEditor(props: {
       lastPayload = serialized
       const currentView = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const current = () => currentView() && operation() && props.action === action
-      const start = captureStart(kind === "create" && startOnCreation())
       setPending(true); setError("")
       try {
-        await schedule.save(payload, requestId, start)
+        if (kind === "create") {
+          // A programmed Mission: saving it again, whatever happened to the answer, saves the same one.
+          const saved = await backendOf(props.instanceId).api.missionCalendars(props.instanceId, { directory: props.directory, calendar: calendarID,
+            configuration: payload, paused: !action.calendar && !startOnCreation() })
+          if (current()) props.onSaved(undefined, undefined, saved.calendars.find(item => item.id === calendarID)?.missionID)
+        } else await schedule.save(payload, requestId)
       } catch (error) {
+        if (current() && error instanceof HttpResponseError && error.code === "calendar-unsupported") setError(t("missions.scheduling.error.unsupported"))
+        else
         if (current()) setError(t("missions.control.mutation.error"))
       } finally { setPending(false) }
       return
@@ -547,7 +556,7 @@ export function MissionEditor(props: {
           <span id={ids.profilesError} role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</span>
         }</Show>
       </section>
-    <Show when={kind === "create"}><label class="mission-create-autostart">
+    <Show when={kind === "create" && !action.calendar}><label class="mission-create-autostart">
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
     </label></Show>
@@ -676,7 +685,7 @@ export function MissionEditor(props: {
              ? !autoSubmit() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
-          {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}
+          {t(pending() || creationPending() ? "missions.control.mutation.pending" : action.calendar ? "missions.control.save" : "missions.create.submit")}
         </button>
       </Show>
     </footer>

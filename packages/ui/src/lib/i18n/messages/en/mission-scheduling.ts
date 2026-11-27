@@ -183,4 +183,5 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Choose an available project source or valid explicit file paths.",
   "missions.scheduling.error.empty": "This calendar has no future slot.",
   "missions.scheduling.error.capability": "Scheduling is unavailable. Keep the draft or remove the launch criteria.",
+  "missions.scheduling.error.unsupported": "These launch criteria cannot be scheduled.",
 }

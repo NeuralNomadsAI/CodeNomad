@@ -110,6 +110,8 @@ test("a programming is paused, resumed and deleted, and refused with its reason"
   const f = await fixture()
   try {
     await f.call("PUT", "/cal_review", { configuration: configuration() })
+    assert.equal((await f.call("PUT", "/cal_later", { configuration: configuration(), paused: true })).body.calendars.find((item: any) => item.id === "cal_later").paused, true, "created paused")
+    await f.call("DELETE", "/cal_later")
     assert.equal((await f.call("POST", "/cal_review/pause")).body.calendars[0].paused, true)
     assert.equal((await f.call("POST", "/cal_review/resume")).body.calendars[0].paused, false)
     const refused = await f.call("PUT", "/cal_other", { configuration: configuration("Review", [{ kind: "mission-completed", missionID: "msn_other" }]) })

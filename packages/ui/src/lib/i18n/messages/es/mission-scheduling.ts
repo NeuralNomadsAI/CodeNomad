@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Elija una fuente disponible del proyecto o rutas explícitas válidas.",
   "missions.scheduling.error.empty": "Este calendario no tiene ningún horario futuro.",
   "missions.scheduling.error.capability": "La programación no está disponible. Conserve el borrador o quite los criterios de lanzamiento.",
+  "missions.scheduling.error.unsupported": "Estos criterios de lanzamiento no se pueden programar.",
   "missions.scheduleList.activationRefused.layer.project": "Configuración del proyecto",
   "missions.scheduleList.activationRefused.layer.global": "Configuración global",
   "missions.scheduleList.activationRefused.layer.inherited": "Configuración heredada",

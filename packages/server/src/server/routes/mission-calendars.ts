@@ -15,7 +15,7 @@ type Deps = Pick<MissionRouteDeps, "workspaceManager" | "worktreeDeletionFence" 
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0")).optional()
 const params = z.object({ id: z.string().min(1).max(200), calendar: missionCalendarIDSchema.optional(), action: z.enum(["pause", "resume"]).optional() }).strict()
 const configuration = z.object(missionConfigurationSchema.shape).strict().omit({ roots: true, profileID: true, executionHost: true, coordinatorSelectionAuthor: true })
-const body = z.object({ configuration, directory }).strict()
+const body = z.object({ configuration, directory, paused: z.boolean().optional() }).strict()
 
 /** Programmed Missions ("calendars") are native Automations: these routes translate the
  * form's launch criteria, prepare the Mission the first launch starts, and list, pause,
@@ -61,7 +61,7 @@ export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
           await owned.refresh()
           // After its first launch an edited programming keeps naming the Mission of its current launch.
           const automations = missionCalendarAutomations(config, id, prepared ?? current?.id)
-          await lifetime.wait(calendars.save(id, Array.isArray(automations) ? automations : []))
+          await lifetime.wait(calendars.save(id, Array.isArray(automations) ? automations : [], input.data.paused))
         } else if (method === "POST") await lifetime.wait(calendars[selected.data.action!](calendar!))
         else if (method === "DELETE") await lifetime.wait(calendars.delete(calendar!))
         await owned.refresh()

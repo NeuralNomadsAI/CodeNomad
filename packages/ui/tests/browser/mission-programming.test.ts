@@ -6,7 +6,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionCalendarView } from "../../../server/src/opencode/mission-calendars"
 import type {} from "./fixtures/mission-navigation"
-import { clickMissionAction, missionDetail, missionEntryStatus, missionMenuItemState, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
+import { clickMissionAction, missionDetail, missionEntryStatus, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
@@ -26,7 +26,9 @@ const mission = (id: string, title: string, runState: "prepared" | "running" = "
   actors: [{ sessionId: "ses_review", kind: "coordinator", title: "Coordinator", managed: false, roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }],
   tasks: [{ id: `task-${id}`, key: "read", title: "Read the changes", brief: "Read", role: "specialist", status: "ready", blockedBy: [], createdAt: NOW, updatedAt: NOW, outstandingExecution: false }],
   reports: [], frontier: [], claims: [], revision: 2, createdAt: NOW, updatedAt: NOW, history: [], historyTruncated: false } as unknown as MissionMap)
-const programming = (missionID: string, extra: Partial<MissionCalendarView> = {}): MissionCalendarView => ({ id: "cal_review", title: "Daily review", paused: false, missionID, mission: {},
+const profile = { agent: "build", model: { providerID: "p", id: "m" } }
+const programming = (missionID: string, extra: Partial<MissionCalendarView> = {}): MissionCalendarView => ({ id: "cal_review", title: "Daily review", paused: false, missionID,
+  mission: { objective: "Review the changes", template: "custom", taskMode: "native", profiles: { coordinator: profile, roles: { specialist: profile } } },
   launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] },
   rules: [{ automationID: "aut_1", trigger: { type: "cron", cron: "0 9 * * *", tz: "UTC" }, tz: "UTC", runCount: 2, nextDueAt: Date.UTC(2026, 10, 28, 9) }],
   last: { outcome: "launched", at: NOW, missionID, launches: 2, history: [{ at: Date.UTC(2026, 10, 26, 9), outcome: "completed" }] }, ...extra })
@@ -35,7 +37,7 @@ async function setup() {
   const page = await browser.newPage({ locale: "en-GB", viewport: { width: 1280, height: 900 } })
   page.setDefaultTimeout(15000)
   const state = { missions: [mission("A", "Daily review"), mission("B", "Other work")], calendars: [programming("A")] }
-  const writes: string[] = []
+  const writes: string[] = [], saved: any[] = []
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
@@ -43,7 +45,9 @@ async function setup() {
     if (method !== "GET") writes.push(`${method} ${pathname.slice(pathname.indexOf("/missions"))}`)
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     const calendar = /\/missions\/calendars(?:\/cal_review(?:\/(pause|resume))?)?$/.exec(pathname)
+    if (pathname.endsWith("/missions/scheduled/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (calendar) {
+      if (method === "PUT") saved.push(request.postDataJSON())
       if (method === "DELETE") state.calendars = []
       else if (calendar[1]) state.calendars = state.calendars.map(item => ({ ...item, paused: calendar[1] === "pause" }))
       return route.fulfill({ json: { calendars: state.calendars } })
@@ -57,19 +61,20 @@ async function setup() {
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
   await page.goto(url, { timeout: 60000 })
-  return { page, state, writes }
+  return { page, state, writes, saved }
 }
 const facts = async (page: Page) => (await missionDetail(page).locator(".mission-schedule-facts").innerText()).replace(/\s+/g, " ")
 
 test("a programmed Mission is one ordinary row that shows and controls its programming", async () => {
-  const { page, state, writes } = await setup()
+  const { page, state, writes, saved } = await setup()
   try {
     await selectMission(page, "Daily review")
     assert.match(await missionEntryStatus(page, "Daily review"), /Every day · 09:00 · UTC · Next wake · Nov 28, 2026, 9:00 AM/)
     assert.doesNotMatch(await missionEntryStatus(page, "Other work"), /Next wake/)
+    const icon = (key: string) => page.locator(`.mission-row[data-mission-key="mission:${key}"] .mission-row-flag`)
+    assert.deepEqual([await icon("A").getAttribute("class"), await icon("B").getAttribute("class")].map(value => /lucide-repeat/.test(value ?? "")), [true, false])
     assert.match(await facts(page), /Launch when Every day · 09:00 · UTC Desired state Running Pause Next wake Nov 28, 2026, 9:00 AM Launched passages 2/)
     assert.match(await missionDetail(page).locator(".mission-past-runs").innerText(), /Nov 26, 2026, 9:00 AM · Completed/)
-    assert.equal((await missionMenuItemState(page, "edit")).enabled, false)
 
     await missionDetail(page).getByRole("button", { name: "Scheduling · Pause" }).click()
     await missionDetail(page).getByRole("button", { name: "Scheduling · Resume" }).waitFor()
@@ -82,6 +87,30 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     await missionRefresh(page).click()
     await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-select[aria-current=true]').waitFor()
     assert.equal((await selectedMissionTitle(page).innerText()).trim(), "Daily review")
+
+    // Between launches the row waits for its next wake, or is paused.
+    state.missions = [{ ...mission("C", "Daily review"), status: "completed" } as MissionMap, mission("B", "Other work")]
+    state.calendars = [programming("C")]
+    await missionRefresh(page).click()
+    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark[data-mark="waiting"]').waitFor()
+    assert.match(await missionEntryStatus(page, "Daily review"), /^Waiting for scheduled run · Every day/)
+    state.missions = [mission("C", "Daily review"), mission("B", "Other work")]
+    await missionRefresh(page).click()
+    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark:not([data-mark="waiting"])').waitFor()
+
+    // Edit reopens the form that created it and saves the same programming.
+    await clickMissionAction(page, "Edit selected mission")
+    const form = page.locator("form.mission-editor")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Review the changes")
+    assert.deepEqual([await form.getByLabel("Criterion 1 type", { exact: true }).inputValue(), await form.getByLabel("Criterion 1 time", { exact: true }).inputValue()], ["daily", "09:00"])
+    assert.equal(await form.getByRole("checkbox", { name: "Start automatically", exact: true }).count(), 0)
+    await form.getByLabel("Objective", { exact: true }).fill("Review the changes, briefly")
+    await form.getByRole("button", { name: "Save", exact: true }).click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(writes.at(-1), "PUT /missions/calendars/cal_review")
+    assert.deepEqual([saved[0].configuration.objective, saved[0].configuration.title, saved[0].configuration.launch, saved[0].paused],
+      ["Review the changes, briefly", "Daily review", programming("C").launch, undefined])
+    assert.deepEqual(saved[0].configuration.profiles, programming("C").mission.profiles)
 
     // Deleting it removes the programming first.
     writes.length = 0
