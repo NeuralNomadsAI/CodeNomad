@@ -161,6 +161,51 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         None
     );
 
+    // Distinct full paths that also expose the same short attachment name must stay ambiguous
+    // for the short name while resolving cleanly for an unambiguous suffix or exact path.
+    let shared_short_name = vec![
+        candidate(&["chart.png", "/b/chart.png"], "b-newest"),
+        candidate(&["chart.png", "/a/chart.png"], "a-older"),
+    ];
+    assert_eq!(
+        match_local_image(&shared_short_name, "chart.png", true),
+        None
+    );
+    assert_eq!(
+        match_local_image(&shared_short_name, "./chart.png", true),
+        None
+    );
+    assert_eq!(
+        match_local_image(&shared_short_name, "a/chart.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("a-older".into()))
+    );
+    assert_eq!(
+        match_local_image(&shared_short_name, "/b/chart.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("b-newest".into()))
+    );
+
+    // Re-reading the same path with its short name resolves to the newest candidate.
+    let reread_same_path = vec![
+        candidate(&["chart.png", r"C:\Work\A\Chart.PNG"], "win-new"),
+        candidate(&["chart.png", r"C:\Work\A\chart.png"], "win-old"),
+    ];
+    assert_eq!(
+        match_local_image(&reread_same_path, "chart.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("win-new".into()))
+    );
+    let win_shared_short = vec![
+        candidate(&["Chart.PNG", r"C:\Work\B\Chart.PNG"], "win-b"),
+        candidate(&["chart.png", r"C:\Work\A\chart.png"], "win-a"),
+    ];
+    assert_eq!(
+        match_local_image(&win_shared_short, "chart.png", true),
+        None
+    );
+    assert_eq!(
+        match_local_image(&win_shared_short, "Chart.PNG", true),
+        None
+    );
+
     // Plain paths try literal first, then percent-decoded fallback; file: URLs do not double-decode.
     let encoded = vec![
         candidate(&["C:/images/a b.png"], "space"),

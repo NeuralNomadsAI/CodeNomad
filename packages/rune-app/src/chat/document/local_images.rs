@@ -113,16 +113,18 @@ fn fallback_matcher(kept: HashMap<String, Vec<bool>>) -> impl Fn(&str, bool) -> 
 }
 
 fn image_search_matcher(
-    kept_meta: HashMap<String, Vec<Option<(String, String)>>>,
-) -> impl Fn(&str) -> Option<(String, String)> {
+    kept_meta: HashMap<String, Vec<markdown::ImageSearch>>,
+) -> impl Fn(&str) -> markdown::ImageSearch {
     let cursors: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
     move |src: &str| {
-        let entries = kept_meta.get(src)?;
+        let Some(entries) = kept_meta.get(src) else {
+            return markdown::ImageSearch::Inline;
+        };
         let mut cursors = cursors.borrow_mut();
         let index = cursors.entry(src.to_owned()).or_insert(0);
-        let slot = entries.get(*index)?.as_ref();
+        let entry = entries.get(*index).cloned();
         *index += 1;
-        slot.cloned()
+        entry.unwrap_or(markdown::ImageSearch::Inline)
     }
 }
 
@@ -151,7 +153,7 @@ impl Plan {
         fallback_matcher(kept)
     }
 
-    pub(super) fn image_search_text(&self) -> impl Fn(&str) -> Option<(String, String)> {
+    pub(super) fn image_search_text(&self) -> impl Fn(&str) -> markdown::ImageSearch {
         let kept_meta = self
             .occurrences
             .iter()
@@ -160,9 +162,14 @@ impl Plan {
                     .iter()
                     .filter_map(Option::as_ref)
                     .map(|slot| {
-                        slot.image
-                            .is_none()
-                            .then(|| (slot.key.clone(), slot.label.clone()))
+                        if slot.image.is_some() {
+                            markdown::ImageSearch::Hidden
+                        } else {
+                            markdown::ImageSearch::Fallback {
+                                key: slot.key.clone(),
+                                label: slot.label.clone(),
+                            }
+                        }
                     })
                     .collect::<Vec<_>>();
                 (src.clone(), meta)
@@ -178,12 +185,12 @@ impl Plan {
         search_terms: Option<(Vec<String>, bool)>,
     ) -> (
         impl Fn(&str, bool) -> Option<String>,
-        impl Fn(&str) -> Option<(String, String)>,
+        impl Fn(&str) -> markdown::ImageSearch,
         impl Fn(&str) -> Option<Image> + 'static,
         impl Fn(El, &markdown::ImageFrame<'_>, Option<&str>) -> El + 'static,
     ) {
         let mut kept: HashMap<String, Vec<bool>> = HashMap::with_capacity(self.occurrences.len());
-        let mut kept_meta: HashMap<String, Vec<Option<(String, String)>>> =
+        let mut kept_meta: HashMap<String, Vec<markdown::ImageSearch>> =
             HashMap::with_capacity(self.occurrences.len());
         let mut active_slots: HashMap<String, VecDeque<Slot>> = HashMap::new();
         for (src, entries) in self.occurrences {
@@ -192,11 +199,14 @@ impl Plan {
             for entry in entries {
                 if let Some(slot) = entry {
                     flags.push(true);
-                    meta.push(
-                        slot.image
-                            .is_none()
-                            .then(|| (slot.key.clone(), slot.label.clone())),
-                    );
+                    meta.push(if slot.image.is_some() {
+                        markdown::ImageSearch::Hidden
+                    } else {
+                        markdown::ImageSearch::Fallback {
+                            key: slot.key.clone(),
+                            label: slot.label.clone(),
+                        }
+                    });
                     active_slots.entry(src.clone()).or_default().push_back(slot);
                 } else {
                     flags.push(false);
@@ -545,41 +555,52 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     if target.is_empty() || has_parent_segment(&target) {
         return Match::Miss;
     }
-    let relative = (!target.starts_with('/') && !windows_path(&target))
-        .then(|| {
-            let mut stripped = target.as_str();
-            while let Some(rest) = stripped.strip_prefix("./") {
-                stripped = rest;
-            }
-            (!stripped.is_empty() && !has_parent_segment(stripped)).then(|| format!("/{stripped}"))
-        })
-        .flatten();
-    let relative_lower = relative.as_deref().map(str::to_lowercase);
-    let mut suffixes: HashMap<&str, &'a Candidate> = HashMap::new();
-    for candidate in candidates {
-        for known in &candidate.paths {
-            if known.comparable == target {
+    if target.starts_with('/') || windows_path(&target) {
+        for candidate in candidates {
+            if candidate
+                .paths
+                .iter()
+                .any(|known| known.comparable == target)
+            {
                 return Match::Found(candidate);
             }
-            if let Some(rel) = relative.as_deref()
-                && !suffixes.contains_key(known.comparable.as_str())
-            {
-                let matched = if known.windows {
-                    known
-                        .comparable
-                        .ends_with(relative_lower.as_deref().unwrap_or(rel))
-                } else {
-                    known.comparable.ends_with(rel)
-                };
-                if matched {
-                    suffixes.insert(known.comparable.as_str(), candidate);
-                }
+        }
+        return Match::Miss;
+    }
+    let mut stripped = target.as_str();
+    while let Some(rest) = stripped.strip_prefix("./") {
+        stripped = rest;
+    }
+    if stripped.is_empty() || has_parent_segment(stripped) {
+        return Match::Miss;
+    }
+    let rel = format!("/{stripped}");
+    let rel_lower = rel.to_lowercase();
+    let mut matched_paths: HashMap<&str, &'a Candidate> = HashMap::new();
+    for candidate in candidates {
+        let mut best: Option<&str> = None;
+        for known in &candidate.paths {
+            let mut known_key = known.comparable.as_str();
+            while let Some(rest) = known_key.strip_prefix("./") {
+                known_key = rest;
+            }
+            let exact = known_key == stripped;
+            let suffix = if known.windows {
+                known.comparable.ends_with(&rel_lower)
+            } else {
+                known.comparable.ends_with(&rel)
+            };
+            if (exact || suffix) && best.is_none_or(|prev| known_key.len() > prev.len()) {
+                best = Some(known_key);
             }
         }
+        if let Some(key) = best {
+            matched_paths.entry(key).or_insert(candidate);
+        }
     }
-    match suffixes.len() {
+    match matched_paths.len() {
         0 => Match::Miss,
-        1 => suffixes
+        1 => matched_paths
             .into_values()
             .next()
             .map_or(Match::Miss, Match::Found),
