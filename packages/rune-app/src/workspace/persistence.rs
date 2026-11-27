@@ -515,6 +515,15 @@ impl Persistence {
                 self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = base_drafts;
                 self.attempted_file_drafts = base_drafts;
+                #[cfg(target_arch = "wasm32")]
+                if !self.file_draft_read_error
+                    && let Some(store) = &self.store
+                {
+                    let staged = documents
+                        .file_draft_snapshot(base_drafts)
+                        .map(|(_, bytes)| bytes);
+                    store.stage_pending_file_drafts(staged);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.file_drafts_dirty_revision = drafts_rev;
@@ -531,7 +540,9 @@ impl Persistence {
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
                 #[cfg(target_arch = "wasm32")]
-                if let Some(store) = &self.store {
+                if !self.file_draft_read_error
+                    && let Some(store) = &self.store
+                {
                     let staged = documents
                         .file_draft_snapshot(drafts_rev)
                         .map(|(_, bytes)| bytes);
@@ -546,6 +557,10 @@ impl Persistence {
                 self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
+                #[cfg(target_arch = "wasm32")]
+                if let Some(store) = &self.store {
+                    store.stage_pending_file_drafts(None);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.file_drafts_dirty_revision = drafts_rev;
@@ -558,6 +573,15 @@ impl Persistence {
         } else {
             // Re-arm any file draft write cancelled by the partial Clear so live edits persist.
             self.attempted_file_drafts = self.saved_file_drafts;
+            #[cfg(target_arch = "wasm32")]
+            if !self.file_draft_read_error
+                && let Some(store) = &self.store
+            {
+                let staged = documents
+                    .file_draft_snapshot(self.saved_file_drafts)
+                    .map(|(_, bytes)| bytes);
+                store.stage_pending_file_drafts(staged);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 self.file_drafts_due = 0.0;
@@ -702,10 +726,6 @@ impl Persistence {
                 return;
             }
             self.cleared_file_drafts_revision = None;
-            #[cfg(target_arch = "wasm32")]
-            if let Some(store) = &self.store {
-                store.stage_pending_file_drafts(None);
-            }
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -765,12 +785,18 @@ impl Persistence {
             return !self.file_draft_error;
         };
         self.attempted_file_drafts = revision;
-        if self.file_draft_read_error
-            || self
-                .store
-                .as_ref()
-                .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
-        {
+        if self.file_draft_read_error {
+            self.file_draft_error = true;
+            return false;
+        }
+        let Some(store) = self.store.as_ref() else {
+            self.file_draft_error = true;
+            return false;
+        };
+        if store.save_file_drafts(&bytes).is_err() {
+            // Keep unsaved draft bytes staged so pagehide retries writing them and withholds
+            // record release if sessionStorage quota still rejects the write.
+            store.stage_pending_file_drafts(Some(bytes));
             self.file_draft_error = true;
             return false;
         }
