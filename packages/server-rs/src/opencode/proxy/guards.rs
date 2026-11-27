@@ -103,16 +103,21 @@ pub(super) fn is_account_no_store_route(route: &str, method: &Method) -> bool {
 }
 
 pub(super) fn guarded(route: &str, method: &Method) -> bool {
+    let session_segment = route
+        .strip_prefix("/api/session/")
+        .or_else(|| route.strip_prefix("/api/experimental/session/"))
+        .and_then(|rest| rest.split('/').next());
     if *method == Method::GET {
+        if session_segment
+            .is_some_and(|seg| seg.is_empty() || seg == "global" || (seg == "active" && route != "/api/session/active"))
+        {
+            return false;
+        }
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
     }
     if is_account_mutation(route, method) {
         return true;
     }
-    let session_segment = route
-        .strip_prefix("/api/session/")
-        .or_else(|| route.strip_prefix("/api/experimental/session/"))
-        .and_then(|rest| rest.split('/').next());
     if session_segment.is_some_and(|seg| matches!(seg, "" | "active" | "global")) {
         return false;
     }

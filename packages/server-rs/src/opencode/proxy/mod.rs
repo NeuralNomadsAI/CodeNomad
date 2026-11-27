@@ -7,6 +7,8 @@ mod background_tests;
 mod defer_media;
 mod dispatch;
 mod guards;
+#[cfg(test)]
+mod inbox_tests;
 mod mutation;
 #[cfg(test)]
 mod stack_tests;
@@ -425,7 +427,13 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             }
         }
     } else {
-        admission_work.await?
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            result = admission_work => result?,
+        }
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
     let directory = if send_input {
@@ -707,7 +715,13 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
                 return Ok(unavailable());
             }
-            verify_mutation_at(&app, &endpoint, session, directory, record).await?;
+            tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                result = verify_mutation_at(&app, &endpoint, session, directory, record) => result?,
+            }
         } else if route.strip_prefix("/api/session/").is_some_and(|rest| !rest.contains('/'))
             && head.headers.get(SESSION_PLACEMENT_HEADER).is_some_and(|v| v == "1")
         {

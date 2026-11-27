@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    http::{Method, StatusCode as Status, header},
+    http::{Method, StatusCode as Status},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -165,14 +165,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 body_empty = true;
                 json!({})
             } else {
-                let valid_ct = if account_mutation {
-                    is_json_content_type(&head.headers)
-                } else {
-                    head.headers
-                        .get(header::CONTENT_TYPE)
-                        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
-                };
-                if !valid_ct {
+                if !is_json_content_type(&head.headers) {
                     return Err(if control.is_some() {
                         controls::invalid("Invalid session control")
                     } else if account_mutation {
@@ -290,7 +283,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     data.insert("permissions".into(), block.clone());
                 }
             }
-            if head.method != Method::DELETE && !(background && body_empty) {
+            if head.method != Method::DELETE && !((background || inbox_patch) && body_empty) {
                 input = Some(Value::Object(data));
             }
         }
