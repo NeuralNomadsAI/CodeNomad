@@ -12,6 +12,7 @@
     .tool-call-todo-tag,
     .git-change-section-count,
     .session-goal-badge,
+    .session-automation-badge,
     .integration-state-badge) {
   border-radius: var(--chip-radius);
 }
@@ -31,6 +32,28 @@
 .session-goal-badge[data-status="complete"] {
   background-color: var(--status-ready-bg);
   color: var(--status-ready-fg);
+}
+
+/* A session automation's status (components/session/session-automations-block.tsx). */
+.session-automation-badge {
+  @apply inline-flex shrink-0 items-center px-1.5 py-0.5 text-xs font-medium;
+  background-color: var(--badge-neutral-bg);
+  color: var(--badge-neutral-text);
+}
+
+.session-automation-badge[data-status="paused"] {
+  background-color: var(--status-starting-bg);
+  color: var(--status-starting-fg);
+}
+
+.session-automation-badge[data-status="done"] {
+  background-color: var(--status-ready-bg);
+  color: var(--status-ready-fg);
+}
+
+.session-automation-badge[data-outcome="failed"] {
+  background-color: var(--status-error-bg);
+  color: var(--status-error-fg);
 }
 
 /* An integration's state label: text carries the state; colour only tints it (AA contrast in every palette). */

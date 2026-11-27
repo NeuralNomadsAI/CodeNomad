@@ -11,10 +11,9 @@ import pino from "pino"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
-import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
+import { PENDING_PLUGIN_ACTIVATION_TIMEOUT_MS, registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
-import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
 import { MINIMUM } from "../../opencode/runtime-version-fixture"
 
 const git = promisify(execFile)
@@ -272,7 +271,7 @@ for (const closeOrder of ["none", "after timeout", "before timeout"] as const) {
     const activationDeadline = new AbortController()
     const timeout = AbortSignal.timeout
     t.mock.method(AbortSignal, "timeout", (ms: number) =>
-      ms === READINESS_WAIT_MS ? activationDeadline.signal : timeout(ms))
+      ms === PENDING_PLUGIN_ACTIVATION_TIMEOUT_MS ? activationDeadline.signal : timeout(ms))
     let close: () => void
     h.app.addHook("onRequest", async (_request, reply) => { close = () => { reply.raw.emit("close") } })
     h.connection.client.plugin.list = async (_input, options) => {
@@ -1128,5 +1127,63 @@ test("64 cold directories use one fixed RPC with at most eight concurrent owners
     assert.equal(peak, 8)
     assert.equal(active, 0)
     assert.ok(commonReads >= 2 * 64, `every candidate is rechecked before and after the RPC: ${commonReads}`)
+  } finally { await h.cleanup() }
+})
+
+test("a warm bootstrap skips redundant plugin activation and re-activates once if evicted", async () => {
+  const h = await harness()
+  try {
+    let catalogues = 0
+    const list = h.connection.client.plugin.list
+    h.connection.client.plugin.list = async (...args) => { catalogues++; return list(...args) }
+    const purposes: string[] = []
+    const resolve = h.manager.getServiceDirectoryForPath
+    h.manager.getServiceDirectoryForPath = async (id, directory, options) => {
+      purposes.push(options?.purpose ?? "default")
+      return resolve(id, directory, options)
+    }
+    const identity = h.manager.getWorktreeIdentityForPath
+    h.manager.getWorktreeIdentityForPath = async (id, directory, purpose) => {
+      purposes.push(`id:${purpose ?? "default"}`)
+      return identity(id, directory, purpose)
+    }
+
+    h.state.result = { data: [complete(h.root, [emptyLocation(h.root)])] }
+    assert.equal((await h.app.inject({ url: h.url() })).statusCode, 200)
+    assert.equal(catalogues, 1, "first cold call activates the bootstrap plugin")
+    assert.ok(purposes.length > 0 && purposes.every(value => value === "event" || value === "id:event"),
+      `background recovery uses registered-only event ownership: ${purposes.join(",")}`)
+
+    // Second batch on the same verified connection and bootstrap skips plugin activation.
+    const second = await h.app.inject({ url: h.url() })
+    assert.equal(second.statusCode, 200)
+    assert.equal(catalogues, 1, "warm bootstrap dispatches directly without re-polling plugin.list")
+    assert.doesNotMatch(String(second.headers["server-timing"]), /plugin-activation/)
+
+    // If OpenCode evicted the bootstrap while idle, 400 rpc.unavailable triggers one re-activation and retry.
+    const baseFetch = h.connection.fetch
+    let evicted = true
+    h.connection.fetch = async (url, init) => {
+      if (evicted) {
+        evicted = false
+        return new Response(JSON.stringify({ _tag: "RpcError", type: "rpc.unavailable", message: "Cold location" }), {
+          status: 400, headers: { "content-type": "application/json" },
+        })
+      }
+      return baseFetch(url, init)
+    }
+    const recovered = await h.app.inject({ url: h.url() })
+    assert.equal(recovered.statusCode, 200)
+    assert.equal(catalogues, 2, "evicted warm bootstrap re-activates once and succeeds")
+    assert.equal(recovered.json().supported, true)
+
+    // If the plugin stays unavailable even after re-activation, report unsupported once.
+    h.connection.fetch = async () => new Response(JSON.stringify({ _tag: "RpcError", type: "rpc.unavailable", message: "Missing RPC" }), {
+      status: 400, headers: { "content-type": "application/json" },
+    })
+    const unsupported = await h.app.inject({ url: h.url() })
+    assert.equal(unsupported.statusCode, 200)
+    assert.deepEqual(unsupported.json(), { supported: false })
+    assert.equal(catalogues, 3)
   } finally { await h.cleanup() }
 })

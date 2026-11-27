@@ -1,6 +1,7 @@
 import type { AutomationInfo, OpenCodeClient } from "@opencode/client"
 import { MISSION_CALENDAR_CARRIER, MISSION_CALENDAR_CODE, MISSION_CALENDAR_PERMISSIONS, missionCalendarIDSchema } from "../missions/calendar-run"
 import type { MissionCalendarAutomation } from "../missions/calendar-automation"
+import { missionLaunchPolicySchema, type MissionLaunchPolicy } from "../missions/launch-policy"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../missions/mission-schedule-carrier-identity"
 import { stableToken } from "../missions/receipt-identity"
 import { locationRequestOptions } from "./compatibility/location"
@@ -8,13 +9,13 @@ import { locationRequestOptions } from "./compatibility/location"
 type Client = { experimental: Pick<OpenCodeClient["experimental"], "automation">; session: Pick<OpenCodeClient["session"], "get" | "create"> }
 /** What a programmed Mission's last run did, from its Automation's state: its current launch, the conversation every launch uses, and its past launches. */
 export type MissionCalendarLast = { outcome: "launched" | "waiting" | "idle"; missionID?: string; status?: string; coordinatorSessionID?: string
-  history: Array<{ at: number; outcome: string }> }
+  history: Array<{ at: number; outcome: string }>; launches: number }
 export type MissionCalendarView = {
   id: string; title: string; paused: boolean
   /** The Mission that is the programmed one right now: its current launch, or the one prepared for the first. */
   missionID?: string
   /** The launch criteria as entered. */
-  launch?: unknown
+  launch?: MissionLaunchPolicy
   /** The Mission each launch creates and the events it waits for, as given at creation. */
   mission: Record<string, unknown>
   rules: Array<{ automationID: string; trigger: AutomationInfo["trigger"]; tz: string; nextDueAt?: number; lastRunAt?: number
@@ -32,7 +33,8 @@ function last(info: AutomationInfo): MissionCalendarLast | undefined {
     const history = Array.isArray(value.history) ? value.history.flatMap(item => item && typeof item === "object" && Number.isSafeInteger((item as { at?: unknown }).at)
       && text240((item as { outcome?: unknown }).outcome) ? [{ at: (item as { at: number }).at, outcome: (item as { outcome: string }).outcome }] : []).slice(-20) : []
     const missionID = text240(value.missionID), status = text240(value.status), coordinatorSessionID = text240(value.coordinatorSessionID)
-    return { outcome: value.outcome, ...(missionID ? { missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history }
+    return { outcome: value.outcome, ...(missionID ? { missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history,
+      launches: Number.isSafeInteger(value.launches) && (value.launches as number) >= 0 ? value.launches as number : history.length }
   } catch { return undefined }
 }
 
@@ -43,7 +45,9 @@ export function missionCalendars(client: Client, location: { directory: string; 
   // The reserved prefix keeps ordinary sends, favourites and permission modes off the carrier.
   const carrier = `${MISSION_SCHEDULE_CARRIER_SESSION_PREFIX}calendar_${stableToken(`${projectID}\0${location.directory}`, 24)}`
   const options = { ...locationRequestOptions(location), signal }
-  const own = async () => (await client.experimental.automation.list({ sessionID: carrier, directory: location.directory }, options))
+  // OpenCode refuses to list the Automations of a conversation that does not exist: before the first calendar, there is no carrier.
+  const own = async () => (await client.experimental.automation.list({ sessionID: carrier, directory: location.directory }, options)
+    .catch(error => { if ((error as { _tag?: unknown })?._tag === "SessionNotFoundError") return []; throw error }))
     .filter(info => info.sessionID === carrier && info.action.type === "code" && info.action.code === MISSION_CALENDAR_CODE)
   const calendarOf = (info: AutomationInfo) => {
     const args = info.action.type === "code" ? info.action.args as { calendar?: unknown } | undefined : undefined
@@ -69,7 +73,8 @@ export function missionCalendars(client: Client, location: { directory: string; 
       const groups = new Map<string, AutomationInfo[]>()
       for (const info of await own()) groups.set(calendarOf(info), [...groups.get(calendarOf(info)) ?? [], info])
       return [...groups].map(([id, infos]) => {
-        const { calendar: _calendar, launch, prepared, ...mission } = (infos[0]!.action as { args?: Record<string, unknown> }).args ?? {}
+        const { calendar: _calendar, launch: entered, prepared, ...mission } = (infos[0]!.action as { args?: Record<string, unknown> }).args ?? {}
+        const launch = missionLaunchPolicySchema.safeParse(entered).data
         // The calendar's latest run, whichever rule made it.
         const latest = infos.filter(info => info.lastRunAt !== undefined && last(info)).sort((a, b) => b.lastRunAt! - a.lastRunAt!)[0]
         const missionID = (latest && last(latest)!.missionID) ?? (typeof prepared === "string" ? prepared : undefined)
@@ -81,8 +86,9 @@ export function missionCalendars(client: Client, location: { directory: string; 
           ...(latest ? { last: { ...last(latest)!, at: latest.lastRunAt! } } : {}) }
       }).sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id))
     },
-    /** Creates the calendar's Automations, or replaces them: its identity, and so its latest Mission and checkpoints, stay. */
-    async save(calendar: string, automations: readonly MissionCalendarAutomation[]): Promise<void> {
+    /** Creates the calendar's Automations, or replaces them: its identity, and so its latest Mission and checkpoints, stay.
+     * `paused` creates a new calendar paused. */
+    async save(calendar: string, automations: readonly MissionCalendarAutomation[], paused = false): Promise<void> {
       missionCalendarIDSchema.parse(calendar)
       if (!automations.length) throw new Error("Mission calendar needs a rule")
       await ensureCarrier()
@@ -96,7 +102,7 @@ export function missionCalendars(client: Client, location: { directory: string; 
         throw error
       }
       // A paused calendar stays paused through an edit.
-      if (previous.length && previous.every(info => info.status !== "active"))
+      if (previous.length ? previous.every(info => info.status !== "active") : paused)
         for (const automationID of created) await client.experimental.automation.pause({ automationID }, options)
       for (const info of previous) await client.experimental.automation.delete({ automationID: info.id }, options)
     },

@@ -3,6 +3,7 @@ import type { HistoryRankedInput } from "../../../server/src/opencode/session-pr
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 import type { SessionGoalResponse } from "../../../server/src/opencode/goal-contract"
+import type { SessionAutomationMutationResponse, SessionAutomationsResponse } from "../../../server/src/opencode/automation-contract"
 import type { ShellInfo } from "@opencode/client"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionPreferenceExpectation } from "./mission-preferences-document"
@@ -310,6 +311,24 @@ export function createServerApi(ctx: BackendHttp) {
     },
     fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
       return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
+    },
+    fetchSessionAutomations(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionAutomationsResponse> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/automations`, { signal }))
+    },
+    pauseSessionAutomation(instanceId: string, sessionId: string, automationId: string): Promise<SessionAutomationMutationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/automations/${encodeURIComponent(automationId)}/pause`, {
+        method: "POST",
+      })
+    },
+    resumeSessionAutomation(instanceId: string, sessionId: string, automationId: string): Promise<SessionAutomationMutationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/automations/${encodeURIComponent(automationId)}/resume`, {
+        method: "POST",
+      })
+    },
+    deleteSessionAutomation(instanceId: string, sessionId: string, automationId: string): Promise<SessionAutomationMutationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/automations/${encodeURIComponent(automationId)}`, {
+        method: "DELETE",
+      })
     },
     fetchBackgroundShells(instanceId: string, directory: string, signal?: AbortSignal): Promise<{ location: { directory: string }; data: ShellInfo[] }> {
       const query = new URLSearchParams({ directory })
@@ -918,6 +937,18 @@ export function createServerApi(ctx: BackendHttp) {
       requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
         method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(30_000) })
+    },
+    /** The directory's programmed Missions. With `calendar`, saves it (`configuration`), pauses, resumes or deletes it first. */
+    missionCalendars(instanceId: string, input: { directory?: string; calendar?: string; action?: "pause" | "resume" | "delete"; configuration?: unknown; paused?: boolean } = {},
+      signal?: AbortSignal): Promise<{ calendars: import("../../../server/src/opencode/mission-calendars").MissionCalendarView[] }> {
+      const base = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/calendars`
+      const query = `?${new URLSearchParams(input.directory === undefined ? {} : { directory: input.directory })}`
+      if (!input.calendar) return secondaryRead(signal, () => request(base + query, { signal }))
+      const target = `${base}/${encodeURIComponent(input.calendar)}`, live = AbortSignal.timeout(60_000)
+      if (input.configuration !== undefined) return request(target, { method: "PUT", signal: live,
+        body: JSON.stringify({ configuration: input.configuration, ...(input.paused ? { paused: true } : {}), ...(input.directory === undefined ? {} : { directory: input.directory }) }) })
+      return input.action === "delete" ? request(target + query, { method: "DELETE", signal: live })
+        : request(`${target}/${input.action}${query}`, { method: "POST", signal: live })
     },
     missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false, signal?: AbortSignal): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
       const url = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`

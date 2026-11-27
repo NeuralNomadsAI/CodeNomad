@@ -38,7 +38,7 @@ function created(body: Record<string, unknown>): MissionMap {
 
 async function setup(page: Page, acknowledgement: "fresh" | "recovered" | null = "fresh") {
   const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = [], activations: Record<string, any>[] = []
-  let list: MissionMap[] = []
+  let list: MissionMap[] = [], calendars: unknown[] = []
   let scheduled: Awaited<ReturnType<typeof pausedMissionScheduleReceipt>> | undefined
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -61,6 +61,12 @@ async function setup(page: Page, acknowledgement: "fresh" | "recovered" | null =
         scheduleActivation: { requestID: input.requestID, expectedRevision: input.expectedDocumentRevision,
           authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: null } } }
       return route.fulfill({ json: { document: scheduled.document } })
+    }
+    // A programmed Mission is saved under the identity the form names; its answer is the list.
+    if (path.includes("/missions/calendars")) {
+      if (request.method() !== "GET") { const body = request.postDataJSON(); creates.push(body); list = [created(body.configuration)]
+        calendars = [{ id: path.split("/").at(-1), title: body.configuration.title, paused: body.paused === true, missionID: "msn_created", launch: body.configuration.launch, mission: {}, rules: [] }] }
+      return route.fulfill({ json: { calendars } })
     }
     if (request.method() === "GET" && path.endsWith("/msn_created/schedule") && scheduled) return route.fulfill({ json: scheduled })
     if (request.method() === "GET" && path.endsWith("/missions/scheduled")) return route.fulfill({ json: {
@@ -386,7 +392,7 @@ test("clearing the daily time and removing the criterion creates a one-time miss
   } finally { await page.close() }
 })
 
-test("daily Create stores a paused schedule and never sends Play", async () => {
+test("daily Create saves a paused programmed Mission and never sends Play", async () => {
   const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page)
   try {
@@ -404,6 +410,7 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     await page.waitForTimeout(300)
     assert.equal(fixture.creates.length, 1)
     const configuration = fixture.creates[0]!.configuration as Record<string, any>
+    assert.equal(fixture.creates[0]!.paused, true)
     assert.equal(configuration.title, "Review yesterday's merged changes and summarize risks")
     assert.deepEqual(configuration.launch, { when: [{ kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" }] })
     assert.deepEqual(fixture.controls, [], "Play stays a separate explicit action")
@@ -411,45 +418,20 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
   } finally { await page.close() }
 })
 
-for (const lost of [false, true]) test(`opted-in schedule creation sends one Play; ${lost ? "a lost control ACK retains its exact hold across remount" : "a direct control ACK is accepted"}`, async () => {
+test("opted-in creation saves the programmed Mission running, in one request", async () => {
   const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris" }), fixture = await setup(page)
-  const controls: Record<string, any>[] = []
-  await page.route("**/api/workspaces/fixture/missions/msn_created/schedule", route => {
-    if (route.request().method() !== "POST") return route.fallback()
-    const input = route.request().postDataJSON(); controls.push(input)
-    return lost ? route.abort("connectionreset") : route.fulfill({ json: { ...fixture.scheduled, pending: false,
-      document: { ...fixture.scheduled!.document, revision: input.expectedRevision + 1, control: { requestID: input.requestID,
-        expectedRevision: input.expectedRevision, action: "play", pending: false } } } })
-  })
-  const holds = () => page.evaluate(async () => {
-    const path = "/src/stores/mission-schedules.ts", { unifiedScheduleHolds } = await import(path)
-    return [...unifiedScheduleHolds.values()].map(hold => ({ phase: hold.phase, action: hold.action,
-      requestID: hold.requestID, expectedRevision: hold.expectedRevision }))
-  })
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Arm this confirmed schedule")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Arm this programmed Mission")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await submitReady(page)
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" })
     assert.equal(fixture.creates.length, 1)
-    assert.equal(controls.length, 1)
-    assert.equal(controls[0].action, "play")
-    assert.equal(fixture.activations.length, 1, "the ON setting still gets a ready activation proof")
-    assert.equal(fixture.activations[0].expectedDocumentRevision, 0)
-    assert.equal(controls[0].expectedRevision, 1, "Play uses the activated revision")
-    if (lost) {
-      const held = await holds()
-      assert.deepEqual(held, [{ phase: "control", action: "play", requestID: controls[0].requestID, expectedRevision: 1 }])
-      await page.evaluate(() => window.missionEditorLifetime.mount(false))
-      await page.evaluate(() => window.missionEditorLifetime.mount(true))
-      assert.deepEqual(await holds(), held)
-      assert.equal(controls.length, 1, "remount never replays the unknown Play")
-    }
-    assert.deepEqual(fixture.errors, [])
+    assert.equal(fixture.creates[0]!.paused, undefined)
+    assert.deepEqual([fixture.controls, fixture.activations, fixture.errors], [[], [], []])
   } finally { await page.close() }
 })

@@ -74,6 +74,8 @@ Une programmation gérée par calendrier nécessite un agent et un modèle expli
 
 ## Programmation {#daily-schedules}
 
+Une Mission avec un horaire répété ou un événement reste une seule ligne de la liste : chaque lancement remplace le précédent dans la même conversation de coordination, et attend tant que le précédent est encore actif. Son détail affiche **Lancer quand**, **État voulu** avec **Pause** ou **Reprendre**, le prochain réveil ou la prochaine vérification, **Passages lancés** et **Exécutions passées** (les 20 derniers lancements). Si **Démarrer automatiquement** est décoché, elle est créée en pause. **Modifier la mission sélectionnée** rouvre le formulaire de création, et le prochain lancement utilise ce que vous enregistrez. **Supprimer la mission sélectionnée…** retire d’abord sa programmation.
+
 ### Critères {#native-scheduling}
 
 Le bouton **i** ouvre [l’aide de programmation](missions.md#native-scheduling).

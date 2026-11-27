@@ -43,10 +43,9 @@ import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
 import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
-import { BackgroundReadQueue } from "../lib/background-read-queue"
 import { prioritizedRead } from "../lib/prioritized-read"
-import { normalizeWorkspacePath, workspaceIdentity } from "./app-session-reconciliation"
-import { capturePendingRecoveryNotices, claimPendingRecoveryNotice, recordPendingRecoveryFailure } from "./pending-recovery-notices"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { captureUnsupportedPendingRecoveryNotice, claimUnsupportedPendingRecoveryNotice } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -91,7 +90,7 @@ import { tGlobal } from "../lib/i18n"
 import { getInstanceLabel } from "../lib/instance-label"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import {
-  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
+  batchIssue, combinePendingFailures, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
   type PendingRecoveryCause, type RecoveryDirectory, type RecoverySnapshot,
 } from "./pending-recovery-cause"
 import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
@@ -271,38 +270,25 @@ function captureInstanceOperation(instanceId: string, parent?: AbortSignal) {
     && getOpenCodeInstanceGeneration(instanceId) === generation)
 }
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
-const pendingRecoveryNoticeChecks = new Map<string, { controller: AbortController; current: () => boolean }>()
-const pendingRecoveryNoticeReads = new BackgroundReadQueue(1)
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
-const notifiedPendingRecovery = new Set<string>()
 const failedPendingRecoveries = new Map<string, number>()
-// A single incomplete scan usually recovers on the next 30-second liveness pass.
-// Warn only when recovery stays incomplete across consecutive attempts.
+// A single incomplete scan usually recovers on the next liveness pass.
+// Only an unsupported plugin surfaces a user-facing notice, after consecutive failures.
 const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
 function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause): void {
   log.warn("Pending request recovery is incomplete", { instanceId, cause })
-  if (!claimPendingRecoveryNotice(pendingRecoveryProject(instanceId), cause, parseInstanceKey(instanceId).backendId)) return
-  const instance = instances().get(instanceId)
-  // Name the sessions that made these directories required: active or holding a request.
-  const sessionTitlesIn = (directories: readonly string[]) => {
-    const wanted = new Set(directories.map(normalizeWorkspacePath))
-    return Array.from(sessions().get(instanceId)?.values() ?? []).filter((session) => session.location?.directory
-      && wanted.has(normalizeWorkspacePath(session.location.directory))
-      && (session.status !== "idle" || session.pendingPermission || session.pendingForm))
-      .map((session) => session.title || session.id)
-  }
-  const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
-  // A project diagnostic, not a request itself: it keeps its bubble and History entry.
-  showToastNotification({ category: "projects", title, message, variant: "warning" })
+  if (cause.kind !== "unsupported") return
+  if (!claimUnsupportedPendingRecoveryNotice(parseInstanceKey(instanceId).backendId)) return
+  showToastNotification({
+    category: "projects",
+    title: tGlobal("interruption.recoveryUnsupported.title"),
+    message: tGlobal("interruption.recoveryCause.unsupported"),
+    variant: "warning",
+  })
 }
 
-function pendingRecoveryProject(instanceId: string): string {
-  const instance = instances().get(instanceId)
-  return instance?.folder ? workspaceIdentity(instance.folder, instance.backendId) : instanceId
-}
-
-// A cause marks an attempt that counts toward the warning; without one, the state only changes.
+// A cause marks an attempt that counts toward the unsupported-plugin notice; without one, the state only changes.
 function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: PendingRecoveryCause): void {
   setIncompletePendingRecovery((previous) => {
     if (previous.has(instanceId) === incomplete) return previous
@@ -312,16 +298,13 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: Pe
     return next
   })
   if (!incomplete) {
-    notifiedPendingRecovery.delete(instanceId)
     failedPendingRecoveries.delete(instanceId)
     return
   }
   if (!cause) return
-  recordPendingRecoveryFailure(pendingRecoveryProject(instanceId), cause)
   const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
   failedPendingRecoveries.set(instanceId, failures)
-  if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
-    notifiedPendingRecovery.add(instanceId)
+  if (failures === PENDING_RECOVERY_WARNING_ATTEMPTS || (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && cause.kind === "unsupported")) {
     notifyPendingRecovery(instanceId, cause)
   }
 }
@@ -464,7 +447,6 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 }
 
 function invalidatePendingRequestSync(instanceId: string): void {
-  pendingRecoveryNoticeChecks.get(instanceId)?.controller.abort()
   if (instances().has(instanceId)) markPendingRecovery(instanceId, true)
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
@@ -572,22 +554,20 @@ const connectionResyncs = new TrailingResyncCoordinator(
     }
     await settle(() => fetchSessions(instanceId, { reset: true, signal }))
     if (!current()) return
-    await Promise.all([
-      settle(() => reloadWorktrees(instanceId, false, signal)),
-      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
-      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
-      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
-    ])
-    if (!current()) return
-    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
+    const loadedMessages = new Set(messagesLoaded().get(instanceId) ?? [])
+    const activeId = activeSessionId().get(instanceId)
     for (const sessionId of loadedMessages) {
       signal.throwIfAborted()
       if (!current()) return
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
-    const activeId = activeSessionId().get(instanceId)
-    if (!current()) return
-    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true, signal }))
+    await Promise.all([
+      activeId && loadedMessages.has(activeId) ? settle(() => loadMessages(instanceId, activeId, { force: true, signal })) : Promise.resolve(),
+      settle(() => reloadWorktrees(instanceId, false, signal)),
+      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
+      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal, loadedMessages)),
+    ])
     if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) throw failures[0]
@@ -603,11 +583,14 @@ function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId, serverEvents.signalForInstance(instanceId))
 }
 
-async function syncLoadedSessionInboxes(instanceId: string, signal?: AbortSignal): Promise<void> {
+async function syncLoadedSessionInboxes(
+  instanceId: string,
+  signal?: AbortSignal,
+  loaded: ReadonlySet<string> = messagesLoaded().get(instanceId) ?? new Set<string>(),
+): Promise<void> {
   if (signal?.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
-  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
   await Promise.all(Array.from(loaded, async (sessionId) => {
     if (signal?.aborted) return
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
@@ -888,13 +871,6 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string, 
   ])
 }
 
-function pendingRecoveryNoticeScope(instanceId: string): string {
-  const folder = instances().get(instanceId)?.folder
-  const directories = (includeHistorical: boolean) => [...new Set(getPendingRequestLocations(instanceId, folder, includeHistorical)
-    .flatMap(location => location.directory ? [normalizeWorkspacePath(location.directory)] : []))].sort()
-  return JSON.stringify([folder, directories(true), directories(false)])
-}
-
 function pendingSnapshotResults<T>(
   snapshot: Extract<RecoverySnapshot, { supported: true }>,
   select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
@@ -915,9 +891,8 @@ function pendingSnapshotResults<T>(
 
 async function readPendingRequestSnapshot(
   instanceId: string, isCurrent: () => boolean,
-  { reconcileInventory = true, onlyDirectories, noticeSignal }: { reconcileInventory?: boolean; onlyDirectories?: string[]; noticeSignal?: AbortSignal } = {},
+  { reconcileInventory = true, onlyDirectories }: { reconcileInventory?: boolean; onlyDirectories?: string[] } = {},
 ): Promise<RecoverySnapshot> {
-  const shouldDefer = () => noticeSignal ? isPendingDiscoveryCompacting() : deferPendingDiscovery(instanceId)
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
@@ -928,7 +903,7 @@ async function readPendingRequestSnapshot(
   const snapshot: Extract<RecoverySnapshot, { supported: true }> = { supported: true, directories: [] }
   for (let offset = 0; offset < directories.length;) {
     if (!isCurrent()) throw pendingRequestSyncSuperseded
-    if (shouldDefer()) throw pendingDiscoveryDeferred
+    if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
     let end = offset, queryBytes = 0
     // ponytail: eight directories bound Git-heavy batches; tune only with native recovery proof.
     while (end < directories.length && end - offset < 8) {
@@ -963,7 +938,7 @@ async function readPendingRequestSnapshot(
       const next = await withPendingRequestTimeout(instanceId, (signal) => {
         if (!isCurrent()) throw pendingRequestSyncSuperseded
         return backendOf(instanceId).api.getPendingRequests(instanceId, batch, signal, optional)
-      }, !noticeSignal, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000, noticeSignal)
+      }, true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
       if (!isCurrent()) throw pendingRequestSyncSuperseded
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
@@ -1177,7 +1152,7 @@ async function runPendingRequestSync(
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
   operation = captureInstanceOperation(instanceId),
-): Promise<(() => void) | undefined> {
+): Promise<void> {
   const { current } = operation
   const startingClient = instances().get(instanceId)?.client
   for (let attempt = 0; attempt < 3 && !token.cancelled && current(); attempt += 1) {
@@ -1194,7 +1169,7 @@ async function runPendingRequestSync(
       // Unavailable loaded-only recovery is non-authoritative, never permission
       // to construct every historical/worktree Location. Only settlement targets
       // use ordinary lists; SSE and later snapshots still recover global Forms.
-      const notices = targetLocations ? undefined : capturePendingRecoveryNotices(pendingRecoveryProject(instanceId), parseInstanceKey(instanceId).backendId)
+      const notice = targetLocations ? undefined : captureUnsupportedPendingRecoveryNotice(parseInstanceKey(instanceId).backendId)
       const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
       const results = await Promise.allSettled([
         syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
@@ -1205,49 +1180,16 @@ async function runPendingRequestSync(
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
         markPendingRecovery(instanceId, false)
-        if (coverage?.supported) lastScannedRequestDirectories.set(instanceId, new Set(coverage.directories
-          .filter((entry) => entry.status !== "excluded")
-          .map((entry) => normalizeWorkspacePath(entry.directory))))
-        if (notices && coverage?.supported) {
-          const covered = coverage.directories.map(entry => entry.directory)
-          notices.release(covered)
-          const missing = notices.missing(covered)
-          if (missing.length) {
-            // Only proven exclusions can account for folders outside the scan.
-            // This probe does not publish queue data or change the scan outcome.
-            return () => {
-              if (!isCurrent() || !notices.current()) return
-              const existing = pendingRecoveryNoticeChecks.get(instanceId)
-              if (existing?.current()) return
-              existing?.controller.abort()
-              const controller = new AbortController()
-              const signal = AbortSignal.any([operation.signal, controller.signal, notices.proofSignal()])
-              const scope = pendingRecoveryNoticeScope(instanceId)
-              const probeCurrent = () => !signal.aborted && current() && notices.current()
-                && instances().get(instanceId)?.client === client
-                && pendingRequestSyncGenerations.get(instanceId) === generation
-                && pendingRecoveryNoticeScope(instanceId) === scope
-              const check = { controller, current: probeCurrent }
-              pendingRecoveryNoticeChecks.set(instanceId, check)
-              void pendingRecoveryNoticeReads.run(signal, () => readPendingRequestSnapshot(instanceId, probeCurrent, {
-                reconcileInventory: false, onlyDirectories: missing, noticeSignal: signal,
-              })).then(async proof => {
-                // Let an overlapping real scan confirm recovery before re-arming.
-                await pendingRequestSyncs.get(instanceId)?.promise.catch(() => {})
-                if (probeCurrent() && proof.supported) {
-                  notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
-                }
-              }).catch(() => {}).finally(() => {
-                if (pendingRecoveryNoticeChecks.get(instanceId) === check) pendingRecoveryNoticeChecks.delete(instanceId)
-              })
-            }
-          }
+        if (coverage?.supported) {
+          lastScannedRequestDirectories.set(instanceId, new Set(coverage.directories
+            .filter((entry) => entry.status !== "excluded")
+            .map((entry) => normalizeWorkspacePath(entry.directory))))
+          notice?.release()
         }
       }
       return
     } catch (error) {
       if (isCurrent()) {
-        pendingRecoveryNoticeChecks.get(instanceId)?.controller.abort()
         markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
           ? recoveryCauseOf(error) : undefined)
       }
@@ -1295,14 +1237,9 @@ function syncPendingRequests(
     })
   }
   const token = { cancelled: false }
-  const check = pendingRecoveryNoticeChecks.get(instanceId)
-  if (check && (targetLocations || !check.current())) check.controller.abort()
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
   const promise = runPendingRequestSync(instanceId, generation, token, targetLocations, operation).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
-  }).then(checkNotice => {
-    // Start notice-only work after releasing the shared recovery slot.
-    checkNotice?.()
   })
   pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
   pendingOperationOwners.set(promise, operation.current)
@@ -1366,10 +1303,28 @@ createRoot(() => {
   })
 })
 
+/** Periodic liveness polling only needs to run for projects with active work,
+ * queued requests, or an incomplete previous recovery. Idle projects rely on
+ * live SSE events, foreground refresh on wake/reconnect, and session activation,
+ * avoiding cold Location wakeups and plugin reloads. */
+function needsPendingRequestLiveness(instanceId: string, hidden = false): boolean {
+  if (incompletePendingRecovery().has(instanceId)) return true
+  if (hidden) return false
+  if (getPermissionQueue(instanceId).length > 0 || getFormQueue(instanceId).length > 0) return true
+  const instanceSessions = sessions().get(instanceId)
+  if (Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending")) return true
+  const compactions = pendingCompactions.get(instanceId)
+  if (Array.from(compactions?.values() ?? []).some((entry) => entry.active && !entry.signal.aborted)) return true
+  return false
+}
+
 async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
   if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
-  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some(
+    (session) => session.status === "working" || session.status === "compacting"
+      || (session.generationRecovery === "pending" && session.generationAdmissionEpoch !== undefined),
+  )
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
   const client = instances().get(instanceId)?.client
@@ -2690,8 +2645,21 @@ const publishSynchronousPage = (
   options: { preserveOmitted?: boolean; confirmPending: boolean; updateUsage: boolean },
 ) => {
   const dropped = takeTranscriptProjection(instanceId, sessionId)
-  projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
-  if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  try {
+    projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
+    if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  } catch (error) {
+    log.error("Failed to project synchronous transcript page", { instanceId, sessionId, error })
+    const watched = activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId)
+    if (watched && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) {
+      const signal = serverEvents.signalForInstance(instanceId)
+      void loadMessages(instanceId, sessionId, { force: true, signal }).catch((reloadError) => {
+        log.warn("Failed to reload transcript after synchronous projection error", { instanceId, sessionId, error: reloadError })
+      })
+    } else if (messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+  }
 }
 
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
@@ -2836,6 +2804,20 @@ setTranscriptProjectionGates({
   invalidateInactiveLoadedSession: (instanceId, sessionId) => {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
   },
+  reloadFailedProjection: (instanceId, sessionId) => {
+    const signal = serverEvents.signalForInstance(instanceId)
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
+      log.warn("Failed to reload transcript after projection retries exhausted", { instanceId, sessionId, error })
+    })
+  },
+  onResyncedPage: (instanceId, sessionId, data) => {
+    publishSynchronousPage(instanceId, sessionId, data, {
+      preserveOmitted: false,
+      confirmPending: true,
+      updateUsage: true,
+    })
+    schedulePendingRequestReconciliation(instanceId)
+  },
   onProjectedUsage: updateSessionInfo,
   // Frame publications always keep omitted history; only their confirmation
   // flag varies (projectOpenCodeMessages takes preserveOmitted first).
@@ -2922,6 +2904,7 @@ export {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   reconcilePendingSessionIndicators,
+  needsPendingRequestLiveness,
   reconcilePendingRequestLiveness,
   syncPendingRequests,
   invalidatePendingRequestSync,

@@ -71,6 +71,10 @@ test("conversation API boundaries strip the prefix, including a real history-win
   await api.pruneSessionHistory(key, { sessionID: "s", candidates: [] })
   await api.pruneSessionMessage(key, { sessionID: "s", messageID: "m", indexes: [0], revision: "a".repeat(64) })
   await api.fetchSessionGoal(key, "s")
+  await api.fetchSessionAutomations(key, "s")
+  await api.pauseSessionAutomation(key, "s", "aut_1")
+  await api.resumeSessionAutomation(key, "s", "aut_1")
+  await api.deleteSessionAutomation(key, "s", "aut_1")
   await api.getPendingRequests(key, ["/repo"], undefined, ["/old"])
   await api.readConversationPermissionMode(key, "s", new AbortController().signal)
   await api.setConversationPermissionMode(key, "s", "supervised")
@@ -81,6 +85,10 @@ test("conversation API boundaries strip the prefix, including a real history-win
     "/api/workspaces/w%2F1/session-history/query", "/api/workspaces/w%2F1/session-history/ranked",
     "/api/workspaces/w%2F1/session-history/prune", "/api/workspaces/w%2F1/session-pruning/prune",
     "/api/workspaces/w%2F1/sessions/s/goal",
+    "/api/workspaces/w%2F1/sessions/s/automations",
+    "/api/workspaces/w%2F1/sessions/s/automations/aut_1/pause",
+    "/api/workspaces/w%2F1/sessions/s/automations/aut_1/resume",
+    "/api/workspaces/w%2F1/sessions/s/automations/aut_1",
     "/api/workspaces/w%2F1/pending-requests?directories=%2Frepo&optionalDirectories=%2Fold",
     "/api/workspaces/w%2F1/sessions/s/permission-mode", "/api/workspaces/w%2F1/sessions/s/permission-mode",
   ])

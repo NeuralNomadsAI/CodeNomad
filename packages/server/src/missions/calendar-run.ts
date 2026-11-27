@@ -36,6 +36,8 @@ const slotSchema = z.object({ version: z.literal(1),
   /** The conversation every launch coordinates in, once the first launch created it. */
   coordinatorSessionID: z.string().min(1).max(240).optional(),
   history: z.array(launchSchema).max(MISSION_CALENDAR_HISTORY).optional(),
+  /** Launches so far, the remembered ones and the older. */
+  launches: z.number().int().nonnegative().optional(),
   /** Replaced Missions whose removal did not finish. */
   retiring: z.array(z.string().min(1).max(100)).max(8).optional(),
   checkpoints: missionCheckpointsSchema.optional() }).strict()/** A calendar with several date rules is several Automations naming the same calendar: they share its slot. */
@@ -70,7 +72,7 @@ export const missionCalendarNews = (events: readonly MissionCalendarEvent[], roo
 
 /** What a run did. `missionID` is the programmed Mission's current launch, whatever the run did. */
 export type MissionCalendarResult = { outcome: "launched" | "waiting" | "idle"; missionID?: string; status?: string
-  coordinatorSessionID?: string; history: Array<z.infer<typeof launchSchema>> }
+  coordinatorSessionID?: string; history: Array<z.infer<typeof launchSchema>>; launches: number }
 /** What a run needs of Missions: `MissionControl` itself, or its registered RPC. */
 export type MissionCalendarControl = Pick<MissionControl, "create" | "lifecycle" | "mission" | "delete">
 type Storage = { get(key: string): Promise<MissionJsonValue | undefined>; set(key: string, value: MissionJsonValue): Promise<void> }
@@ -100,15 +102,16 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
   }
   const slot = slotSchema.safeParse(await storage.get(key)).data
   let launched = slot?.launched, checkpoints = slot?.checkpoints, history = slot?.history ?? [], retiring = slot?.retiring ?? []
+  let launches = slot?.launches ?? history.length + (launched && !launched.placeholder ? 1 : 0)
   // An edit of the programming before its first launch prepares another Mission.
   if (prepared && (!launched || launched.placeholder && launched.missionID !== prepared))
     launched = { automationID: occurrence.automationID, run: occurrence.run, missionID: prepared, at: now(), placeholder: true }
   const repeated = !!launched && !launched.placeholder && launched.automationID === occurrence.automationID && launched.run === occurrence.run
   let coordinatorSessionID = slot?.coordinatorSessionID
   const save = () => storage.set(key, JSON.parse(JSON.stringify({ version: 1, launched, coordinatorSessionID, checkpoints,
-    ...(history.length ? { history } : {}), ...(retiring.length ? { retiring } : {}) })) as MissionJsonValue)
+    ...(history.length ? { history } : {}), ...(launches ? { launches } : {}), ...(retiring.length ? { retiring } : {}) })) as MissionJsonValue)
   const answer = (outcome: MissionCalendarResult["outcome"], status = launched?.outcome): MissionCalendarResult => ({ outcome,
-    ...(launched ? { missionID: launched.missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history })
+    ...(launched ? { missionID: launched.missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history, launches })
   if (repeated) {
     // The run already launched: only its start may be left to finish.
     const current = (await control.mission(launched!.missionID)).mission
@@ -130,6 +133,7 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
     if (waiting?.status === "active" && waiting.runState === "prepared") {
       coordinatorSessionID = waiting.coordinatorSessionId
       launched = { ...occurrence, missionID: waiting.id, at: now() }
+      launches++
       await save()
       return answer("launched", (await start(waiting)).status)
     }
@@ -167,6 +171,7 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
     : await create(coordinatorSessionID).catch(() => create())).mission
   coordinatorSessionID = created.coordinatorSessionId
   launched = { ...occurrence, missionID: created.id, at: now() }
+  launches++
   await save()
   return answer("launched", (await start(created)).status)
 }

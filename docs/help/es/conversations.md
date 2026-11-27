@@ -119,6 +119,14 @@ Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principa
 
 Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
 
+## Seguir automatizaciones de la sesión con /automation {#automations}
+
+1. Crea o gestiona automatizaciones programadas o por eventos en una conversación con `/automation` (o mediante las herramientas de automatización del agente).
+2. Mientras la conversación tiene automatizaciones, **Estado** las muestra encima de **Tokens** (debajo de **Objetivo** si hay uno activo): cada fila muestra su estado (**Activa**, **En pausa** o **Finalizada**), el nombre, la próxima ejecución o regla y el número de ejecuciones. Las finalizadas permanecen plegadas bajo **Finalizadas (N)** hasta que las despliegues.
+3. Pasa el puntero por una fila o dale el foco para ver su disparador, programación y última salida, o haz clic para abrir la ventana de detalles. Usa **Pausar automatización**, **Reanudar automatización** o **Eliminar automatización** en la fila para controlarla directamente.
+
+Solo se muestran las automatizaciones de la conversación activa. Eliminar una automatización es irreversible y no deshace el trabajo ya realizado. Sin automatizaciones, o con un servicio de OpenCode sin API de automatizaciones, el bloque no aparece.
+
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
 En Rune, deshacer rellena el cuadro de redacción vacío con el texto original. Usa **Rehacer último mensaje** encima de la conversación para recuperar el historial. Deshacer y eliminar herramientas y razonamientos requieren compatibilidad del servidor.

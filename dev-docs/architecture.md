@@ -313,6 +313,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `stores/shell-store.ts` | A+P | list/output/load; dirty trailing refreshForEvent; remove | Captured signalForInstance, request signal/current and lane identity; API callback gets signal; sent remove retains SDK client. |
 | `stores/shells.ts` | A | native Shell SDK adapter; event refresh | captureBackendOperation/current and location-scoped SDK client. |
 | `stores/session-goal.ts` | A+P | goal reads; event/open/reconnect refresh scheduler; runSessionGoalCommand | Factory supplies signalForInstance to the goal store; reconnect timers capture the scheduling attachment signal; session commands use action authority and guarded readback. |
+| `stores/session-automations.ts` | A+P | automation reads; execution/shell/open/reconnect refresh scheduler; runSessionAutomationAction | Factory supplies signalForInstance to the automations store; reconnect timers capture the scheduling attachment signal; mutations use captured backend and fence earlier reads. |
 | `stores/integrations.ts` | A | catalog/binding factories; event debounce/reconnect/open; connection/session epochs; detach cleanup | Both factories receive signalForInstance; reconnect scheduler captures attachment signal; backend owner guards connection epochs and revokes bindings while retaining their demand. |
 | `lib/integrations-api.ts` | A+P+C | fetchIntegrations/fetchIntegrationBinding/installIntegration/attachment request | Instance-owned backend HTTP and captured attachment/caller signal checked before dispatch and after response/body reads; raw workspace id at HTTP boundary; sent mutations retain their server-side outcome. |
 | `stores/plugin-controls.ts` | A+C | controls read/cache/demand; activation; instance-owner API adapter | Backend resolved from instance key, raw workspace id at API boundary; captured attachment signal and cache request generation fence reads/publication; sent activation retains selected client. |
@@ -395,6 +396,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/integration-host-installation.ts` | A+C | open installation/consent workflow | captureBackendOperation, epoch/controller/generation/disposed/current; submitted install retained. |
 | `components/plugin-activation-controls.tsx` | P | integration binding and application installation from Plugins rows | Delegated binding/installation handlers capture backend attachment and exact Location/session; row disposal and invalidation revoke pending consent. |
 | `components/session/session-goal-line.tsx` | P | runSessionGoalCommand | Session goal demand and delegated session-action attachment authority. |
+| `components/session/session-automations-block.tsx` | P | runSessionAutomationAction | Session automations demand and delegated attachment-scoped confirm and action authority. |
 | `components/mission-tracking.tsx` | P | onOpenActor callback | Captured actor/selected Mission view; parent navigation callback owns session hydration. |
 | `components/mission-schedule-list.tsx` | P | controls.act/reconcile | Delegated schedule controls attachment/current and durable mutation receipt. |
 | `components/mission-selected-actions.tsx` | P | onAdmitted; missionStore.refresh; briefing.ask | Selected Mission view predicate; delegated map/admission/action owner. |
@@ -473,7 +475,8 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 
 | Adapter family | Exact methods | IO authority |
 |---|---|---|
-| Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal | S; background queue for secondary reads |
+| Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal, fetchSessionAutomations | S; background queue for secondary reads |
+| Session automation mutations | pauseSessionAutomation, resumeSessionAutomation, deleteSessionAutomation | C; captured backend and session own the mutation; callers fence pre-mutation reads |
 | Background Shell inventory | fetchBackgroundShells | S; owner backend, raw workspace boundary and public directory; secondary queue and attachment-owned watch/read lane |
 | Transcript mutations | pruneSessionMessage | C; callers fence publication with their operation |
 | Conversation permission mode read | readConversationPermissionMode | S; owning backend, conversation view cancels stale reads |

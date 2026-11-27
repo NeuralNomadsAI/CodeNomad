@@ -13,7 +13,11 @@ function fixture() {
       create: async (input: any) => { calls.push(`session ${input.id}`); sessions.set(input.id, { ...input }); return sessions.get(input.id) },
     },
     experimental: { automation: {
-      list: async ({ sessionID }: { sessionID: string }) => rows.filter(row => row.sessionID === sessionID).map(row => ({ ...row })),
+      list: async ({ sessionID }: { sessionID: string }) => {
+        // OpenCode refuses to list the Automations of a conversation that does not exist.
+        if (!sessions.has(sessionID)) throw Object.assign(new Error(`Session not found: ${sessionID}`), { _tag: "SessionNotFoundError", sessionID })
+        return rows.filter(row => row.sessionID === sessionID).map(row => ({ ...row }))
+      },
       create: async (input: any) => {
         if (++next >= failCreateAt) throw new Error("refused")
         const row = { id: `aut_${next}`, tz: "UTC", status: "active", runCount: 0, ...input }
@@ -37,14 +41,14 @@ test("a calendar is the Automations that name it in the Location's carrier conve
   assert.deepEqual(f.sessions.get(f.calendars.carrier).metadata, { [MISSION_CALENDAR_CARRIER]: { version: 1 } })
   // Somebody else's Automation in the same conversation is not a calendar.
   f.rows.push({ id: "aut_other", name: "Other", sessionID: f.calendars.carrier, tz: "UTC", status: "active", runCount: 0, trigger: { type: "every", every: "1 hour" }, action: { type: "prompt", prompt: "Hello" } })
-  f.rows[1].lastRunAt = 50; f.rows[1].state = { last: JSON.stringify({ outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1", history: [{ at: 10, outcome: "completed" }] }) }
+  f.rows[1].lastRunAt = 50; f.rows[1].state = { last: JSON.stringify({ outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1", history: [{ at: 10, outcome: "completed" }], launches: 24 }) }
   f.rows[0].lastRunAt = 40; f.rows[0].state = { last: JSON.stringify({ outcome: "launched", missionID: "msn_running", status: "active", history: [] }) }
   const [calendar, ...others] = await f.calendars.list()
   assert.equal(others.length, 0)
   assert.deepEqual([calendar!.id, calendar!.title, calendar!.paused, calendar!.rules.map(rule => rule.automationID)], ["cal_sync", "Sync", false, ["aut_1", "aut_2"]])
   assert.deepEqual([calendar!.mission, calendar!.launch, calendar!.missionID], [{ objective: "Review", template: "custom" }, { when: [] }, "msn_running"])
   assert.deepEqual(calendar!.last, { outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1",
-    history: [{ at: 10, outcome: "completed" }], at: 50 }, "the latest run of any rule")
+    history: [{ at: 10, outcome: "completed" }], launches: 24, at: 50 }, "the latest run of any rule")
 })
 
 test("saving again replaces the rules under the same identity, and a paused calendar stays paused", async () => {
@@ -68,4 +72,12 @@ test("a refused rule leaves the calendar as it was", async () => {
   f.failCreatesFrom(3)
   await assert.rejects(f.calendars.save("cal_sync", [f.rule("0 10 * * *", "cal_sync"), f.rule("bad", "cal_sync")]), /refused/)
   assert.deepEqual((await f.calendars.list())[0]!.rules.map(rule => rule.automationID), ["aut_1"])
+})
+
+test("a project that never had a calendar lists none, and has none to pause or delete", async () => {
+  const f = fixture()
+  assert.deepEqual(await f.calendars.list(), [])
+  await assert.rejects(f.calendars.pause("cal_sync"), MissionCalendarMissing)
+  await assert.rejects(f.calendars.delete("cal_sync"), MissionCalendarMissing)
+  assert.deepEqual(f.calls, [], "listing creates nothing")
 })

@@ -74,6 +74,8 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 ## Scheduling {#daily-schedules}
 
+A Mission with a repeating schedule or an event stays one row in the list: each launch replaces the previous one in the same coordinator conversation, and waits while the previous launch is still active. Its detail shows **Launch when**, **Desired state** with **Pause** or **Resume**, the next wake or check, **Launched passages** and **Past runs** (the last 20 launches). With **Start automatically** off, it is created paused. **Edit selected mission** reopens the creation form, and the next launch uses what you save. **Delete selected mission…** removes its scheduling first.
+
 ### Criteria {#native-scheduling}
 
 The **i** button opens [scheduling help](missions.md#native-scheduling).

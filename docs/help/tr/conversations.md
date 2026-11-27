@@ -119,6 +119,14 @@ Kapatmak ana oturumu kesmeden bekleyen yan isteği iptal eder. Etkin konuşmadan
 
 Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başlar. OpenCode; oturumu durdurduğunuzda, bir çalıştırma başarısız olduğunda, ilerleme durduğunda, tur sınırına ulaşıldığında veya hizmet yeniden başladığında hedefi kendisi de duraklatır; devam etmek için sürdürün. Duraklatmak veya temizlemek, yapılmış işi geri almaz. Hedef yoksa veya hedef desteği olmayan bir OpenCode hizmetinde satır görünmez.
 
+## /automation ile oturum otomasyonlarını izleyin {#automations}
+
+1. Bir konuşmada `/automation` ile (veya ajanın otomasyon araçlarıyla) zamanlanmış ya da olay tabanlı otomasyonlar oluşturun veya yönetin.
+2. Konuşmanın otomasyonları olduğu sürece **Durum**, bunları **Tokenlar** üzerinde (etkin bir hedef varsa **Hedef** altında) listeler: her satır durumu (**Etkin**, **Duraklatıldı** veya **Tamamlandı**), adı, sonraki çalıştırmayı ya da kuralı ve çalıştırma sayısını gösterir. Tamamlananlar açılana kadar **Tamamlananlar (N)** altında katlı kalır.
+3. Tetikleyiciyi, zamanlamayı ve son çıktıyı görmek için satırın üzerine gelin veya odaklanın ya da ayrıntı penceresini açmak için tıklayın. Satırdaki **Otomasyonu duraklat**, **Otomasyonu sürdür** veya **Otomasyonu sil** düğmeleriyle doğrudan yönetin.
+
+Yalnızca etkin konuşmaya ait otomasyonlar gösterilir. Bir otomasyonu silmek geri alınamaz ve yapılmış işi geri çevirmez. Otomasyon yoksa veya otomasyon API'sini sunmayan bir OpenCode hizmetinde blok görünmez.
+
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 
 Rune'da geri alma, boş yazma alanına özgün metni yerleştirir. Geçmişi geri yüklemek için konuşmanın üzerindeki **Son Mesajı Yinele** düğmesini kullanın. Geri alma ve araçları ve akıl yürütmeyi kaldırma, sunucu desteği gerektirir.

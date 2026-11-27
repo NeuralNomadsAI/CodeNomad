@@ -70,6 +70,8 @@ La programación basada en calendario requiere agente y modelo explícitos para 
 
 ## Programación {#daily-schedules}
 
+Una Misión con un horario repetido o un evento sigue siendo una sola fila de la lista: cada lanzamiento sustituye al anterior en la misma conversación de coordinación y espera mientras el anterior siga activo. Su detalle muestra **Lanzar cuando**, **Estado deseado** con **Pausar** o **Reanudar**, la próxima activación o comprobación, **Pasadas iniciadas** y **Ejecuciones anteriores** (los últimos 20 lanzamientos). Con **Iniciar automáticamente** desactivado, se crea en pausa. **Editar la misión seleccionada** vuelve a abrir el formulario de creación, y el siguiente lanzamiento usa lo que guarde. **Eliminar la misión seleccionada…** quita primero su programación.
+
 ### Criterios {#native-scheduling}
 
 El botón **i** abre la [ayuda de programación](missions.md#native-scheduling).

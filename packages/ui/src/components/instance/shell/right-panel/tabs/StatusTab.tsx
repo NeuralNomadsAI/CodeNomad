@@ -20,6 +20,7 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import SessionGoalLine from "../../../../session/session-goal-line"
+import SessionAutomationsBlock from "../../../../session/session-automations-block"
 import { ConversationPermissions, ConversationPermissionsInfo, ConversationPermissionsSummary, createConversationPermissionsState } from "../../../../session/conversation-permissions"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { applyRightPanelItemCustomization, CONVERSATION_PERMISSIONS_SECTION_ID, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
@@ -284,8 +285,15 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={supportsWorkspaceCapability(props.instanceId, "session-goals") && props.activeSession()?.id}>
-        {(sessionId) => <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />}
+      <Show when={props.activeSession()?.id}>
+        {(sessionId) => (
+          <>
+            <Show when={supportsWorkspaceCapability(props.instanceId, "session-goals")}>
+              <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />
+            </Show>
+            <SessionAutomationsBlock instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />
+          </>
+        )}
       </Show>
       <Accordion.Root
         class="right-panel-accordion"

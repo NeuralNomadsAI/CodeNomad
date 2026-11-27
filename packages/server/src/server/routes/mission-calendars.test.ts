@@ -24,7 +24,10 @@ async function fixture() {
     config: { get: async () => [] }, session, location: { get: async () => ({ directory, project: { id: projectID } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     experimental: { automation: {
-      list: async ({ sessionID }: any) => automations.filter(item => item.sessionID === sessionID).map(item => ({ ...item })),
+      list: async ({ sessionID }: any) => {
+        if (!sessions.has(sessionID)) throw Object.assign(new Error("Session not found"), { _tag: "SessionNotFoundError", sessionID })
+        return automations.filter(item => item.sessionID === sessionID).map(item => ({ ...item }))
+      },
       create: async (input: any) => { const value = { id: `aut_${++next}`, tz: "UTC", status: "active", runCount: 0, ...input }; automations.push(value); return value },
       pause: async ({ automationID }: any) => { row(automationID).status = "paused" },
       resume: async ({ automationID }: any) => { row(automationID).status = "active" },
@@ -110,6 +113,8 @@ test("a programming is paused, resumed and deleted, and refused with its reason"
   const f = await fixture()
   try {
     await f.call("PUT", "/cal_review", { configuration: configuration() })
+    assert.equal((await f.call("PUT", "/cal_later", { configuration: configuration(), paused: true })).body.calendars.find((item: any) => item.id === "cal_later").paused, true, "created paused")
+    await f.call("DELETE", "/cal_later")
     assert.equal((await f.call("POST", "/cal_review/pause")).body.calendars[0].paused, true)
     assert.equal((await f.call("POST", "/cal_review/resume")).body.calendars[0].paused, false)
     const refused = await f.call("PUT", "/cal_other", { configuration: configuration("Review", [{ kind: "mission-completed", missionID: "msn_other" }]) })

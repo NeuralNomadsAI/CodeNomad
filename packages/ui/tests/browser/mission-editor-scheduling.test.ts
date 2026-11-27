@@ -70,6 +70,10 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     }
     if (request.method() !== "GET") {
       const body = request.postDataJSON(); posts.push(body); original = body
+      // A programmed Mission is saved under the identity the form names; its answer is the list.
+      if (pathname.includes("/missions/calendars/")) doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration } }
+      if (pathname.includes("/missions/calendars/")) return lose ? route.abort("connectionreset") : route.fulfill({ json: { calendars: [{
+        id: pathname.split("/").at(-1), title: body.configuration.title, paused: body.paused === true, missionID: "msn_fixture", launch: body.configuration.launch, mission: {}, rules: [] }] } })
       if (pathname.endsWith("/missions")) return lose ? route.abort("connectionreset")
         : route.fulfill({ json: { mission: { ...journal, objective: body.objective, notes: body.notes, title: body.title } } })
       if (pathname.endsWith("/scheduled")) {
@@ -229,11 +233,10 @@ test("shared Create stores a paused two-time policy with exact profiles and send
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1)
-    assert.equal(f.posts[0].action, "create"); assert.equal(f.posts[0].expectedRevision, 0)
+    assert.equal(f.posts[0].paused, true, "created paused: Start automatically is unchecked")
     assert.deepEqual(f.posts[0].configuration.profiles, profiles)
     assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "15 9 * * *", zone: "Europe/Paris" },
       { kind: "cron", expression: "45 17 * * *", zone: "Europe/Paris" }] })
-    assert.equal(f.doc.state, "paused"); assert.equal(f.doc.firstPlayedAt, null); assert.deepEqual(f.doc.calendars, [])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -908,16 +911,33 @@ test("revision conflict keeps the old draft for explicit comparison and never re
   } finally { await page.close() }
 })
 
-for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its immutable identity across close/remount; automatic reread reads only its exact receipt`, async () => {
+test("a programmed Mission whose answer was lost is saved again under the same identity", async () => {
+  const page = await browser.newPage(), f = await setup(page), saved: string[] = []
+  page.on("request", request => { if (request.method() === "PUT") saved.push(new URL(request.url()).pathname) })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Original creation")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
+    await ready(page); f.lose = true
+    await form(page).locator('button[type="submit"]').click()
+    await form(page).getByRole("alert").waitFor()
+    assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), false, "the form stays usable")
+    f.lose = false
+    await form(page).locator('button[type="submit"]').click()
+    await form(page).waitFor({ state: "detached" })
+    assert.equal(saved.length, 2)
+    assert.match(saved[0], /\/missions\/calendars\/cal_[a-f0-9]{32}$/)
+    assert.equal(saved[1], saved[0])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const kind of ["edit"] as const) test(`${kind} lost ACK keeps its immutable identity across close/remount; automatic reread reads only its exact receipt`, async () => {
   const page = await browser.newPage()
   await page.clock.install({ time: Date.now() })
   const f = await setup(page)
   try {
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
-    if (kind === "create") {
-      await form(page).getByLabel(objective, { exact: true }).fill("Original creation")
-      await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
-    }
     await ready(page); f.lose = true; f.proof = false
     const receiptRequest = (url: string) => {
       const link = new URL(url)

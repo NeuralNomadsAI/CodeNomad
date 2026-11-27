@@ -27,6 +27,28 @@ export function hasKeyboardOcclusion(win: Window): boolean {
     && isTextEntry(win.document.activeElement as HTMLInputElement | null))
 }
 
+/** Height a keyboard removed from the layout itself. Firefox installed web apps
+ * shrink the whole window (visualViewport included) instead of overlaying it,
+ * so remember the tallest height seen at the current width and treat a
+ * substantial loss while editing on touch as the keyboard. A width change
+ * (rotation, split window) starts over from the new geometry. */
+export function createLayoutKeyboardTracker() {
+  let width = 0
+  let fullHeight = 0
+  return (win: Window): number => {
+    if (win.innerWidth !== width || win.innerHeight > fullHeight) {
+      width = win.innerWidth
+      fullHeight = win.innerHeight
+    }
+    const lost = fullHeight - win.innerHeight
+    return lost >= 100 && (win.visualViewport?.scale ?? 1) === 1
+      && win.matchMedia?.("(pointer: coarse)").matches
+      && isTextEntry(win.document.activeElement as HTMLInputElement | null) ? lost : 0
+  }
+}
+
+export const layoutKeyboardInset = createLayoutKeyboardTracker()
+
 /** Keeps `--keyboard-offset` current; returns the cleanup. */
 export function installKeyboardOffset(win: Window): () => void {
   const vv = win.visualViewport

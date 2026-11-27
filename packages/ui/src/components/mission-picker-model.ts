@@ -18,6 +18,8 @@ export interface MissionPickerEntry {
   childActivity?: "permission" | "working" | "idle"
   /** A Mission whose plan holds no task: like a session without children, no chevron. */
   leaf?: boolean
+  /** A programmed Mission: an ordinary row with the recurring icon. */
+  recurring?: boolean
 }
 
 /** A one-time Mission's own state from native requests and observed actor activity:

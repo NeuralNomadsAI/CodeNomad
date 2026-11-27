@@ -5,7 +5,8 @@ import { MissionDocumentPassageEngine, type DocumentPassagePorts, type DocumentP
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { missionDocumentChanges as changes } from "./mission-document-state"
 import type { MissionCalendar, MissionDocument, MissionWake } from "./mission-document"
-import { missionSourceKey } from "./mission-document"
+import { missionSourceKey, projectMissionDocument } from "./mission-document"
+import { missionScheduleAvailableActions } from "./mission-schedule-display"
 import type { MissionConfiguration } from "./launch-policy"
 import type { MissionJsonValue } from "./model"
 
@@ -417,4 +418,85 @@ test("auxiliary, overlap and paused preflight need only positive contiguous wake
   assert.equal((await f.engine.preflight({ missionID: "review", wake })).ready, true)
   assert.equal((await f.engine.preflight({ missionID: "review", wake: f.wake(0, 3) })).ready, false)
   assert.deepEqual(await f.read(), pending); assert.equal(f.mutations(), pendingWrites)
+})
+
+test("overlapping wake with unreadable source still closes fan-in after not-started settlement and unlocks Edit and Resume", async () => {
+  const f = await fixture()
+  const condition = { kind: "conversation-message" as const, conversationID: "ses_watched" }
+  const digest = "a".repeat(64)
+  await f.mutate(doc => {
+    doc.configuration.launch = { when: [condition] }
+    doc.checkpoints = [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_0", count: 0 } }]
+  })
+  const first = f.wake(0, 1, start + 1000)
+  f.ports.snapshot = async () => ({
+    news: { triggers: true, conditions: false, changed: [missionSourceKey(condition)] },
+    checkpoints: [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_1", count: 1 } }],
+    current,
+  })
+  f.ports.admit = async () => ({ kind: "unknown" })
+  assert.equal(await f.engine.wake({ missionID: "review", wake: first }), "unknown")
+  assert.ok((await f.read()).pending)
+  // An overlapping wake arrives after the watched source became unreadable, leaving the suppressed fan-in window open.
+  f.tick()
+  const overlapping = f.wake(0, 2, start + 2000)
+  f.ports.snapshot = async () => { throw new Error("Watched conversation deleted") }
+  assert.equal(await f.engine.wake({ missionID: "review", wake: overlapping }), "unknown")
+  assert.equal((await f.read()).fanIn?.completed, false)
+  // When admission settles as not-started, the failed schedule cannot defer a launch, so closing the window skips source reads while keeping wake proof.
+  f.ports.admit = async () => ({ kind: "not-started", current })
+  assert.equal(await f.engine.reconcile({ missionID: "review" }), "settled")
+  const settled = await f.read()
+  assert.equal(settled.pending, null)
+  assert.equal(settled.blocked, "failed")
+  assert.equal(settled.fanIn?.completed, true)
+  assert.equal(settled.calendars[0].highWater, 2)
+  assert.equal(projectMissionDocument(settled).edit.structural, true)
+  const actions = missionScheduleAvailableActions(settled)
+  assert.ok(actions.includes("configure"))
+  assert.ok(actions.includes("resume"))
+})
+
+test("prepared wake after old fan-in cutoff is consumed on not-started settlement and unlocks Edit and Resume", async () => {
+  const f = await fixture(2)
+  const condition = { kind: "conversation-message" as const, conversationID: "ses_watched" }
+  const digest = "b".repeat(64)
+  await f.mutate(doc => {
+    doc.configuration.launch = { when: [condition] }
+    doc.checkpoints = [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_0", count: 0 } }]
+  })
+  const first0 = f.wake(0, 1, start + 1000)
+  f.wake(1, 1, start + 1000)
+  f.ports.snapshot = async () => ({
+    news: { triggers: true, conditions: false, changed: [missionSourceKey(condition)] },
+    checkpoints: [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: digest, value: { latestMessageID: "msg_1", count: 1 } }],
+    current,
+  })
+  f.ports.admit = async () => ({ kind: "unknown" })
+  assert.equal(await f.engine.wake({ missionID: "review", wake: first0 }), "unknown")
+  assert.ok((await f.read()).pending)
+  // First principal overlaps while the watched source is unreadable, leaving the suppressed window open at start + 2000.
+  f.tick()
+  const overlap0 = f.wake(0, 2, start + 2000)
+  f.ports.snapshot = async () => { throw new Error("Watched conversation deleted") }
+  assert.equal(await f.engine.wake({ missionID: "review", wake: overlap0 }), "unknown")
+  assert.equal((await f.read()).fanIn?.completed, false)
+  // Second principal prepares a wake AFTER that window's cutoff before admission settles as not-started.
+  f.tick()
+  const prepared1 = f.wake(1, 2, start + 3000)
+  await f.mutate(doc => changes.prepareWake(doc, { scheduleID: prepared1.scheduleID, run: prepared1.run, messageID: prepared1.messageID, dueAt: prepared1.dueAt! }))
+  assert.ok((await f.read()).calendars[1].wakePreparing)
+  f.ports.admit = async () => ({ kind: "not-started", current })
+  assert.equal(await f.engine.reconcile({ missionID: "review" }), "settled")
+  const settled = await f.read()
+  assert.equal(settled.pending, null)
+  assert.equal(settled.blocked, "failed")
+  assert.equal(settled.fanIn?.completed, true)
+  assert.equal(settled.calendars[0].highWater, 2)
+  assert.equal(settled.calendars[1].highWater, 2)
+  assert.equal(settled.calendars[1].wakePreparing, null)
+  assert.equal(projectMissionDocument(settled).edit.structural, true)
+  const actions = missionScheduleAvailableActions(settled)
+  assert.ok(actions.includes("configure"))
+  assert.ok(actions.includes("resume"))
 })
