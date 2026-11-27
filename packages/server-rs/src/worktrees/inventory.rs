@@ -472,6 +472,7 @@ pub struct Tree {
     /// another worktree) while media/history ownership checks validate the resolved target
     /// and the target checkout's own Git layout.
     projected_link: Option<Box<(PathBuf, PathBuf, Physical, String)>>,
+    scope: PathBuf,
 }
 impl Tree {
     #[cfg(test)]
@@ -502,6 +503,7 @@ impl Tree {
             },
             identity: None,
             projected_link: None,
+            scope: PathBuf::new(),
         }
     }
     pub fn registered(&self) -> &Path {
@@ -605,10 +607,16 @@ impl Tree {
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
         if let Some(link) = &self.projected_link {
             let (link_path, target, target_layout, target_id) = link.as_ref();
+            let resolved_matches = link_path.to_str().is_some_and(|s| {
+                super::ownership::resolve_media_path_checked(&self.scope, s)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|(p, a)| p == a && p == *target)
+            });
             return dir.starts_with(target)
                 && self.layout.live()
                 && target_layout.live()
-                && dunce::canonicalize(link_path).ok().as_ref() == Some(target)
+                && resolved_matches
                 && identity(target).ok().as_deref() == Some(target_id.as_str());
         }
         let project_missing = self.nested_missing
@@ -739,12 +747,26 @@ async fn root_at(
     let main_raw = here["project"]["canonical"].as_str().map(str::to_owned).ok_or_else(native_error)?;
     let here_dir_raw = here["directory"].as_str().map(str::to_owned);
     let project_dir_raw = here["project"]["directory"].as_str().map(str::to_owned);
+    let scope_for_root = app.scope.clone();
     let (main_path, here_dir, project_dir) = tokio::task::spawn_blocking(move || {
-        (physical(&main_raw), here_dir_raw.as_deref().and_then(physical), project_dir_raw.as_deref().and_then(physical))
+        let resolve = |raw: &str| {
+            if scoped {
+                super::ownership::resolve_media_path_checked(&scope_for_root, raw)
+                    .ok()
+                    .flatten()
+                    .filter(|(p, a)| p == a)
+                    .map(|(p, _)| p)
+            } else {
+                physical(raw)
+            }
+        };
+        (resolve(&main_raw), here_dir_raw.as_deref().and_then(resolve), project_dir_raw.as_deref().and_then(resolve))
     })
     .await
     .map_err(|_| native_error())?;
-    let main_path = main_path.ok_or_else(native_error)?;
+    let main_path = main_path.ok_or_else(|| {
+        if scoped { conflict("Workspace and native project do not share a checkout") } else { native_error() }
+    })?;
     let main = if main_path == local.root { local.clone() } else { checkout(&main_path).await? };
     if here_dir.as_ref() != Some(&w.path)
         || project_dir.as_ref() != Some(&local.root)
@@ -1050,6 +1072,7 @@ async fn catalogue_in_at(
             removable: !opened && check.admin != check.common,
             layout: check,
             projected_link,
+            scope: app.scope.clone(),
             branch: field("branch refs/heads/"),
             head: field("HEAD ").filter(|s| s.bytes().any(|b| b != b'0')),
             locked: meta.split('\0').any(|s| s == "locked" || s.starts_with("locked ")),

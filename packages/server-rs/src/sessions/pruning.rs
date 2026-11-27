@@ -445,12 +445,14 @@ pub(super) async fn prove_ownership(
     let id_recheck = anchor_id.clone();
     let checkout_recheck = checkout.clone();
     let still_same = tokio::task::spawn_blocking(move || {
-        ownership::resolve_media_path_checked(&scope_recheck, &dir_recheck).ok().flatten().is_some_and(|(p, a)| {
-            p == path_recheck
-                && a == anchor_recheck
-                && crate::files::directory_identity(&a).ok().as_deref() == Some(id_recheck.as_str())
-                && checkout_recheck.live(&p)
-        })
+        checkout_recheck.live(&path_recheck)
+            && ownership::resolve_media_path_checked(&scope_recheck, &dir_recheck).ok().flatten().is_some_and(
+                |(p, a)| {
+                    p == path_recheck
+                        && a == anchor_recheck
+                        && crate::files::directory_identity(&a).ok().as_deref() == Some(id_recheck.as_str())
+                },
+            )
     })
     .await
     .unwrap_or(false);
