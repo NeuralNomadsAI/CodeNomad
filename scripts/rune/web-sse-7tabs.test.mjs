@@ -5,6 +5,7 @@ import {
   assertExactInjectedMultiset,
   assertSingleMultiplexedSse,
   evaluateConcurrentBatch,
+  parseCdpSseFrame,
   summarizeLatencies,
 } from './web-sse-7tabs.mjs'
 
@@ -195,6 +196,21 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
   assert.throws(() => assertExactInjectedMultiset([
     {...exactFrames[0], type: null},
     exactFrames[1],
+  ], 'sse-1', expected), /expected instance\.event/)
+  const rootUnwrappedDelta = parseCdpSseFrame({
+    requestId: 'sse-1',
+    data: JSON.stringify({
+      type: 'session.text.delta',
+      data: {sessionID: 'ses_tab_1', assistantMessageID: 'sse-live-1', delta: 'Tab 1'},
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    rootUnwrappedDelta,
+  ], 'sse-1', expected), /expected instance\.event/)
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    {...exactFrames[0], type: 'session.text.delta', nativeType: null},
   ], 'sse-1', expected), /expected instance\.event/)
   assert.throws(() => assertExactInjectedMultiset([
     ...exactFrames,
