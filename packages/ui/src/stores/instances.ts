@@ -552,22 +552,20 @@ const connectionResyncs = new TrailingResyncCoordinator(
     }
     await settle(() => fetchSessions(instanceId, { reset: true, signal }))
     if (!current()) return
-    await Promise.all([
-      settle(() => reloadWorktrees(instanceId, false, signal)),
-      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
-      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
-      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
-    ])
-    if (!current()) return
-    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
+    const loadedMessages = new Set(messagesLoaded().get(instanceId) ?? [])
+    const activeId = activeSessionId().get(instanceId)
     for (const sessionId of loadedMessages) {
       signal.throwIfAborted()
       if (!current()) return
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
-    const activeId = activeSessionId().get(instanceId)
-    if (!current()) return
-    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true, signal }))
+    await Promise.all([
+      activeId && loadedMessages.has(activeId) ? settle(() => loadMessages(instanceId, activeId, { force: true, signal })) : Promise.resolve(),
+      settle(() => reloadWorktrees(instanceId, false, signal)),
+      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
+      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal, loadedMessages)),
+    ])
     if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) throw failures[0]
@@ -583,11 +581,14 @@ function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId, serverEvents.signalForInstance(instanceId))
 }
 
-async function syncLoadedSessionInboxes(instanceId: string, signal?: AbortSignal): Promise<void> {
+async function syncLoadedSessionInboxes(
+  instanceId: string,
+  signal?: AbortSignal,
+  loaded: ReadonlySet<string> = messagesLoaded().get(instanceId) ?? new Set<string>(),
+): Promise<void> {
   if (signal?.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
-  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
   await Promise.all(Array.from(loaded, async (sessionId) => {
     if (signal?.aborted) return
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
@@ -1318,7 +1319,10 @@ function needsPendingRequestLiveness(instanceId: string, hidden = false): boolea
 async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
   if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
-  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some(
+    (session) => session.status === "working" || session.status === "compacting"
+      || (session.generationRecovery === "pending" && session.generationAdmissionEpoch !== undefined),
+  )
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
   const client = instances().get(instanceId)?.client
@@ -2637,8 +2641,21 @@ const publishSynchronousPage = (
   options: { preserveOmitted?: boolean; confirmPending: boolean; updateUsage: boolean },
 ) => {
   const dropped = takeTranscriptProjection(instanceId, sessionId)
-  projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
-  if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  try {
+    projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
+    if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  } catch (error) {
+    log.error("Failed to project synchronous transcript page", { instanceId, sessionId, error })
+    const watched = activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId)
+    if (watched && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) {
+      const signal = serverEvents.signalForInstance(instanceId)
+      void loadMessages(instanceId, sessionId, { force: true, signal }).catch((reloadError) => {
+        log.warn("Failed to reload transcript after synchronous projection error", { instanceId, sessionId, error: reloadError })
+      })
+    } else if (messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+  }
 }
 
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
@@ -2782,6 +2799,20 @@ setTranscriptProjectionGates({
     isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId)),
   invalidateInactiveLoadedSession: (instanceId, sessionId) => {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
+  },
+  reloadFailedProjection: (instanceId, sessionId) => {
+    const signal = serverEvents.signalForInstance(instanceId)
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
+      log.warn("Failed to reload transcript after projection retries exhausted", { instanceId, sessionId, error })
+    })
+  },
+  onResyncedPage: (instanceId, sessionId, data) => {
+    publishSynchronousPage(instanceId, sessionId, data, {
+      preserveOmitted: false,
+      confirmPending: true,
+      updateUsage: true,
+    })
+    schedulePendingRequestReconciliation(instanceId)
   },
   onProjectedUsage: updateSessionInfo,
   // Frame publications always keep omitted history; only their confirmation
