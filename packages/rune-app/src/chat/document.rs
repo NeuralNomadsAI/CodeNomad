@@ -444,8 +444,8 @@ fn prose_for(
                         )
                         .child(card)
                 },
-                fallback_fn,
-                image_search_fn,
+                &fallback_fn,
+                &image_search_fn,
                 image_lookup,
                 image_frame,
             )

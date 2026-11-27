@@ -48,46 +48,46 @@ struct State {
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
-    git: git::Binding,
+    git: Box<git::Binding>,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
-    attachments: chat::attachments::Reader,
+    attachments: Box<chat::attachments::Reader>,
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
-    transcript_display: transcript_state::Display,
-    rail_excerpts: timeline::ExcerptCache,
-    saved_outlines: workspace::outlines::Cache,
+    transcript_display: Box<transcript_state::Display>,
+    rail_excerpts: Box<timeline::ExcerptCache>,
+    saved_outlines: Box<workspace::outlines::Cache>,
     rail_filter_revision: u64,
     window_size: [f32; 2],
-    tool_diff_preferences: chat::ToolDiffPreferences,
+    tool_diff_preferences: Box<chat::ToolDiffPreferences>,
     screen: Screen,
-    settings: settings::Host,
-    notifications: shell::notifications::Host,
+    settings: Box<settings::Host>,
+    notifications: Box<shell::notifications::Host>,
     wake_lock: platform::wake_lock::Controller,
     #[cfg(not(target_arch = "wasm32"))]
-    launch: platform::launch::Host,
+    launch: Box<platform::launch::Host>,
     #[cfg(not(target_arch = "wasm32"))]
-    direct_authentication: chat::authentication::Recovery,
+    direct_authentication: Box<chat::authentication::Recovery>,
     input_scope: std::rc::Rc<()>,
     #[cfg(target_arch = "wasm32")]
     web_composer_input_epoch: u64,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
-    shell: shell::Panels,
-    command_palette: shell::command_palette::Palette,
-    tab_rename: shell::tab_rename::Rename,
-    temporary: shell::temporary::Host,
-    blank_cleanup: shell::blank_cleanup::Host,
-    workspace_open: shell::workspace_open::Host,
-    status_permissions: shell::status_permissions::Permissions,
-    status_services: shell::status_services::Services,
-    status_usage: shell::status_usage::Panel,
+    shell: Box<shell::Panels>,
+    command_palette: Box<shell::command_palette::Palette>,
+    tab_rename: Box<shell::tab_rename::Rename>,
+    temporary: Box<shell::temporary::Host>,
+    blank_cleanup: Box<shell::blank_cleanup::Host>,
+    workspace_open: Box<shell::workspace_open::Host>,
+    status_permissions: Box<shell::status_permissions::Permissions>,
+    status_services: Box<shell::status_services::Services>,
+    status_usage: Box<shell::status_usage::Panel>,
     chat_title: String,
     messages: Vec<history::Row>,
     draft: TextEdit,
-    composer: composer::Owner,
-    prompt_history: composer::recall::History,
-    command_receipts: composer::command_receipts::CommandReceipts,
+    composer: Box<composer::Owner>,
+    prompt_history: Box<composer::recall::History>,
+    command_receipts: Box<composer::command_receipts::CommandReceipts>,
     incoming: Option<Receiver<Event>>,
     conversation_client_id: Option<String>,
     conversation_stream_connected: bool,
@@ -235,7 +235,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         .iter()
         .all(|key| platform::setting(key).is_some());
     if !scoped && !local_stress() {
-        s.screen = Screen::Launcher(launcher::Launcher::new(wake));
+        s.screen = Screen::Launcher(Box::new(launcher::Launcher::new(wake)));
         s.workspace = Some(workspace::Ui::new());
         s.renew_scope();
         workspace::connected(s);
@@ -474,4 +474,18 @@ fn run_app() {
         },
     );
     platform::finish();
+}
+
+#[cfg(test)]
+mod state_layout_tests {
+    use super::State;
+
+    #[test]
+    fn state_stays_compact_for_windows_debug_stack() {
+        let size = std::mem::size_of::<State>();
+        assert!(
+            size <= 5 * 1024,
+            "State grew to {size} bytes; keep large sub-states boxed to stay within Windows's 2 MiB debug stack"
+        );
+    }
 }

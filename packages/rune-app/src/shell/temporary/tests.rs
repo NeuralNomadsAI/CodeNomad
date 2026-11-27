@@ -215,7 +215,7 @@ fn connected_runtime(backend: Backend) -> Runtime<State> {
     let mut l = Launcher::fixture();
     l.connection = Some(backend);
     l.server_id = Some("srv-temp".into());
-    s.screen = Screen::Launcher(l);
+    s.screen = Screen::Launcher(Box::new(l));
     let mut ui = workspace::Ui::new();
     ui.fixture_ready();
     s.workspace = Some(ui);

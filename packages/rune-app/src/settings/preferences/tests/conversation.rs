@@ -899,7 +899,7 @@ fn closing_project_without_conversation_uses_the_renewed_cookie() {
         launcher.project = Some(project.clone());
         launcher.connection = Some(previous);
         launcher.server_id = Some("fixture-profile".into());
-        root.screen = crate::Screen::Launcher(launcher);
+        root.screen = crate::Screen::Launcher(Box::new(launcher));
         root.workspace = Some(crate::workspace::Ui::new());
         crate::workspace::opened(&mut root, &project);
         let key = root.workspace.as_ref().unwrap().active_key().to_owned();
@@ -1024,7 +1024,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         });
         launcher.connection = Some(backend.clone());
         root.screen = crate::Screen::Chat {
-            launcher: Some(launcher),
+            launcher: Some(Box::new(launcher)),
         };
         let (out, incoming) = bounded(2);
         root.incoming = Some(incoming);

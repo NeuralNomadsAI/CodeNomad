@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn detach_stopped_temporary_keeps_drafts_when_retained_and_purges_when_deleted() {
         let mut s = init();
-        s.screen = Screen::Launcher(Launcher::fixture());
+        s.screen = Screen::Launcher(Box::new(Launcher::fixture()));
         let mut ui = Ui::new();
         ui.fixture_ready();
         let project_retained = Project {
@@ -727,7 +727,7 @@ mod tests {
         let mut s = init();
         let mut l = Launcher::fixture();
         l.server_id = Some("srv-test".into());
-        s.screen = Screen::Launcher(l);
+        s.screen = Screen::Launcher(Box::new(l));
         let mut ui = Ui::new();
         ui.fixture_ready();
 
@@ -841,7 +841,7 @@ mod tests {
         l.connection = Some(backend.clone());
         l.server_id = Some("srv-neigh".into());
         l.project = Some(temp_project.clone());
-        s.screen = Screen::Launcher(l);
+        s.screen = Screen::Launcher(Box::new(l));
         let mut ui = Ui::new();
         ui.fixture_ready();
 

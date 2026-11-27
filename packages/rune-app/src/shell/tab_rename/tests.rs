@@ -545,7 +545,9 @@ fn palette_and_rename_dismiss_on_project_install_and_auth_renewal() {
             path: "/managed".into(),
             temporary: false,
         });
-        s.screen = Screen::Chat { launcher: Some(l) };
+        s.screen = Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt = runtime(s);
         send_key(&mut rt, Key::Command('p'), primary_mods(true));
         assert!(command_palette::is_open(&rt.state));

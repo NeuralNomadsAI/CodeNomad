@@ -183,7 +183,9 @@ fn launcher_chat_and_inactive_transcript_do_not_spin_receipt_wakes() {
         backend.session = "ses_fixture".into();
         let mut s = crate::init();
         s.screen = crate::screen::Screen::Chat {
-            launcher: Some(crate::launcher::Launcher::new(std::sync::Arc::new(|| {}))),
+            launcher: Some(Box::new(crate::launcher::Launcher::new(
+                std::sync::Arc::new(|| {}),
+            ))),
         };
         s.phase = crate::Phase::Ready;
         s.messages.push(

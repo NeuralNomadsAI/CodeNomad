@@ -15,9 +15,9 @@ mod tests;
 #[derive(Default)]
 pub struct Reader {
     backend: Option<Backend>,
-    pending: Option<Request>,
+    pending: Option<Box<Request>>,
     generation: u64,
-    active_save: Option<(u64, DownloadSource)>,
+    active_save: Option<(u64, Box<DownloadSource>)>,
     pub saving: bool,
     pub write: Option<Receiver<bool>>,
     pub error: bool,
@@ -84,7 +84,7 @@ impl Reader {
         self.generation = self.generation.wrapping_add(1);
         let token = self.generation;
         self.saving = true;
-        self.active_save = Some((token, source));
+        self.active_save = Some((token, Box::new(source)));
         token
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -148,12 +148,12 @@ impl Reader {
         let reads = s.reads.clone();
         let task_source = source.clone();
         reader.error = false;
-        reader.pending = Some(Request {
+        reader.pending = Some(Box::new(Request {
             _cancel: cancel,
             result,
             name: name.into(),
             source,
-        });
+        }));
         platform::spawn(async move {
             let Some(_slot) = reads.preview(&cancelled).await else {
                 return;

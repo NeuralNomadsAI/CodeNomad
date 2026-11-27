@@ -187,11 +187,166 @@ pub fn prose<S: 'static>(
         wrapped,
         frame,
         diff_frame,
-        |_, _| None,
-        |_| ImageSearch::Inline,
+        &|_, _| None,
+        &|_| ImageSearch::Inline,
         |_| None,
         |el, _, _| prose_image(el),
     )
+}
+
+#[inline(never)]
+fn prose_style(kit: &rune_kit::Kit, dark: bool, highlight: bool) -> Box<MarkdownStyle> {
+    let t = tokens(dark);
+    let style = Box::new(
+        MarkdownStyle::from_kit(kit)
+            .code_block(t.color("surface-inset"), t.color("border-base"))
+            .code_block_radius(0.0)
+            .code_block_text(t.color("text-primary"))
+            .plain_code_text(t.color("text-primary")),
+    );
+    let style = prose_style_inline(style, dark);
+    prose_style_misc(style, dark, highlight)
+}
+
+#[inline(never)]
+fn prose_style_inline(style: Box<MarkdownStyle>, dark: bool) -> Box<MarkdownStyle> {
+    let t = tokens(dark);
+    Box::new(
+        (*style)
+            .inline_code_bg(t.color("surface-muted"))
+            .inline_code_text(t.color("text-primary"))
+            .quote(t.color("border-base"), 3.0, 12.0, t.color("text-secondary"))
+            .rule(t.color("border-base")),
+    )
+}
+
+#[inline(never)]
+fn prose_style_misc(style: Box<MarkdownStyle>, dark: bool, highlight: bool) -> Box<MarkdownStyle> {
+    let t = tokens(dark);
+    Box::new(
+        (*style)
+            .link(t.color("accent-primary"))
+            .link_hover(t.color("accent-hover"))
+            .link_underline(rune::Color::TRANSPARENT)
+            .syntax_highlight(highlight)
+            .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS),
+    )
+}
+
+type ProseHighlights = (
+    Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
+    Option<String>,
+);
+
+#[inline(never)]
+fn prose_highlights(
+    source: &str,
+    dark: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> ProseHighlights {
+    let Some(q) = query else {
+        return (Vec::new(), None);
+    };
+    let t = tokens(dark);
+    let (ranges, first_image, _) = prose_ranges_with_images(source, q, 512, image_search_text);
+    let active_image = if q.active
+        && first_image.is_some()
+        && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+    {
+        first_image
+    } else {
+        None
+    };
+    let matches = ranges
+        .into_iter()
+        .enumerate()
+        .map(|(i, spans)| {
+            let hl = if active_image.is_none()
+                && q.active
+                && i == 0
+                && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+            {
+                rune_kit::markdown::Highlight::current()
+                    .bg(t.color("transcript-search-active"))
+                    .fg(t.color("transcript-search-active-ink"))
+                    .radius(0.0)
+                    .key("history-search-match")
+            } else {
+                rune_kit::markdown::Highlight::new()
+                    .bg(t.color("transcript-search-mark"))
+                    .radius(0.0)
+            };
+            (spans, hl)
+        })
+        .collect();
+    (matches, active_image)
+}
+
+#[inline(never)]
+fn prose_markdown_base(
+    source: String,
+    style: Box<MarkdownStyle>,
+    matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
+    streaming: bool,
+) -> Box<Markdown> {
+    let md = Box::new(Markdown::new(source).style(*style).highlights(matches));
+    prose_markdown_flags(md, streaming)
+}
+
+#[inline(never)]
+fn prose_markdown_flags(md: Box<Markdown>, streaming: bool) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .selectable(true)
+            .tasks_read_only()
+            .scroll_wide(true)
+            .streaming(streaming),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_links<S: 'static>(
+    md: Box<Markdown>,
+    link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
+    help: impl Fn(&str) -> Option<String> + 'static,
+) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .on_link_tx(link)
+            .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
+            .link_help(help),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_media(
+    md: Box<Markdown>,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
+    image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
+    active_image_key: Option<String>,
+) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .images(image)
+            .image_frame(move |el, frame| image_frame(el, frame, active_image_key.as_deref())),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_frames(
+    md: Box<Markdown>,
+    wrapped: impl Fn(usize, &str) -> bool + 'static,
+    frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
+    diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
+    kit: &rune_kit::Kit,
+) -> El {
+    (*md)
+        .code_wrap(wrapped)
+        .code_frame(frame)
+        .diff_frame(diff_frame)
+        .build(kit)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -207,86 +362,20 @@ pub fn prose_with_images<S: 'static>(
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
-    fallback_label: impl Fn(&str, bool) -> Option<String>,
-    image_search_text: impl Fn(&str) -> ImageSearch,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
     image: impl Fn(&str) -> Option<rune::Image> + 'static,
     image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
 ) -> El {
     let dark = dark();
     let kit = &*kit(dark);
-    let t = tokens(dark);
-    let style = MarkdownStyle::from_kit(kit)
-        .code_block(t.color("surface-inset"), t.color("border-base"))
-        .code_block_radius(0.0)
-        .code_block_text(t.color("text-primary"))
-        .plain_code_text(t.color("text-primary"))
-        .inline_code_bg(t.color("surface-muted"))
-        .inline_code_text(t.color("text-primary"))
-        .quote(t.color("border-base"), 3.0, 12.0, t.color("text-secondary"))
-        .rule(t.color("border-base"))
-        .link(t.color("accent-primary"))
-        .link_hover(t.color("accent-hover"))
-        .link_underline(rune::Color::TRANSPARENT)
-        .syntax_highlight(highlight)
-        .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
-    let source = literal_breaks_with_images(source, truncated, &fallback_label).into_owned();
-    let (matches, active_image_key): (
-        Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
-        Option<String>,
-    ) = match query {
-        Some(q) => {
-            let (ranges, first_image, _) =
-                prose_ranges_with_images(&source, q, 512, &image_search_text);
-            let active_image = if q.active
-                && first_image.is_some()
-                && q.claimed.is_none_or(|claimed| !claimed.replace(true))
-            {
-                first_image
-            } else {
-                None
-            };
-            let matches = ranges
-                .into_iter()
-                .enumerate()
-                .map(|(i, spans)| {
-                    let hl = if active_image.is_none()
-                        && q.active
-                        && i == 0
-                        && q.claimed.is_none_or(|claimed| !claimed.replace(true))
-                    {
-                        rune_kit::markdown::Highlight::current()
-                            .bg(t.color("transcript-search-active"))
-                            .fg(t.color("transcript-search-active-ink"))
-                            .radius(0.0)
-                            .key("history-search-match")
-                    } else {
-                        rune_kit::markdown::Highlight::new()
-                            .bg(t.color("transcript-search-mark"))
-                            .radius(0.0)
-                    };
-                    (spans, hl)
-                })
-                .collect();
-            (matches, active_image)
-        }
-        None => (Vec::new(), None),
-    };
-    Markdown::new(source)
-        .style(style)
-        .highlights(matches)
-        .selectable(true)
-        .tasks_read_only()
-        .scroll_wide(true)
-        .streaming(streaming)
-        .on_link_tx(link)
-        .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
-        .link_help(help)
-        .images(image)
-        .image_frame(move |el, frame| image_frame(el, frame, active_image_key.as_deref()))
-        .code_wrap(wrapped)
-        .code_frame(frame)
-        .diff_frame(diff_frame)
-        .build(kit)
+    let style = prose_style(kit, dark, highlight);
+    let source = literal_breaks_with_images(source, truncated, fallback_label).into_owned();
+    let (matches, active_image_key) = prose_highlights(&source, dark, query, image_search_text);
+    let md = prose_markdown_base(source, style, matches, streaming);
+    let md = prose_markdown_links(md, link, secondary, help);
+    let md = prose_markdown_media(md, image, image_frame, active_image_key);
+    prose_markdown_frames(md, wrapped, frame, diff_frame, kit)
 }
 
 #[cfg(test)]
