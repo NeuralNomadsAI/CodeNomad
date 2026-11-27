@@ -108,16 +108,18 @@ export function parseCdpSseFrame(event) {
   try { parsed = JSON.parse(event.data) } catch {}
   const eventName = typeof event?.eventName === 'string' && event.eventName.length > 0 ? event.eventName : null
   const isNamedDelta = eventName === 'session.text.delta'
-  const nativeEvent = parsed?.event ?? (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
+  const hasEnvelopeEvent = parsed?.event != null && typeof parsed.event === 'object'
+  const nativeEvent = hasEnvelopeEvent ? parsed.event : (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
+  const payload = hasEnvelopeEvent ? nativeEvent?.data : (nativeEvent?.data ?? parsed)
   return {
     requestId: event.requestId,
     eventName,
     type: parsed?.type ?? null,
     instanceId: parsed?.instanceId ?? null,
     nativeType: nativeEvent?.type ?? (isNamedDelta ? 'session.text.delta' : null),
-    sessionID: nativeEvent?.data?.sessionID ?? parsed?.sessionID ?? null,
-    assistantMessageID: nativeEvent?.data?.assistantMessageID ?? parsed?.assistantMessageID ?? null,
-    delta: nativeEvent?.data?.delta ?? parsed?.delta ?? null,
+    sessionID: payload?.sessionID ?? null,
+    assistantMessageID: payload?.assistantMessageID ?? null,
+    delta: payload?.delta ?? null,
   }
 }
 
