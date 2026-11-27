@@ -101,6 +101,11 @@ impl Host {
             .or(self.pending_restore.as_deref_mut())
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_stash(&mut self, stashed: StashedTemporary) {
+        self.pending_restore = Some(Box::new(stashed));
+    }
+
     pub(crate) fn cancel_for_auth(&mut self) {
         self.dialog = None;
         if let Some(pending) = self.creating.take()

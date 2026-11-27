@@ -82,6 +82,7 @@ pub(crate) struct Reader {
     activity: Option<(bool, u64)>,
     settling: bool,
     settled_inbox: Vec<String>,
+    settled_confirmations: Vec<String>,
 }
 
 impl Reader {
@@ -136,6 +137,7 @@ impl Reader {
                 activity: None,
                 settling: false,
                 settled_inbox: Vec::new(),
+                settled_confirmations: Vec::new(),
             },
             ReadingLane {
                 demand,
@@ -170,7 +172,32 @@ impl Reader {
                     self.settled_inbox.push(item.id.clone());
                 }
             }
+            Event::Message(m) => {
+                if m.role == "user" {
+                    self.settled_confirmations.push(m.id.clone());
+                }
+            }
+            Event::History(messages) => {
+                for m in messages {
+                    if m.role == "user" {
+                        self.settled_confirmations.push(m.id.clone());
+                    }
+                }
+            }
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                for m in &page.rows {
+                    if m.role == "user" {
+                        self.settled_confirmations.push(m.id.clone());
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+
+    fn discard_deferred_sync(&mut self) {
+        if let Some(deferred) = self.deferred_sync.take() {
+            self.record_settled_inbox(&deferred.event);
         }
     }
 
@@ -187,11 +214,18 @@ impl Reader {
         std::mem::take(&mut self.settled_inbox)
     }
 
+    pub(crate) fn drain_settled_confirmations(&mut self) -> Vec<String> {
+        if self.hidden {
+            self.drain();
+        }
+        std::mem::take(&mut self.settled_confirmations)
+    }
+
     pub(crate) fn stop_content(&mut self) {
         self.hidden = true;
         self.pending_scroll = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.generation = self.request.publish(None);
@@ -268,37 +302,42 @@ impl Reader {
         clock: Option<f64>,
     ) -> Option<Event> {
         self.last_taken = None;
-        if let Some(deferred) = self.deferred_sync.take()
-            && !self.hidden
-            && deferred.generation == self.generation
-            && deferred.connection == self.connection.load(SeqCst)
-        {
-            if !defer_sync || !self.resume_pending {
-                self.last_taken = Some((deferred.generation, deferred.connection));
-                return Some(deferred.event);
-            }
-            let scroll_seq = reading.scroll_seq();
-            if clock.is_some() && deferred.last_clock == clock && scroll_seq == deferred.last_seq {
-                self.deferred_sync = Some(deferred);
+        if let Some(deferred) = self.deferred_sync.take() {
+            if !self.hidden
+                && deferred.generation == self.generation
+                && deferred.connection == self.connection.load(SeqCst)
+            {
+                if !defer_sync || !self.resume_pending {
+                    self.last_taken = Some((deferred.generation, deferred.connection));
+                    return Some(deferred.event);
+                }
+                let scroll_seq = reading.scroll_seq();
+                if clock.is_some()
+                    && deferred.last_clock == clock
+                    && scroll_seq == deferred.last_seq
+                {
+                    self.deferred_sync = Some(deferred);
+                    return None;
+                }
+                let seq_ready = scroll_seq >= deferred.min_seq;
+                let ready = seq_ready
+                    && (reading.top_is_fresh()
+                        || reading
+                            .live_bookmark_fresh(history_bounds, cached_gap)
+                            .is_some());
+                if ready || deferred.stage >= 4 {
+                    self.last_taken = Some((deferred.generation, deferred.connection));
+                    return Some(deferred.event);
+                }
+                self.deferred_sync = Some(DeferredSync {
+                    stage: deferred.stage + 1,
+                    last_clock: clock,
+                    last_seq: scroll_seq,
+                    ..deferred
+                });
                 return None;
             }
-            let seq_ready = scroll_seq >= deferred.min_seq;
-            let ready = seq_ready
-                && (reading.top_is_fresh()
-                    || reading
-                        .live_bookmark_fresh(history_bounds, cached_gap)
-                        .is_some());
-            if ready || deferred.stage >= 4 {
-                self.last_taken = Some((deferred.generation, deferred.connection));
-                return Some(deferred.event);
-            }
-            self.deferred_sync = Some(DeferredSync {
-                stage: deferred.stage + 1,
-                last_clock: clock,
-                last_seq: scroll_seq,
-                ..deferred
-            });
-            return None;
+            self.record_settled_inbox(&deferred.event);
         }
         while let Ok((generation, connection, event)) = self.events.try_recv() {
             if !self.hidden
@@ -393,12 +432,13 @@ impl Reader {
         self.resume_pending = true;
         self.pending_scroll = false;
         self.last_taken = None;
-        self.deferred_sync = None;
+        self.discard_deferred_sync();
         self.sync_undo = None;
         self.awaiting_manual_probe = ManualProbeWait::Idle;
         self.resume_manual_seq = None;
         self.reconciled_manual_scroll = false;
         self.bookmark = current;
+        self.drain();
         self.generation = self.request.publish(Some(target));
     }
 
@@ -1004,11 +1044,16 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
-    let Some(ids) = s.reader.as_mut().map(Reader::drain_settled_inbox) else {
+    let Some((inbox_ids, confirmation_ids)) = s.reader.as_mut().map(|reader| {
+        (
+            reader.drain_settled_inbox(),
+            reader.drain_settled_confirmations(),
+        )
+    }) else {
         return false;
     };
     let mut changed = false;
-    for id in ids {
+    for id in inbox_ids {
         changed |= crate::composer::confirm_unconfirmed_id(s, &id);
         if s.composer.is_optimistic(&id) {
             s.composer.clear_optimistic(Some(&id));
@@ -1018,6 +1063,9 @@ pub(crate) fn settle_discarded_inbox(s: &mut State) -> bool {
                 changed = true;
             }
         }
+    }
+    for id in confirmation_ids {
+        changed |= crate::composer::confirm_unconfirmed_id(s, &id);
     }
     changed
 }

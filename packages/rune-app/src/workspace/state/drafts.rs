@@ -3799,4 +3799,243 @@ mod tests {
             "resulting snapshot must still encode cleanly within v1 bounds"
         );
     }
+
+    #[test]
+    fn stashed_sibling_projections_preserve_both_archives_and_resync_on_restore() {
+        let make_ws =
+            |folder: &str, active: Option<&str>, drafts: &[(&str, &str)]| super::super::Workspace {
+                backend_id: None,
+                server_id: None,
+                folder: folder.into(),
+                project_name: None,
+                temporary: true,
+                occurrence: 1,
+                workspace_id: None,
+                active_session_id: active.map(str::to_owned),
+                drafts: drafts
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                attachment_drafts: Default::default(),
+                attachment_parts: Default::default(),
+                view: Default::default(),
+            };
+
+        let mut rt = rune::Runtime::new(
+            crate::init(),
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let closed_a = make_ws(
+            "/tmp/two-proj",
+            Some("ses-del"),
+            &[("ses-del", "archive A")],
+        );
+        let closed_b = make_ws(
+            "/tmp/two-proj",
+            Some("ses-del"),
+            &[("ses-del", "archive B")],
+        );
+        let scope = super::super::ProjectScope::from_workspace(&closed_a);
+        // Push B first, A second so newest-first order is [A, B].
+        ui.closed.push(closed_b.clone());
+        ui.closed_restored.push(Default::default());
+        ui.closed_derived_from.push(Default::default());
+        ui.closed_unconfirmed_attempts.push(Default::default());
+        ui.closed.push(closed_a.clone());
+        ui.closed_restored.push(Default::default());
+        ui.closed_derived_from.push(Default::default());
+        ui.closed_unconfirmed_attempts.push(Default::default());
+        ui.closed_pending_deleted
+            .push((scope.clone(), "ses-del".into()));
+
+        // Tab 0 projected A and is stashed; Tab 1 stays open projecting B.
+        let mut open_entry =
+            super::super::entry("tab-open".into(), Tab::Workspace(closed_b.clone()));
+        open_entry.pending_drafts.insert("ses-del".into());
+        ui.entries = vec![open_entry];
+        ui.active = 0;
+
+        let mut stashed_entry =
+            super::super::entry("tab-stashed".into(), Tab::Workspace(closed_a.clone()));
+        stashed_entry.pending_drafts.insert("ses-del".into());
+        let stashed = super::super::StashedTemporary {
+            tab_key: "tab-stashed".into(),
+            original_index: 0,
+            was_active: true,
+            created_blank_key: None,
+            project: crate::catalog::Project {
+                id: "ws-two".into(),
+                path: "/tmp/two-proj".into(),
+                temporary: true,
+            },
+            backend: Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            folder: "/tmp/two-proj".into(),
+            backend_id: None,
+            server_id: None,
+            entry: stashed_entry,
+            return_focus: None,
+        };
+
+        let snap_both = ui.snapshot_with_stashed(Some(&stashed));
+        let mut persisted_texts: Vec<&str> = snap_both
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                Tab::Workspace(w) => w.drafts.get("ses-del").map(String::as_str),
+                Tab::Blank => None,
+            })
+            .collect();
+        persisted_texts.sort_unstable();
+        assert_eq!(
+            persisted_texts,
+            vec!["archive A", "archive B"],
+            "stashing tab 0 while tab 1 projects archive B must persist both A and B without duplicating B or dropping A"
+        );
+        let fallback_copies = snap_both
+            .tabs
+            .iter()
+            .filter(|tab| {
+                matches!(tab, Tab::Workspace(w) if w.drafts.contains_key(NO_SESSION_DRAFT_ID))
+            })
+            .count();
+        assert_eq!(fallback_copies, 0);
+
+        // Now archive A is confirmed/removed while tab 0 is still stashed, leaving only B.
+        ui.closed.pop();
+        ui.closed_restored.pop();
+        ui.closed_derived_from.pop();
+        ui.closed_unconfirmed_attempts.pop();
+
+        let snap_one = ui.snapshot_with_stashed(Some(&stashed));
+        let surviving_texts: Vec<&str> = snap_one
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                Tab::Workspace(w) => w.drafts.get("ses-del").map(String::as_str),
+                Tab::Blank => None,
+            })
+            .collect();
+        assert_eq!(
+            surviving_texts,
+            vec!["archive B"],
+            "snapshot_with_stashed must drop stale A and persist surviving archive B once across open + stashed tabs"
+        );
+
+        // On discard refusal (e.g. HTTP 409), restore_stashed must resync the restored tab so
+        // ordinary snapshots never resurrect stale A either.
+        rt.state.workspace = Some(ui);
+        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        rt.update(|s, tx| super::super::restore_stashed(s, stashed, false, tx));
+        let snap_after_restore = rt.state.workspace.as_ref().unwrap().snapshot();
+        let restored_texts: Vec<&str> = snap_after_restore
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                Tab::Workspace(w) => w.drafts.get("ses-del").map(String::as_str),
+                Tab::Blank => None,
+            })
+            .collect();
+        assert_eq!(
+            restored_texts,
+            vec!["archive B"],
+            "restore_stashed must resync pending closed projections so stale archive A cannot be persisted after 409"
+        );
+    }
+
+    #[test]
+    fn closing_active_tab_settles_queued_reader_sync_confirmation_before_session_deleted_invalidation()
+     {
+        use crate::transport::{Command, Event, PromptOutcome};
+
+        let mut rt = rune::Runtime::new(
+            crate::init(),
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        rt.state.workspace = Some(ui);
+        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        let project = crate::catalog::Project {
+            id: "ws-close-sync".into(),
+            path: "/repo/close-sync".into(),
+            temporary: false,
+        };
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.workspace = "ws-close-sync".into();
+        backend.session = "ses-close-sync".into();
+        let (cmd_tx, cmd_rx) = codenomad_client::bounded(8);
+        let (ev_tx, ev_rx) = codenomad_client::bounded(8);
+        let (mut reader, lane) = crate::chat::reader::Reader::fixture_open();
+        reader.install(false);
+        let reader_gen = reader.generation();
+
+        rt.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt.state, &project);
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx);
+        rt.state.incoming = Some(ev_rx);
+        rt.state.reader = Some(reader);
+        rt.state.draft = rune::edit::TextEdit::new("confirmed via reader sync");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt) = cmd_rx.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id = prompt.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+
+        // Queue ReaderSync confirmation on the Reader lane and SessionDeleted on incoming;
+        // closing the active tab must settle the ReaderSync user confirmation even though
+        // incoming SessionDeleted invalidates the reader first.
+        lane.events
+            .try_send((
+                reader_gen,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: vec![
+                            crate::Message {
+                                usage: None,
+                                id: attempt_id,
+                                role: "user".into(),
+                                completed: true,
+                                body: "confirmed via reader sync".into(),
+                                parts: vec![],
+                            }
+                            .into(),
+                        ],
+                        older: None,
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        ev_tx.try_send(Event::SessionDeleted).unwrap();
+
+        let active_key = rt.state.workspace.as_ref().unwrap().entries[0].key.clone();
+        rt.update(|s, tx| crate::workspace::close(s, &active_key, tx));
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let resurrected_open = ui.entries.iter().any(|e| {
+            matches!(&e.saved, Tab::Workspace(w) if w.drafts.values().any(|t| t == "confirmed via reader sync"))
+        });
+        let resurrected_closed = ui
+            .closed
+            .iter()
+            .any(|w| w.drafts.values().any(|t| t == "confirmed via reader sync"));
+        assert!(
+            !resurrected_open && !resurrected_closed,
+            "closing active tab must settle queued ReaderSync confirmation before SessionDeleted recovery"
+        );
+    }
 }

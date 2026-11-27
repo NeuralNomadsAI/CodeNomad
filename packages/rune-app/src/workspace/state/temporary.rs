@@ -296,6 +296,19 @@ pub(crate) fn restore_stashed(
     }
     let insert_at = stashed.original_index.min(ui.entries.len());
     ui.entries.insert(insert_at, stashed.entry);
+    if let Tab::Workspace(w) = &ui.entries[insert_at].saved
+        && !ui.entries[insert_at].pending_drafts.is_empty()
+    {
+        let scope = super::ProjectScope::from_workspace(w);
+        let ids: Vec<String> = ui.entries[insert_at]
+            .pending_drafts
+            .iter()
+            .cloned()
+            .collect();
+        for id in ids {
+            super::drafts::sync_pending_closed_projections(ui, &scope, &id);
+        }
+    }
     if activate_restored {
         ui.active = insert_at;
         ui.changed();
@@ -1168,6 +1181,84 @@ mod tests {
             peek.bundle.and_then(|b| b.text).as_deref(),
             Some("keep me"),
             "independent closed draft must remain visible after keep_drafts discard with non-matching clear_authority"
+        );
+    }
+
+    #[test]
+    fn stashed_temporary_tab_protects_its_local_draft_from_blank_session_cleanup() {
+        let mut rt = Runtime::new(
+            crate::init(),
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let temp_project = crate::catalog::Project {
+            id: "ws-temp".into(),
+            path: "/tmp/cleanup-guard".into(),
+            temporary: true,
+        };
+        let mut open_ws = super::super::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/tmp/cleanup-guard".into(),
+            project_name: None,
+            temporary: true,
+            occurrence: 1,
+            workspace_id: None,
+            active_session_id: Some("ses_other".into()),
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        };
+        let mut open_entry =
+            super::super::entry("tab-open".into(), Tab::Workspace(open_ws.clone()));
+        open_entry.project = Some(temp_project.clone());
+        open_entry.sessions = vec![codenomad_client::catalog::Session {
+            id: "ses_blank".into(),
+            title: "Blank".into(),
+        }];
+        ui.entries = vec![open_entry];
+        ui.active = 0;
+
+        let mut launcher = crate::launcher::Launcher::fixture();
+        launcher.project = Some(temp_project.clone());
+        launcher.sessions = vec![codenomad_client::catalog::Session {
+            id: "ses_blank".into(),
+            title: "Blank".into(),
+        }];
+        rt.state.screen = crate::Screen::Launcher(launcher);
+        rt.state.workspace = Some(ui);
+
+        assert!(
+            !crate::workspace::session_cleanup_protected(&rt.state, "ws-temp", "ses_blank"),
+            "without a stashed draft, ses_blank should be eligible for cleanup"
+        );
+
+        open_ws
+            .drafts
+            .insert("ses_blank".into(), "unsent draft on stashed tab".into());
+        let stashed_entry = super::super::entry("tab-stashed".into(), Tab::Workspace(open_ws));
+        let stashed = StashedTemporary {
+            tab_key: "tab-stashed".into(),
+            original_index: 0,
+            was_active: false,
+            created_blank_key: None,
+            project: temp_project,
+            backend: Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            folder: "/tmp/cleanup-guard".into(),
+            backend_id: None,
+            server_id: None,
+            entry: stashed_entry,
+            return_focus: None,
+        };
+        rt.state.temporary.fixture_stash(stashed);
+
+        assert!(
+            crate::workspace::session_cleanup_protected(&rt.state, "ws-temp", "ses_blank"),
+            "stashed temporary tab holding a local draft must protect its session from blank cleanup"
         );
     }
 }

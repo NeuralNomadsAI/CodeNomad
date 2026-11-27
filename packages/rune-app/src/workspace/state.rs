@@ -561,18 +561,33 @@ impl Ui {
             Some(active.min(refs.len() - 1))
         };
         let mut tabs: Vec<Tab> = refs.iter().map(|e| e.saved.clone()).collect();
-        // Resync any pending closed-draft projections on a stashed temporary tab against the
-        // current ui.closed archives (confirmations during stashing only resync self.entries),
-        // so stale projections are never persisted and surviving archives are never skipped.
-        let mut stashed_projected: HashSet<String> = HashSet::new();
+        // Resync pending closed-draft projections across all matching tabs (open + stashed,
+        // in refs order) for any session projected on the stashed temporary tab, so stale
+        // projections are dropped and distinct sibling archives are assigned 1-to-1 without
+        // duplicating one archive or dropping another.
+        let mut resynced_projected: Vec<(ProjectScope, String, usize)> = Vec::new();
         if let Some(si) = stashed_idx
-            && let Tab::Workspace(snap_w) = &mut tabs[si]
+            && let Tab::Workspace(stashed_w) = &refs[si].saved
+            && !refs[si].pending_drafts.is_empty()
         {
-            let scope = ProjectScope::from_workspace(snap_w);
+            let scope = ProjectScope::from_workspace(stashed_w);
             for id in &refs[si].pending_drafts {
-                snap_w.drafts.remove(id);
-                snap_w.attachment_drafts.remove(id);
-                snap_w.attachment_parts.remove(id);
+                let pending_tabs: Vec<usize> = refs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, entry)| {
+                        (entry.pending_drafts.contains(id)
+                            && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w)))
+                        .then_some(idx)
+                    })
+                    .collect();
+                for &idx in &pending_tabs {
+                    if let Tab::Workspace(snap_w) = &mut tabs[idx] {
+                        snap_w.drafts.remove(id);
+                        snap_w.attachment_drafts.remove(id);
+                        snap_w.attachment_parts.remove(id);
+                    }
+                }
                 let clear_authorities =
                     drafts::collect_open_clear_authorities_for(refs.iter().copied(), &scope, id);
                 let (bundles, _) = drafts::collect_closed_bundles_for_recovery(
@@ -581,15 +596,11 @@ impl Ui {
                     id,
                     &clear_authorities,
                 );
-                let projected_open = self
-                    .entries
-                    .iter()
-                    .filter(|entry| {
-                        entry.pending_drafts.contains(id)
-                            && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                    })
-                    .count();
-                if let Some(bundle) = bundles.get(projected_open) {
+                let mut placed = 0usize;
+                for (idx, bundle) in pending_tabs.into_iter().zip(bundles) {
+                    let Tab::Workspace(snap_w) = &mut tabs[idx] else {
+                        continue;
+                    };
                     if let Some(text) = bundle.text.as_ref()
                         && !text.is_empty()
                     {
@@ -601,8 +612,9 @@ impl Ui {
                     if let Some(parts) = bundle.attachment_parts.as_ref() {
                         snap_w.attachment_parts.insert(id.clone(), parts.clone());
                     }
-                    stashed_projected.insert(id.clone());
+                    placed += 1;
                 }
+                resynced_projected.push((scope.clone(), id.clone(), placed));
             }
         }
         // Exclude restored copies already superseded by a closed sibling's clear authority
@@ -1169,18 +1181,18 @@ impl Ui {
                     if closed_bundles.is_empty() {
                         continue;
                     }
-                    let projected_count = self
-                        .entries
+                    let projected_count = resynced_projected
                         .iter()
-                        .filter(|entry| {
-                            entry.pending_drafts.contains(id)
-                                && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                        })
-                        .count()
-                        + usize::from(stashed_idx.is_some_and(|si| {
-                            stashed_projected.contains(id)
-                                && matches!(&refs[si].saved, Tab::Workspace(w) if scope.matches(w))
-                        }));
+                        .find_map(|(s, k, count)| (s.same_scope(scope) && k == id).then_some(*count))
+                        .unwrap_or_else(|| {
+                            self.entries
+                                .iter()
+                                .filter(|entry| {
+                                    entry.pending_drafts.contains(id)
+                                        && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                                })
+                                .count()
+                        });
                     let no_session_free = !snap.tabs.iter().any(|tab| {
                         matches!(tab, Tab::Workspace(w) if scope.matches(w)
                         && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
