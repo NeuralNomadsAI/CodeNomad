@@ -379,9 +379,10 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||metaGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
           const req=route.request()
+          if(req.failure())return abortSseRoute(route)
           admittedMetaRequest=req
           metaGate='block'
-          if(!await continueSseRoute(route))releaseMetaAdmission(req)
+          if(!await continueSseRoute(route)||req.failure())releaseMetaAdmission(req)
           return
         }
         if(entryGate!=='block'&&metaGate==='hold')return holdRoute(route)
@@ -396,10 +397,11 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||entryGate==='pass'||sseGate==='pass')return continueSseRoute(route)
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
           const req=route.request()
+          if(req.failure())return abortSseRoute(route)
           sseGate='block'
           metaGate='block'
           admittedSseRequest=req
-          if(!await continueSseRoute(route))releaseSseAdmission(req)
+          if(!await continueSseRoute(route)||req.failure())releaseSseAdmission(req)
           return
         }
         if(entryGate!=='block'&&sseGate==='hold')return holdRoute(route)
