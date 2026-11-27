@@ -39,10 +39,18 @@ pub struct Settings {
     write_enter: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     #[cfg(test)]
     write_exit: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    #[cfg(test)]
+    desktop_voice_env: Mutex<Option<(Option<String>, String)>>,
 }
 
 #[cfg(test)]
 impl Settings {
+    pub(crate) fn set_desktop_voice_env_for_test(&self, identity: Option<String>, channel: String) {
+        *self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()) = Some((identity, channel));
+    }
+    pub(crate) fn desktop_voice_env_for_test(&self) -> Option<(Option<String>, String)> {
+        self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
     pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
         self.write.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -102,6 +110,8 @@ impl Settings {
             write_enter: Mutex::new(None),
             #[cfg(test)]
             write_exit: Mutex::new(None),
+            #[cfg(test)]
+            desktop_voice_env: Mutex::new(None),
         }
     }
     fn file(&self, kind: Kind) -> &std::path::Path {

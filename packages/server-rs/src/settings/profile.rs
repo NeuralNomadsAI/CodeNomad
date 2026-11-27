@@ -21,6 +21,11 @@ pub fn scope(config: &Path) -> Option<Scope> {
     profile_scope(Style::host(), config.to_str()?, &channel, default, expected.ok().as_deref())
 }
 
+#[cfg(test)]
+pub fn scope_for_test(config: &Path, channel: &str, expected: Option<&str>) -> Option<Scope> {
+    profile_scope(Style::host(), config.to_str()?, channel, "stable", expected)
+}
+
 fn profile_scope(style: Style, config: &str, channel: &str, default: &str, expected: Option<&str>) -> Option<Scope> {
     let channel = channel.trim().to_lowercase();
     let channel = if channel.is_empty() { default } else { channel.as_str() };
