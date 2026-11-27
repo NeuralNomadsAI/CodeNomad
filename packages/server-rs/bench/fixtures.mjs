@@ -226,7 +226,7 @@ function tokenizeEsm(code) {
       if (tok.type === "template-head" && depth === 0) return false
       if (depth === 0 && tok.type === "ident" && tok.value === "class") {
         const before = tokens[idx - 1]
-        if (before?.type === "punct" && (before.value === "." || before.value === "?.")) return false
+        if (before?.type === "punct" && (before.value === "." || before.value === "?.")) continue
         return isExprPrecederAt(idx - 1, true)
       }
     }

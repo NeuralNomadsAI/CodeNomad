@@ -200,6 +200,7 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
     'const fnDiv = function () { return 1 } / 2; const afterFnDiv = await import("./native-fixture-http.mjs"); const halfFn = 1 / 2',
     'const asyncFnDiv = async function* gen() { yield 1 } / 2; const afterAsyncFnDiv = await import("./native-fixture-guards.mjs"); const halfAsyncFn = 1 / 2',
     'const clsDiv = class Foo extends Base { } / 2; const afterClsDiv = await import("./native-fixture-process.mjs"); const halfCls = 1 / 2',
+    'const memberClsDiv = class extends ns.class { } / 2; const afterMemberClsDiv = await import("./native-fixture-http.mjs"); const halfMCls = 1 / 2',
     'if (ok) { noop() } /from "\\.\\/native-fixture-http\\.mjs"/.test(s)',
     'function decl() {} /from "\\.\\/native-fixture-http\\.mjs"/.test(s)',
     'const computed = import("./native-fixture-http.mjs" + suffix)',
@@ -229,6 +230,7 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
   assert.ok(rewritten.includes(`const fnDiv = function () { return 1 } / 2; const afterFnDiv = await import(${JSON.stringify(httpUrl)}); const halfFn = 1 / 2`))
   assert.ok(rewritten.includes(`const asyncFnDiv = async function* gen() { yield 1 } / 2; const afterAsyncFnDiv = await import(${JSON.stringify(guardsUrl)}); const halfAsyncFn = 1 / 2`))
   assert.ok(rewritten.includes(`const clsDiv = class Foo extends Base { } / 2; const afterClsDiv = await import(${JSON.stringify(processUrl)}); const halfCls = 1 / 2`))
+  assert.ok(rewritten.includes(`const memberClsDiv = class extends ns.class { } / 2; const afterMemberClsDiv = await import(${JSON.stringify(httpUrl)}); const halfMCls = 1 / 2`))
   assert.ok(rewritten.includes('if (ok) { noop() } /from "\\.\\/native-fixture-http\\.mjs"/.test(s)'))
   assert.ok(rewritten.includes('function decl() {} /from "\\.\\/native-fixture-http\\.mjs"/.test(s)'))
   assert.ok(rewritten.includes('const computed = import("./native-fixture-http.mjs" + suffix)'))
@@ -549,6 +551,14 @@ test("Windows drive probing never runs before canonical/home checks and validate
         resolveSystemPowerShell({ SystemRoot: junction }),
         /resolves inside the user's home/,
       )
+      await assert.rejects(
+        resolveSystemPowerShell(process.env, { probeDriveType: () => "Network" }),
+        /must reside on a local volume/,
+      )
+      await assert.rejects(
+        resolveSystemPowerShell(process.env, { probeDriveType: () => "Removable" }),
+        /must reside on a local volume/,
+      )
     }
   } finally {
     await unlink(loopA).catch(() => {})
@@ -589,6 +599,43 @@ test("assertPrivateTsServerLaunch validates private profile, configured binary, 
     await assert.rejects(
       assertPrivateTsServerLaunch(["--config", badConfig], { ...env }, { probeDriveType: () => "Fixed" }),
       /outside the user's home/,
+    )
+
+    // Legacy config.json migration (`preferences.lastUsedBinary`) and sibling `config.yaml`.
+    const jsonDir = path.join(profile, "legacy-json")
+    await mkdir(jsonDir, { recursive: true })
+    const legacyJson = path.join(jsonDir, "config.json")
+    await writeFile(legacyJson, JSON.stringify({ preferences: { lastUsedBinary: path.join(os.homedir(), "opencode2.exe") } }))
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", legacyJson], { ...env }, { probeDriveType: () => "Fixed" }),
+      /outside the user's home/,
+    )
+    await writeFile(legacyJson, JSON.stringify({ preferences: { lastUsedBinary: privateExe } }))
+    await writeFile(path.join(jsonDir, "config.yaml"), `server:\n  opencodeBinary: ${JSON.stringify(path.join(os.homedir(), "opencode.exe"))}\n`)
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", legacyJson], { ...env }, { probeDriveType: () => "Fixed" }),
+      /outside the user's home/,
+    )
+
+    // Custom `@opencode/cli` package.json `bin` entry pointing outside the npm package / into user home.
+    const npmPrefix = process.platform === "win32" ? path.join(env.APPDATA, "npm") : path.join(env.HOME, ".local")
+    const pkgRoot = path.join(npmPrefix, ...(process.platform === "win32" ? [] : ["lib"]), "node_modules", "@opencode", "cli")
+    await mkdir(path.join(pkgRoot, "bin"), { recursive: true })
+    await writeFile(path.join(pkgRoot, "package.json"), JSON.stringify({
+      name: "@opencode/cli",
+      bin: { opencode2: "./bin/custom.exe" },
+    }))
+    const customTarget = path.join(pkgRoot, "bin", "custom.exe")
+    await writeFile(customTarget, "stub")
+    await assertPrivateTsServerLaunch(["--config", configYaml], { ...env }, { probeDriveType: () => "Fixed" })
+
+    await writeFile(path.join(pkgRoot, "package.json"), JSON.stringify({
+      name: "@opencode/cli",
+      bin: { opencode2: "../../../../../../escape.exe" },
+    }))
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", configYaml], { ...env }, { probeDriveType: () => "Fixed" }),
+      /escapes its npm package/,
     )
   } finally {
     await rm(scratch, { recursive: true, force: true })
