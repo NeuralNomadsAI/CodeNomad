@@ -31,6 +31,27 @@ const WAITING_LIMIT: usize = 32;
 pub(super) const STEP_BYTES: usize = 2 << 20;
 pub(super) const MAX_TRUNCATED_IMAGE_PATH_BYTES: usize = 4 * 1024;
 pub(super) const MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES: usize = 32 * 1024;
+
+pub(super) fn truncated_image_entry_bytes(
+    msg_id: &str,
+    tool_id: &str,
+    groups: &[Vec<String>],
+) -> usize {
+    let base = std::mem::size_of::<(String, String, Vec<Vec<String>>)>()
+        .saturating_add(msg_id.len())
+        .saturating_add(tool_id.len())
+        .saturating_add(
+            groups
+                .len()
+                .saturating_mul(std::mem::size_of::<Vec<String>>()),
+        );
+    groups.iter().fold(base, |acc, paths| {
+        paths.iter().fold(
+            acc.saturating_add(paths.len().saturating_mul(std::mem::size_of::<String>())),
+            |inner, path| inner.saturating_add(path.len()),
+        )
+    })
+}
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
@@ -294,14 +315,7 @@ impl Children {
                     .saturating_add(report.report.body.len());
             }
             for ((msg_id, tool_id), groups) in &entry.snapshot.truncated_tool_images {
-                total = total
-                    .saturating_add(msg_id.len())
-                    .saturating_add(tool_id.len());
-                for paths in groups {
-                    for path in paths {
-                        total = total.saturating_add(path.len());
-                    }
-                }
+                total = total.saturating_add(truncated_image_entry_bytes(msg_id, tool_id, groups));
             }
         }
         total

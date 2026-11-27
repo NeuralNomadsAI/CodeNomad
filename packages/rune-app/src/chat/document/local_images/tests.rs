@@ -134,7 +134,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         match_local_image(&items, "./out/chart.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("newest-win".into()))
     );
-    // POSIX path stays case-sensitive.
+    // POSIX path stays case-sensitive and preserves literal backslashes.
     assert_eq!(
         match_local_image(&items, "/tmp/only/unique.png", true),
         None
@@ -142,6 +142,22 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
     assert_eq!(
         match_local_image(&items, "only/Unique.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("posix".into()))
+    );
+    let posix_backslash = vec![
+        candidate(&[r"/tmp/a\b.png"], "literal-backslash"),
+        candidate(&["/tmp/a/b.png"], "nested-slash"),
+    ];
+    assert_eq!(
+        match_local_image(&posix_backslash, "/tmp/a/b.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("nested-slash".into()))
+    );
+    assert_eq!(
+        match_local_image(&posix_backslash, r"/tmp/a\b.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("literal-backslash".into()))
+    );
+    assert_eq!(
+        match_local_image(&posix_backslash, "a/b.png", true).map(|c| &c.source),
+        Some(&PictureSource::Inline("nested-slash".into()))
     );
     // Ambiguous relative suffix returns None; explicit path still resolves.
     assert_eq!(match_local_image(&items, "dup.png", true), None);

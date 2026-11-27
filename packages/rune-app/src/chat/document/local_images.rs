@@ -461,8 +461,11 @@ fn strip_leading_drive_slash(path: &str) -> Cow<'_, str> {
 }
 
 fn normalize_path(value: &str) -> String {
-    let replaced = value.replace('\\', "/");
-    replaced.trim_end_matches('/').to_owned()
+    if value.starts_with('/') && !value.starts_with("//") {
+        value.trim_end_matches('/').to_owned()
+    } else {
+        value.replace('\\', "/").trim_end_matches('/').to_owned()
+    }
 }
 
 fn has_parent_segment(normalized: &str) -> bool {

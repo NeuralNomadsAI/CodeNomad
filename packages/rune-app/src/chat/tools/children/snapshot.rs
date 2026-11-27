@@ -108,7 +108,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
                                 .iter()
                                 .flatten()
                                 .any(|p| p.len() > MAX_TRUNCATED_IMAGE_PATH_BYTES);
-                            let bytes: usize = shadows.iter().flatten().map(String::len).sum();
+                            let bytes = truncated_image_entry_bytes(&row.id, &tool.id, &shadows);
                             if too_long
                                 || truncated_image_bytes.saturating_add(bytes)
                                     > MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES
