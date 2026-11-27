@@ -108,3 +108,10 @@ test("the Automations of one calendar share its Mission: a second date rule wait
   f.missions.get("msn_calendar_aut_morning_1")!.status = "completed"
   assert.deepEqual(await f.run(2, undefined, "aut_evening"), { missionID: "msn_calendar_aut_evening_2", status: "active" })
 })
+
+test("two date rules due at the same instant launch one Mission", async () => {
+  const f = fixture()
+  const results = await Promise.all([f.run(1, undefined, "aut_morning"), f.run(1, undefined, "aut_weekly")])
+  assert.deepEqual(results, [{ missionID: "msn_calendar_aut_morning_1", status: "active" }, { waiting: "msn_calendar_aut_morning_1" }])
+  assert.equal(f.missions.size, 1)
+})

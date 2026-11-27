@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { MissionControl } from "./control"
 import type { MissionCreateInput } from "./control-types"
+import { runMissionExclusive } from "./exclusive"
 import { missionConditionSchema, type MissionCondition } from "./launch-policy"
 import { missionCheckpointsSchema, missionSourceKey, type MissionSourceCheckpoint } from "./mission-document"
 import { isMissionGithubCondition } from "./mission-github-condition"
@@ -66,8 +67,14 @@ type Storage = { get(key: string): Promise<MissionJsonValue | undefined>; set(ke
 /** One occurrence: an ordinary one-time Mission, created and started, unless the
  * calendar's previous Mission is still active or its events (`news`) brought nothing
  * new since the calendar's last launch. An active Mission leaves the events unread, so their news waits for it.
- * Repeating a run changes nothing. */
-export async function runMissionCalendar(control: MissionCalendarControl, storage: Storage,
+ * Repeating a run changes nothing, and the runs of one calendar follow one another. */
+export function runMissionCalendar(control: MissionCalendarControl, storage: Storage,
+  key: string, occurrence: { automationID: string; run: number },
+  mission: Omit<MissionCreateInput, "requestID" | "prepared">, news?: MissionCalendarNews): Promise<MissionCalendarResult> {
+  return runMissionExclusive(`calendar:${key}`, () => runOccurrence(control, storage, key, occurrence, mission, news))
+}
+
+async function runOccurrence(control: MissionCalendarControl, storage: Storage,
   key: string, occurrence: { automationID: string; run: number },
   mission: Omit<MissionCreateInput, "requestID" | "prepared">, news?: MissionCalendarNews): Promise<MissionCalendarResult> {
   // A Mission created by a run that never started it is started by whichever run finds it.
