@@ -323,6 +323,28 @@ fn read_gitfile_in(scope: &Path, path: &Path) -> Result<Vec<u8>, Error> {
     small(&real)
 }
 
+#[cfg(windows)]
+fn same_entry_nofollow(a: &Path, b: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let open = |p: &Path| {
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(p)
+            .ok()
+            .and_then(|f| same_file::Handle::from_file(f).ok())
+    };
+    open(a).is_some_and(|ha| open(b).as_ref() == Some(&ha))
+}
+
+#[cfg(not(windows))]
+fn same_entry_nofollow(_a: &Path, _b: &Path) -> bool {
+    false
+}
+
 fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
     let Some(parent) = path.parent() else {
         return false;
@@ -349,10 +371,7 @@ fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
     }
     // Verify the entry itself (not only its symlink target) belongs to `expected`'s checkout.
     name == exp_name
-        || (cfg!(windows)
-            && name.eq_ignore_ascii_case(exp_name)
-            && file_identity_stamp(&joined)
-                .is_some_and(|id| file_identity_stamp(&exp_joined).as_deref() == Some(id.as_str())))
+        || (cfg!(windows) && name.eq_ignore_ascii_case(exp_name) && same_entry_nofollow(&joined, &exp_joined))
 }
 
 impl Physical {
@@ -2081,6 +2100,15 @@ mod layout_tests {
         std::fs::create_dir_all(bad_commondir_repo.join(".git")).unwrap();
         std::fs::write(bad_commondir_repo.join(".git").join("commondir"), b"../\xffcommon\n").unwrap();
         assert!(!super::precheck_git_layout_in_scope(&scope, &bad_commondir_repo));
+
+        #[cfg(windows)]
+        {
+            let case_dir = scope.join("case-check");
+            std::fs::create_dir_all(&case_dir).unwrap();
+            let real_git = case_dir.join(".git");
+            std::fs::write(&real_git, "gitdir: ../repo/.git\n").unwrap();
+            assert!(super::canonical_file_in(&scope, &case_dir.join(".GIT"), &real_git));
+        }
 
         // An out-of-scope `refs` junction/symlink inside `.git` must fail closed.
         let repo = scope.join("repo");
