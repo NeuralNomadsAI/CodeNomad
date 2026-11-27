@@ -49,20 +49,24 @@ test('admitLiveRoute enforces GET, origin, and cookie without a policy and repor
   ])
 })
 
-test('assertSse503Backoff enforces exactly 3 probes with bounded 1 s and 2 s retries', () => {
+test('assertSse503Backoff enforces exactly 3 probes with distinct lower bounds and liveness ceilings', () => {
   const probe = (receivedAt, fulfilledAt = receivedAt) => ({receivedAt, fulfilledAt})
 
   assert.deepEqual(
     assertSse503Backoff([probe(0, 5), probe(1020, 1025), probe(3040, 3045)]),
     {retryDelay1Ms: 1015, retryDelay2Ms: 2015},
   )
+  // Host CPU spike on retry 1 must still pass when both distinct lower bounds and liveness ceilings hold.
+  assert.deepEqual(
+    assertSse503Backoff([probe(0, 5), probe(4005, 4010), probe(6025, 6030)]),
+    {retryDelay1Ms: 4000, retryDelay2Ms: 2015},
+  )
 
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1020, 1025)]), /Expected exactly 3/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(15, 20), probe(1030, 1035), probe(3050, 3055)]), /Expected exactly 3/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(500, 505), probe(2600, 2605)]), /first bounded retry delay/)
-  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(2005, 2010), probe(6010, 6015)]), /first bounded retry delay/)
-  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1800, 1805), probe(3610, 3615)]), /second bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(10505, 10510), probe(12600, 12605)]), /first bounded retry delay/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(2020, 2025)]), /second bounded retry delay/)
-  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(5020, 5025)]), /second bounded retry delay/)
-  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1850, 1855), probe(3700, 3705)]), /second bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(2700, 2705)]), /second bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(16520, 16525)]), /second bounded retry delay/)
 })

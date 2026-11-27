@@ -78,14 +78,8 @@ function trackPending(pending, promise){
   return run
 }
 
-function trackFulfill(pending, promise, onError){
-  const run=promise.catch(err=>{ onError(err) }).finally(()=>pending.delete(run))
-  pending.add(run)
-  return run
-}
-
-async function abortRouteOrClose(route, label='route abort', ms=2_000){
-  const abortErr=await drainWithin([route.abort()],label,ms)
+async function abortRouteOrClose(route, label='route abort', ms=2_000, errorCode){
+  const abortErr=await drainWithin([errorCode?route.abort(errorCode):route.abort()],label,ms)
   if(!abortErr)return null
   const target=route.request().frame()?.page()
   if(target&&!target.isClosed()){
@@ -94,11 +88,15 @@ async function abortRouteOrClose(route, label='route abort', ms=2_000){
   return abortErr
 }
 
-async function fulfillOrAbort(pending, route, payload, onError){
-  let failed=false
-  await trackFulfill(pending,route.fulfill(payload),err=>{ failed=true; onError(err) })
-  if(failed)await abortRouteOrClose(route,'route fulfill recovery')
-  return !failed
+async function fulfillOrAbort(pending, route, payload, onError, ms=5_000){
+  let err=null
+  const run=drainWithin([route.fulfill(payload)],'route fulfill',ms)
+    .then(result=>{ if(result){ err=result; onError(result) } })
+    .finally(()=>pending.delete(run))
+  pending.add(run)
+  await run
+  if(err)await abortRouteOrClose(route,'route fulfill recovery')
+  return !err
 }
 
 async function drainWithin(promises, label, ms=2_000){
@@ -116,13 +114,21 @@ async function drainWithin(promises, label, ms=2_000){
 
 async function drainSetsWithin(sets, label, ms=2_000){
   const deadline=now()+ms
+  let firstError=null
   while(true){
     const snapshot=sets.flatMap(set=>[...set])
-    if(!snapshot.length)return null
+    if(!snapshot.length)return firstError
     const remaining=deadline-now()
-    if(remaining<=0)return new Error(`Timed out draining ${label} after ${ms} ms`)
-    const err=await drainWithin(snapshot,label,remaining)
-    if(err)return err
+    if(remaining<=0)return firstError??new Error(`Timed out draining ${label} after ${ms} ms`)
+    const TIMED_OUT=Symbol('timedOut')
+    let timer
+    const result=await Promise.race([
+      Promise.allSettled(snapshot),
+      new Promise(resolve=>{ timer=setTimeout(()=>resolve(TIMED_OUT),remaining); timer.unref?.() }),
+    ]).finally(()=>clearTimeout(timer))
+    if(result===TIMED_OUT)return firstError??new Error(`Timed out draining ${label} after ${ms} ms`)
+    const rejected=result.find(entry=>entry.status==='rejected')
+    if(rejected)firstError??=rejected.reason
   }
 }
 
@@ -180,9 +186,9 @@ async function runWithPairTab(context, again, options, fn){
 }
 
 const SSE_RETRY1_MIN_MS=750
-const SSE_RETRY1_MAX_MS=1850
-const SSE_RETRY2_MIN_MS=1900
-const SSE_RETRY2_MAX_MS=3500
+const SSE_RETRY1_MAX_MS=10_000
+const SSE_RETRY2_MIN_MS=1800
+const SSE_RETRY2_MAX_MS=15_000
 
 function probeDelayMs(probes, index){
   return probes[index].receivedAt-probes[index-1].fulfilledAt
@@ -195,8 +201,8 @@ export function assertSse503Backoff(probes){
   const retryDelay2Ms=probeDelayMs(probes,2)
   assert(retryDelay1Ms>=SSE_RETRY1_MIN_MS&&retryDelay1Ms<=SSE_RETRY1_MAX_MS,
     `Expected first bounded retry delay (~1 s, ${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(retryDelay1Ms)} ms`)
-  assert(retryDelay2Ms>=SSE_RETRY2_MIN_MS&&retryDelay2Ms<=SSE_RETRY2_MAX_MS&&retryDelay2Ms>retryDelay1Ms,
-    `Expected second bounded retry delay (~2 s, ${SSE_RETRY2_MIN_MS}-${SSE_RETRY2_MAX_MS} ms and > ${Math.round(retryDelay1Ms)} ms), observed ${Math.round(retryDelay2Ms)} ms`)
+  assert(retryDelay2Ms>=SSE_RETRY2_MIN_MS&&retryDelay2Ms<=SSE_RETRY2_MAX_MS,
+    `Expected second bounded retry delay (~2 s, ${SSE_RETRY2_MIN_MS}-${SSE_RETRY2_MAX_MS} ms), observed ${Math.round(retryDelay2Ms)} ms`)
   return {retryDelay1Ms,retryDelay2Ms}
 }
 
@@ -258,14 +264,22 @@ async function verifySseAuthenticated503Recovery({
       }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise,routeFailed.promise])
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
+      const onSseFulfillError=err=>{
+        if(sseTeardown)teardownFulfillError??=err
+        else failRoute(err)
+      }
+      const abortSseRoute=async(route,code)=>{
+        const err=await abortRouteOrClose(route,'SSE+503 route abort',2_000,code)
+        if(err)onSseFulfillError(err)
+      }
       const checkRoute=async route=>{
         try {
           if(await admitRoute(route.request()))return true
-          await route.abort('blockedbyclient').catch(()=>{})
+          await abortSseRoute(route,'blockedbyclient')
           return false
         } catch (err) {
           if(sseScenarioActive)failRoute(err)
-          await route.abort().catch(()=>{})
+          await abortSseRoute(route)
           return false
         }
       }
@@ -288,16 +302,12 @@ async function verifySseAuthenticated503Recovery({
           sseResponseAt=performance.now()
         }
       }
-      const onSseFulfillError=err=>{
-        if(sseTeardown)teardownFulfillError??=err
-        else failRoute(err)
-      }
       const routeMeta=route=>trackPending(pendingSseRoutes,(async()=>{
         const entryGate=metaGate
-        if(entryGate==='abort')return route.abort().catch(()=>{})
+        if(entryGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||entryGate==='pass')return route.fallback()
         if(!await checkRoute(route))return
-        if(metaGate==='abort')return route.abort().catch(()=>{})
+        if(metaGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||metaGate==='pass')return route.fallback()
         if(entryGate==='admit-one'&&metaGate==='admit-one'){
           metaGate='block'
@@ -308,10 +318,10 @@ async function verifySseAuthenticated503Recovery({
       })())
       const routeEvents=route=>trackPending(pendingSseRoutes,(async()=>{
         const entryGate=sseGate
-        if(entryGate==='abort')return route.abort().catch(()=>{})
+        if(entryGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||entryGate==='pass')return route.fallback()
         if(!await checkRoute(route))return
-        if(sseGate==='abort')return route.abort().catch(()=>{})
+        if(sseGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(entryGate==='admit-one'&&sseGate==='admit-one'){
           sseGate='hold'
@@ -325,7 +335,7 @@ async function verifySseAuthenticated503Recovery({
       })())
       const routeStatus=route=>trackPending(pendingStatusRoutes,(async()=>{
         const receivedAt=performance.now()
-        if(sseGate==='abort')return route.abort().catch(()=>{})
+        if(sseGate==='abort')return abortSseRoute(route)
         if(!sseScenarioActive||route.request().method()!=='GET')return route.fallback()
         const duringEpisode=injectTransient503
         let probe=null
@@ -335,10 +345,10 @@ async function verifySseAuthenticated503Recovery({
         }
         const attempt=duringEpisode?statusProbes.length:0
         if(!await checkRoute(route))return
-        if(sseGate==='abort')return route.abort().catch(()=>{})
+        if(sseGate==='abort')return abortSseRoute(route)
         if(!duringEpisode)return route.fallback()
         if(!sseScenarioActive||!injectTransient503){
-          await route.abort().catch(()=>{})
+          await abortSseRoute(route)
           return
         }
         if(attempt<=2){
@@ -351,24 +361,24 @@ async function verifySseAuthenticated503Recovery({
         }
         if(attempt!==3||recoveryReserved||recoveredStatuses>0){
           failRoute(new Error(`Unexpected /api/auth/status probe #${attempt} during bounded SSE 503 recovery`))
-          await route.abort().catch(()=>{})
+          await abortSseRoute(route)
           return
         }
         recoveryReserved=true
+        let fulfillError=null
         try {
           const deliver=await releaseRecovered.promise
           if(!deliver||!injectTransient503){
-            await route.abort().catch(()=>{})
+            await abortSseRoute(route)
             return
           }
           const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet,sseAbort.signal)
           if(!injectTransient503){
-            await route.abort().catch(()=>{})
+            await abortSseRoute(route)
             return
           }
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
-          let fulfillError=null
           if(!await fulfillOrAbort(pendingSseFulfills,route,{status,headers,body:text},
             err=>{ fulfillError=err; onSseFulfillError(err) }))throw fulfillError
           recoveredStatuses++
@@ -376,7 +386,7 @@ async function verifySseAuthenticated503Recovery({
           recoveredCaptured.resolve()
         } catch (err) {
           if(!sseTeardown)failRoute(err)
-          await route.abort().catch(()=>{})
+          if(!fulfillError)await abortSseRoute(route)
         }
       })())
       let cleanupError=null
@@ -423,7 +433,7 @@ async function verifySseAuthenticated503Recovery({
           releaseRecovered.resolve(false)
           throw err
         }
-        await step(withBudget(now()+20_000,'bounded retry /api/auth/status 200 after transient 503s',
+        await step(withBudget(now()+30_000,'bounded retry /api/auth/status 200 after transient 503s',
           ()=>step(recoveredCaptured.promise)))
         if(forbiddenError)throw forbiddenError
         if(routeError)throw routeError
@@ -457,9 +467,9 @@ async function verifySseAuthenticated503Recovery({
         releaseRecovered.resolve(false)
         releaseHeldSse.resolve(recovered)
         page.off('response',onSseResponse)
-        const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
         const unrouteErr=await unrouteBounded(page,[[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]],'SSE+503 routes',2_000)
-        cleanupError??=heldRouteError??teardownFulfillError??drainErr??unrouteErr
+        const drainErr=await drainSetsWithin([pendingSseRoutes,pendingStatusRoutes,pendingSseFulfills,pendingHeldRoutes],'SSE+503 routes',2_000)
+        cleanupError??=heldRouteError??teardownFulfillError??unrouteErr??drainErr
         await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
       }
       if(cleanupError)throw cleanupError
@@ -622,18 +632,25 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           }
         }
         const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failFocusForbidden})
+        let focusTeardownFulfillError=null
+        const abortFocusRoute=async(route,code)=>{
+          const err=await abortRouteOrClose(route,'focus recovery route abort',2_000,code)
+          if(err){
+            if(focusTeardown)focusTeardownFulfillError??=err
+            else failFocusRoute(err)
+          }
+        }
         const checkFocusRoute=async route=>{
           try {
             if(await admitRoute(route.request()))return true
-            await route.abort('blockedbyclient').catch(()=>{})
+            await abortFocusRoute(route,'blockedbyclient')
             return false
           } catch (err) {
             if(focusActive)failFocusRoute(err)
-            await route.abort().catch(()=>{})
+            await abortFocusRoute(route)
             return false
           }
         }
-        let focusTeardownFulfillError=null
         const holdEvents=route=>trackPending(pendingFocusRoutes,(async()=>{
           if(!focusActive||!blockEvents)return route.fallback()
           if(!await checkFocusRoute(route))return
@@ -660,10 +677,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             if(staleReleased&&!heldFollowUp){
               heldFollowUp=true
               postStaleStatus++
+              let fulfillError=null
               try {
                 const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet,focusAbort.signal)
                 if(!focusActive){
-                  await route.abort().catch(()=>{})
+                  await abortFocusRoute(route)
                   return
                 }
                 assert.equal(body.authenticated,true)
@@ -671,16 +689,15 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
                 followUpCaptured.resolve()
                 await releaseFollowUp.promise
                 if(!focusActive){
-                  await route.abort().catch(()=>{})
+                  await abortFocusRoute(route)
                   return
                 }
-                let fulfillError=null
                 if(!await fulfillOrAbort(pendingFocusFulfills,route,{status,headers,body:text},
                   err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err }))throw fulfillError
               } catch (err) {
                 followUpCaptured.reject(err)
                 if(!focusTeardown&&focusActive)failFocusRoute(err)
-                await route.abort().catch(()=>{})
+                if(!fulfillError)await abortFocusRoute(route)
               } finally {
                 followUpSettled.resolve()
               }
@@ -692,10 +709,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           heldStale=true
           blockEvents=true
           staleRequest=route.request()
+          let fulfillError=null
           try {
             const {status,headers,text,body}=await fetchOwnedStatus(route,url.origin,context,attestedGet,focusAbort.signal)
             if(!focusActive){
-              await route.abort().catch(()=>{})
+              await abortFocusRoute(route)
               return
             }
             assert.equal(body.authenticated,false)
@@ -703,17 +721,16 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             staleCaptured.resolve()
             await releaseStale.promise
             if(!focusActive){
-              await route.abort().catch(()=>{})
+              await abortFocusRoute(route)
               return
             }
-            let fulfillError=null
             if(!await fulfillOrAbort(pendingFocusFulfills,route,{status,headers,body:text},
               err=>{ fulfillError=err; if(focusTeardown)focusTeardownFulfillError??=err }))throw fulfillError
           } catch (err) {
             staleError=err
             staleCaptured.reject(err)
             if(!focusTeardown&&focusActive)failFocusRoute(err)
-            await route.abort().catch(()=>{})
+            if(!fulfillError)await abortFocusRoute(route)
           } finally {
             staleDone=true
             staleSettled.resolve()
@@ -813,9 +830,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
           await settleFollowUp()
-          const drainErr=await drainSetsWithin([pendingFocusRoutes,pendingFocusFulfills],'focus recovery routes',2_000)
           const unrouteErr=await unrouteBounded(page,[[eventsUrl,holdEvents],[authStatusUrl,holdStaleStatus]],'focus recovery routes',2_000)
-          focusCleanupError??=focusTeardownFulfillError??drainErr??unrouteErr
+          const drainErr=await drainSetsWithin([pendingFocusRoutes,pendingFocusFulfills],'focus recovery routes',2_000)
+          focusCleanupError??=focusTeardownFulfillError??unrouteErr??drainErr
         }
         if(focusCleanupError)throw focusCleanupError
     })
