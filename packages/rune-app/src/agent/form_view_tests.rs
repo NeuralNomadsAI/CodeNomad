@@ -4731,8 +4731,9 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
             "unchecking option must disable Answer again"
         );
 
-        // 4. Visible multiselect with 65 copies of `prod` in default can be replaced by checking
-        // `prod`, enabling Answer and submitting `["prod"]`.
+        // 4. Visible multiselect with 65 copies of `prod` in default hydrates `prod` as checked
+        // (keeping the 65-item count until unchecked), then unchecking and re-checking `prod`
+        // submits `["prod"]`.
         let oversized_65_form = Form {
             tool: None,
             infer_websearch: false,
@@ -4759,17 +4760,22 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
             "disabled"
         ));
         let target_prod = agent_forms::multi_option_key("targets", "prod");
+        assert!(
+            has_state(find_node(&otree, &target_prod).unwrap(), "checked"),
+            "65 copies of `prod` must hydrate `prod` as checked"
+        );
         tap(&mut ort, &target_prod);
         let otree2 = ort.accessibility_json();
         assert!(
             !has_state(find_node(&otree2, "answer-question").unwrap(), "disabled"),
-            "checking an option must replace the oversized default and enable Answer"
+            "unchecking `prod` removes all 65 copies and enables Answer"
         );
+        tap(&mut ort, &target_prod);
         let oans = agent_forms::answer(
             &ort.state.agent.as_ref().unwrap().forms[0],
             &ort.state.agent.as_ref().unwrap().drafts,
         )
-        .expect("replaced oversized multiselect default must submit");
+        .expect("re-checked multiselect option must submit");
         assert_eq!(oans["targets"], json!(["prod"]));
 
         // 5. Desktop accepts ECMAScript extended-year ISO date-times (`+010000-01-01T00:00:00.000Z`)
@@ -7045,5 +7051,411 @@ fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_
             Err(agent_forms::ValidationError::TooLong { max: 20_000 }),
             "oversized custom draft must remain flagged TooLong(20_000) after refresh"
         );
+    });
+}
+
+#[test]
+fn preserved_65_item_multiselect_defaults_committed_custom_before_checkbox_interleaved_form_created_rejection_flagless_k_escape_and_gmt_colon_date_time()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. A 65-item multiselect default (`keep` + 64 copies of `drop`) preserves both checkboxes
+        // checked and never silently discards defaults when `add` is toggled; unchecking `drop`
+        // recovers cleanly to `["keep", "add"]`. Truly unrepresentable overflow (>64 runs) stays
+        // guarded until explicit Clear.
+        let mut defaults_65 = vec![json!("keep")];
+        defaults_65.extend(std::iter::repeat_n(json!("drop"), 64));
+        let multi65_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-multi65".into(),
+            title: "Defaults".into(),
+            fields: vec![json!({
+                "key": "picks",
+                "title": "Picks",
+                "type": "multiselect",
+                "maxItems": 100,
+                "options": [
+                    {"value": "keep", "label": "Keep"},
+                    {"value": "drop", "label": "Drop"},
+                    {"value": "add", "label": "Add"}
+                ],
+                "default": defaults_65
+            })],
+        };
+        let (mut m65_state, _m65rx) = state_with_form(multi65_form.clone());
+        {
+            let d = &m65_state.agent.as_ref().unwrap().drafts
+                [&("form-r27-multi65".into(), "picks".into())];
+            assert!(d.selected.contains("keep"), "`keep` must be loaded checked");
+            assert!(d.selected.contains("drop"), "`drop` must be loaded checked");
+            assert!(!d.selected.contains("add"));
+        }
+        m65_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r27-multi65".into(), "picks".into()))
+            .unwrap()
+            .toggle("add");
+        assert_eq!(
+            agent_forms::evaluate_form(&multi65_form, &m65_state.agent.as_ref().unwrap().drafts)
+                .active[0]
+                .1,
+            Err(agent_forms::ValidationError::TooManyItems { max: 32 }),
+            "checking `add` must keep the 65 defaults counted instead of silently submitting [\"add\"]"
+        );
+        m65_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r27-multi65".into(), "picks".into()))
+            .unwrap()
+            .toggle("drop");
+        assert_eq!(
+            agent_forms::answer(&multi65_form, &m65_state.agent.as_ref().unwrap().drafts).unwrap()
+                ["picks"],
+            json!(["keep", "add"]),
+            "unchecking `drop` removes all 64 copies and leaves [\"keep\", \"add\"]"
+        );
+        // Truly unrepresentable overflow (>64 distinct runs) cannot be bypassed by toggle without Clear.
+        let mut alt_70 = Vec::with_capacity(70);
+        for i in 0..70 {
+            alt_70.push(json!(if i % 2 == 0 { "keep" } else { "drop" }));
+        }
+        let overflow_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-ovf".into(),
+            title: "Overflow".into(),
+            fields: vec![json!({
+                "key": "picks",
+                "title": "Picks",
+                "type": "multiselect",
+                "maxItems": 100,
+                "options": [
+                    {"value": "keep", "label": "Keep"},
+                    {"value": "drop", "label": "Drop"},
+                    {"value": "add", "label": "Add"}
+                ],
+                "default": alt_70
+            })],
+        };
+        let (ovf_state, _ovfrx) = state_with_form(overflow_form.clone());
+        let mut ovf_rt = Runtime::new(ovf_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        ovf_rt.frame(0.0);
+        let ovf_tree = ovf_rt.accessibility_json();
+        assert!(
+            find_node(&ovf_tree, &agent_forms::clear_option_key("picks")).is_some(),
+            "unrepresentable overflow default must expose an explicit Clear control"
+        );
+        ovf_rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r27-ovf".into(), "picks".into()))
+                .unwrap()
+                .toggle("add");
+        });
+        assert!(
+            agent_forms::answer(&overflow_form, &ovf_rt.state.agent.as_ref().unwrap().drafts)
+                .is_err(),
+            "toggle alone must not silently discard an unrepresentable overflow default"
+        );
+        ovf_rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r27-ovf".into(), "picks".into()))
+                .unwrap()
+                .clear_multiselect();
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r27-ovf".into(), "picks".into()))
+                .unwrap()
+                .toggle("add");
+        });
+        assert_eq!(
+            agent_forms::answer(&overflow_form, &ovf_rt.state.agent.as_ref().unwrap().drafts)
+                .unwrap()["picks"],
+            json!(["add"]),
+            "explicit Clear must unlock selection cleanly"
+        );
+
+        // 2. Typing `qa` in custom multiselect, blurring to commit it, then checking `prod` sends
+        // `["qa", "prod"]` (matching Solid), not `["prod", "qa"]`.
+        let order_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-order".into(),
+            title: "Order".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let (mut ord_state, _ordrx) = state_with_form(order_form.clone());
+        ord_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r27-order".into(), "targets".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "qa".into();
+        let mut ord_rt = Runtime::new(ord_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        ord_rt.frame(0.0);
+        // Focus then Tab-blur custom editor, then check `prod`.
+        ord_rt.update(|s, _| {
+            let scope = s.input_scope.clone();
+            let _ = s.editor(
+                &scope,
+                crate::screen::Editor::Custom(("form-r27-order".into(), "targets".into())),
+            );
+            s.agent.as_mut().unwrap().reconcile_custom_focus();
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r27-order".into(), "targets".into()))
+                .unwrap()
+                .toggle("prod");
+        });
+        assert_eq!(
+            agent_forms::answer(&order_form, &ord_rt.state.agent.as_ref().unwrap().drafts).unwrap()
+                ["targets"],
+            json!(["qa", "prod"]),
+            "checkbox toggled after committed custom entry must append after `qa`"
+        );
+
+        // 3. Interleaved `form.created` while a deferred reply POST is in flight must not erase
+        // the server's 400 field rejection once the trailing read confirms the form is unchanged.
+        let def_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-def1".into(),
+            title: "Deferred".into(),
+            fields: vec![json!({
+                "key": "code",
+                "title": "Code",
+                "type": "string",
+                "required": true,
+                "pattern": "^x{257}$"
+            })],
+        };
+        let other_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-def2".into(),
+            title: "Other".into(),
+            fields: vec![json!({
+                "key": "note",
+                "title": "Note",
+                "type": "string"
+            })],
+        };
+        let (jobs, _) = codenomad_client::bounded(1);
+        let (stop, _) = codenomad_client::bounded(1);
+        let (results_tx, results) = codenomad_client::bounded(4);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(4);
+        let mut handle = crate::agent::Handle::test(jobs, stop, results);
+        handle.forms = forms_tx;
+        let mut ui = crate::agent::Ui::new(handle);
+        ui.reading = false;
+        ui.known = true;
+        ui.mark_pending_known();
+        ui.forms_lane.reading = false;
+        ui.online = true;
+        while forms_rx.try_recv().is_ok() {}
+        ui.selected = def_form.id.clone();
+        ui.forms.push(def_form.clone());
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        ui.drafts
+            .get_mut(&("form-r27-def1".into(), "code".into()))
+            .unwrap()
+            .editor()
+            .text = "x".into();
+        let mut race_state = crate::init();
+        race_state.phase = crate::Phase::Ready;
+        race_state.agent = Some(ui);
+        let mut race_rt = Runtime::new(
+            race_state,
+            render_form,
+            (420.0, 620.0),
+            Env::new(false, 1.0),
+        );
+        race_rt.frame(0.0);
+        race_rt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r27-def1"));
+        let act_gen = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, g)) => g,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        // Interleave `form.created` for another form before ActForm completes.
+        race_rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .notice_request(true, "form-r27-def2".into());
+        });
+        // Deliver the 400 validation rejection for the now-stale generation `act_gen`.
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "{\"error\":\"Form field does not match pattern: code\"}".into(),
+                )),
+                Some(vec![def_form.clone()]),
+                act_gen,
+            ))
+            .unwrap();
+        race_rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        // Drain the scheduled trailing read and confirm both forms (original unchanged).
+        let read_gen = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Read(g)) => g,
+            _ => panic!("expected trailing PendingJob::Read"),
+        };
+        results_tx
+            .try_send(crate::agent::Result::Forms(
+                Some(vec![def_form.clone(), other_form]),
+                read_gen,
+            ))
+            .unwrap();
+        race_rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        race_rt.frame(1.0 / 60.0);
+        let race_tree = race_rt.accessibility_json();
+        assert!(
+            find_node(&race_tree, &agent_forms::field_error_key("code")).is_some(),
+            "confirmed field rejection must survive an interleaved form.created refresh"
+        );
+        assert!(
+            has_state(
+                find_node(&race_tree, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must stay disabled for the rejected `x` value after trailing read confirms unchanged form"
+        );
+
+        // 4. Flagless JS `\k<id>` with no named capture groups defers to OpenCode instead of
+        // marking the form unsupported, while invalid named backref with a named group still fails.
+        let k_escape_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-kesc".into(),
+            title: "Identity k".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "^\\k<id>$"
+            })],
+        };
+        assert!(
+            agent_forms::supported(&k_escape_form),
+            "flagless `^\\k<id>$` without named captures must not be marked unsupported"
+        );
+        let (mut k_state, _krx) = state_with_form(k_escape_form.clone());
+        k_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r27-kesc".into(), "val".into()))
+            .unwrap()
+            .editor()
+            .text = "k<id>".into();
+        assert_eq!(
+            agent_forms::answer(&k_escape_form, &k_state.agent.as_ref().unwrap().drafts).unwrap()["val"],
+            json!("k<id>"),
+            "flagless `^\\k<id>$` must allow submitting `k<id>`"
+        );
+        let bad_named_ref = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-badk".into(),
+            title: "Bad named ref".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?<a>x)\\k<b>$"
+            })],
+        };
+        assert!(
+            !agent_forms::supported(&bad_named_ref),
+            "unresolved `\\k<b>` with a named capture group must remain invalid syntax"
+        );
+
+        // 5. Required hidden `date-time` default `Thu Jan 01 1970 01:00:00 GMT+0100 (GMT+01:00)`
+        // (and localized/unclassified JS Date strings) passes instead of disabling Answer.
+        let gmt_colon_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r27-gmt-colon".into(),
+            title: "GMT colon".into(),
+            fields: vec![
+                json!({
+                    "key": "when",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "Thu Jan 01 1970 01:00:00 GMT+0100 (GMT+01:00)"
+                }),
+                json!({
+                    "key": "local_tz",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "Thu Jan 01 1970 01:00:00 GMT+0100 (heure normale d’Europe centrale)"
+                }),
+                json!({
+                    "key": "exotic",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "Jan 1970"
+                }),
+            ],
+        };
+        let (gmt_state, _gmtrx) = state_with_form(gmt_colon_form.clone());
+        let mut gmt_rt = Runtime::new(gmt_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        gmt_rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&gmt_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "JS-valid date-time defaults including `(GMT+01:00)` must enable Answer"
+        );
+        let gmt_ans = agent_forms::answer(
+            &gmt_colon_form,
+            &gmt_rt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("JS-valid hidden date-time defaults must submit verbatim");
+        assert_eq!(
+            gmt_ans["when"],
+            json!("Thu Jan 01 1970 01:00:00 GMT+0100 (GMT+01:00)")
+        );
+        assert_eq!(
+            gmt_ans["local_tz"],
+            json!("Thu Jan 01 1970 01:00:00 GMT+0100 (heure normale d’Europe centrale)")
+        );
+        assert_eq!(gmt_ans["exotic"], json!("Jan 1970"));
     });
 }

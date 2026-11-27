@@ -306,10 +306,17 @@ pub struct Ui {
         Vec<serde_json::Value>,
         Vec<(String, serde_json::Value)>,
     )>,
+    pending_field_rejection: Option<PendingFieldRejection>,
     activity_during_job: bool,
     usage_during_job: bool,
     trailing: Option<bool>,
     catalog_trailing: Option<String>,
+}
+
+struct PendingFieldRejection {
+    form_id: String,
+    submitted_fields: Vec<serde_json::Value>,
+    to_mark: Vec<(String, serde_json::Value)>,
 }
 fn extract_field_key_from_message(message: &str, valid_keys: &[&str]) -> Option<String> {
     // OpenCode form validation messages end with `: <field_key>` (e.g.
@@ -576,6 +583,7 @@ impl Ui {
         self.forms_lane.trailing = false;
         self.forms_lane.error = false;
         self.pending_deferred_submission = None;
+        self.pending_field_rejection = None;
         self.attention.disconnected();
         self.sync_error();
         self.sync_pending_known();
@@ -610,6 +618,7 @@ impl Ui {
         self.permissions_lane.reset();
         self.forms_lane.reset();
         self.pending_deferred_submission = None;
+        self.pending_field_rejection = None;
         self.activity_during_job = false;
         self.usage_during_job = false;
         self.trailing = None;
@@ -697,6 +706,7 @@ impl Ui {
             if let Ok((answer, deferred)) = agent_forms::answer_with_deferred(form, &self.drafts) {
                 let fields = form.fields.clone();
                 if !self.forms_locked() {
+                    self.pending_field_rejection = None;
                     self.pending_deferred_submission =
                         (!deferred.is_empty()).then(|| (id.to_string(), fields.clone(), deferred));
                 }
@@ -707,6 +717,7 @@ impl Ui {
     pub fn cancel_form(&mut self, id: String) {
         if self.forms.iter().any(|f| f.id == id) {
             self.pending_deferred_submission = None;
+            self.pending_field_rejection = None;
             self.act(Action::Cancel(id));
         }
     }
@@ -795,6 +806,7 @@ impl Ui {
             permissions_lane: RequestLane::default(),
             forms_lane: RequestLane::default(),
             pending_deferred_submission: None,
+            pending_field_rejection: None,
             activity_during_job: false,
             usage_during_job: false,
             trailing: None,
@@ -1145,6 +1157,20 @@ impl Ui {
             }
             self.forms = forms;
             agent_forms::seed(&self.forms, &mut self.drafts);
+            if let Some(rejection) = self.pending_field_rejection.take()
+                && self
+                    .forms
+                    .iter()
+                    .any(|f| f.id == rejection.form_id && f.fields == rejection.submitted_fields)
+            {
+                for (field_key, submitted_value) in rejection.to_mark {
+                    if let Some(draft) =
+                        self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                    {
+                        draft.server_rejected_value = Some(submitted_value);
+                    }
+                }
+            }
         }
         self.reconcile_selected();
     }
@@ -1254,46 +1280,42 @@ impl Ui {
                     let ok = matches!(outcome, crate::agent_api::FormReplyOutcome::Ok);
                     if self.scope_missing {
                         self.forms_lane.reconciling = false;
+                        self.pending_field_rejection = None;
                     } else {
+                        if let crate::agent_api::FormReplyOutcome::ValidationRejected(ref detail) =
+                            outcome
+                            && let Some((form_id, submitted_fields, deferred_fields)) =
+                                submitted_deferred
+                        {
+                            let all_keys: Vec<&str> = submitted_fields
+                                .iter()
+                                .filter_map(|f| f["key"].as_str())
+                                .collect();
+                            let rejected_keys = detail
+                                .as_deref()
+                                .map(|body| extract_rejected_field_keys(body, &all_keys))
+                                .unwrap_or_default();
+                            let to_mark: Vec<(String, serde_json::Value)> =
+                                if !rejected_keys.is_empty() {
+                                    deferred_fields
+                                        .into_iter()
+                                        .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                            if !to_mark.is_empty() {
+                                self.pending_field_rejection = Some(PendingFieldRejection {
+                                    form_id,
+                                    submitted_fields,
+                                    to_mark,
+                                });
+                            }
+                        }
                         let fresh = generation == self.forms_lane.generation;
                         self.forms_lane.error = !ok || (fresh && forms.is_none());
                         self.sync_error();
                         if fresh {
-                            if let crate::agent_api::FormReplyOutcome::ValidationRejected(
-                                ref detail,
-                            ) = outcome
-                                && let Some(ref pending_forms) = forms
-                                && let Some((form_id, submitted_fields, deferred_fields)) =
-                                    submitted_deferred
-                                && pending_forms
-                                    .iter()
-                                    .any(|f| f.id == form_id && f.fields == submitted_fields)
-                            {
-                                let all_keys: Vec<&str> = submitted_fields
-                                    .iter()
-                                    .filter_map(|f| f["key"].as_str())
-                                    .collect();
-                                let rejected_keys = detail
-                                    .as_deref()
-                                    .map(|body| extract_rejected_field_keys(body, &all_keys))
-                                    .unwrap_or_default();
-                                let to_mark: Vec<(String, serde_json::Value)> =
-                                    if !rejected_keys.is_empty() {
-                                        deferred_fields
-                                            .into_iter()
-                                            .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
-                                for (field_key, submitted_value) in to_mark {
-                                    if let Some(draft) =
-                                        self.drafts.get_mut(&(form_id.clone(), field_key))
-                                    {
-                                        draft.server_rejected_value = Some(submitted_value);
-                                    }
-                                }
-                            }
                             self.forms_lane.reconciling = forms.is_none();
                             self.apply_forms(forms);
                         } else {

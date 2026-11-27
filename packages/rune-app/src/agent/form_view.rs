@@ -581,6 +581,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                 } else {
                     std::collections::HashSet::new()
                 };
+                let multi_locked = locked || d.oversized_multiselect_default;
                 let mut items: Vec<El> = Vec::new();
                 for (index, option) in valid.into_iter().enumerate() {
                     let label = option_label(option, index);
@@ -605,16 +606,20 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         shown_desc.as_deref(),
                         choice_note.as_deref(),
                         checked,
-                        locked,
+                        multi_locked,
                         checkbox_invalid,
                         crate::screen::action(&scope, move |s: &mut State| {
-                            if let Some(d) = s
-                                .agent
-                                .as_mut()
-                                .filter(|a| !a.forms_mutating())
-                                .and_then(|a| a.drafts.get_mut(&id))
-                            {
-                                d.toggle(&value)
+                            if let Some(a) = s.agent.as_mut().filter(|a| !a.forms_mutating()) {
+                                if let Some(d) = a.drafts.get_mut(&id)
+                                    && (d.custom.focused || d.custom_was_focused)
+                                {
+                                    d.custom.focused = false;
+                                    d.custom_was_focused = true;
+                                }
+                                a.reconcile_custom_focus();
+                                if let Some(d) = a.drafts.get_mut(&id) {
+                                    d.toggle(&value)
+                                }
                             }
                         }),
                     ));
@@ -640,16 +645,20 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                             None,
                             choice_note.as_deref(),
                             checked,
-                            locked,
+                            multi_locked,
                             checkbox_invalid,
                             crate::screen::action(&scope, move |s: &mut State| {
-                                if let Some(d) = s
-                                    .agent
-                                    .as_mut()
-                                    .filter(|a| !a.forms_mutating())
-                                    .and_then(|a| a.drafts.get_mut(&id))
-                                {
-                                    d.toggle_preserved_custom(&value)
+                                if let Some(a) = s.agent.as_mut().filter(|a| !a.forms_mutating()) {
+                                    if let Some(d) = a.drafts.get_mut(&id)
+                                        && (d.custom.focused || d.custom_was_focused)
+                                    {
+                                        d.custom.focused = false;
+                                        d.custom_was_focused = true;
+                                    }
+                                    a.reconcile_custom_focus();
+                                    if let Some(d) = a.drafts.get_mut(&id) {
+                                        d.toggle_preserved_custom(&value)
+                                    }
                                 }
                             }),
                         ));
@@ -662,6 +671,27 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         &field_name,
                         group_desc.as_deref(),
                         items,
+                    ));
+                }
+                if d.oversized_multiselect_default {
+                    let clear_id = identity.clone();
+                    let clear_label = t("sessionList.selection.clearLabel");
+                    let clear_accessible = format!("{field_name} · {clear_label}");
+                    children.push(form_controls::clear_choice_button(
+                        &agent_forms::clear_option_key(key),
+                        clear_label,
+                        &clear_accessible,
+                        locked,
+                        crate::screen::action_tx(&scope, move |s: &mut State, _tx| {
+                            if let Some(d) = s
+                                .agent
+                                .as_mut()
+                                .filter(|a| !a.forms_mutating())
+                                .and_then(|a| a.drafts.get_mut(&clear_id))
+                            {
+                                d.clear_multiselect();
+                            }
+                        }),
                     ));
                 }
                 if allow_custom {
@@ -684,7 +714,7 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
                         &d.custom,
                         &custom_label,
                         custom_desc.as_deref(),
-                        locked,
+                        multi_locked,
                         required && !has_choices,
                         is_invalid,
                         crate::screen::edit(&scope, crate::screen::Editor::Custom(id)),

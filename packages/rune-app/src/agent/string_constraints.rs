@@ -190,12 +190,30 @@ impl StringFormat {
         }
     }
 
-    pub fn matches(self, value: &str) -> bool {
+    pub fn classify(self, value: &str) -> MatchOutcome {
         match self {
-            Self::Uri => is_valid_uri(value),
-            Self::Email => is_valid_email(value),
-            Self::Date => is_valid_date(value),
-            Self::DateTime => is_valid_date_time(value),
+            Self::Uri => {
+                if is_valid_uri(value) {
+                    MatchOutcome::Matched
+                } else {
+                    MatchOutcome::NoMatch
+                }
+            }
+            Self::Email => {
+                if is_valid_email(value) {
+                    MatchOutcome::Matched
+                } else {
+                    MatchOutcome::NoMatch
+                }
+            }
+            Self::Date => {
+                if is_valid_date(value) {
+                    MatchOutcome::Matched
+                } else {
+                    MatchOutcome::NoMatch
+                }
+            }
+            Self::DateTime => classify_date_time(value),
         }
     }
 }
@@ -237,23 +255,35 @@ pub fn matches_string_constraints_budgeted(
     value: &str,
     budget: &mut MatchBudget,
 ) -> Result<MatchOutcome, ()> {
+    let mut deferred = false;
     if let Some(raw) = field.get("format").filter(|v| !v.is_null()) {
         let fmt = raw.as_str().and_then(StringFormat::parse).ok_or(())?;
-        if !fmt.matches(value) {
-            return Ok(MatchOutcome::NoMatch);
+        match fmt.classify(value) {
+            MatchOutcome::Matched => {}
+            MatchOutcome::NoMatch => return Ok(MatchOutcome::NoMatch),
+            MatchOutcome::Deferred => deferred = true,
         }
     }
     if let Some(raw) = field.get("pattern").filter(|v| !v.is_null()) {
         let src = raw.as_str().ok_or(())?;
         if !src.is_empty() {
             match compile_cached(src) {
-                Ok(pat) => return Ok(match_cached(src, &pat, value, budget)),
+                Ok(pat) => {
+                    return Ok(match match_cached(src, &pat, value, budget) {
+                        MatchOutcome::Matched if deferred => MatchOutcome::Deferred,
+                        other => other,
+                    });
+                }
                 Err(CompileError::DeferToServer) => return Ok(MatchOutcome::Deferred),
                 Err(CompileError::InvalidSyntax) => return Err(()),
             }
         }
     }
-    Ok(MatchOutcome::Matched)
+    Ok(if deferred {
+        MatchOutcome::Deferred
+    } else {
+        MatchOutcome::Matched
+    })
 }
 
 pub fn is_es_whitespace(c: char) -> bool {
@@ -576,7 +606,7 @@ fn format_iso_year(year: i64) -> String {
 /// syntax (`YYYY-MM-DDTHH:mm:ss.sss` or `±YYYYYY-MM-DDTHH:mm:ss.sss`) so desktop and wasm32 share
 /// one exact grammar before converting local time to UTC.
 #[allow(dead_code)]
-pub(crate) fn format_canonical_local_iso(parsed: ParsedLocalDateTime) -> Option<String> {
+fn format_canonical_local_iso(parsed: ParsedLocalDateTime) -> Option<String> {
     let local_secs = civil_to_unix_secs(
         parsed.year,
         parsed.month,
@@ -650,9 +680,9 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
         }
         let inner = &tz_raw[paren_idx + 1..tz_raw.len() - 1];
         if inner.is_empty()
-            || !inner.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b' ' | b'+' | b'-' | b'/' | b'_' | b'.')
-            })
+            || inner
+                .chars()
+                .any(|c| c == '(' || c == ')' || c.is_control())
         {
             return None;
         }
@@ -1059,7 +1089,13 @@ fn within_js_date_range(year: i64, month: u32, day: u32, sod_ms: i64, tz_offset_
 
 fn is_valid_date_time(value: &str) -> bool {
     let s = trim_es(value);
-    if s.is_empty() || !s.is_ascii() {
+    if s.is_empty() {
+        return false;
+    }
+    // Require ASCII on the date/time portion before any trailing `(...)` timezone comment so
+    // localized timezone names (e.g. `GMT+0100 (GMT+01:00)` or non-ASCII CLDR names) pass safely.
+    let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
+    if !prefix.is_ascii() {
         return false;
     }
     // Use one deterministic parser across desktop and wasm32 so both targets agree on every
@@ -1111,6 +1147,113 @@ fn is_valid_date_time(value: &str) -> bool {
     let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
         + i64::from(millis);
     within_js_date_range(year, month, day, sod_ms, tz_offset_ms.unwrap_or(0))
+}
+
+fn looks_like_rejected_known_date_shape(s: &str) -> bool {
+    if s.starts_with("-000000") {
+        return true;
+    }
+    // Reject invalid ISO dates (invalid month/day/range/time), except ISO valid dates with a
+    // trailing space + timezone marker (`1970-01-01 GMT+0100`) which V8 accepts.
+    if let Some((year, ylen)) = parse_iso_year_prefix(s) {
+        let tail = &s.as_bytes()[ylen..];
+        if tail.is_empty() || tail[0] == b'-' {
+            let valid_date_with_tz_tail = s[ylen..]
+                .strip_prefix('-')
+                .and_then(take_1_or_2_digits)
+                .filter(|&(m, _)| (1..=12).contains(&m))
+                .and_then(|(m, rest)| {
+                    rest.strip_prefix('-')
+                        .and_then(take_1_or_2_digits)
+                        .filter(|&(d, _)| (1..=days_in_month_i64(year, m)).contains(&d))
+                        .map(|(_, after_d)| after_d)
+                })
+                .is_some_and(|after_d| {
+                    after_d.starts_with(' ') && parse_tz_offset_ms(after_d.trim_start()).is_some()
+                });
+            return !valid_date_with_tz_tail;
+        }
+    }
+    // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/30/2026`, `13-01-2026`).
+    let first_sep = s.bytes().position(|b| matches!(b, b'/' | b'-'));
+    if let Some(sep_idx) = first_sep
+        && sep_idx > 0
+        && s.as_bytes()[..sep_idx].iter().all(u8::is_ascii_digit)
+    {
+        let sep = s.as_bytes()[sep_idx];
+        let rest = &s[sep_idx + 1..];
+        if let Some(second_sep) = rest.bytes().position(|b| b == sep)
+            && second_sep > 0
+            && rest.as_bytes()[..second_sep].iter().all(u8::is_ascii_digit)
+        {
+            return true;
+        }
+    }
+    // Reject 3-token named-month dates with impossible days (`Jan 99, 2026`, `Feb 30, 2026`).
+    if let Some((mut t1, mut rest)) = next_date_piece(s) {
+        if is_weekday_name(t1) {
+            if let Some((nt, nr)) = next_date_piece(rest) {
+                t1 = nt;
+                rest = nr;
+            }
+        }
+        if let Some((t2, r2)) = next_date_piece(rest)
+            && let Some((t3, _)) = next_date_piece(r2)
+        {
+            let day_year = if let Some(m) = parse_month_name(t1) {
+                parse_ascii_digits(t2)
+                    .zip(parse_year_2_or_4(t3))
+                    .map(|(d, y)| (y, m, d))
+            } else if let Some(m) = parse_month_name(t2) {
+                if t1.len() == 4 {
+                    parse_ascii_digits(t1)
+                        .zip(parse_ascii_digits(t3))
+                        .map(|(y, d)| (i64::from(y), m, d))
+                } else {
+                    parse_ascii_digits(t1)
+                        .zip(parse_year_2_or_4(t3))
+                        .map(|(d, y)| (y, m, d))
+                }
+            } else {
+                None
+            };
+            if let Some((y, m, d)) = day_year
+                && !(1..=days_in_month_i64(y, m)).contains(&d)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn classify_date_time(value: &str) -> MatchOutcome {
+    let s = trim_es(value);
+    if s.is_empty() || !s.bytes().any(|b| b.is_ascii_digit()) {
+        return MatchOutcome::NoMatch;
+    }
+    if is_valid_date_time(s) {
+        return MatchOutcome::Matched;
+    }
+    if looks_like_rejected_known_date_shape(s) {
+        return MatchOutcome::NoMatch;
+    }
+    // Defer unclassified JS Date-like formats (e.g. `Jan 1970`, `1970-01-01 GMT+0100`, or exotic
+    // parenthesized timezone annotations) to OpenCode rather than falsely rejecting valid defaults.
+    let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
+    let has_month_or_tz = prefix
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| {
+            parse_month_name(tok).is_some()
+                || tok.eq_ignore_ascii_case("GMT")
+                || tok.eq_ignore_ascii_case("UTC")
+        })
+        || (s.contains('(') && s.ends_with(')'));
+    if has_month_or_tz {
+        MatchOutcome::Deferred
+    } else {
+        MatchOutcome::NoMatch
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1411,6 +1554,8 @@ struct Parser {
     nodes: usize,
     captures: usize,
     named_captures: HashMap<String, usize>,
+    has_named_captures: bool,
+    malformed_k_escape: bool,
     needs_backtrack: bool,
     deferred: bool,
 }
@@ -1424,6 +1569,8 @@ impl Parser {
             nodes: 0,
             captures: 0,
             named_captures: HashMap::new(),
+            has_named_captures: false,
+            malformed_k_escape: false,
             needs_backtrack: false,
             deferred: false,
         }
@@ -1453,10 +1600,14 @@ impl Parser {
         if self.pos != self.units.len() {
             return Err(CompileError::InvalidSyntax);
         }
+        if self.has_named_captures && self.malformed_k_escape {
+            return Err(CompileError::InvalidSyntax);
+        }
         resolve_backrefs(
             &mut expr,
             self.captures,
             &self.named_captures,
+            self.has_named_captures,
             &mut self.deferred,
         )?;
         if self.deferred {
@@ -1680,12 +1831,14 @@ impl Parser {
                                 let name_slice = &self.units[name_start..name_end];
                                 match classify_capture_name(name_slice) {
                                     CaptureNameKind::Valid(name) => {
+                                        self.has_named_captures = true;
                                         self.captures += 1;
                                         let idx = self.captures;
                                         self.named_captures.entry(name).or_insert(idx);
                                         GroupKind::Capture(idx)
                                     }
                                     CaptureNameKind::Defer => {
+                                        self.has_named_captures = true;
                                         self.deferred = true;
                                         self.captures += 1;
                                         GroupKind::Capture(self.captures)
@@ -1834,6 +1987,7 @@ impl Parser {
             }
             x if x == b'k' as u16 => {
                 if self.peek() == Some(b'<' as u16) {
+                    let saved = self.pos;
                     self.pos += 1;
                     let start = self.pos;
                     while let Some(c) = self.peek() {
@@ -1844,22 +1998,29 @@ impl Parser {
                     }
                     let end = self.pos;
                     if end == start || self.next() != Some(b'>' as u16) {
-                        return Err(CompileError::InvalidSyntax);
-                    }
-                    match classify_capture_name(&self.units[start..end]) {
-                        CaptureNameKind::Valid(name) => {
-                            self.needs_backtrack = true;
-                            Ok(Expr::NamedBackref(name))
+                        self.pos = saved;
+                        self.malformed_k_escape = true;
+                        Ok(Expr::Literal(b'k' as u16))
+                    } else {
+                        match classify_capture_name(&self.units[start..end]) {
+                            CaptureNameKind::Valid(name) => {
+                                self.needs_backtrack = true;
+                                Ok(Expr::NamedBackref(name))
+                            }
+                            CaptureNameKind::Defer => {
+                                self.deferred = true;
+                                Ok(Expr::Empty)
+                            }
+                            CaptureNameKind::Invalid => {
+                                self.pos = saved;
+                                self.malformed_k_escape = true;
+                                Ok(Expr::Literal(b'k' as u16))
+                            }
                         }
-                        CaptureNameKind::Defer => {
-                            self.deferred = true;
-                            Ok(Expr::Empty)
-                        }
-                        CaptureNameKind::Invalid => Err(CompileError::InvalidSyntax),
                     }
                 } else {
-                    self.deferred = true;
-                    Ok(Expr::Empty)
+                    self.malformed_k_escape = true;
+                    Ok(Expr::Literal(b'k' as u16))
                 }
             }
             other => Ok(match self.decode_u16_escape(other)? {
@@ -2073,6 +2234,7 @@ fn resolve_backrefs(
     expr: &mut Expr,
     captures: usize,
     named: &HashMap<String, usize>,
+    has_named_captures: bool,
     deferred: &mut bool,
 ) -> Result<(), CompileError> {
     match expr {
@@ -2086,6 +2248,12 @@ fn resolve_backrefs(
             if let Some(&idx) = named.get(name) {
                 *expr = Expr::Backref(idx);
                 Ok(())
+            } else if !has_named_captures {
+                // In flagless ECMAScript RegExp without named capturing groups, `\k` is a valid
+                // identity escape (`^\k<id>$` matches `"k<id>"`). Defer to OpenCode so quantifiers
+                // and full Annex B semantics match V8.
+                *deferred = true;
+                Ok(())
             } else if *deferred {
                 Ok(())
             } else {
@@ -2096,10 +2264,12 @@ fn resolve_backrefs(
         | Expr::Capture { inner, .. }
         | Expr::Lookaround { inner, .. }
         | Expr::Flags { inner, .. }
-        | Expr::Repeat { inner, .. } => resolve_backrefs(inner, captures, named, deferred),
+        | Expr::Repeat { inner, .. } => {
+            resolve_backrefs(inner, captures, named, has_named_captures, deferred)
+        }
         Expr::Concat(items) | Expr::Alt(items) => {
             for item in items {
-                resolve_backrefs(item, captures, named, deferred)?;
+                resolve_backrefs(item, captures, named, has_named_captures, deferred)?;
             }
             Ok(())
         }
