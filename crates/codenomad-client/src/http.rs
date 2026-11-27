@@ -17,6 +17,7 @@ struct CapabilityState {
     drop_generation: Arc<AtomicU64>,
     observed: Mutex<(u64, u64, bool, bool)>,
     required: AtomicBool,
+    identity_mismatch: AtomicBool,
     open_streams: Arc<AtomicUsize>,
     probe_seq: AtomicU64,
     stream_drop_epoch: AtomicU64,
@@ -185,6 +186,7 @@ impl Http {
                 drop_generation: Arc::new(AtomicU64::new(0)),
                 observed: Mutex::new((0, 0, false, false)),
                 required: AtomicBool::new(false),
+                identity_mismatch: AtomicBool::new(false),
                 open_streams: Arc::new(AtomicUsize::new(0)),
                 probe_seq: AtomicU64::new(0),
                 stream_drop_epoch: AtomicU64::new(0),
@@ -412,12 +414,17 @@ impl Http {
     }
     pub(crate) fn revoke_server_attestation_at(&self, generation: u64, seq: u64) -> bool {
         let state = self.6.observed.lock().unwrap();
-        if generation == self.6.drop_generation.load(Ordering::SeqCst) && seq >= state.1 {
-            self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
-            true
-        } else {
-            false
-        }
+        seq >= state.1
+            && self
+                .6
+                .drop_generation
+                .compare_exchange(
+                    generation,
+                    generation + 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
     }
     #[cfg(test)]
     pub(crate) fn attest(&self, id: &str, capabilities: Vec<String>) -> bool {
@@ -430,13 +437,30 @@ impl Http {
             .server
             == id;
         if !matched {
+            self.6.identity_mismatch.store(true, Ordering::SeqCst);
             self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
         }
         matched
     }
-    #[cfg(test)]
-    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
-        self.attest(id, Vec::new())
+    pub(crate) fn record_server_identity_mismatch(&self, generation: u64, seq: u64) -> bool {
+        let state = self.6.observed.lock().unwrap();
+        if seq >= state.1
+            && self
+                .6
+                .drop_generation
+                .compare_exchange(
+                    generation,
+                    generation + 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+        {
+            self.6.identity_mismatch.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
     }
     pub(crate) fn verify_server_identity_at(
         &self,
@@ -454,9 +478,12 @@ impl Http {
             .server
             == id;
         if !matched {
-            self.revoke_server_attestation_at(generation, seq);
+            self.record_server_identity_mismatch(generation, seq);
         }
         matched
+    }
+    pub fn server_identity_mismatch(&self) -> bool {
+        self.6.identity_mismatch.load(Ordering::SeqCst)
     }
     pub fn supports_service_usage(&self) -> bool {
         self.3.load(Ordering::Relaxed)
@@ -852,9 +879,19 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     guard_b.close_and_revoke(&http, true, false);
     assert!(http.supports_atomic_settings_patches());
     assert!(!http.needs_capability_recheck());
+    // Start a probe with an admissible sequence (>= seq_re) right before the last stream drops.
+    let (gen_before_drop, seq_before_drop, _) = http.begin_meta_probe();
     guard_a.close_and_revoke(&http, true, false);
+    let gen_after_drop = http.drop_generation();
+    assert_ne!(gen_after_drop, gen_before_drop);
     assert!(!http.supports_atomic_settings_patches());
     assert!(http.needs_capability_recheck());
+    // A probe started before the generation bump must be rejected by both CAS gates solely on
+    // generation mismatch without mutating drop_generation or setting server_identity_mismatch.
+    assert!(!http.revoke_server_attestation_at(gen_before_drop, seq_before_drop));
+    assert!(!http.record_server_identity_mismatch(gen_before_drop, seq_before_drop));
+    assert_eq!(http.drop_generation(), gen_after_drop);
+    assert!(!http.server_identity_mismatch());
     http.record_transport_drop("stream-a", false);
     assert_eq!(http.transport_drops("stream-a"), 1);
     // Repeated failed SSE reconnect attempts (was_open=false while already in outage) must not
@@ -865,8 +902,10 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     http.mark_stream_opened("stream-a");
     http.record_transport_drop("stream-a", true);
     assert_eq!(http.transport_drops("stream-a"), 2);
-    // A delayed /api/meta response started at gen0 cannot re-enable atomic mode after the drop.
+    // A delayed /api/meta response started at gen0 cannot re-enable atomic mode or set identity mismatch after the drop.
     assert!(!http.observe_capabilities_at(gen0, seq0, true, true));
+    assert!(!http.record_server_identity_mismatch(gen0, seq0));
+    assert!(!http.server_identity_mismatch());
     assert!(!http.supports_atomic_settings_patches());
     assert!(http.needs_capability_recheck());
     // A stale mismatch from an older probe sequence cannot revoke a newer confirmed attestation.
@@ -877,6 +916,8 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     http.mark_drop_epoch_attested(drop_epoch_fresh);
     assert!(!http.has_unattested_stream_drop());
     assert!(!http.revoke_server_attestation_at(gen_cur, seq_stale));
+    assert!(!http.record_server_identity_mismatch(gen_cur, seq_stale));
+    assert!(!http.server_identity_mismatch());
     assert!(http.supports_atomic_settings_patches());
     assert!(!http.needs_capability_recheck());
     drop((guard_a, guard_b));

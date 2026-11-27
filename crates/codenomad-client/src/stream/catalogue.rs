@@ -89,7 +89,10 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
         }),
         WorkspaceEvent::NativeFilesystemChanged { workspace_id }
         | WorkspaceEvent::WorktreesChanged { workspace_id }
-        | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        | WorkspaceEvent::Stopped { workspace_id, .. } => workspace_id.len() + 64,
+        WorkspaceEvent::TemporaryChanged { folders } => folders
+            .iter()
+            .fold(64usize, |acc, folder| acc.saturating_add(folder.len() + 32)),
         _ => 64,
     }
 }
@@ -105,7 +108,8 @@ pub(super) struct Signals {
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
-    workspace_stopped: Mutex<HashSet<String>>,
+    workspace_stopped: Mutex<std::collections::HashMap<String, (bool, bool)>>,
+    temporary_folders: Mutex<Option<Vec<String>>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
     disconnect_notice: std::sync::atomic::AtomicBool,
     authentication_required: std::sync::atomic::AtomicBool,
@@ -156,6 +160,7 @@ impl Signals {
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
+        *self.temporary_folders.lock().unwrap() = None;
         *self.stats.lock().unwrap() = StatsChanges::default();
         let gen_changed = self
             .generation
@@ -262,13 +267,20 @@ impl Signals {
         let workspace_event =
             super::routing::parse_detached_workspace_event(frame).is_some_and(|event| {
                 match event {
-                    WorkspaceEvent::Stopped { workspace_id } => {
+                    WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted,
+                        temporary_retained,
+                    } => {
                         let mut stopped = self.workspace_stopped.lock().unwrap();
-                        if stopped.len() < 128 {
-                            stopped.insert(workspace_id);
-                        } else if !stopped.contains(&workspace_id) {
+                        if stopped.len() < 128 || stopped.contains_key(&workspace_id) {
+                            stopped.insert(workspace_id, (deleted, temporary_retained));
+                        } else {
                             self.workspace_overflow.store(true, SeqCst);
                         }
+                    }
+                    WorkspaceEvent::TemporaryChanged { folders } => {
+                        *self.temporary_folders.lock().unwrap() = Some(folders);
                     }
                     other => {
                         if self.workspace_events.lock().unwrap().push(other) {
@@ -436,6 +448,7 @@ impl CatalogueWatch {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -509,20 +522,23 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
+    pub fn take_temporary_folders(&self) -> Option<Vec<String>> {
+        self.signals.temporary_folders.lock().unwrap().take()
+    }
+
     pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
         let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
-        let stopped_ids: HashSet<String> = self
-            .signals
-            .workspace_stopped
-            .lock()
-            .unwrap()
-            .drain()
-            .collect();
-        for workspace_id in &stopped_ids {
+        let mut stopped_ids = HashSet::new();
+        for (workspace_id, (deleted, temporary_retained)) in
+            self.signals.workspace_stopped.lock().unwrap().drain()
+        {
+            stopped_ids.insert(workspace_id.clone());
             events.push_back(WorkspaceEvent::Stopped {
-                workspace_id: workspace_id.clone(),
+                workspace_id,
+                deleted,
+                temporary_retained,
             });
         }
         for event in self.signals.workspace_events.lock().unwrap().drain() {
@@ -533,7 +549,9 @@ impl CatalogueWatch {
                 | WorkspaceEvent::SessionMoved { workspace_id, .. }
                 | WorkspaceEvent::ServicesConfigChanged { workspace_id }
                 | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
-                | WorkspaceEvent::Stopped { workspace_id } => stopped_ids.contains(workspace_id),
+                | WorkspaceEvent::Stopped { workspace_id, .. } => {
+                    stopped_ids.contains(workspace_id)
+                }
                 WorkspaceEvent::PluginsChanged { workspace_id, .. }
                 | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id
                     .as_ref()
@@ -685,7 +703,7 @@ mod tests {
         assert_eq!(generation, 2);
         assert!(matches!(
             events.front(),
-            Some(WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "proj-1"
+            Some(WorkspaceEvent::Stopped { workspace_id, .. }) if workspace_id == "proj-1"
         ));
         for _ in 0..260 {
             watch.signals.observe(&json!({
@@ -772,6 +790,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -851,6 +870,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -887,6 +907,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -930,6 +951,7 @@ mod tests {
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
@@ -945,6 +967,53 @@ mod tests {
         assert!(!signals.workspace_overflow.load(SeqCst));
         signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
         assert!(signals.workspace_overflow.load(SeqCst));
+    }
+
+    #[test]
+    fn temporary_changed_coalesces_latest_folders_and_clears_on_disconnect() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            mission_catalog: Mutex::default(),
+            provider_moves: Mutex::default(),
+            integrations: Mutex::default(),
+            integration_sessions: Mutex::default(),
+            stopped: Mutex::default(),
+            stats: Mutex::default(),
+            attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            temporary_folders: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
+            generation: Default::default(),
+            workspace_generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-a", "/tmp/cn-b"]
+        }));
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-b"]
+        }));
+        assert_eq!(
+            signals.temporary_folders.lock().unwrap().take(),
+            Some(vec!["/tmp/cn-b".to_owned()])
+        );
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["relative/invalid"]
+        }));
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
+        signals.observe(&json!({
+            "type": "workspace.temporaryChanged",
+            "folders": ["/tmp/cn-c"]
+        }));
+        signals.disconnected();
+        assert_eq!(*signals.temporary_folders.lock().unwrap(), None);
     }
 
     #[test]
@@ -1006,7 +1075,7 @@ mod tests {
         assert!(!overflow);
         assert!(events.iter().any(|ev| matches!(
             ev,
-            WorkspaceEvent::Stopped { workspace_id } if workspace_id == "proj-1"
+            WorkspaceEvent::Stopped { workspace_id, .. } if workspace_id == "proj-1"
         )));
         assert!(!events.iter().any(|ev| matches!(
             ev,

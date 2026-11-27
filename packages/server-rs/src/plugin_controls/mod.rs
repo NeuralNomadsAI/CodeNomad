@@ -6,12 +6,12 @@
 pub(crate) mod catalog;
 mod discovery;
 mod doc;
-mod engine;
+pub(crate) mod engine;
 mod json_utf16;
 mod order;
-mod snapshot;
-mod sources;
-mod spec;
+pub(crate) mod snapshot;
+pub(crate) mod sources;
+pub(crate) mod spec;
 
 use axum::{
     Extension, Json, Router,

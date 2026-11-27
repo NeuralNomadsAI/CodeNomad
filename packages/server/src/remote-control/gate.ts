@@ -282,6 +282,7 @@ export function deviceCookie(token: string, maxAge = DEVICE_COOKIE_MAX_AGE_SECON
 // An early reply leaves any request body unread; closing the connection keeps a
 // reused keep-alive socket from failing the client's next request.
 function reject(reply: FastifyReply, status: number, error: string): void {
+  if (status === 401) reply.header("x-codenomad-before-dispatch", "1")
   reply.header("connection", "close").code(status).send({ error })
 }
 

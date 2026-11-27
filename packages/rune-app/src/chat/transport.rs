@@ -67,6 +67,7 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     };
     s.conversation_stream_connected = false;
     s.commands = Some(commands);
+    s.stream_offline = false;
     let reading = match &startup {
         Startup::Bound(_) => {
             let (mut reader, lane) = super::reader::Reader::open();
@@ -153,10 +154,18 @@ pub(crate) async fn authenticate_and_run(
         return;
     }
     match result {
-        Ok(()) => {
-            target.session_directory = target.prompt_directory().await.ok();
-            run_bound(Ok(target), out, input, wake, None).await;
-        }
+        Ok(()) => match target.prompt_directory().await {
+            Ok(directory) => {
+                target.session_directory = Some(directory);
+                run_bound(Ok(target), out, input, wake, None).await;
+            }
+            Err(error) if codenomad_client::http::authentication_expired(&error) => {
+                publish(&out, &wake, Event::authentication_required(target)).await;
+                drop(out);
+                wake();
+            }
+            Err(error) => run_bound(Err(error), out, input, wake, None).await,
+        },
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             publish(&out, &wake, Event::authentication_required(target)).await;
             drop(out);

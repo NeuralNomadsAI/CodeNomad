@@ -222,6 +222,7 @@ fn reopening_web_preferences_with_steady_catalogue_watch_keeps_queued_depth_writ
         let project = crate::catalog::Project {
             id: "captured".into(),
             path: "/repo/wt-a".into(),
+            temporary: false,
         };
         crate::workspace::opened(&mut root, &project);
         crate::workspace::bound(&mut root, &backend);
@@ -743,6 +744,7 @@ fn worktrees_changed_wakes_open_preferences_window_without_manual_tick() {
         let project = crate::catalog::Project {
             id: "captured".into(),
             path: "/repo/wt-a".into(),
+            temporary: false,
         };
         crate::workspace::opened(&mut root, &project);
         crate::workspace::bound(&mut root, &backend);

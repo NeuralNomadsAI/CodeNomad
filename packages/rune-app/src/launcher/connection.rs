@@ -329,6 +329,7 @@ pub(super) fn poll_boot(l: &mut Launcher) -> bool {
     {
         l.boot = None;
         l.pending = false;
+        l.rebinding_failed = false;
         l.managed_renewal = None;
         l.managed_renewal_failed_for = None;
         boot_changed = true;

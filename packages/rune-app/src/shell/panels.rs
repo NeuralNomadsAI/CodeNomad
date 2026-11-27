@@ -507,10 +507,12 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
 
 fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El {
     let title = if s.chat_title.is_empty() && project {
-        s.screen
-            .launcher()
-            .and_then(|l| l.project.as_ref())
-            .map_or("", |p| &p.path)
+        crate::workspace::active_project_title(s).unwrap_or_else(|| {
+            s.screen
+                .launcher()
+                .and_then(|l| l.project.as_ref())
+                .map_or("", |p| &p.path)
+        })
     } else {
         &s.chat_title
     };
@@ -522,7 +524,10 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         [
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
-            crate::timeline::search::trigger(s).unwrap_or_else(shell::spacer),
+            shell::spacer(),
+            super::tab_rename::trigger(s, touch).unwrap_or_else(col),
+            super::command_palette::trigger(s, touch),
+            crate::timeline::search::trigger(s).unwrap_or_else(col),
             crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],
@@ -538,8 +543,8 @@ fn connection_warning(s: &State) -> Option<El> {
     let failed = s.phase == crate::Phase::Failed;
     #[cfg(target_arch = "wasm32")]
     let failed = failed || s.phase == crate::Phase::RestoreFailed;
-    match s.phase {
-        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
+    match &s.phase {
+        phase if phase.reconnecting() => Some(text(connection(s)).role("status")),
         _ if failed => Some(crate::components::button_tx(
             "connection-retry",
             strings::t("sessionList.loadError.retry"),

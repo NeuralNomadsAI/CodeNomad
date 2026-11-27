@@ -39,10 +39,27 @@ pub struct Settings {
     write_enter: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     #[cfg(test)]
     write_exit: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    #[cfg(test)]
+    desktop_voice_env: Mutex<Option<(Option<String>, String)>>,
+    #[cfg(test)]
+    speech_env: Mutex<Option<(Option<String>, Option<String>)>>,
 }
 
 #[cfg(test)]
 impl Settings {
+    pub(crate) fn set_desktop_voice_env_for_test(&self, identity: Option<String>, channel: String) {
+        *self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()) = Some((identity, channel));
+    }
+    pub(crate) fn desktop_voice_env_for_test(&self) -> Option<(Option<String>, String)> {
+        self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub(crate) fn set_speech_env_for_test(&self, api_key: Option<&str>, base_url: Option<&str>) {
+        *self.speech_env.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((api_key.map(str::to_owned), base_url.map(str::to_owned)));
+    }
+    pub(crate) fn speech_env_for_test(&self) -> Option<(Option<String>, Option<String>)> {
+        self.speech_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
     pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
         self.write.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -102,6 +119,10 @@ impl Settings {
             write_enter: Mutex::new(None),
             #[cfg(test)]
             write_exit: Mutex::new(None),
+            #[cfg(test)]
+            desktop_voice_env: Mutex::new(None),
+            #[cfg(test)]
+            speech_env: Mutex::new(None),
         }
     }
     fn file(&self, kind: Kind) -> &std::path::Path {
@@ -467,7 +488,7 @@ async fn patch_config(
         (Some(mode), None) => Some(mode),
         (Some(_), Some(_)) => return Err(Failure::Invalid("Unknown conditional patch mode".into()).response()),
     };
-    let mut refresh_login = false;
+    let mut binary_changed = false;
     let saved = match conditional.as_deref() {
         Some("missions-v1") => conditional::apply_committed(&app.settings, &name, &patch, |saved| {
             publish(&app, Kind::Config, &name, saved.clone());
@@ -495,8 +516,8 @@ async fn patch_config(
                         }
                         if name == "server" {
                             let before_bin = before.get("server").and_then(|s| s.get("opencodeBinary"));
-                            refresh_login =
-                                patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != before_bin);
+                            let after_bin = after.get("server").and_then(|s| s.get("opencodeBinary"));
+                            binary_changed = before_bin != after_bin;
                         }
                         Ok(())
                     },
@@ -506,8 +527,15 @@ async fn patch_config(
         }
     };
     let saved = saved.map_err(Failure::response)?;
-    if refresh_login {
-        crate::opencode::login_start::refresh(&app);
+    if binary_changed {
+        let app_adopt = app.clone();
+        // Detach so cancelling this HTTP request (e.g. remote device revocation) never leaves
+        // the active binary selection behind the already-committed profile change.
+        let _ = tokio::spawn(async move {
+            crate::opencode::adopt_configured_binary(&app_adopt).await;
+            crate::opencode::login_start::refresh(&app_adopt);
+        })
+        .await;
     }
     Ok(Json(sanitized(&name, saved)).into_response())
 }

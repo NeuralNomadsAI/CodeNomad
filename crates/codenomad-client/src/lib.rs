@@ -7,6 +7,7 @@
 pub mod agent_api;
 pub mod attachments;
 pub mod backend;
+pub mod blank_session_cleanup;
 pub mod catalog;
 pub mod content;
 pub mod files;
@@ -35,6 +36,7 @@ pub use server_path::basename as server_path_basename;
 pub use server_path::file_uri as server_file_uri;
 pub use server_path::same as same_server_path;
 pub mod stream;
+pub mod temporary_workspaces;
 pub mod timeline;
 pub mod transport;
 pub mod wire;

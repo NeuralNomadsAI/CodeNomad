@@ -50,10 +50,14 @@ impl Target {
                 let transport_lost = s.settings.shared.borrow().is_transport_lost();
                 let online = if s.incoming.is_some()
                     || s.conversation_client_id.is_some()
-                    || matches!(s.phase, crate::Phase::Reconnecting | crate::Phase::Failed)
+                    || s.stream_offline
+                    || s.phase.reconnecting()
+                    || s.phase == crate::Phase::Failed
                 {
                     s.conversation_stream_connected
-                        && !matches!(s.phase, crate::Phase::Reconnecting | crate::Phase::Failed)
+                        && !s.stream_offline
+                        && !s.phase.reconnecting()
+                        && s.phase != crate::Phase::Failed
                         && !transport_lost
                 } else {
                     !transport_lost

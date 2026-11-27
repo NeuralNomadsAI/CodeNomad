@@ -146,6 +146,7 @@ pub fn contract() {
             | Event::Connected(_)
             | Event::ProviderUsageWatch(_)
             | Event::AgentHint(_)
+            | Event::UpstreamReady
             | Event::AgentControl(_)
             | Event::ObservedRunning { .. }
             | Event::Workspace(_)

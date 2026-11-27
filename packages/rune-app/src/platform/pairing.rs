@@ -9,6 +9,8 @@ use wasm_bindgen::{JsCast, closure::Closure};
 #[derive(Default)]
 pub struct Recovery {
     state: PairingState,
+    observed_tab: Option<Option<String>>,
+    retry_pending: Option<Option<String>>,
     result: Option<Receiver<Option<bool>>>,
     retry_timer: Option<Receiver<()>>,
     focus: Option<FocusCheck>,
@@ -89,10 +91,14 @@ pub fn available() -> bool {
 }
 
 fn start_check(s: &mut State) {
+    if s.pairing.state.should_defer_start() {
+        return;
+    }
     s.pairing.retry_timer = None;
     if s.pairing.focus.is_none() {
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     }
+    s.pairing.observed_tab = Some(s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));
     let (out, input) = bounded(1);
     s.pairing.result = Some(input);
     let wake = s.wake.clone();
@@ -118,6 +124,16 @@ fn schedule_retry(s: &mut State, delay_ms: u64) {
         let _ = out.send(()).await;
         wake();
     });
+}
+
+pub fn set_defer_checks(s: &mut State, defer: bool) {
+    s.pairing.state.set_defer_checks(defer);
+}
+
+pub fn flush_deferred_checks(s: &mut State) {
+    if s.pairing.state.take_deferred_check() && available() {
+        start_check(s);
+    }
 }
 
 pub fn observe(s: &mut State) {
@@ -169,6 +185,30 @@ pub fn observe_conversation_authenticated(s: &mut State, newly_connected: bool) 
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    if let Some(target) = &s.pairing.retry_pending {
+        if let Some(key) = target.as_deref()
+            && !s.workspace.as_ref().is_some_and(|ui| ui.has_tab_key(key))
+        {
+            s.pairing.retry_pending = None;
+        } else if !s.pairing.state.required
+            && !s.composer.pending()
+            && !s.screen.launcher().is_some_and(|l| l.pending)
+            && s.workspace.as_ref().map(|ui| ui.active_key()) == target.as_deref()
+        {
+            s.pairing.retry_pending = None;
+            if s.screen.is_launcher()
+                || matches!(
+                    s.phase,
+                    crate::Phase::Failed
+                        | crate::Phase::WorkspaceMissing
+                        | crate::Phase::RestoreFailed
+                )
+            {
+                crate::retry_connection(s, tx);
+            }
+            return true;
+        }
+    }
     let mut changed = false;
     if s.pairing
         .focus
@@ -193,6 +233,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         return changed;
     };
     s.pairing.result = None;
+    let observed_tab = s.pairing.observed_tab.take();
     match s.pairing.state.settle(result) {
         Settled::Unchanged => {
             s.pairing.retry_timer = None;
@@ -201,14 +242,34 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Settled::Required => {
+            let needs_recheck = s.pairing.state.in_flight;
+            s.pairing.retry_pending = None;
             if let Some(l) = s.screen.launcher_mut() {
                 l.password = rune::edit::TextEdit::new("");
             }
+            crate::chat::events::poll_chat(s, 64);
+            s.composer.picker.set_attachments_supported(false);
+            let _ = crate::composer::menu::poll(s, tx);
             s.renew_scope();
+            s.blank_cleanup.cancel();
+            if let Some(reader) = &s.reader {
+                reader.revoke();
+            }
+            if let Some(commands) = s.commands.take() {
+                commands.close();
+            }
+            if !matches!(
+                s.phase,
+                crate::Phase::WorkspaceMissing | crate::Phase::RestoreFailed
+            ) {
+                s.phase = crate::Phase::Failed;
+            }
+            s.stream_offline = true;
+            crate::workspace::revoke_cached_sessions(s);
             if s.pairing.focus.is_none() {
                 s.pairing.focus = FocusCheck::new(s.wake.clone());
             }
-            if s.pairing.state.in_flight {
+            if needs_recheck && s.pairing.result.is_none() {
                 start_check(s);
             }
         }
@@ -219,7 +280,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             s.pairing.focus = None;
             crate::chat::reader::cancel_page(s);
             s.history_error = false;
-            crate::retry_connection(s, tx);
+            let target_tab = observed_tab
+                .unwrap_or_else(|| s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));
+            let active_matches =
+                s.workspace.as_ref().map(|ui| ui.active_key()) == target_tab.as_deref();
+            let launcher_busy = s.screen.launcher().is_some_and(|l| l.pending);
+            if active_matches && !s.composer.pending() && !launcher_busy {
+                crate::retry_connection(s, tx);
+                s.pairing.retry_pending = None;
+            } else if target_tab
+                .as_deref()
+                .is_none_or(|key| s.workspace.as_ref().is_some_and(|ui| ui.has_tab_key(key)))
+            {
+                s.pairing.retry_pending = Some(target_tab);
+            }
         }
     }
     true

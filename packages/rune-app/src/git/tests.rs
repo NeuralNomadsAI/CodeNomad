@@ -1309,7 +1309,14 @@ fn closing_git_preview_restores_scrolled_up_reading_position() {
             CloseMode::WorkspaceStopped => {
                 rt.update(|s, tx| {
                     let workspace_id = s.git.owner.as_ref().unwrap().backend.workspace.clone();
-                    super::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    super::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
                     assert!(super::poll(s, 1.0, tx));
                 });
             }
@@ -1365,7 +1372,7 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
 
     let mut s = crate::init();
     let mut ws = crate::workspace::Ui::new();
-    ws.mark_ready();
+    ws.fixture_ready();
     s.workspace = Some(ws);
     s.phase = crate::Phase::Ready;
     s.messages = tab_a_rows.clone();
