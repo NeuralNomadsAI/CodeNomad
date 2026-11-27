@@ -49,7 +49,7 @@ test('admitLiveRoute enforces GET, origin, and cookie without a policy and repor
   ])
 })
 
-test('SSE 503 backoff handles single-slot (3 probes) and multiplexed two-slot (4 probes) episodes', () => {
+test('SSE 503 backoff handles single-slot (3 probes) and multiplexed two-slot (4-5 probes) episodes', () => {
   const probe = (receivedAt, fulfilledAt = receivedAt) => ({receivedAt, fulfilledAt})
 
   const single = [probe(0, 5), probe(1020, 1025), probe(3040, 3045)]
@@ -68,7 +68,17 @@ test('SSE 503 backoff handles single-slot (3 probes) and multiplexed two-slot (4
   assert.equal(shouldServeSse503(muxSlowHandover), false)
   assert.deepEqual(assertSse503Backoff(muxSlowHandover), {retryDelay1Ms: 1015, retryDelay2Ms: 2015, coalescedSlotProbes: 1})
 
+  const muxAfterRetry1 = [probe(0, 5), probe(1015, 1020), probe(1520, 1525), probe(2535, 2540), probe(4560, 4565)]
+  assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 3)), true)
+  assert.equal(shouldServeSse503(muxAfterRetry1.slice(0, 4)), true)
+  assert.equal(shouldServeSse503(muxAfterRetry1), false)
+  assert.deepEqual(assertSse503Backoff(muxAfterRetry1), {retryDelay1Ms: 1010, retryDelay2Ms: 2020, coalescedSlotProbes: 2})
+
+  assert.equal(shouldServeSse503([probe(0, 5), probe(10, 15), probe(20, 25), probe(30, 35)]), false)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(10, 15), probe(20, 25), probe(30, 35)]), /first bounded retry delay/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(10, 15), probe(1020, 1025), probe(2030, 2035)]), /second bounded retry delay/)
-  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(10, 15), probe(1020, 1025), probe(3040, 3045), probe(5050, 5055)]), /3 or 4/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(3005, 3010), probe(8010, 8015)]), /first bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(5020, 5025)]), /second bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(10, 15), probe(20, 25), probe(1035, 1040), probe(3050, 3055)]), /5-probe multiplexed handover/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(1520, 1525), probe(2535, 2540), probe(4560, 4565), probe(6570, 6575)]), /3 to 5/)
 })
