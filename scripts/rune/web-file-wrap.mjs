@@ -1,21 +1,19 @@
 import assert from 'node:assert/strict'
-import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium} from 'playwright'
-import {bundleAssetPaths, fulfillWorkspaceCreation, workspacePolicy} from './web-workspace-policy.mjs'
+import {bundleAssetPaths, workspacePolicy} from './web-workspace-policy.mjs'
 
 const file='wrap.txt', key='opencode-session-right-panel-files-word-wrap-v1'
 const windowKey='codenomad.rune.alpha.client-state.v1'
 const wrapKey=on=>`instanceShell.filesShell.${on?'disable':'enable'}WordWrap`
 
-export async function fileWrapBrowser({values,m,out,storage,url,root}) {
+export async function fileWrapBrowser({values,m,out,browser,storageState,fulfillWorkspaceCreation,writeOutput,recordCleanupError,url,root}) {
+  assert(browser&&typeof fulfillWorkspaceCreation==='function'&&typeof writeOutput==='function','Attested browser, fulfillWorkspaceCreation, and writeOutput required for fileWrapBrowser')
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
   const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
-  const browser=await chromium.launch({headless:true,executablePath:values.executable,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   const proof={headless:true,origin:url.origin,stages:[],refused:[],reads:[],errors:[]}
-  let context
+  let context,primaryError=null,passed=false
   try {
-    context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'light',storageState:storage})
+    context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'light',storageState})
     await context.route('**/*',async route=>{
       const req=route.request(),u=new URL(req.url()),p=u.pathname
       let allowed=await policy.request(req)
@@ -125,18 +123,28 @@ export async function fileWrapBrowser({values,m,out,storage,url,root}) {
     assert.deepEqual(proof.refused,[])
     assert.deepEqual(proof.errors,[])
     proof.result='pass'
-    console.log(JSON.stringify({runner:'web-file-wrap',result:proof.result,out}))
+    passed=true
   }catch(error){
+    primaryError=error
     proof.result='fail'
-    proof.failure=error.message
-    await Promise.all(context?.pages().map(async(page,index)=>{
-      await writeFile(path.join(out,`file-wrap-tab-${index}.aria.yml`),await page.locator('body').ariaSnapshot({timeout:2000}))
-    })??[]).catch(()=>{})
+    proof.failure=error?.message??String(error)
+    await Promise.allSettled(context?.pages().map(async(page,index)=>{
+      await writeOutput(`file-wrap-tab-${index}.aria.yml`,await page.locator('body').ariaSnapshot({timeout:2000}))
+    })??[])
     throw error
   }finally{
-    try{await context?.close()}finally{
-      await browser.close()
-      await writeFile(path.join(out,'file-wrap-proof.json'),JSON.stringify(proof,null,2))
+    let cleanupError=null
+    try{await context?.close()}catch(closeError){
+      recordCleanupError?.('file-wrap context.close',closeError)
+      ;(proof.cleanupErrors??=[]).push(`context.close: ${closeError.message}`)
+      if(proof.result==='pass'){proof.result='fail';proof.failure=closeError.message}
+      cleanupError??=closeError
     }
+    try{await writeOutput('file-wrap-proof.json',JSON.stringify(proof,null,2))}catch(writeError){
+      recordCleanupError?.('file-wrap proof write',writeError)
+      cleanupError??=writeError
+    }
+    if(!primaryError&&cleanupError)throw cleanupError
   }
+  if(passed)console.log(JSON.stringify({runner:'web-file-wrap',result:proof.result,out}))
 }

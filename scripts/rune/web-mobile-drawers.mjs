@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
-import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium} from 'playwright'
-import {bundleAssetPaths, fulfillWorkspaceCreation, workspacePolicy} from './web-workspace-policy.mjs'
+import {bundleAssetPaths, workspacePolicy} from './web-workspace-policy.mjs'
 
 function samePath(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false
@@ -11,15 +9,32 @@ function samePath(a, b) {
     : a === b
 }
 
-export async function mobileDrawersBrowser({values, m, out, storage, url, root}) {
+export async function mobileDrawersBrowser({values, m, out, browser, storageState, fulfillWorkspaceCreation, writeOutput, recordCleanupError, url, root}) {
+  assert(
+    browser && typeof fulfillWorkspaceCreation === 'function' && typeof writeOutput === 'function',
+    'Attested browser, fulfillWorkspaceCreation, and writeOutput required for mobileDrawersBrowser',
+  )
   const assets = await bundleAssetPaths(path.resolve(root, process.env.RUNE_WEB_DIR ?? 'target/rune-web-connected'))
   const linked = path.join(path.dirname(values.project), 'linked')
   const ownedDirectory = dir => samePath(dir, values.project) || samePath(dir, linked)
-  const browser = await chromium.launch({
-    headless: true,
-    executablePath: values.executable,
-    args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'],
+  let routeError = null
+  let cancelled = false
+  let closing = false
+  let rejectRoute = () => {}
+  const routeFailed = new Promise((_, reject) => {
+    rejectRoute = reject
   })
+  routeFailed.catch(() => {})
+  const failRoute = error => {
+    cancelled = true
+    if (!routeError) {
+      routeError = error
+      rejectRoute(error)
+    }
+    proof.errors.push(error?.message ?? String(error))
+  }
+  const isShutdownError = error =>
+    closing && /Target page, context or browser has been closed|Browser has been closed/i.test(error?.message ?? '')
   const proof = {
     runner: 'web-mobile-drawers',
     emulation: 'Chromium Playwright (isMobile+hasTouch), not Android ADB/Gboard',
@@ -61,46 +76,90 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     }
   }
 
+  const contexts = []
+  const pendingContexts = new Set()
+  const inflightRoutes = new Set()
   const createPage = async ({width, height, colorScheme}) => {
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     const policy = workspacePolicy({origin: url.origin, project: values.project, assets})
-    const context = await browser.newContext({
-      viewport: {width, height},
-      deviceScaleFactor: 1,
-      colorScheme,
-      isMobile: true,
-      hasTouch: true,
-      storageState: storage,
-    })
-    await context.route('**/*', async route => {
-      const req = route.request(), u = new URL(req.url()), p = u.pathname
-      let allowed = await policy.request(req)
-      if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
-        const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
-        const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
-        if (req.method() === 'GET' && policy.workspaces.has(id)) {
-          if (tail === 'files') {
-            const keys = [...u.searchParams.keys()]
-            allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
-          } else {
-            allowed = u.search === ''
+    const task = (async () => {
+      const created = await browser.newContext({
+        viewport: {width, height},
+        deviceScaleFactor: 1,
+        colorScheme,
+        isMobile: true,
+        hasTouch: true,
+        storageState,
+      })
+      if (cancelled) {
+        await created.close()
+        return null
+      }
+      contexts.push(created)
+      return created
+    })()
+    pendingContexts.add(task)
+    let context
+    try {
+      context = await task
+    } finally {
+      pendingContexts.delete(task)
+    }
+    if (!context || cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
+    await context.route('**/*', route => {
+      const handle = (async () => {
+        try {
+          const req = route.request(), u = new URL(req.url()), p = u.pathname
+          let allowed = await policy.request(req)
+          if (!allowed && u.origin === url.origin && (await req.allHeaders()).cookie) {
+            const [, id, tail] = p.match(/^\/api\/workspaces\/([^/]+)\/(files|worktrees\/[^/]+\/git-status)$/) ?? []
+            const [, nativeId, nativeTail] = p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(location|worktree)$/) ?? []
+            if (req.method() === 'GET' && policy.workspaces.has(id)) {
+              if (tail === 'files') {
+                const keys = [...u.searchParams.keys()]
+                allowed = keys.every(k => k === 'directory' || k === 'path') && ownedDirectory(u.searchParams.get('directory')) && ['.', ''].includes(u.searchParams.get('path') ?? '')
+              } else {
+                allowed = u.search === ''
+              }
+            } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
+              if (nativeTail === 'location') {
+                const keys = [...u.searchParams.keys()]
+                allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
+              } else if (nativeTail === 'worktree') {
+                allowed = u.search === ''
+              }
+            }
           }
-        } else if (req.method() === 'GET' && policy.workspaces.has(nativeId)) {
-          if (nativeTail === 'location') {
-            const keys = [...u.searchParams.keys()]
-            allowed = keys.length === 1 && keys[0] === 'location[directory]' && ownedDirectory(u.searchParams.get('location[directory]'))
-          } else if (nativeTail === 'worktree') {
-            allowed = u.search === ''
+          if (!allowed) {
+            proof.refused.push(`${req.method()} ${p}${u.search}`)
+            await route.abort('blockedbyclient')
+            return
+          }
+          if (req.method() === 'POST' && p === '/api/workspaces') {
+            await fulfillWorkspaceCreation(route, policy)
+            return
+          }
+          await route.continue()
+        } catch (error) {
+          if (!isShutdownError(error)) {
+            failRoute(error)
+            try {
+              await route.abort('failed')
+            } catch (abortError) {
+              if (!isShutdownError(abortError)) {
+                proof.errors.push(`route.abort failed: ${abortError?.message ?? String(abortError)}`)
+              }
+            }
           }
         }
-      }
-      if (!allowed) {
-        proof.refused.push(`${req.method()} ${p}${u.search}`)
-        return route.abort('blockedbyclient')
-      }
-      if (req.method() === 'POST' && p === '/api/workspaces') return fulfillWorkspaceCreation(route, policy)
-      return route.continue()
+      })()
+      inflightRoutes.add(handle)
+      handle.finally(() => inflightRoutes.delete(handle))
+      return handle
     })
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     const page = await context.newPage()
+    if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
     page.setDefaultTimeout(20000)
     page.on('pageerror', error => proof.errors.push(error.message))
     await page.goto(url.href, {waitUntil: 'domcontentloaded', timeout: 60000})
@@ -125,11 +184,10 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     return {context, page}
   }
 
-  let phoneCtx, tabletCtx
-  try {
+  let primaryError = null
+  const runProbe = async () => {
     // 1. Phone portrait start (390x844): floating drawers, IME shrink, rotation, full-width Files, Escape layering, outside tap.
     const phone = await createPage({width: 390, height: 844, colorScheme: 'dark'})
-    phoneCtx = phone.context
     const page = phone.page
     const left = button(page, m['window.menu.leftPanel'])
     const right = button(page, m['window.menu.rightPanel'])
@@ -334,7 +392,6 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
 
     // 2. Landscape tablet start (1366x1024): both panels docked, hide on portrait, independent per-orientation memory.
     const tablet = await createPage({width: 1366, height: 1024, colorScheme: 'light'})
-    tabletCtx = tablet.context
     const tPage = tablet.page
     const tLeft = button(tPage, m['window.menu.leftPanel'])
     const tRight = button(tPage, m['window.menu.rightPanel'])
@@ -357,25 +414,70 @@ export async function mobileDrawersBrowser({values, m, out, storage, url, root})
     await waitExpanded(tLeft, true)
     await waitExpanded(tRight, false)
     proof.tablet.perOrientationMemory = true
-
+  }
+  const closeAllContexts = async () => {
+    cancelled = true
+    closing = true
+    let closeError = null
+    while (pendingContexts.size) {
+      const settled = await Promise.allSettled([...pendingContexts])
+      for (const outcome of settled) {
+        if (outcome.status === 'rejected') {
+          recordCleanupError?.('mobile-drawers pending context', outcome.reason)
+          ;(proof.cleanupErrors ??= []).push(`pending context: ${outcome.reason?.message ?? outcome.reason}`)
+          closeError ??= outcome.reason
+        }
+      }
+    }
+    const toClose = contexts.splice(0)
+    const closed = await Promise.allSettled(toClose.map(ctx => ctx.close()))
+    for (const outcome of closed) {
+      if (outcome.status === 'rejected') {
+        recordCleanupError?.('mobile-drawers context.close', outcome.reason)
+        ;(proof.cleanupErrors ??= []).push(`context.close: ${outcome.reason?.message ?? outcome.reason}`)
+        closeError ??= outcome.reason
+      }
+    }
+    while (inflightRoutes.size) {
+      await Promise.allSettled([...inflightRoutes])
+    }
+    return closeError
+  }
+  let probePromise = null
+  let passed = false
+  try {
+    probePromise = runProbe()
+    probePromise.catch(() => {})
+    await Promise.race([probePromise, routeFailed])
+    await Promise.allSettled([...inflightRoutes])
+    const closeError = await closeAllContexts()
+    if (routeError) throw routeError
     assert.deepEqual(proof.refused, [], `Forbidden requests: ${JSON.stringify(proof.refused)}`)
     assert.deepEqual(proof.errors, [], `Page errors: ${JSON.stringify(proof.errors)}`)
+    if (closeError) throw closeError
     proof.result = 'pass'
-    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
+    passed = true
   } catch (error) {
+    primaryError = error
+    cancelled = true
     proof.result = 'fail'
-    proof.failure = error.message
-    await Promise.all([phoneCtx, tabletCtx].flatMap(ctx => ctx?.pages() ?? []).map(async (p, i) => {
-      await writeFile(path.join(out, `mobile-drawers-fail-${i}.aria.yml`), await p.locator('body').ariaSnapshot({timeout: 2000}))
-    })).catch(() => {})
+    proof.failure = error?.message ?? String(error)
+    await Promise.allSettled(contexts.flatMap(ctx => ctx.pages()).map(async (p, i) => {
+      await writeOutput(`mobile-drawers-fail-${i}.aria.yml`, await p.locator('body').ariaSnapshot({timeout: 2000}))
+    }))
     throw error
   } finally {
+    let cleanupError = await closeAllContexts()
+    await probePromise?.catch(() => {})
     try {
-      await phoneCtx?.close()
-      await tabletCtx?.close()
-    } finally {
-      await browser.close()
-      await writeFile(path.join(out, 'mobile-drawers-proof.json'), JSON.stringify(proof, null, 2))
+      await writeOutput('mobile-drawers-proof.json', JSON.stringify(proof, null, 2))
+    } catch (writeError) {
+      recordCleanupError?.('mobile-drawers proof write', writeError)
+      cleanupError ??= writeError
     }
+    if (!primaryError && cleanupError) throw cleanupError
+  }
+  if (passed) {
+    console.log(JSON.stringify({runner: 'web-mobile-drawers', result: proof.result, out}))
   }
 }

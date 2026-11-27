@@ -758,6 +758,63 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.linked.rows.is_empty());
 }
 
+#[test]
+fn root_creation_uncertain_survives_passive_listings_until_explicit_refresh() {
+    let mut launcher = Launcher::fixture();
+    launcher.sessions = vec![row("root"), row("deleted")];
+    launcher.creation_uncertain = true;
+    launcher.creation_uncertain_linked = None;
+    launcher.error = Some("rune.create_error");
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+        true,
+        false,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root"]
+    );
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root"), row("other")],
+            next: None,
+        },
+        None,
+        true,
+        true,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "other"]
+    );
+    launcher.apply_directory_refresh(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+    );
+    assert!(!launcher.creation_uncertain);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct CatalogueFixture {
     base_url: String,

@@ -72,7 +72,9 @@ fn open_window(s: &mut State, providers: bool) {
         return;
     }
     if host.window.as_ref().is_some_and(|(_, _, request)| {
-        request.reopen.borrow().is_some() || request.config_reopen.borrow().is_some()
+        request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some()
     }) {
         return;
     }
@@ -123,6 +125,37 @@ pub(super) fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'st
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn warn_save_failed(locale: &'static str) {
     crate::platform::preferences_save_warning(locale, view::save_warning);
+}
+
+pub(crate) fn close_request(
+    s: &mut State,
+    _tx: &mut rune::Tx,
+) -> rune_theme_codenomad::shell::CloseResponse {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((window, token, request)) = &s.settings.window {
+        let alive = Rc::strong_count(token) > 1;
+        let has_reopen = request.reopen.borrow().is_some()
+            || request.config_reopen.borrow().is_some()
+            || request.palette_reopen.borrow().is_some();
+        if (alive && request.guard_close.get()) || has_reopen {
+            request.close_main_after.set(true);
+            request.requested.set(true);
+            if alive {
+                window.focus();
+                if let Some(wake) = &s.settings.shared.borrow().window_wake {
+                    wake();
+                }
+            } else {
+                let request = request.clone();
+                let editor = request.reopen.borrow_mut().take();
+                launch_preferences(s, request, editor);
+            }
+            return rune_theme_codenomad::shell::CloseResponse::Defer;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = s;
+    rune_theme_codenomad::shell::CloseResponse::Close
 }
 
 pub(crate) fn close(s: &mut State) {

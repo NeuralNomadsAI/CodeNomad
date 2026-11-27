@@ -63,7 +63,7 @@ pub fn picture_hover(image: &rune::Image, label: &str, anchor: &str) -> Option<E
         .a11y_hidden()
         .inert();
     Some(rune_kit::popover::anchored(
-        crate::kit(dark),
+        &crate::kit(dark),
         body,
         anchor,
         rune_kit::Placement::TopStart,
@@ -131,4 +131,23 @@ pub fn chip(name: &str, glyph: Option<&'static Icon>, action: Option<El>) -> El 
                 .color(ink),
         )
         .children(action)
+}
+
+pub fn status_badge(label: &str) -> El {
+    let t = tokens(layout::dark());
+    let size = t.number("font-size-xs").px();
+    row()
+        .center_y()
+        .shrink()
+        .min_w(0.0)
+        .px(t.space(Space::Sm).px())
+        .py(t.space(Space::Xs).px())
+        .radius(t.length(Length::ChipRadius).px())
+        .fill(t.color("badge-neutral-bg"))
+        .role("status")
+        .child(
+            text(label)
+                .font(TextStyle::new(size, t.number("font-weight-medium").px()))
+                .color(t.color("text-secondary")),
+        )
 }

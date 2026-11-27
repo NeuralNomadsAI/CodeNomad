@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createServer } from "node:http"
 import { createHash, randomBytes } from "node:crypto"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
@@ -52,7 +53,7 @@ const port = portServer.address().port
 await new Promise(resolve => portServer.close(resolve))
 assert.notEqual(port, 28894)
 const owned = []
-let current, client, endpoint
+let current, client, endpoint, attestedFetch
 const wait = async (predicate, timeout = 30_000) => {
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
@@ -64,10 +65,18 @@ const wait = async (predicate, timeout = 30_000) => {
 }
 const stop = async child => {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
-  child.kill("SIGKILL")
-  await new Promise(resolve => child.once("exit", resolve))
+  if (child === current) { await attestedFetch?.close().catch(() => {}); attestedFetch = undefined }
+  const closed = new Promise(resolve => child.once("close", resolve))
+  const pid = await fixtureChildPid(child).catch(() => undefined)
+  if (Number.isSafeInteger(pid) && pid > 0) {
+    try { process.kill(pid, "SIGKILL") } catch {}
+    await Promise.race([closed, sleep(5_000)])
+  }
+  if (child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
 }
 const launch = async label => {
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
   const child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", String(port)],
     { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
   owned.push(child); current = child
@@ -78,17 +87,25 @@ const launch = async label => {
     writeFileSync(path.join(root, `${label}-stdout.txt`), output.stdout)
     writeFileSync(path.join(root, `${label}-stderr.txt`), output.stderr)
   })
+  const expectedPid = await fixtureChildPid(child)
+  assert(Number.isSafeInteger(expectedPid) && expectedPid > 0, "Expected owned service PID")
   await wait(async () => {
     if (!existsSync(registrationFile)) return false
     const registration = JSON.parse(readFileSync(registrationFile))
-    if (registration.pid !== await fixtureChildPid(child)) return false
-    endpoint = await Service.discover({ file: registrationFile, version: cliVersion })
-    return !!endpoint
+    if (registration.pid !== expectedPid || typeof registration.url !== "string") return false
+    try { await verifyLoopbackListenerOwner(port, expectedPid) } catch { return false }
+    const auth = registration.auth ?? (registration.password ? { type: "basic", username: registration.username ?? "opencode", password: registration.password } : undefined)
+    endpoint = { url: registration.url, auth }
+    return true
   })
   assert.equal(endpoint.url, `http://127.0.0.1:${port}`)
   const { id, pid, url, version } = JSON.parse(readFileSync(registrationFile))
   save(label, { id, pid, url, version })
-  client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
+  attestedFetch = createAttestedFetch(endpoint.url, port, expectedPid)
+  client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
+  await wait(async () => {
+    try { return (await client.server.info()).pid === expectedPid } catch { return false }
+  })
   return { id, pid, url, version }
 }
 const definition = { id: "codenomad.schedule-qualification", methods: Object.fromEntries(
@@ -150,7 +167,7 @@ try {
     reconciliation: { sessionID: reconciliation.id, scheduleID: reconciliationSchedule.id } }))
   if (coldMissing) {
     const initial = save("cold-before", await observe("snapshot", { sessionID: reconciliation.id, scheduleID: reconciliationSchedule.id }))
-    const nativeCount = events().length, firstPID = current.pid
+    const nativeCount = events().length, firstPID = await fixtureChildPid(current)
     await stop(current)
     const artifact = coldMissing === "runtime" ? artifacts.qualification : artifacts.provider
     renameSync(artifact.file, `${artifact.file}.held`)
@@ -257,7 +274,7 @@ try {
     assert.deepEqual(phaseCompacted[key], phaseBefore[key], key)
   for (const key of ["id", "sessionID", "nextDueAt", "remainingRuns", "runCount"])
     assert.deepEqual(auxiliaryCompacted[key], auxiliaryBefore[key], key)
-  const firstPID = current.pid
+  const firstPID = await fixtureChildPid(current)
   await wait(() => events().some(event => event.pid === firstPID && event.kind === "cas" && event.run === 2), 75_000)
   await wait(() => events().filter(event => event.pid === firstPID && event.kind === "local-stream").length >= 2)
   const streams = events().filter(event => event.pid === firstPID && event.kind === "local-stream")
@@ -265,7 +282,7 @@ try {
   save("cached-language-two-occurrences", { pid: firstPID, streams: streams.length, languageObjects: 1 })
   const beforeCold = save("document-before-cold-restart", await qa("snapshot"))
   assert.equal(beforeCold.calendars.find(item => item.role === "reconciliation").highWater, 2)
-  const oldPID = current.pid
+  const oldPID = await fixtureChildPid(current)
   await stop(current)
   const cold = await launch("cold-incarnation")
   assert.notEqual(cold.pid, oldPID)
@@ -287,7 +304,10 @@ try {
   assert.equal((await qa("snapshot")).revision, second.revision)
   // Disable auto-start while leaving this explicitly launched isolated daemon alive.
   writeFileSync(path.join(configRoot, "service.json"), JSON.stringify({ hostname: "127.0.0.1", port, disabled: true }))
-  assert(await Service.discover({ file: registrationFile }))
+  const disabledReg = JSON.parse(readFileSync(registrationFile, "utf8"))
+  assert.equal(disabledReg.pid, cold.pid)
+  await verifyLoopbackListenerOwner(port, cold.pid)
+  assert.equal((await client.server.info()).pid, cold.pid)
   save("disabled-live", { discovered: true, supervision: "absent", pid: cold.pid })
   // Artifact checks also fence an already cached local model.
   renameSync(artifacts.provider.file, `${artifacts.provider.file}.held`)
@@ -331,6 +351,7 @@ try {
 } finally {
   if (artifacts?.provider && existsSync(`${artifacts.provider.file}.held`)) renameSync(`${artifacts.provider.file}.held`, artifacts.provider.file)
   if (artifacts?.qualification && existsSync(`${artifacts.qualification.file}.held`)) renameSync(`${artifacts.qualification.file}.held`, artifacts.qualification.file)
+  await attestedFetch?.close().catch(() => {})
   for (const child of owned) await stop(child)
   spy.closeAllConnections(); await new Promise(resolve => spy.close(resolve))
   save("cleanup", { ownPIDs: await Promise.all(owned.map(fixtureChildPid)), running: await Promise.all(owned.filter(child => child.exitCode === null && child.signalCode === null).map(fixtureChildPid)),

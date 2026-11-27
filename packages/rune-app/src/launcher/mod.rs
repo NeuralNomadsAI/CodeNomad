@@ -386,16 +386,21 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut relayed = false;
     if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
         let mut stopped = Vec::new();
+        let mut stopped_ids = HashSet::new();
         let mut other = Vec::new();
         for event in events {
-            if matches!(
-                event,
-                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
-            ) {
+            if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } = &event {
+                stopped_ids.insert(workspace_id.clone());
                 stopped.push(event);
             } else {
                 other.push(event);
             }
+        }
+        if !stopped_ids.is_empty() {
+            other.retain(|event| {
+                crate::workspace::event_workspace_id(event)
+                    .is_none_or(|id| !stopped_ids.contains(id))
+            });
         }
         if overflow
             && let Some(l) = s.screen.launcher_mut()

@@ -97,10 +97,12 @@ exit 0`
 }
 
 function powershell(script: string, timeoutMs: number): Promise<string | undefined> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
       { encoding: "utf8", timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => resolve(error ? undefined : stdout))
+      (error, stdout) => {
+        resolve(error ? undefined : stdout)
+      })
   })
 }
 
@@ -117,6 +119,7 @@ export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Dat
   if (listing === undefined) return 0
   const targets = windowsTreeStopTargets(rootPid, parseWindowsProcessRows(listing), rootStartedBy)
   if (targets.length === 0 || deadline - Date.now() <= 0) return 0
-  await powershell(windowsStopScript([...targets].reverse()), deadline - Date.now())
+  const stopped = await powershell(windowsStopScript([...targets].reverse()), deadline - Date.now())
+  if (stopped === undefined) return 0
   return targets.length
 }
