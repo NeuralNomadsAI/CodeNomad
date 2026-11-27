@@ -9,19 +9,25 @@ import {createAttestedTcpRelay,fixtureAttestationEnv,resolveLoopbackListenerPid,
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
 
-async function runIsolatedPairFixture({root,options,state,isInterrupted}){
+async function runIsolatedPairFixture({root,options,env,executable,state,isInterrupted}){
   if(isInterrupted?.())throw Error('Launcher interrupted before pairing')
   const pairProofFile=path.join(options.profile,'pair-proof.json')
   const mobileUrl=new URL('../../../scripts/rune/web-mobile.mjs',import.meta.url).href
+  const httpUrl=new URL('../../../scripts/native-fixture-http.mjs',import.meta.url).href
   const helperCode=`
     import {readFileSync,writeFileSync} from 'node:fs'
-    import {pairFixture} from ${JSON.stringify(mobileUrl)}
+    import {resolveWorktreePackage} from ${JSON.stringify(httpUrl)}
     const payload=JSON.parse(readFileSync(0,'utf8'))
+    if(payload.executable){
+      const {chromium}=await import(resolveWorktreePackage('playwright'))
+      Object.defineProperty(chromium,'executablePath',{value:()=>payload.executable,configurable:true})
+    }
+    const {pairFixture}=await import(${JSON.stringify(mobileUrl)})
     const paired=await pairFixture(payload.options)
     writeFileSync(payload.outFile,JSON.stringify(paired),{mode:0o600})
   `
   const helperEnv={
-    ...stripFixtureServerSecrets(process.env),
+    ...stripFixtureServerSecrets(env),
     ...fixtureAttestationEnv(process.env,{includeServerRoots:true}),
   }
   const helper=spawnFixtureChild(process.execPath,['--input-type=module','-e',helperCode],{
@@ -51,7 +57,7 @@ async function runIsolatedPairFixture({root,options,state,isInterrupted}){
   state.pairingStartedBy=startedBy
   state.resolvePairingStop=()=>{pairingStopSettled({exited:false})}
   helper.stdin?.on('error',()=>{})
-  helper.stdin?.end(JSON.stringify({options,outFile:pairProofFile}))
+  helper.stdin?.end(JSON.stringify({options,outFile:pairProofFile,executable}))
   try{
     const outcome=await Promise.race([
       closed.then(exit=>({exited:true,exit})),
@@ -88,6 +94,7 @@ export async function launchWeb({
       ...(webSearch?{toolGroupVisibility:'collapsed',toolInputsVisibility:'hidden'}:{})}}})
     assert(config.ok(),`Configure the history fixture: ${await config.text()}`)
   }
+  const browserExecutable=process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()
   const storage=path.join(profile,'browser-storage.json')
   let uiOrigin=origin,paired
   if(webMobile||webSse7Tabs){
@@ -100,6 +107,8 @@ export async function launchWeb({
       paired=await runIsolatedPairFixture({
         root,
         options:{origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:webSse7Tabs?false:!sameOriginPairing},
+        env,
+        executable:browserExecutable,
         state,
         isInterrupted,
       })
@@ -126,8 +135,8 @@ export async function launchWeb({
   const args=webAndroid
     ?[uiOrigin,profile,project,ui,String(serverPid),String(process.pid)]
     :webSse7Tabs
-      ?['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
-      :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+      ?['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',browserExecutable]
+      :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webMobileDrawers?['--mobile-drawers']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',browserExecutable]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')

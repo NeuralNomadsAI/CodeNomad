@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {spawnFixtureChild,stopFixtureChild,stopFixtureHandle,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
-import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,createStreamRedactor,fixtureAttestationEnv,stripFixtureServerSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
 import {renameSync,writeFileSync} from 'node:fs'
 import {lstat,mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
@@ -1037,7 +1037,7 @@ try{
       cwd:root,
       windowsHide:true,
       stdio:['pipe','inherit','inherit'],
-      env:stripFixtureServerSecrets(process.env),
+      env:{...clientEnv,...fixtureAttestationEnv(process.env,{includeServerRoots:true})},
     })
     webState.clientStartedBy=new Date()
     const pendingClosedOnly=trackClientClose(client)
@@ -1052,7 +1052,11 @@ try{
     if(outcome.error)throw outcome.error
     if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
     assert(!outcome.timedOut,'Pending-open fixture exceeded 300000ms')
-    result=outcome.code
+    assert.equal(outcome.code,0,'Pending-open fixture helper must exit cleanly')
+    const pendingProof=JSON.parse(await readFile(path.join(profile,'pending-open-proof.json'),'utf8'))
+    assert(Array.isArray(pendingProof)&&pendingProof.length===4,'Pending-open fixture must publish all 4 case proofs')
+    assert.deepEqual(pendingProof.map(entry=>entry?.recordsRemaining),[0,0,0,0],'Pending-open proof must confirm zero remaining records')
+    result=0
   }else if(restoreState){
     if(restoreFileDrafts)await signIn(origin)
     if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
