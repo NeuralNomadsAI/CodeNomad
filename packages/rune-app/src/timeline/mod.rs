@@ -298,6 +298,7 @@ pub(crate) fn suspend(s: &mut State) {
     let t = owner(s);
     t.visible = false;
     t.live = false;
+    t.rail_bounds.0.set([0.0; 4]);
     t.keep_passage_deferred = None;
     t.previews.hide();
     cancel_scan(t);
@@ -391,6 +392,9 @@ pub(super) fn apply_width(s: &mut State, width: f32, tx: &mut rune::Tx) -> bool 
     let was_shown = t.rail_shown;
     t.width = width;
     let shown = demanded(s) && (owner(s).has_raw_markers || !owner(s).markers.is_empty());
+    if !shown {
+        owner(s).rail_bounds.0.set([0.0; 4]);
+    }
     if shown != was_shown {
         owner(s).rail_shown = shown;
         if owner(s).jump.align.is_none() {
@@ -437,7 +441,8 @@ pub(crate) fn rail_layout_pending(s: &State, history_w: f32) -> bool {
     {
         return true;
     }
-    if rail_should_mount && history_w >= container_w - 1.0 {
+    let rail_painted = t.rail_shown && t.rail_bounds.0.get()[2] > 1.0;
+    if rail_should_mount && !rail_painted && history_w >= container_w - 1.0 {
         return true;
     }
     !rail_should_mount && t.width.is_finite() && t.width > 0.0 && history_w < t.width - 1.0
@@ -581,6 +586,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         owner(s).previews.hide();
         let was_visible = std::mem::take(&mut owner(s).visible);
         let was_shown = std::mem::take(&mut owner(s).rail_shown);
+        owner(s).rail_bounds.0.set([0.0; 4]);
         if was_visible {
             navigation::clear_browse(s);
         }
@@ -698,6 +704,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         changed |= reproject(s);
     }
     let shown = owner(s).has_raw_markers || !owner(s).markers.is_empty();
+    if !shown {
+        owner(s).rail_bounds.0.set([0.0; 4]);
+    }
     let was_shown = std::mem::replace(&mut owner(s).rail_shown, shown);
     if shown != was_shown {
         changed = true;

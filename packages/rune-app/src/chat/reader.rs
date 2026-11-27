@@ -32,8 +32,10 @@ struct SyncUndo {
     phase: crate::Phase,
     trimmed_older: bool,
     trimmed_newer: bool,
+    saved_seq: u64,
+    saved_offset: f32,
+    saved_max: f32,
     age: u8,
-    defer_age: u8,
     last_clock: Option<f64>,
 }
 
@@ -167,6 +169,21 @@ impl Reader {
         self.gap
     }
 
+    pub(crate) fn has_sync_undo(&self) -> bool {
+        self.sync_undo.is_some()
+    }
+
+    pub(crate) fn sync_undo_anchor(&self) -> Option<(u64, f32, f32, Bookmark)> {
+        self.sync_undo.as_ref().map(|undo| {
+            (
+                undo.saved_seq,
+                undo.saved_offset,
+                undo.saved_max,
+                undo.bookmark.clone(),
+            )
+        })
+    }
+
     pub(crate) fn can_undo_sync(&self, wants_older: bool, wants_newer: bool) -> bool {
         self.sync_undo.as_ref().is_some_and(|undo| {
             (wants_older && undo.trimmed_older) || (wants_newer && undo.trimmed_newer)
@@ -184,6 +201,7 @@ impl Reader {
         phase: crate::Phase,
         trimmed_older: bool,
         trimmed_newer: bool,
+        saved_scroll: (u64, f32, f32),
         clock: Option<f64>,
     ) {
         let Some((generation, connection)) = self.last_taken else {
@@ -208,8 +226,10 @@ impl Reader {
             phase,
             trimmed_older,
             trimmed_newer,
+            saved_seq: saved_scroll.0,
+            saved_offset: saved_scroll.1,
+            saved_max: saved_scroll.2,
             age: 0,
-            defer_age: 0,
             last_clock: clock,
         });
     }
@@ -523,6 +543,10 @@ impl Reader {
     ) -> bool {
         if std::mem::take(&mut self.pending_scroll) {
             self.awaiting_manual_probe = ManualProbeWait::Idle;
+            let trimmed_laid_out = self
+                .sync_undo
+                .as_ref()
+                .is_some_and(|undo| undo.saved_seq != reading.scroll_seq());
             let had_manual_scroll = std::mem::take(&mut self.reconciled_manual_scroll);
             if self.user_scrolled_while_resuming(reading) {
                 if let Some(live) = reading.live_bookmark_fresh(history_bounds, self.gap) {
@@ -537,7 +561,7 @@ impl Reader {
                         self.resume_manual_seq = None;
                         *revision += 1;
                         reading.apply_restored(&self.bookmark, *revision, false);
-                        reading.arm_frame_restore_for(&self.bookmark, true);
+                        reading.arm_frame_restore_for(&self.bookmark, true, trimmed_laid_out);
                         reading.note_programmatic_scroll();
                         Reading::restore(&self.bookmark, tx);
                         return true;
@@ -555,7 +579,7 @@ impl Reader {
             let rescued = reading.rescue_target_if_evicted(messages, history_bounds);
             let restore = rescued.clone().unwrap_or_else(|| self.bookmark.clone());
             if rescued.is_none() {
-                reading.arm_frame_restore_for(&restore, had_manual_scroll);
+                reading.arm_frame_restore_for(&restore, had_manual_scroll, trimmed_laid_out);
             }
             reading.note_programmatic_scroll();
             Reading::restore(&restore, tx);
@@ -658,7 +682,7 @@ pub(crate) fn take_manual_probe_wait(s: &mut State, tx: &Tx) -> bool {
 }
 
 pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
-    let keep_probe = s.transcript_display.reading().has_pending_restore_probe();
+    let keep_probe = s.transcript_display.reading().keeps_sync_undo_alive();
     let conversation_visible = crate::timeline::conversation_shown(s);
     if let Some(reader) = &mut s.reader
         && let Some(undo) = &mut reader.sync_undo
@@ -666,8 +690,7 @@ pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
         if undo.last_clock == Some(clock) {
             return;
         }
-        if conversation_visible && reader.pending_scroll && undo.defer_age < 4 {
-            undo.defer_age += 1;
+        if conversation_visible && reader.pending_scroll {
             undo.last_clock = Some(clock);
             return;
         }
@@ -3641,6 +3664,7 @@ mod resume_tests {
             crate::Phase::Ready,
             true,
             false,
+            (0, 0.0, 0.0),
             Some(1.0),
         );
         s.messages = vec![msg("m-0"), msg("m-1")];
@@ -3651,7 +3675,7 @@ mod resume_tests {
         s.reader = Some(reader);
         s.transcript_display
             .reading_mut()
-            .arm_frame_restore_for(&Bookmark::Latest, false);
+            .arm_frame_restore_for(&Bookmark::Latest, false, false);
         assert!(s.transcript_display.reading().has_pending_restore_probe());
         expire_sync_undo(s, 1.0);
         assert_eq!(
@@ -3691,6 +3715,7 @@ mod resume_tests {
             crate::Phase::Ready,
             true,
             false,
+            (0, 0.0, 0.0),
             Some(2.0),
         );
         expire_sync_undo(s, 2.0);
@@ -3713,6 +3738,7 @@ mod resume_tests {
             crate::Phase::Ready,
             true,
             false,
+            (0, 0.0, 0.0),
             None,
         );
         expire_sync_undo(s, 3.0);
@@ -4035,6 +4061,7 @@ mod resume_tests {
             crate::Phase::Ready,
             true,
             false,
+            (0, 0.0, 0.0),
             Some(1.0),
         );
         reader.pending_scroll = true;
@@ -4045,46 +4072,42 @@ mod resume_tests {
         assert!(!s.transcript_display.reading().has_pending_restore_probe());
 
         // While renderer_ready is legitimately deferred (pending_scroll == true), distinct frames
-        // must keep SyncUndo alive rather than expiring it before renderer_ready arms frame_restore.
-        expire_sync_undo(s, 1.016);
-        assert!(
-            s.reader.as_ref().unwrap().sync_undo.is_some(),
-            "first deferred frame while pending_scroll is true must keep SyncUndo"
-        );
-        expire_sync_undo(s, 1.032);
-        assert!(
-            s.reader.as_ref().unwrap().sync_undo.is_some(),
-            "second deferred frame while pending_scroll is true must keep SyncUndo"
-        );
+        // must keep SyncUndo alive indefinitely (even past 4 frames) until renderer_ready runs.
+        for step in 1..=6 {
+            let clock = 1.0 + f64::from(step) * 0.016;
+            expire_sync_undo(s, clock);
+            assert!(
+                s.reader.as_ref().unwrap().sync_undo.is_some(),
+                "deferred frame {step} while pending_scroll is true must keep SyncUndo"
+            );
+        }
 
         // Once renderer_ready consumes pending_scroll and arms frame_restore, SyncUndo ages once
         // across the probe frame and clears on the following frame.
         s.reader.as_mut().unwrap().pending_scroll = false;
         s.transcript_display
             .reading_mut()
-            .arm_frame_restore_for(&Bookmark::Latest, false);
-        expire_sync_undo(s, 1.032);
+            .arm_frame_restore_for(&Bookmark::Latest, false, false);
+        expire_sync_undo(s, 1.096);
         assert_eq!(
             s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
             0,
             "same-frame poll after renderer_ready must not age SyncUndo"
         );
-        expire_sync_undo(s, 1.048);
+        expire_sync_undo(s, 1.112);
         assert_eq!(
             s.reader.as_ref().unwrap().sync_undo.as_ref().unwrap().age,
             1,
             "probe frame must keep SyncUndo alive at age 1"
         );
-        expire_sync_undo(s, 1.064);
+        expire_sync_undo(s, 1.128);
         assert!(
             s.reader.as_ref().unwrap().sync_undo.is_none(),
             "frame after probe must clear SyncUndo"
         );
 
-        // Even when renderer_ready IS legitimately deferred (e.g. rail mounting on a 320 -> 844 px
-        // rotation during the same frame as trimmed ReaderSync), a consumption-frame wheel aiming
-        // outside the trimmed page must roll back before renderer_ready runs and accumulate
-        // multiple same-frame wheel events.
+        // Exercise the deferred pending_scroll fallback AFTER the trimmed page has already laid out
+        // with zero overflow (cur.max == 0.0) while rail_layout_pending still defers renderer_ready.
         let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
             range
                 .map(|i| {
@@ -4102,41 +4125,186 @@ mod resume_tests {
                 })
                 .collect()
         };
-        let mut s2 = init();
-        s2.phase = Phase::Ready;
-        s2.messages = make_rows("Full40", 0..40);
-        let (reader2, lane2) = Reader::open();
-        s2.reader = Some(reader2);
-        let mut rt2 = Runtime::new(s2, crate::view, (320.0, 420.0), Env::new(false, 1.0));
-        rt2.poll = Some(crate::poll);
-        for _ in 0..20 {
+        let run_deferred_trimmed_wheel = |deltas: &[f32]| -> (usize, Option<Target>) {
+            let mut s2 = init();
+            s2.phase = Phase::Ready;
+            s2.messages = make_rows("Full40", 0..40);
+            let (reader2, lane2) = Reader::open();
+            s2.reader = Some(reader2);
+            let mut rt2 = Runtime::new(s2, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+            rt2.poll = Some(crate::poll);
+            for _ in 0..20 {
+                rt2.frame(0.02);
+            }
+            rt2.update(|_, tx| {
+                tx.instant();
+                tx.scroll_key_to("defer-20", 0.0);
+            });
+            for _ in 0..20 {
+                rt2.frame(0.02);
+            }
+            rt2.update(|s, tx| {
+                suspend(s);
+                resume(s, tx);
+            });
+            let g2 = rt2.state.reader.as_ref().unwrap().generation;
+            for _ in 0..10 {
+                rt2.frame(0.02);
+            }
+            let saved_seq = rt2.state.transcript_display.reading().scroll_seq();
+            // Resize 320 -> 844 px on the same frame ReaderSync is first deferred so that on the
+            // next frame poll installs trimmed [18..22] (4 short rows, zero overflow at 844x390)
+            // while wait_rail_layout keeps pending_scroll == true and Rune renders [18..22].
+            lane2
+                .events
+                .try_send((
+                    g2,
+                    0,
+                    Event::ReaderSync {
+                        page: crate::history::Page {
+                            rows: make_rows("Trim20", 20..21),
+                            older: Some(serde_json::json!("older-defer")),
+                            newer: Some(serde_json::json!("newer-defer")),
+                            running: false,
+                            user_file_references: false,
+                        },
+                        version: 1,
+                    },
+                ))
+                .unwrap();
+            rt2.set_viewport((844.0, 390.0), 1.0);
             rt2.frame(0.02);
+            assert!(rt2.state.reader.as_ref().unwrap().has_deferred_sync());
+            // Next frame consumes ReaderSync, installs [20..21], defers renderer_ready on rail
+            // layout, and lays out the trimmed page (cur.seq > saved_seq, cur.max == 0.0).
+            rt2.frame(0.02);
+            assert!(
+                rt2.state.reader.as_ref().unwrap().has_pending_scroll(),
+                "rail layout must still defer renderer_ready after trimmed page installs"
+            );
+            assert!(
+                rt2.state.reader.as_ref().unwrap().has_sync_undo(),
+                "SyncUndo must remain armed while renderer_ready is deferred"
+            );
+            let (cur_seq, _cur_off, cur_max) =
+                rt2.state.transcript_display.reading().scroll_snapshot();
+            assert!(
+                cur_seq > saved_seq,
+                "trimmed page must have laid out before wheeling (cur_seq={cur_seq}, saved_seq={saved_seq})"
+            );
+            assert!(
+                cur_max <= 0.5,
+                "trimmed 1-row page at 844x390 must have no overflow (cur_max={cur_max})"
+            );
+            let h_rect = rt2
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+            for &dy in deltas {
+                rt2.wheel_event(rune::WheelEvent::new(0.0, dy).at(wx, wy));
+            }
+            for _ in 0..30 {
+                rt2.frame(0.02);
+            }
+            let hist = rt2
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let dest = rt2
+                .elements()
+                .into_iter()
+                .filter_map(|e| {
+                    let k = e.key?;
+                    k.starts_with("defer-").then_some((k, e.rect))
+                })
+                .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+                .map(|(k, _)| k)
+                .expect("visible row after deferred trimmed-layout wheel");
+            let dest_idx: usize = dest.strip_prefix("defer-").unwrap().parse().unwrap();
+            (dest_idx, lane2.demand.current().target)
+        };
+
+        let (single_idx, single_target) = run_deferred_trimmed_wheel(&[240.0]);
+        let (double_idx, double_target) = run_deferred_trimmed_wheel(&[240.0, 240.0]);
+        assert!(
+            single_idx < 20 && single_idx > 0,
+            "single upward wheel after zero-overflow trimmed layout must roll back in pre-sync bookmark coordinates: got defer-{single_idx:02}"
+        );
+        assert!(
+            double_idx < single_idx && double_idx > 0,
+            "two same-frame upward wheels must both accumulate from pre-sync bookmark without jumping to top: single=defer-{single_idx:02}, double=defer-{double_idx:02}"
+        );
+        assert_eq!(
+            single_target,
+            Some(Target::Around(format!("defer-{single_idx:02}"))),
+            "single rolled-back wheel must re-request Target::Around(dest)"
+        );
+        assert_eq!(
+            double_target,
+            Some(Target::Around(format!("defer-{double_idx:02}"))),
+            "accumulated rolled-back wheel must re-request Target::Around(dest)"
+        );
+    }
+
+    #[test]
+    fn deferred_direction_reversal_gesture_still_triggers_rollback() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rev-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full36", 0..36);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
         }
-        rt2.update(|_, tx| {
+        rt.update(|_, tx| {
             tx.instant();
-            tx.scroll_key_to("defer-20", 0.0);
+            tx.scroll_key_to("rev-20", 0.0);
         });
         for _ in 0..20 {
-            rt2.frame(0.02);
+            rt.frame(0.02);
         }
-        rt2.update(|s, tx| {
+        rt.update(|s, tx| {
             suspend(s);
             resume(s, tx);
         });
-        let g2 = rt2.state.reader.as_ref().unwrap().generation;
+        let g = rt.state.reader.as_ref().unwrap().generation;
         for _ in 0..10 {
-            rt2.frame(0.02);
+            rt.frame(0.02);
         }
-        lane2
-            .events
+        // Older-side-only trim (newer: None) while rail mount defers renderer_ready.
+        lane.events
             .try_send((
-                g2,
+                g,
                 0,
                 Event::ReaderSync {
                     page: crate::history::Page {
-                        rows: make_rows("Trim16_26", 16..26),
-                        older: Some(serde_json::json!("older-defer")),
-                        newer: Some(serde_json::json!("newer-defer")),
+                        rows: make_rows("Trim16_36", 16..36),
+                        older: Some(serde_json::json!("older-rev")),
+                        newer: None,
                         running: false,
                         user_file_references: false,
                     },
@@ -4144,48 +4312,183 @@ mod resume_tests {
                 },
             ))
             .unwrap();
-        rt2.frame(0.02);
-        assert!(rt2.state.reader.as_ref().unwrap().has_deferred_sync());
-        // Grow from 320 -> 844 px so rail_layout_pending legitimately defers renderer_ready on
-        // the consumption frame while two upward wheel events arrive on the same frame.
-        rt2.set_viewport((844.0, 390.0), 1.0);
-        let h_rect = rt2
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
             .elements()
             .into_iter()
             .find(|e| e.key.as_deref() == Some("history"))
             .unwrap()
             .rect;
         let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
-        rt2.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
-        rt2.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        // Single vertical gesture: non-trimmed downward delta first, then upward reversal past rev-16.
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, -80.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 640.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Moved),
+        );
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, 0.0)
+                .at(wx, wy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Ended),
+        );
         for _ in 0..30 {
-            rt2.frame(0.02);
+            rt.frame(0.02);
         }
-        let hist = rt2
+        let hist = rt
             .elements()
             .into_iter()
             .find(|e| e.key.as_deref() == Some("history"))
             .unwrap()
             .rect;
-        let dest = rt2
+        let dest = rt
             .elements()
             .into_iter()
             .filter_map(|e| {
                 let k = e.key?;
-                k.starts_with("defer-").then_some((k, e.rect))
+                k.starts_with("rev-").then_some((k, e.rect))
             })
             .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
             .map(|(k, _)| k)
-            .expect("visible row after deferred consumption-frame wheel");
-        let dest_idx: usize = dest.strip_prefix("defer-").unwrap().parse().unwrap();
+            .expect("visible row after direction-reversal gesture");
+        let dest_idx: usize = dest.strip_prefix("rev-").unwrap().parse().unwrap();
         assert!(
             dest_idx < 16,
-            "wheel during legitimately deferred renderer_ready must still roll back trimmed [16..26] and reach < defer-16: got {dest}"
+            "direction reversal in one vertical gesture must keep ownership and roll back < rev-16: got {dest}"
         );
         assert_eq!(
-            lane2.demand.current().target,
+            lane.demand.current().target,
             Some(Target::Around(dest)),
-            "rolled-back deferred wheel must re-request Target::Around(dest)"
+            "direction-reversal rollback must re-request Target::Around(dest)"
+        );
+    }
+
+    #[test]
+    fn widening_mounted_rail_does_not_stall_renderer_ready_or_drop_sync_undo() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("widen-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full40", 0..40);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (800.0, 390.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.presented("timeline").is_some(),
+            "rail must be mounted at 800 px"
+        );
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("widen-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_26", 16..26),
+                        older: Some(serde_json::json!("older-widen")),
+                        newer: Some(serde_json::json!("newer-widen")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        // Widen by > 40 px/frame across 6 consecutive frames while the rail is already mounted;
+        // rail_layout_pending must stay false so renderer_ready settles immediately on consumption.
+        rt.set_viewport((860.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.set_viewport((920.0, 390.0), 1.0);
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for step in 0..6 {
+            rt.set_viewport((980.0 + step as f32 * 60.0, 390.0), 1.0);
+            rt.frame(0.02);
+            let hw = rt.state.tool_diff_preferences.history_width();
+            assert!(
+                !crate::timeline::rail_layout_pending(&rt.state, hw),
+                "widening an already-mounted rail must not report rail_layout_pending (step {step}, hw={hw})"
+            );
+        }
+        for _ in 0..24 {
+            rt.frame(0.02);
+        }
+        let hist = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let dest = rt
+            .elements()
+            .into_iter()
+            .filter_map(|e| {
+                let k = e.key?;
+                k.starts_with("widen-").then_some((k, e.rect))
+            })
+            .find(|(_, r)| r[3] > 0.0 && r[1] <= hist[1] + 0.5 && r[1] + r[3] > hist[1] + 0.5)
+            .map(|(k, _)| k)
+            .expect("visible row after widening mounted rail + upward wheel");
+        let dest_idx: usize = dest.strip_prefix("widen-").unwrap().parse().unwrap();
+        assert!(
+            dest_idx < 16,
+            "widening mounted rail must keep SyncUndo working and reach < widen-16: got {dest}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(dest)),
+            "rollback while widening mounted rail must re-request Target::Around(dest)"
         );
     }
 }

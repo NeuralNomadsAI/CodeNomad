@@ -365,6 +365,7 @@ fn drain_chat(
                 } else {
                     None
                 };
+                let saved_scroll = s.transcript_display.reading().scroll_snapshot();
                 if let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                     if let Some((
@@ -387,6 +388,7 @@ fn drain_chat(
                             prev_phase,
                             trimmed_older,
                             trimmed_newer,
+                            saved_scroll,
                             clock,
                         );
                     }
