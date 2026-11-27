@@ -363,7 +363,14 @@ struct CustomEntry {
     value: String,
 }
 
+fn exceeds_custom_input_budget(text: &str) -> bool {
+    text.len() > 80_000 || text.encode_utf16().count() > 20_000
+}
+
 fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
+    if text.is_empty() || exceeds_custom_input_budget(text) {
+        return Vec::new();
+    }
     let bytes = text.as_bytes();
     let mut entries = Vec::new();
     let mut pos = 0;
@@ -509,7 +516,7 @@ fn strip_leaked_defaults(
         next.preserved_custom.retain(|item| !blocked(item));
         next.preserved_custom_selected.retain(|item| !blocked(item));
         if let Some(items) = &mut next.multiselect_order {
-            items.retain(|item| !blocked(item));
+            items.retain(|entry| !blocked(&entry.value));
         }
         if !next.custom.text.is_empty()
             && remove_promoted_lines(&mut next.custom, |trimmed| blocked(trimmed))
@@ -552,6 +559,19 @@ fn collect_hidden_provenance(draft: &mut Draft) -> BTreeSet<String> {
     provenance
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MultiselectOrderSource {
+    Selected,
+    PreservedCustom,
+    CustomText,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiselectOrderEntry {
+    pub value: String,
+    pub source: MultiselectOrderSource,
+}
+
 pub struct Draft {
     pub edit: TextEdit,
     pub custom: TextEdit,
@@ -561,7 +581,7 @@ pub struct Draft {
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
-    pub multiselect_order: Option<Vec<String>>,
+    pub multiselect_order: Option<Vec<MultiselectOrderEntry>>,
     pub oversized_multiselect_default: bool,
     pub has_string_value: bool,
     pub hidden_multiselect: Option<Vec<String>>,
@@ -610,10 +630,7 @@ impl Draft {
     /// Parse non-empty custom multiselect entries once (bailing out in O(1) when the draft
     /// exceeds the 20,000 UTF-16 code-unit limit) so rendering can test all checkboxes in O(1).
     pub fn custom_multiselect_values(&self) -> HashSet<String> {
-        if self.custom.text.is_empty()
-            || self.custom.text.len() > 80_000
-            || self.custom.text.encode_utf16().count() > 20_000
-        {
+        if self.custom.text.is_empty() || exceeds_custom_input_budget(&self.custom.text) {
             return HashSet::new();
         }
         parse_custom_entries(&self.custom.text)
@@ -627,8 +644,7 @@ impl Draft {
         let in_selected = self.selected.contains(value);
         let in_custom = !value.is_empty()
             && !self.custom.text.is_empty()
-            && self.custom.text.len() <= 80_000
-            && self.custom.text.encode_utf16().count() <= 20_000
+            && !exceeds_custom_input_budget(&self.custom.text)
             && parse_custom_entries(&self.custom.text)
                 .iter()
                 .any(|entry| !entry.value.is_empty() && entry.value == value);
@@ -647,13 +663,16 @@ impl Draft {
                 }
             }
             if let Some(order) = &mut self.multiselect_order {
-                order.retain(|item| item != value);
+                order.retain(|entry| entry.value != value);
             }
         } else {
             self.selected.insert(value.into());
             self.multiselect_order
                 .get_or_insert_with(Vec::new)
-                .push(value.into());
+                .push(MultiselectOrderEntry {
+                    value: value.into(),
+                    source: MultiselectOrderSource::Selected,
+                });
         }
         self.dirty = true;
     }
@@ -661,13 +680,16 @@ impl Draft {
         self.oversized_multiselect_default = false;
         if self.preserved_custom_selected.remove(value) {
             if let Some(order) = &mut self.multiselect_order {
-                order.retain(|item| item != value);
+                order.retain(|entry| entry.value != value);
             }
         } else {
             self.preserved_custom_selected.insert(value.into());
             self.multiselect_order
                 .get_or_insert_with(Vec::new)
-                .push(value.into());
+                .push(MultiselectOrderEntry {
+                    value: value.into(),
+                    source: MultiselectOrderSource::PreservedCustom,
+                });
         }
         self.dirty = true;
     }
@@ -698,8 +720,7 @@ impl Draft {
         self.custom_was_focused = false;
         if self.kind != Some(FieldKind::Multiselect)
             || self.custom.text.is_empty()
-            || self.custom.text.len() > 80_000
-            || self.custom.text.encode_utf16().count() > 20_000
+            || exceeds_custom_input_budget(&self.custom.text)
         {
             return false;
         }
@@ -722,27 +743,39 @@ impl Draft {
             return false;
         }
         // Snapshot the exact pre-blur wire sequence (`selected` / `preserved_custom_selected` in
-        // their existing order, followed by the user-typed custom entries in exact typed order) so
-        // committing on blur never reorders `qa,prod` into `["prod","qa"]`.
+        // their existing order, followed by the user-typed custom entries in exact typed order)
+        // while tagging each occurrence's source so later text edits only replace `CustomText`
+        // occurrences and never leave ghost duplicates from promoted checkboxes.
         let mut exact_order = Vec::new();
         let mut emitted_selected = HashSet::new();
         let mut emitted_preserved = HashSet::new();
         if let Some(prev_order) = &self.multiselect_order {
-            for item in prev_order {
-                if self.selected.contains(item) {
-                    emitted_selected.insert(item.clone());
-                    exact_order.push(item.clone());
-                } else if self.preserved_custom_selected.contains(item)
-                    && !options.iter().any(|o| o.value == item.as_str())
-                {
-                    emitted_preserved.insert(item.clone());
-                    exact_order.push(item.clone());
+            for entry in prev_order {
+                match entry.source {
+                    MultiselectOrderSource::Selected => {
+                        if self.selected.contains(&entry.value) {
+                            emitted_selected.insert(entry.value.clone());
+                            exact_order.push(entry.clone());
+                        }
+                    }
+                    MultiselectOrderSource::PreservedCustom => {
+                        if self.preserved_custom_selected.contains(&entry.value)
+                            && !options.iter().any(|o| o.value == entry.value.as_str())
+                        {
+                            emitted_preserved.insert(entry.value.clone());
+                            exact_order.push(entry.clone());
+                        }
+                    }
+                    MultiselectOrderSource::CustomText => {}
                 }
             }
         }
         for item in &self.selected {
             if !emitted_selected.contains(item) {
-                exact_order.push(item.clone());
+                exact_order.push(MultiselectOrderEntry {
+                    value: item.clone(),
+                    source: MultiselectOrderSource::Selected,
+                });
             }
         }
         for item in &self.preserved_custom {
@@ -750,10 +783,21 @@ impl Draft {
                 && !options.iter().any(|o| o.value == item.as_str())
                 && !emitted_preserved.contains(item)
             {
-                exact_order.push(item.clone());
+                exact_order.push(MultiselectOrderEntry {
+                    value: item.clone(),
+                    source: MultiselectOrderSource::PreservedCustom,
+                });
             }
         }
-        exact_order.extend(parsed);
+        let mut promote_once: HashSet<String> = to_promote.iter().cloned().collect();
+        for value in parsed {
+            let source = if promote_once.remove(&value) {
+                MultiselectOrderSource::Selected
+            } else {
+                MultiselectOrderSource::CustomText
+            };
+            exact_order.push(MultiselectOrderEntry { value, source });
+        }
 
         let mut remaining_removals: HashSet<String> = to_promote.iter().cloned().collect();
         remove_promoted_lines(&mut self.custom, |decoded| {
@@ -896,18 +940,28 @@ fn fresh_draft(field: &Value) -> Draft {
                     if is_allowed {
                         d.selected.insert(raw.to_string());
                         d.prior_choice_values.insert(raw.to_string());
-                        raw_default.push(raw.to_string());
+                        raw_default.push(MultiselectOrderEntry {
+                            value: raw.to_string(),
+                            source: MultiselectOrderSource::Selected,
+                        });
                     } else if is_any_declared {
                         // Declared outside the 64-option render cap: never hydrate into visible custom text.
                         d.prior_choice_values.insert(raw.to_string());
                     } else if allow_custom {
-                        raw_default.push(raw.to_string());
                         if !is_line_editable_custom(raw) {
+                            raw_default.push(MultiselectOrderEntry {
+                                value: raw.to_string(),
+                                source: MultiselectOrderSource::PreservedCustom,
+                            });
                             if seen_preserved.insert(raw.to_string()) {
                                 d.preserved_custom.push(raw.to_string());
                                 d.preserved_custom_selected.insert(raw.to_string());
                             }
                         } else {
+                            raw_default.push(MultiselectOrderEntry {
+                                value: raw.to_string(),
+                                source: MultiselectOrderSource::CustomText,
+                            });
                             editable_custom.push(raw);
                         }
                     }
@@ -1142,44 +1196,82 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 }
                 draft.preserved_custom = remaining_preserved;
                 draft.preserved_custom_selected = remaining_preserved_selected;
+                let custom_oversized = exceeds_custom_input_budget(&draft.custom.text);
+                let mut newly_selected_counts: HashMap<String, usize> = HashMap::new();
                 if !draft.custom.text.is_empty() {
-                    // Promote newly declared custom lines first, then discard any remaining
-                    // custom text when custom input is disabled.
-                    let mut newly_selected = Vec::new();
-                    let was_dirty = draft.is_dirty();
-                    let was_custom_edited = draft.is_custom_edited();
-                    if remove_promoted_lines(&mut draft.custom, |trimmed| {
-                        if is_newly_declared(trimmed) {
-                            newly_selected.push(trimmed.to_string());
-                            true
-                        } else {
-                            false
+                    // Promote newly declared custom lines first (skipping oversized drafts so
+                    // refresh never allocates unbounded entries and retains the text for the user
+                    // to trim), then discard any remaining custom text when custom input is disabled.
+                    if !custom_oversized {
+                        let mut newly_selected = Vec::new();
+                        let was_dirty = draft.is_dirty();
+                        let was_custom_edited = draft.is_custom_edited();
+                        if remove_promoted_lines(&mut draft.custom, |trimmed| {
+                            if is_newly_declared(trimmed) {
+                                newly_selected.push(trimmed.to_string());
+                                true
+                            } else {
+                                false
+                            }
+                        }) {
+                            draft.custom_baseline = draft.custom.text.clone();
+                            if was_dirty {
+                                draft.text_dirty.set(true);
+                            }
+                            if was_custom_edited {
+                                draft.custom_dirty.set(true);
+                            }
                         }
-                    }) {
-                        draft.custom_baseline = draft.custom.text.clone();
-                        if was_dirty {
-                            draft.text_dirty.set(true);
-                        }
-                        if was_custom_edited {
-                            draft.custom_dirty.set(true);
+                        for item in newly_selected {
+                            *newly_selected_counts.entry(item.clone()).or_insert(0) += 1;
+                            draft.selected.insert(item);
                         }
                     }
-                    draft.selected.extend(newly_selected);
                     if !allow_custom && !draft.custom.text.is_empty() {
                         draft.custom = TextEdit::new("");
                         draft.custom_baseline.clear();
                     }
                 }
                 if let Some(raw_items) = &mut draft.multiselect_order {
-                    let custom_entries: HashSet<String> = parse_custom_entries(&draft.custom.text)
-                        .into_iter()
-                        .map(|e| e.value)
-                        .collect();
-                    raw_items.retain(|item| {
-                        draft.selected.contains(item)
-                            || draft.preserved_custom_selected.contains(item)
-                            || (allow_custom && custom_entries.contains(item))
-                    });
+                    if !newly_selected_counts.is_empty() {
+                        for entry in raw_items.iter_mut() {
+                            if entry.source == MultiselectOrderSource::CustomText
+                                && let Some(rem) = newly_selected_counts.get_mut(&entry.value)
+                                && *rem > 0
+                            {
+                                *rem -= 1;
+                                entry.source = MultiselectOrderSource::Selected;
+                            }
+                        }
+                    }
+                    if custom_oversized {
+                        raw_items.retain(|entry| match entry.source {
+                            MultiselectOrderSource::Selected => {
+                                draft.selected.contains(&entry.value)
+                            }
+                            MultiselectOrderSource::PreservedCustom => {
+                                draft.preserved_custom_selected.contains(&entry.value)
+                            }
+                            MultiselectOrderSource::CustomText => allow_custom,
+                        });
+                    } else {
+                        let custom_entries: HashSet<String> =
+                            parse_custom_entries(&draft.custom.text)
+                                .into_iter()
+                                .map(|e| e.value)
+                                .collect();
+                        raw_items.retain(|entry| match entry.source {
+                            MultiselectOrderSource::Selected => {
+                                draft.selected.contains(&entry.value)
+                            }
+                            MultiselectOrderSource::PreservedCustom => {
+                                draft.preserved_custom_selected.contains(&entry.value)
+                            }
+                            MultiselectOrderSource::CustomText => {
+                                allow_custom && custom_entries.contains(&entry.value)
+                            }
+                        });
+                    }
                 }
             } else if kind == FieldKind::StringOptions {
                 draft.selected.clear();
@@ -1655,33 +1747,33 @@ fn validate_budgeted_with_deferred(
             let mut emitted_selected: HashSet<String> = HashSet::new();
             let mut emitted_preserved: HashSet<String> = HashSet::new();
             if let Some(order) = &d.multiselect_order {
-                for item in order {
-                    if d.selected.contains(item) {
-                        if emitted_selected.insert(item.clone()) {
-                            values.push(item.clone());
-                        } else if allow_custom
-                            && !custom_edited
-                            && let Some(rem) = custom_counts.get_mut(item.as_str())
-                            && *rem > 0
-                        {
-                            *rem -= 1;
-                            values.push(item.clone());
-                        } else {
-                            values.push(item.clone());
+                for entry in order {
+                    match entry.source {
+                        MultiselectOrderSource::Selected => {
+                            if d.selected.contains(&entry.value) {
+                                emitted_selected.insert(entry.value.clone());
+                                values.push(entry.value.clone());
+                            }
                         }
-                    } else if allow_custom
-                        && d.preserved_custom_selected.contains(item)
-                        && !is_declared(item)
-                    {
-                        emitted_preserved.insert(item.clone());
-                        values.push(item.clone());
-                    } else if allow_custom
-                        && !custom_edited
-                        && let Some(rem) = custom_counts.get_mut(item.as_str())
-                        && *rem > 0
-                    {
-                        *rem -= 1;
-                        values.push(item.clone());
+                        MultiselectOrderSource::PreservedCustom => {
+                            if allow_custom
+                                && d.preserved_custom_selected.contains(&entry.value)
+                                && !is_declared(&entry.value)
+                            {
+                                emitted_preserved.insert(entry.value.clone());
+                                values.push(entry.value.clone());
+                            }
+                        }
+                        MultiselectOrderSource::CustomText => {
+                            if allow_custom
+                                && !custom_edited
+                                && let Some(rem) = custom_counts.get_mut(entry.value.as_str())
+                                && *rem > 0
+                            {
+                                *rem -= 1;
+                                values.push(entry.value.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -1704,15 +1796,12 @@ fn validate_budgeted_with_deferred(
                     // multiplicity across checked checkboxes and custom input entries.
                     values.extend(parsed_custom.iter().cloned());
                 } else {
-                    let mut emitted_new_custom: HashSet<&str> = HashSet::new();
                     for item in &parsed_custom {
                         if let Some(rem) = custom_counts.get_mut(item.as_str())
                             && *rem > 0
                         {
                             *rem -= 1;
-                            if emitted_new_custom.insert(item.as_str()) {
-                                values.push(item.clone());
-                            }
+                            values.push(item.clone());
                         }
                     }
                 }

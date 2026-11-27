@@ -313,17 +313,19 @@ pub struct Ui {
 }
 fn extract_field_key_from_message(message: &str, valid_keys: &[&str]) -> Option<String> {
     // OpenCode form validation messages end with `: <field_key>` (e.g.
-    // `Form field does not match pattern: code`). Match only the explicit suffix token,
-    // never arbitrary English prose words earlier in the sentence.
-    let tail = message.rsplit_once(": ")?.1.trim();
-    let candidate = tail
-        .trim_end_matches('.')
-        .trim_matches(|c| matches!(c, '"' | '\'' | '`'))
-        .trim();
-    valid_keys
-        .iter()
-        .find(|&&k| k == candidate)
-        .map(|k| (*k).to_string())
+    // `Form field does not match pattern: code` or `...: code.`). Match only the exact key
+    // after `: ` without stripping punctuation or whitespace.
+    let mut search = message;
+    let mut matched: Option<&str> = None;
+    while let Some((_, tail)) = search.split_once(": ") {
+        if let Some(&key) = valid_keys.iter().find(|&&k| k == tail)
+            && matched.is_none_or(|prev| key.len() > prev.len())
+        {
+            matched = Some(key);
+        }
+        search = tail;
+    }
+    matched.map(str::to_string)
 }
 
 fn collect_structured_field_keys(
@@ -1032,8 +1034,11 @@ impl Ui {
     pub fn forms_locked(&self) -> bool {
         self.scope_missing || self.forms_lane.locked(self.online)
     }
+    /// True only while a form reply/cancel POST is actively in flight. Draft editing remains
+    /// available once the POST finishes even if post-reply reconciliation is still pending, while
+    /// Answer/Cancel stay gated by `forms_locked()`.
     pub fn forms_mutating(&self) -> bool {
-        self.forms_lane.mutation_pending()
+        self.forms_lane.busy
     }
     pub fn ids(&self) -> Vec<String> {
         self.permissions
@@ -1278,8 +1283,6 @@ impl Ui {
                                             .into_iter()
                                             .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
                                             .collect()
-                                    } else if deferred_fields.len() == 1 {
-                                        deferred_fields
                                     } else {
                                         Vec::new()
                                     };

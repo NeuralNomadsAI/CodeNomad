@@ -363,7 +363,8 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
                 ""
             );
 
-            // Reconciliation keeps controls locked after the in-flight request finishes.
+            // Reconciliation after the POST finishes keeps Answer/Cancel gated on fresh request
+            // authority while leaving the draft fields editable.
             rt.update(|s, _| {
                 let a = s.agent.as_mut().unwrap();
                 a.forms_lane.busy = false;
@@ -372,10 +373,18 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             rt.frame(1.0 / 60.0);
             let tree = rt.accessibility_json();
             assert!(has_state(
-                find_node(&tree, "bool-raw_confirm_key-false").unwrap(),
+                find_node(&tree, "answer-question").unwrap(),
                 "disabled"
             ));
             assert!(has_state(
+                find_node(&tree, "cancel-question").unwrap(),
+                "disabled"
+            ));
+            assert!(!has_state(
+                find_node(&tree, "bool-raw_confirm_key-false").unwrap(),
+                "disabled"
+            ));
+            assert!(!has_state(
                 find_input(&tree, "field-raw_untitled_key"),
                 "disabled"
             ));
@@ -4553,7 +4562,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         // 4. Desktop DST disambiguation matches ECMAScript Date (`America/New_York`):
         // spring-forward gap `2026-03-08T02:30` -> `2026-03-08T07:30:00.000Z` (03:30 EDT),
         // fall-back overlap `2026-11-01T01:30` -> `2026-11-01T05:30:00.000Z` (earlier EDT instant).
-        let ny_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+        let ny_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32, i32)> {
             // 2026 America/New_York DST:
             // starts 2026-03-08 07:00:00Z (1772953200), ends 2026-11-01 06:00:00Z (1793512800)
             let offset = if (1_772_953_200..1_793_512_800).contains(&utc_secs) {
@@ -4580,6 +4589,7 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
                 d as i32,
                 (sod / 3600) as i32,
                 ((sod % 3600) / 60) as i32,
+                (sod % 60) as i32,
             ))
         };
         assert_eq!(
@@ -5466,7 +5476,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
 
         // 2. Unpadded local date-time `2026-11-26 4:30` normalizes to UTC `2026-11-26T09:30:00.000Z`
         // under US Eastern time (-05:00) instead of falling back to the raw timezone-less string.
-        let est_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+        let est_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32, i32)> {
             let local = utc_secs - 5 * 3600;
             let days = local.div_euclid(86_400);
             let sod = local.rem_euclid(86_400);
@@ -5486,6 +5496,7 @@ fn checkbox_custom_dedup_unpadded_local_dt_normalization_literal_quotes_optional
                 d as i32,
                 (sod / 3600) as i32,
                 ((sod % 3600) / 60) as i32,
+                (sod % 60) as i32,
             ))
         };
         assert_eq!(
@@ -6086,7 +6097,7 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         results2_tx
             .try_send(crate::agent::Result::ActForm(
                 crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
-                    "{\"error\":\"invalid field token\"}".into(),
+                    "{\"error\":\"Form field does not match pattern: token\"}".into(),
                 )),
                 Some(vec![deferred_form.clone()]),
                 def_gen,
@@ -6281,7 +6292,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         // 3. Signed 6-digit extended ISO local date-time (`+010000-01-01T00:00`) normalizes to
         // `+010000-01-01T00:00:00.000Z` on desktop just like web, and out-of-range local
         // date-times fail validation rather than sending raw timezone-less strings.
-        let utc_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+        let utc_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32, i32)> {
             let days = utc_secs.div_euclid(86_400);
             let sod = utc_secs.rem_euclid(86_400);
             let z = days + 719_468;
@@ -6300,6 +6311,7 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
                 d as i32,
                 (sod / 3600) as i32,
                 ((sod % 3600) / 60) as i32,
+                (sod % 60) as i32,
             ))
         };
         assert_eq!(
@@ -6675,6 +6687,363 @@ fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_
                     .is_some_and(|text| text.contains("Fournisseur de recherche web"))
             }),
             "recognized Web Search consent form must localize its visible heading"
+        );
+    });
+}
+
+#[test]
+fn promoted_duplicate_replacement_bounded_nullable_repeat_escaped_capture_names_exact_dotted_key_editable_reconciliation_lmt_seconds_and_oversized_refresh_guard()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Typing `prod,prod` in a custom multiselect (`maxItems: 2`), blurring to promote the
+        // first `prod`, and replacing the remaining custom text `prod` with `qa` submits
+        // `["prod", "qa"]` without leaving a ghost duplicate `prod`.
+        let dup_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r26-dup".into(),
+            title: "Targets".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "maxItems": 2,
+                "options": [{"value": "prod", "label": "Production"}]
+            })],
+        };
+        let (mut dup_state, _duprx) = state_with_form(dup_form.clone());
+        dup_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r26-dup".into(), "targets".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "prod,prod".into();
+        let mut drt = Runtime::new(dup_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        drt.frame(0.0);
+        // Simulate focus then blur on custom multiselect editor.
+        drt.update(|s, _| {
+            let scope = s.input_scope.clone();
+            let _ = s.editor(
+                &scope,
+                crate::screen::Editor::Custom(("form-r26-dup".into(), "targets".into())),
+            );
+            s.agent.as_mut().unwrap().reconcile_custom_focus();
+        });
+        {
+            let a = drt.state.agent.as_ref().unwrap();
+            let d = &a.drafts[&("form-r26-dup".into(), "targets".into())];
+            assert!(d.selected.contains("prod"));
+            assert_eq!(d.custom.text, "prod");
+            assert_eq!(
+                agent_forms::answer(&dup_form, &a.drafts).unwrap()["targets"],
+                json!(["prod", "prod"])
+            );
+        }
+        // Now replace the remaining text `prod` with `qa`.
+        drt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r26-dup".into(), "targets".into()))
+                .unwrap()
+                .custom_editor()
+                .text = "qa".into();
+        });
+        drt.frame(1.0 / 60.0);
+        assert_eq!(
+            agent_forms::answer(&dup_form, &drt.state.agent.as_ref().unwrap().drafts).unwrap()["targets"],
+            json!(["prod", "qa"]),
+            "replacing remaining custom text after blur promotion must not keep a ghost duplicate"
+        );
+        assert!(
+            !has_state(
+                find_node(&drt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must stay enabled for 2 items (`[\"prod\", \"qa\"]`) with maxItems: 2"
+        );
+
+        // 2. Bounded nullable repeat `^(?=(a?){1,2})\1$` matches `"a"` (ECMAScript zero-progress guard
+        // prevents optional second iteration from overwriting capture 1 with an empty match).
+        let repeat_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r26-repeat".into(),
+            title: "Repeat".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?=(a?){1,2})\\1$"
+            })],
+        };
+        let (mut r_state, _rrx) = state_with_form(repeat_form.clone());
+        r_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r26-repeat".into(), "val".into()))
+            .unwrap()
+            .editor()
+            .text = "a".into();
+        assert_eq!(
+            agent_forms::answer(&repeat_form, &r_state.agent.as_ref().unwrap().drafts).unwrap()["val"],
+            json!("a"),
+            "bounded optional repeat must apply ECMAScript zero-progress guard"
+        );
+
+        // 3. Valid escaped capture group name `^(?<\u0061>x)\k<a>$` decodes and matches `"xx"`.
+        let esc_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r26-esc".into(),
+            title: "Escaped group".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "^(?<\\u0061>x)\\k<a>$"
+            })],
+        };
+        let (mut esc_state, _erx) = state_with_form(esc_form.clone());
+        esc_state
+            .agent
+            .as_mut()
+            .unwrap()
+            .drafts
+            .get_mut(&("form-r26-esc".into(), "val".into()))
+            .unwrap()
+            .editor()
+            .text = "xx".into();
+        assert_eq!(
+            agent_forms::answer(&esc_form, &esc_state.agent.as_ref().unwrap().drafts).unwrap()["val"],
+            json!("xx"),
+            "escaped capture name \\u0061 must resolve to `a` and match `xx`"
+        );
+
+        // 4. Native validation rejection with dotted key `code.` attributes strictly to `code.`
+        // without stripping punctuation onto `code`, and an unrecognized message stays form-level.
+        let dotted_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r26-dot".into(),
+            title: "Dotted keys".into(),
+            fields: vec![
+                json!({
+                    "key": "code",
+                    "title": "Code",
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^a{257}$"
+                }),
+                json!({
+                    "key": "code.",
+                    "title": "Code Dot",
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^a{257}$"
+                }),
+            ],
+        };
+        let (jobs, _) = codenomad_client::bounded(1);
+        let (stop, _) = codenomad_client::bounded(1);
+        let (results_tx, results) = codenomad_client::bounded(4);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(4);
+        let mut handle = crate::agent::Handle::test(jobs, stop, results);
+        handle.forms = forms_tx;
+        let mut ui = crate::agent::Ui::new(handle);
+        ui.reading = false;
+        ui.known = true;
+        ui.mark_pending_known();
+        ui.forms_lane.reading = false;
+        ui.online = true;
+        while forms_rx.try_recv().is_ok() {}
+        ui.selected = dotted_form.id.clone();
+        ui.forms.push(dotted_form.clone());
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        ui.drafts
+            .get_mut(&("form-r26-dot".into(), "code".into()))
+            .unwrap()
+            .editor()
+            .text = "a".repeat(257);
+        ui.drafts
+            .get_mut(&("form-r26-dot".into(), "code.".into()))
+            .unwrap()
+            .editor()
+            .text = "b".into();
+        let mut dot_state = crate::init();
+        dot_state.phase = crate::Phase::Ready;
+        dot_state.agent = Some(ui);
+        let mut dot_rt = Runtime::new(dot_state, render_form, (420.0, 720.0), Env::new(false, 1.0));
+        dot_rt.frame(0.0);
+        dot_rt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r26-dot"));
+        let gen1 = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, g)) => g,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "{\"error\":\"Form field does not match pattern: code.\"}".into(),
+                )),
+                Some(vec![dotted_form.clone()]),
+                gen1,
+            ))
+            .unwrap();
+        dot_rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        dot_rt.frame(1.0 / 60.0);
+        let dot_tree = dot_rt.accessibility_json();
+        assert!(
+            find_node(&dot_tree, &agent_forms::field_error_key("code.")).is_some(),
+            "exact dotted key `code.` must receive the field rejection"
+        );
+        assert!(
+            find_node(&dot_tree, &agent_forms::field_error_key("code")).is_none(),
+            "valid sibling `code` must not be matched by stripping trailing punctuation"
+        );
+        // Correcting `code.` immediately re-enables Answer.
+        dot_rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r26-dot".into(), "code.".into()))
+                .unwrap()
+                .editor()
+                .text = "a".repeat(257);
+        });
+        dot_rt.frame(1.0 / 60.0);
+        assert!(
+            !has_state(
+                find_node(&dot_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "correcting `code.` must re-enable Answer"
+        );
+
+        // 5. Validation rejection followed by a 503 form-list refresh leaves the draft editable
+        // while Answer and Cancel remain gated on fresh request authority.
+        dot_rt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r26-dot"));
+        let gen2 = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, g)) => g,
+            _ => panic!("expected second PendingJob::Act"),
+        };
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "{\"error\":\"Form validation failed\"}".into(),
+                )),
+                None,
+                gen2,
+            ))
+            .unwrap();
+        dot_rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        dot_rt.frame(1.0 / 60.0);
+        let recon_tree = dot_rt.accessibility_json();
+        assert!(
+            has_state(
+                find_node(&recon_tree, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must stay disabled while reconciling after a 503 refresh"
+        );
+        assert!(
+            has_state(
+                find_node(&recon_tree, "cancel-question").unwrap(),
+                "disabled"
+            ),
+            "Cancel must stay disabled while reconciling after a 503 refresh"
+        );
+        assert!(
+            !has_state(find_input(&recon_tree, "field-code"), "disabled"),
+            "draft field must remain editable after the reply POST finishes even when refresh returned 503"
+        );
+        dot_rt.update(|s, _| {
+            let scope = s.input_scope.clone();
+            let edit = s.editor(
+                &scope,
+                crate::screen::Editor::Form(("form-r26-dot".into(), "code".into())),
+            );
+            edit.text = "edited-while-reconciling".into();
+        });
+        assert_eq!(
+            dot_rt.state.agent.as_ref().unwrap().drafts[&("form-r26-dot".into(), "code".into())]
+                .edit
+                .text,
+            "edited-while-reconciling",
+            "screen editor callback must accept draft edits while awaiting refresh reconciliation"
+        );
+
+        // 6. Historical LMT offset with seconds (`Europe/Paris` 1900 `+00:09:21`) preserves exact
+        // seconds on desktop, matching Chromium's `1900-01-01T11:50:39.000Z`.
+        let paris_1900_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32, i32)> {
+            let local = utc_secs + 9 * 60 + 21;
+            let days = local.div_euclid(86_400);
+            let sod = local.rem_euclid(86_400);
+            let z = days + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = mp + if mp < 10 { 3 } else { -9 };
+            let y = y + i64::from(m <= 2);
+            Some((
+                y as i32,
+                m as i32,
+                d as i32,
+                (sod / 3600) as i32,
+                ((sod % 3600) / 60) as i32,
+                (sod % 60) as i32,
+            ))
+        };
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "1900-01-01T12:00",
+                paris_1900_clock
+            )
+            .as_deref(),
+            Some("1900-01-01T11:50:39.000Z"),
+            "native local clock conversion must preserve historical offset seconds"
+        );
+
+        // 7. Refreshing a pending multiselect form with an oversized comma-only paste bypasses
+        // custom parsing without unbounded allocations and retains the draft text for trimming.
+        let big_commas = ",".repeat(250_000);
+        let mut big_drafts = std::collections::HashMap::new();
+        agent_forms::seed(&[dup_form.clone()], &mut big_drafts);
+        big_drafts
+            .get_mut(&("form-r26-dup".into(), "targets".into()))
+            .unwrap()
+            .custom_editor()
+            .text = big_commas.clone();
+        agent_forms::seed(&[dup_form.clone()], &mut big_drafts);
+        assert_eq!(
+            big_drafts[&("form-r26-dup".into(), "targets".into())]
+                .custom
+                .text
+                .len(),
+            250_000,
+            "refresh reconciliation must retain oversized custom text without clearing or allocating unbounded entries"
+        );
+        assert_eq!(
+            agent_forms::evaluate_form(&dup_form, &big_drafts).active[0].1,
+            Err(agent_forms::ValidationError::TooLong { max: 20_000 }),
+            "oversized custom draft must remain flagged TooLong(20_000) after refresh"
         );
     });
 }

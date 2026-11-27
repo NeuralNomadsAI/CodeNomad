@@ -426,19 +426,18 @@ fn civil_to_unix_secs(year: i64, month: i64, day: i64, hour: i64, minute: i64, s
 #[cfg(not(target_arch = "wasm32"))]
 fn local_offset_secs<F>(utc_secs: i64, local_clock: &F) -> Option<i64>
 where
-    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32, i32)>,
 {
-    let (ly, lm, ld, lh, lmin) = local_clock(utc_secs)?;
-    let local_min_secs = civil_to_unix_secs(
+    let (ly, lm, ld, lh, lmin, lsec) = local_clock(utc_secs)?;
+    let local_secs = civil_to_unix_secs(
         i64::from(ly),
         i64::from(lm),
         i64::from(ld),
         i64::from(lh),
         i64::from(lmin),
-        0,
+        i64::from(lsec),
     );
-    let utc_min_secs = utc_secs - utc_secs.rem_euclid(60);
-    Some(local_min_secs - utc_min_secs)
+    Some(local_secs - utc_secs)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -458,7 +457,7 @@ fn equivalent_gregorian_year(year: i64) -> i64 {
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_local_civil_to_utc_secs<F>(parsed: ParsedLocalDateTime, local_clock: F) -> Option<i64>
 where
-    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32, i32)>,
 {
     let target_secs = civil_to_unix_secs(
         parsed.year,
@@ -477,6 +476,7 @@ where
         td as i32,
         (target_sod / 3600) as i32,
         ((target_sod % 3600) / 60) as i32,
+        (target_sod % 60) as i32,
     );
     // Sample 36 hours on either side so every timezone (UTC-12..UTC+14) brackets any DST transition.
     if let (Some(off_before), Some(off_mid), Some(off_after)) = (
@@ -554,7 +554,7 @@ pub fn is_local_date_time_without_zone(value: &str) -> bool {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn normalize_local_date_time_with_clock<F>(value: &str, local_clock: F) -> Option<String>
 where
-    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32, i32)>,
 {
     let parsed = parse_local_date_time_without_zone(trim_es(value))?;
     let utc_secs = resolve_local_civil_to_utc_secs(parsed, local_clock)?;
@@ -622,7 +622,7 @@ pub fn normalize_edited_local_date_time(value: &str) -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let utc_secs =
-            resolve_local_civil_to_utc_secs(parsed, codenomad_host_process::local_clock)?;
+            resolve_local_civil_to_utc_secs(parsed, codenomad_host_process::local_clock_seconds)?;
         format_utc_iso(utc_secs, parsed.millis)
     }
 }
@@ -1240,16 +1240,108 @@ enum CaptureNameKind {
     Invalid,
 }
 
+fn decode_capture_name_units(slice: &[u16]) -> Result<Vec<u32>, CaptureNameKind> {
+    let mut cps = Vec::with_capacity(slice.len());
+    let mut i = 0;
+    while i < slice.len() {
+        let u = slice[i];
+        if u == b'\\' as u16 {
+            if slice.get(i + 1).copied() != Some(b'u' as u16) {
+                return Err(CaptureNameKind::Invalid);
+            }
+            if slice.get(i + 2).copied() == Some(b'{' as u16) {
+                let mut j = i + 3;
+                let mut val: u32 = 0;
+                let mut digits = 0usize;
+                while j < slice.len() && slice[j] != b'}' as u16 {
+                    let Some(h) = hex_nibble_u16(slice[j]) else {
+                        return Err(CaptureNameKind::Invalid);
+                    };
+                    digits += 1;
+                    val = val.saturating_mul(16).saturating_add(u32::from(h));
+                    if val > 0x10_FFFF {
+                        return Err(CaptureNameKind::Invalid);
+                    }
+                    j += 1;
+                }
+                if digits == 0 || slice.get(j).copied() != Some(b'}' as u16) {
+                    return Err(CaptureNameKind::Invalid);
+                }
+                cps.push(val);
+                i = j + 1;
+            } else {
+                if i + 6 > slice.len() {
+                    return Err(CaptureNameKind::Invalid);
+                }
+                let mut val: u16 = 0;
+                for &d in &slice[i + 2..i + 6] {
+                    let Some(h) = hex_nibble_u16(d) else {
+                        return Err(CaptureNameKind::Invalid);
+                    };
+                    val = (val << 4) | h;
+                }
+                i += 6;
+                if (0xD800..=0xDBFF).contains(&val)
+                    && i + 6 <= slice.len()
+                    && slice[i] == b'\\' as u16
+                    && slice[i + 1] == b'u' as u16
+                    && slice[i + 2] != b'{' as u16
+                {
+                    let mut low: u16 = 0;
+                    let mut ok_low = true;
+                    for &d in &slice[i + 2..i + 6] {
+                        if let Some(h) = hex_nibble_u16(d) {
+                            low = (low << 4) | h;
+                        } else {
+                            ok_low = false;
+                            break;
+                        }
+                    }
+                    if ok_low && (0xDC00..=0xDFFF).contains(&low) {
+                        let cp = 0x1_0000
+                            + ((u32::from(val) - 0xD800) << 10)
+                            + (u32::from(low) - 0xDC00);
+                        cps.push(cp);
+                        i += 6;
+                        continue;
+                    }
+                }
+                if (0xD800..=0xDFFF).contains(&val) {
+                    return Err(CaptureNameKind::Defer);
+                }
+                cps.push(u32::from(val));
+            }
+        } else if (0xD800..=0xDBFF).contains(&u) {
+            let Some(&low) = slice.get(i + 1) else {
+                return Err(CaptureNameKind::Defer);
+            };
+            if !(0xDC00..=0xDFFF).contains(&low) {
+                return Err(CaptureNameKind::Defer);
+            }
+            let cp = 0x1_0000 + ((u32::from(u) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
+            cps.push(cp);
+            i += 2;
+        } else if (0xDC00..=0xDFFF).contains(&u) {
+            return Err(CaptureNameKind::Defer);
+        } else {
+            cps.push(u32::from(u));
+            i += 1;
+        }
+    }
+    Ok(cps)
+}
+
 fn classify_capture_name(slice: &[u16]) -> CaptureNameKind {
     if slice.is_empty() {
         return CaptureNameKind::Invalid;
     }
-    if slice.contains(&(b'\\' as u16)) {
-        return CaptureNameKind::Defer;
-    }
-    let mut out = String::with_capacity(slice.len());
-    for (idx, decoded) in char::decode_utf16(slice.iter().copied()).enumerate() {
-        let Ok(ch) = decoded else {
+    let cps = match decode_capture_name_units(slice) {
+        Ok(cps) => cps,
+        Err(kind) => return kind,
+    };
+    let mut out = String::with_capacity(cps.len());
+    for (idx, cp) in cps.into_iter().enumerate() {
+        let Some(ch) = char::from_u32(cp) else {
             return CaptureNameKind::Defer;
         };
         if idx == 0 {
@@ -1994,6 +2086,8 @@ fn resolve_backrefs(
             if let Some(&idx) = named.get(name) {
                 *expr = Expr::Backref(idx);
                 Ok(())
+            } else if *deferred {
+                Ok(())
             } else {
                 Err(CompileError::InvalidSyntax)
             }
@@ -2244,20 +2338,33 @@ fn compile_vm_expr(
                     };
                 }
                 Some(hi) => {
-                    for _ in *min..*hi {
-                        charge_work(work)?;
-                        let split = push_vm_inst(insts, VmInst::Split(0, 0))?;
-                        let body = insts.len();
-                        if let Some((lo, hi_cap)) = cap_bounds {
-                            push_vm_inst(insts, VmInst::ClearCaps(lo, hi_cap))?;
+                    if *hi > *min {
+                        if *zero_slots >= MAX_BT_CAPTURES {
+                            return Err(CompileError::DeferToServer);
                         }
-                        compile_vm_expr(inner, flags, insts, zero_slots, work)?;
-                        let end = insts.len();
-                        insts[split] = if *lazy {
-                            VmInst::Split(end, body)
-                        } else {
-                            VmInst::Split(body, end)
-                        };
+                        let slot = *zero_slots;
+                        *zero_slots += 1;
+                        let mut splits = Vec::with_capacity(*hi - *min);
+                        for _ in *min..*hi {
+                            charge_work(work)?;
+                            let split = push_vm_inst(insts, VmInst::Split(0, 0))?;
+                            let body = insts.len();
+                            push_vm_inst(insts, VmInst::ZeroGuardStart(slot))?;
+                            if let Some((lo, hi_cap)) = cap_bounds {
+                                push_vm_inst(insts, VmInst::ClearCaps(lo, hi_cap))?;
+                            }
+                            compile_vm_expr(inner, flags, insts, zero_slots, work)?;
+                            push_vm_inst(insts, VmInst::ZeroGuardEnd(slot))?;
+                            splits.push((split, body));
+                        }
+                        let final_end = insts.len();
+                        for (split, body) in splits {
+                            insts[split] = if *lazy {
+                                VmInst::Split(final_end, body)
+                            } else {
+                                VmInst::Split(body, final_end)
+                            };
+                        }
                     }
                 }
             }

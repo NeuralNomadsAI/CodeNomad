@@ -37,6 +37,11 @@ pub fn local_month_day(stamp: &str, locale: &str) -> Option<String> {
 }
 
 pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
+    let (y, m, d, h, min, _) = local_clock_seconds(seconds)?;
+    Some((y, m, d, h, min))
+}
+
+pub fn local_clock_seconds(seconds: i64) -> Option<(i32, i32, i32, i32, i32, i32)> {
     let ticks = u64::try_from((i128::from(seconds) + 11_644_473_600) * 10_000_000).ok()?;
     let local = local_time(ticks)?;
     Some((
@@ -45,6 +50,7 @@ pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
         local.wDay.into(),
         local.wHour.into(),
         local.wMinute.into(),
+        local.wSecond.into(),
     ))
 }
 
