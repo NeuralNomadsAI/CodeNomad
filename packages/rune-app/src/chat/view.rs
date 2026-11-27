@@ -24,9 +24,14 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             crate::settings::transcript_filters::trigger(s, &mut overlays, cx.touch_controls()),
         )
     });
-    let restore: Vec<El> = super::message_actions::restore(s).collect();
-    let has_restore = s.transcript_display.messages.has_restore();
-    let has_restore_error = s.transcript_display.messages.has_error();
+    let restore: Vec<El> = super::message_actions::restore(s)
+        .chain(super::queue::recovery(s))
+        .chain(super::queue::error(s))
+        .collect();
+    let has_restore =
+        s.transcript_display.messages.has_restore() || s.transcript_display.queue.has_saved_edit();
+    let has_restore_error =
+        s.transcript_display.messages.has_error() || s.transcript_display.queue.has_error();
     let timeline_notice = crate::timeline::notice_key(s);
     let layout = rune_theme_codenomad::interruption::session_layout(
         cx,

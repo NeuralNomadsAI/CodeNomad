@@ -277,7 +277,54 @@ pub fn modify(text: &[u16], path: &[Seg], value: Option<J>, options: &Formatting
                 }
             }
         }
-        // Array edits are not used by the depth editor; the reference would handle them.
+        (NodeType::Array, Some(Seg::Index(insert_index))) => {
+            if insert_index == -1 {
+                let v = value.ok_or(())?;
+                let new_property = stringify(&v, None);
+                let e = if let Some(&previous) = p.children.last() {
+                    edit(tree.end(previous), 0, [vec![44], new_property].concat())
+                } else {
+                    edit(p.offset + 1, 0, new_property)
+                };
+                Ok(with_formatting(text, e, options))
+            } else if value.is_none() {
+                if insert_index < 0 || (insert_index as usize) >= p.children.len() {
+                    return Err(());
+                }
+                let removal_index = insert_index as usize;
+                let e = if p.children.len() == 1 {
+                    edit(p.offset + 1, p.length - 2, Vec::new())
+                } else if p.children.len() - 1 == removal_index {
+                    let previous = p.children[removal_index - 1];
+                    let offset = tree.end(previous);
+                    let parent_end = p.offset + p.length;
+                    edit(offset, parent_end - 2 - offset, Vec::new())
+                } else {
+                    let to_remove = tree.node(p.children[removal_index]);
+                    let next = tree.node(p.children[removal_index + 1]);
+                    edit(to_remove.offset, next.offset - to_remove.offset, Vec::new())
+                };
+                Ok(with_formatting(text, e, options))
+            } else if insert_index >= 0 {
+                let v = value.unwrap();
+                let new_property = stringify(&v, None);
+                let idx = insert_index as usize;
+                let e = if idx < p.children.len() {
+                    let to_modify = tree.node(p.children[idx]);
+                    edit(to_modify.offset, to_modify.length, new_property)
+                } else if p.children.is_empty() || idx == 0 {
+                    let content = if p.children.is_empty() { new_property } else { [new_property, vec![44]].concat() };
+                    edit(p.offset + 1, 0, content)
+                } else {
+                    let index = idx.min(p.children.len());
+                    let previous = p.children[index - 1];
+                    edit(tree.end(previous), 0, [vec![44], new_property].concat())
+                };
+                Ok(with_formatting(text, e, options))
+            } else {
+                Err(())
+            }
+        }
         _ => Err(()),
     }
 }

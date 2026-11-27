@@ -77,7 +77,7 @@ pub fn run() {
         s.phase == Phase::Streaming
             && s.messages
                 .last()
-                .is_some_and(|m| m.role == "assistant" && m.body.len() > 40)
+                .is_some_and(|m| m.role == "assistant" && m.body.len() > 400)
     });
     let partial = rt.state.messages.last().unwrap().body.len();
     tap(&mut rt, "stop-response");

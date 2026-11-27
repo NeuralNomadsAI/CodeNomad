@@ -65,6 +65,43 @@ impl Reader {
     pub fn preview(&self) -> Option<&Preview> {
         self.preview.as_ref()
     }
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.preview.as_ref().map_or(0, |preview| {
+            preview
+                .bytes
+                .len()
+                .saturating_add(preview.path.len())
+                .saturating_add(preview.workspace_id.len())
+                .saturating_add(preview.version.as_deref().map_or(0, str::len))
+        })
+    }
+    pub(crate) fn evict_preview(&mut self) -> usize {
+        let freed = self.retained_bytes();
+        if freed == 0 {
+            return 0;
+        }
+        self.cancel();
+        self.preview = None;
+        self.error = None;
+        self.dirty = self.target.is_some();
+        self.due = 0.0;
+        freed
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_set_preview(&mut self, directory: &str, path: &str, bytes: Vec<u8>) {
+        self.target = Some(Target {
+            session: self.backend.session.clone(),
+            directory: directory.into(),
+            path: path.into(),
+        });
+        self.preview = Some(Preview {
+            workspace_id: self.backend.workspace.clone(),
+            path: path.into(),
+            bytes,
+            version: None,
+        });
+        self.dirty = false;
+    }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }

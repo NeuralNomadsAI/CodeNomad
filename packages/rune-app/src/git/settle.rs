@@ -44,7 +44,7 @@ impl Ui {
         if lane == Lane::Changes {
             self.index_checked = None;
         }
-        self.requests.slot_mut(lane).error = Some(error.to_string());
+        self.requests.slot_mut(lane).error = Some(format_git_error(&error, ErrorContext::Read));
     }
 
     pub(super) fn accept(&mut self, lane: Lane, value: Value) {
@@ -196,8 +196,16 @@ impl Ui {
                 self.changes.finish_bulk(revision);
                 None
             }
-            (Mutation::Init(_), Err(error)) => Some((false, init_error(error))),
-            (_, Err(error)) => Some((false, error.to_string())),
+            (Mutation::Init(_), Err(error)) => {
+                Some((false, format_git_error(&error, ErrorContext::Init)))
+            }
+            (Mutation::Commit { .. }, Err(error)) => {
+                Some((false, format_git_error(&error, ErrorContext::Commit)))
+            }
+            (Mutation::Paths(..), Err(error)) => Some((
+                false,
+                format_git_error(&error, ErrorContext::StageOrUnstage),
+            )),
         };
         if announce {
             self.mutation_notice = self.mutation_message.clone();
@@ -231,25 +239,62 @@ fn same_tree(a: &Worktree, b: &Worktree) -> bool {
         }
 }
 
-fn init_error(error: Error) -> String {
-    if error
-        .downcast_ref::<Refusal>()
-        .is_some_and(|err| err.code.as_deref() == Some("git_required"))
-    {
-        return error.to_string();
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ErrorContext {
+    Read,
+    StageOrUnstage,
+    Commit,
+    Init,
+}
+
+fn format_git_error(error: &Error, context: ErrorContext) -> String {
+    let fallback = match context {
+        ErrorContext::Commit => "instanceShell.gitChanges.commit.error",
+        ErrorContext::Read | ErrorContext::StageOrUnstage | ErrorContext::Init => "rune.failed",
+    };
+    if context == ErrorContext::Init {
+        if let Some(refusal) = error.downcast_ref::<Refusal>() {
+            let key = match refusal.code.as_deref() {
+                Some("git_init_unsupported") => Some("filesPanel.gitInit.unsupported"),
+                Some("git_init_repository_exists") => Some("filesPanel.gitInit.exists"),
+                Some("git_init_directory_mismatch") => Some("filesPanel.gitInit.mismatch"),
+                Some("git_required") => Some("filesPanel.gitInit.gitRequired"),
+                _ if matches!(refusal.status, 403 | 404) => Some("filesPanel.gitInit.notOwned"),
+                _ if refusal.status == 409 => Some("filesPanel.gitInit.deleting"),
+                _ => None,
+            };
+            if let Some(key) = key {
+                return crate::strings::t(key).into();
+            }
+            let detail = refusal
+                .message()
+                .unwrap_or_else(|| crate::strings::t(fallback));
+            return crate::strings::t("filesPanel.gitInit.error").replace("{message}", detail);
+        }
+        let detail = crate::strings::t(git_error_key(error).unwrap_or(fallback));
+        return crate::strings::t("filesPanel.gitInit.error").replace("{message}", detail);
     }
-    let key = error.downcast_ref::<Refusal>().and_then(|err| {
-        Some(match err.code.as_deref() {
-            Some("git_init_unsupported") => "filesPanel.gitInit.unsupported",
-            Some("git_init_repository_exists") => "filesPanel.gitInit.exists",
-            Some("git_init_directory_mismatch") => "filesPanel.gitInit.mismatch",
-            _ if matches!(err.status, 403 | 404) => "filesPanel.gitInit.notOwned",
-            _ if err.status == 409 => "filesPanel.gitInit.deleting",
-            _ => return None,
-        })
-    });
-    key.map_or_else(
-        || crate::strings::t("filesPanel.gitInit.error").replace("{message}", &error.to_string()),
-        |key| crate::strings::t(key).into(),
-    )
+
+    if let Some(refusal) = error.downcast_ref::<Refusal>() {
+        if refusal.code.as_deref() == Some("git_required") {
+            return crate::strings::t("filesPanel.gitInit.gitRequired").into();
+        }
+        if let Some(message) = refusal.message() {
+            return message.to_owned();
+        }
+        return crate::strings::t(fallback).into();
+    }
+
+    crate::strings::t(git_error_key(error).unwrap_or(fallback)).into()
+}
+
+fn git_error_key(error: &Error) -> Option<&'static str> {
+    let git_error = error.downcast_ref::<GitError>()?;
+    match git_error {
+        GitError::CheckoutUnavailable => Some("gitPanel.error.checkoutUnavailable"),
+        GitError::UnconfirmedMutation => Some("gitPanel.error.unconfirmedMutation"),
+        GitError::OversizedContent => Some("toolCall.output.tooLarge"),
+        GitError::UnsupportedImageType => Some("filesPanel.binary"),
+        GitError::InvalidRequest | GitError::UnexpectedResponse => None,
+    }
 }

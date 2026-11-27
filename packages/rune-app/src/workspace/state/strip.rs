@@ -1,8 +1,8 @@
 use super::{State, Tab, busy, close, close_blocked, new_tab, select};
 use crate::strings;
-use rune::{Cx, El};
+use rune::El;
 
-pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
+pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
     let Some(ui) = &s.workspace else {
         return rune::el();
     };
@@ -40,11 +40,10 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
             },
         )
         .collect();
-    let touch = cx.touch_controls();
-    let actions = crate::settings::entries(touch)
+    let actions = crate::settings::entries(touch, skip_tab)
         .into_iter()
         .chain(std::iter::once(crate::shell::notifications::history_entry(
-            s, touch,
+            s, touch, skip_tab,
         )));
     let search_visible = crate::timeline::search::available(s);
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
@@ -81,6 +80,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         ui.entries.get(ui.active).map(|e| e.key.as_str()),
         &new_help,
         &active_close_help,
+        skip_tab,
         select,
         close,
         new_tab,

@@ -836,6 +836,16 @@ pub(super) struct Cache {
 }
 
 impl Cache {
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total
+                .saturating_add(entry.key.len())
+                .saturating_add(entry.patch.len())
+                .saturating_add(entry.file.len())
+                .saturating_add(entry.lines.saturating_mul(96))
+        })
+    }
+
     pub(super) fn sync(&mut self, mode: impl Fn(&str) -> DiffMode) {
         for entry in &mut self.entries {
             entry.state.set_mode(mode(&entry.key));
@@ -960,7 +970,6 @@ pub(super) fn body(
                 Arc::as_ptr(tool) as usize,
                 Rc::as_ptr(&s.input_scope) as usize,
                 locale(),
-                layout::dark(),
                 s.transcript_display.toggled(&wrap_key),
                 s.transcript_display.steps(key),
             );
