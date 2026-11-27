@@ -55,7 +55,7 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
                 s.current_scope(&scope) && with_locale(render_locale, || handle_key(s, event, tx))
             }
         })
-        .build(field_kit(layout::dark()))
+        .build(&field_kit(layout::dark()))
         .key(FIELD);
     let close_control = close_button(
         &palette.close_control,

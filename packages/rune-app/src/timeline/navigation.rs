@@ -166,7 +166,7 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     let serial = owner(s).jump.serial;
     let visible = anchors::visible_rows(s);
     if let Some(index) = visible.iter().position(|row| row.id == target.message) {
-        match locate(s, visible, index, &target) {
+        match locate(s, visible, index, !s.history_detached, &target) {
             JumpLanding::Visible(message, key, steps) => {
                 owner(s).jump.browse = false;
                 settle(s, &target, (message, key, steps));
@@ -235,11 +235,18 @@ enum JumpLanding {
     Missing,
 }
 
-fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker) -> JumpLanding {
+fn locate(
+    s: &State,
+    rows: &[crate::history::Row],
+    row_index: usize,
+    at_tail: bool,
+    m: &Marker,
+) -> JumpLanding {
     let row = &rows[row_index];
     if !anchors::context_visible(s, &row.role) {
         return JumpLanding::Filtered;
     }
+    let infer = if at_tail { rows } else { &[] };
     let steps = anchors::steps(s, &row.id);
     if m.id.is_empty() {
         return match s
@@ -249,7 +256,7 @@ fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker)
             .filter(|hit| hit.message == row.id)
             .map_or_else(
                 || Landing::Visible(row.id.clone(), 0),
-                |hit| hit.landing(s, row, steps),
+                |hit| hit.landing(s, infer, row, steps),
             ) {
             Landing::Visible(key, reveal) => JumpLanding::Visible(row.id.clone(), key, reveal),
             Landing::Filtered => JumpLanding::Filtered,
@@ -265,7 +272,7 @@ fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker)
     };
     if block
         .part
-        .is_some_and(|i| !anchors::part_visible(s, row, i))
+        .is_some_and(|i| !anchors::part_visible(s, infer, row, i))
     {
         return JumpLanding::Filtered;
     }
@@ -277,12 +284,16 @@ fn locate(s: &State, rows: &[crate::history::Row], row_index: usize, m: &Marker)
             };
             block
                 .part
-                .and_then(|index| anchors::collapsed_group_target(s, rows, row_index, shown, index))
+                .and_then(|index| {
+                    anchors::collapsed_group_target_at(s, rows, at_tail, row_index, shown, index)
+                })
                 .unwrap_or_else(|| (row.id.clone(), key))
         }
         super::MarkerKind::Tool => block
             .part
-            .and_then(|index| anchors::collapsed_group_target(s, rows, row_index, shown, index))
+            .and_then(|index| {
+                anchors::collapsed_group_target_at(s, rows, at_tail, row_index, shown, index)
+            })
             .unwrap_or_else(|| (row.id.clone(), block.key)),
         _ => (row.id.clone(), block.key),
     };
@@ -336,7 +347,7 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
     };
     let visible = anchors::visible_slice(s, &page.rows);
     let landing = if let Some(index) = visible.iter().position(|row| row.id == target.message) {
-        locate(s, visible, index, &target)
+        locate(s, visible, index, page.newer.is_none(), &target)
     } else if page.rows.iter().any(|row| row.id == target.message) {
         JumpLanding::Filtered
     } else {
@@ -401,8 +412,9 @@ pub(crate) fn restore_search(s: &mut State) {
     let hit = hit.clone();
     let landing = {
         let visible = anchors::visible_rows(s);
+        let infer = if s.history_detached { &[] } else { visible };
         if let Some(row) = visible.iter().find(|row| row.id == hit.message) {
-            hit.landing(s, row, anchors::steps(s, &row.id))
+            hit.landing(s, infer, row, anchors::steps(s, &row.id))
         } else if s.messages.iter().any(|row| row.id == hit.message) {
             Landing::Filtered
         } else {
@@ -446,25 +458,32 @@ pub(super) fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    {
+    let same_frame_wheel = {
         let t = owner(s);
         let mut scroll = t.scroll.get();
-        scroll.rail_wheel.clear_frame();
-        scroll.transcript_wheel_target = None;
-        scroll.transcript_wheel_momentum = false;
-        t.scroll.set(scroll);
-    }
+        let same_frame = scroll
+            .wheel_pending_commit
+            .is_some_and(|clock| clock == tx.clock() && tx.input_waiting());
+        if !same_frame {
+            scroll.wheel_pending_commit = None;
+            scroll.rail_wheel.clear_frame();
+            scroll.transcript_wheel_target = None;
+            scroll.transcript_wheel_momentum = false;
+            t.scroll.set(scroll);
+        }
+        same_frame
+    };
     let (_, moved) = gesture(s);
     let mut halted = false;
     {
         let t = owner(s);
         let mut scroll = t.scroll.get();
-        let mut dirty = scroll.wheel_last_rail.take().is_some();
+        let mut dirty = !same_frame_wheel && scroll.wheel_last_rail.take().is_some();
         if scroll.halt_rail_glide {
             scroll.halt_rail_glide = false;
             scroll.rail_glide = None;
             scroll.rail_glide_interrupted = false;
-            scroll.rail_glide_stalled = 0;
+            scroll.rail_glide_stalled_at = None;
             let at = scroll.at.offset[1];
             scroll.programmatic_rail = Some(at);
             dirty = true;
@@ -528,7 +547,7 @@ fn halt_obsolete_glide(
     if (at.offset[1] - clamped).abs() <= 0.5 {
         scroll.rail_glide = None;
         scroll.rail_glide_interrupted = false;
-        scroll.rail_glide_stalled = 0;
+        scroll.rail_glide_stalled_at = None;
         scroll.halt_rail_glide = false;
         t.scroll.set(scroll);
         return;
@@ -539,7 +558,7 @@ fn halt_obsolete_glide(
     }
     scroll.rail_glide = None;
     scroll.rail_glide_interrupted = false;
-    scroll.rail_glide_stalled = 0;
+    scroll.rail_glide_stalled_at = None;
     scroll.halt_rail_glide = false;
     scroll.programmatic_rail = Some(at.offset[1]);
     t.scroll.set(scroll);
@@ -585,13 +604,17 @@ pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> 
     {
         if (at.offset[1] - current.rail_glide_last).abs() > 0.01 {
             current.rail_glide_last = at.offset[1];
-            current.rail_glide_stalled = 0;
+            current.rail_glide_stalled_at = None;
             t.scroll.set(current);
             tx.wake_after(RAIL_GLIDE_WATCHDOG);
             return false;
         }
-        if current.rail_glide_stalled == 0 {
-            current.rail_glide_stalled = 1;
+        let now = tx.clock();
+        if current
+            .rail_glide_stalled_at
+            .is_none_or(|stalled_at| stalled_at == now)
+        {
+            current.rail_glide_stalled_at = Some(now);
             t.scroll.set(current);
             tx.wake_after(RAIL_GLIDE_WATCHDOG);
             return false;
@@ -610,7 +633,7 @@ pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> 
     scroll.programmatic_rail = Some(target);
     scroll.rail_glide = Some(target);
     scroll.rail_glide_last = at.offset[1];
-    scroll.rail_glide_stalled = 0;
+    scroll.rail_glide_stalled_at = None;
     scroll.rail_glide_interrupted = false;
     scroll.halt_rail_glide = false;
     t.scroll.set(scroll);

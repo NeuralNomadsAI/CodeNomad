@@ -97,6 +97,7 @@ impl State {
     }
     pub fn show_launcher(&mut self) {
         self.screen.show_launcher();
+        self.tool_diff_preferences.reset_history_size();
         self.renew_scope();
     }
     pub fn show_chat(&mut self) {

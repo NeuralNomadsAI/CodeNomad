@@ -251,18 +251,20 @@ pub fn close<S: 'static>(label: &str, action: impl Fn(&mut S, &mut rune::Tx) + '
 }
 
 pub fn scope_picker(key: &str, options: &[&str], label: String) -> rune_kit::Select {
-    rune_kit::Select::new(key, options).label(label)
+    rune_kit::Select::new(key, options)
+        .label(label)
+        .step_closed(true)
 }
 
 pub fn build_scope(picker: rune_kit::Select, layer: &mut Vec<El>) -> El {
-    picker.build(crate::kit(layout::dark()), layer)
+    picker.build(&crate::kit(layout::dark()), layer)
 }
 
 pub fn technical<S: 'static>(checked: bool, label: &str, action: impl Fn(&mut S) + 'static) -> El {
     rune_kit::Checkbox::new(checked)
         .label(label)
         .on_toggle(action)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub enum WindowDrag {
@@ -299,7 +301,7 @@ pub fn toggle<S: 'static>(label: &str, press: impl Fn(&mut S, &mut rune::Tx) + '
         .label(label)
         .help(label)
         .on_press_tx(press)
-        .build(crate::kit(layout::dark()))
+        .build(&crate::kit(layout::dark()))
 }
 
 pub fn body() -> El {

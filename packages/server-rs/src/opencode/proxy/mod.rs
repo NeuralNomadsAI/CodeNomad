@@ -1,6 +1,8 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
 #[cfg(test)]
+mod account_tests;
+#[cfg(test)]
 mod background_tests;
 mod defer_media;
 mod dispatch;
@@ -10,13 +12,15 @@ mod mutation;
 mod stack_tests;
 
 pub use guards::verify_mutation;
+use guards::verify_mutation_at;
+pub(crate) use guards::verify_ordinary_session_at;
 
 use std::time::Duration;
 
 use axum::{
     Json,
     extract::{Request, State},
-    http::{Method, StatusCode as Status, header},
+    http::{HeaderValue, Method, StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -24,12 +28,41 @@ use serde_json::{Value, json};
 use super::{SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, upstream_error};
 use crate::{Error, Shared, error, not_found, unavailable};
 use guards::{
-    ALLOWED, carrier_denied, foreign, guarded, is_hop_by_hop_connection_token, parse_location_context,
-    resolve_media_path_async, safe_route, schedule_input, verify_mutation_at,
+    ALLOWED, carrier_denied, foreign, guarded, is_account_no_store_route, is_hop_by_hop_connection_token,
+    parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
 };
 
+fn is_account_proxy_path(path: &str, method: &Method) -> bool {
+    let Some(suffix) =
+        path.strip_prefix("/workspaces/").and_then(|t| t.split_once('/')).and_then(|(_, s)| s.strip_prefix("instance"))
+    else {
+        return false;
+    };
+    if let Some(route) = safe_route(suffix) {
+        let route = route.trim_end_matches('/');
+        if is_account_no_store_route(route, method) {
+            return true;
+        }
+    }
+    let trimmed = suffix.trim_end_matches('/');
+    trimmed == "/api/credential"
+        || trimmed.starts_with("/api/credential/")
+        || (trimmed.starts_with("/api/integration/") && trimmed.contains("/connect/"))
+}
+
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
-    Box::pin(relay_inner(app, request)).await
+    let no_store = is_account_proxy_path(request.uri().path(), request.method());
+    let result = Box::pin(relay_inner(app, request)).await;
+    if no_store {
+        let mut response = match result {
+            Ok(response) => response,
+            Err(err) => err.into_response(),
+        };
+        response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        Ok(response)
+    } else {
+        result
+    }
 }
 
 async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
@@ -42,6 +75,12 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
+    if (route.starts_with("/api/credential/")
+        || (route.starts_with("/api/integration/") && route.contains("/connect/")))
+        && route.trim_start_matches('/').split('/').any(|seg| !valid_segment(seg))
+    {
+        return Err(invalid());
+    }
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
     let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
     let send_input = prompt || command;
@@ -55,7 +94,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     }
     let declared =
         head.headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
-    if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH))
+    if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE))
         && declared.is_some_and(|length| length > body_limit)
     {
         let _ = super::proxy_body::read(body, body_limit, declared).await;
@@ -85,6 +124,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         && session.is_some_and(|s| {
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
+    let account_route = is_account_no_store_route(route, &head.method);
     let workspace_closed = || async {
         loop {
             let notified = app.workspace_closed.notified();
@@ -107,16 +147,23 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         acquired = app.native.acquire(deadline) => match acquired {
             Ok(endpoint) => endpoint,
             Err(ref refusal @ super::admission::Refusal::Unsupported { ref actual, reason }) => {
-                return Err((
-                    Status::UPGRADE_REQUIRED,
-                    Json(json!({
+                let body = if account_route {
+                    json!({
+                        "error": "opencode_update_required",
+                        "message": "OpenCode update required",
+                        "minimumVersion": super::admission::MINIMUM_VERSION,
+                        "reason": reason,
+                    })
+                } else {
+                    json!({
                         "error": "opencode_update_required",
                         "message": refusal.to_string(),
                         "actualVersion": actual,
                         "minimumVersion": super::admission::MINIMUM_VERSION,
                         "reason": reason,
-                    })),
-                ));
+                    })
+                };
+                return Err((Status::UPGRADE_REQUIRED, Json(body)));
             }
             Err(_) => return Err(upstream_error()),
         },
@@ -151,6 +198,41 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     // Validate `x-codenomad-location` shape and query selectors before any session lookup
     // (TS `http-server.ts:1133-1136, 1248-1269` & `proxy-locations.ts:27-34`).
     let parsed_location_context = parse_location_context(&head.headers)?;
+    let global_form = controls::is_global_form(route, &head.method);
+    let global_form_directory = if global_form {
+        let invalid_form = || error(Status::BAD_REQUEST, "Invalid Form location");
+        if head.headers.contains_key("x-opencode-workspace") {
+            return Err(invalid_form());
+        }
+        let mut values = head.headers.get_all("x-opencode-directory").iter();
+        let header_dir = if let Some(value) = values.next() {
+            if values.next().is_some() {
+                return Err(invalid_form());
+            }
+            let raw = value.to_str().ok().ok_or_else(invalid_form)?;
+            let decoded = crate::shared::decode_component(raw).ok_or_else(invalid_form)?;
+            if decoded.trim().is_empty() || decoded.contains('\0') {
+                return Err(invalid_form());
+            }
+            Some(decoded)
+        } else {
+            None
+        };
+        if let Some(ctx) = &parsed_location_context {
+            let expected = header_dir.as_deref().unwrap_or(opened);
+            if ctx["directory"].as_str() != Some(expected) {
+                return Err(error(Status::BAD_REQUEST, "Conflicting Form location"));
+            }
+        }
+        if let Some(dir) = &header_dir {
+            if !crate::worktrees::owns(&app, &workspace, dir).await {
+                return Err(foreign());
+            }
+        }
+        header_dir
+    } else {
+        None
+    };
     let (mut dir_count, mut loc_dir_count) = (0usize, 0usize);
     let mut invalid_query = false;
     let mut requested_dirs: Vec<String> = Vec::new();
@@ -260,7 +342,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
                 if requested_checkout.is_none() {
                     requested_checkout = Some(proof);
                 }
-            } else if !crate::worktrees::owns(&app, &workspace, req).await {
+            } else if !account_route && !crate::worktrees::owns(&app, &workspace, req).await {
                 return Err(foreign());
             }
         }
@@ -346,9 +428,14 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         admission_work.await?
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
-    let directory =
-        if send_input { native_directory.or(requested.as_deref()) } else { requested.as_deref().or(native_directory) }
-            .unwrap_or(opened);
+    let directory = if send_input {
+        native_directory.or(requested.as_deref())
+    } else if global_form_directory.is_some() {
+        global_form_directory.as_deref()
+    } else {
+        requested.as_deref().or(native_directory)
+    }
+    .unwrap_or(opened);
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
@@ -465,7 +552,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             } else {
                 false
             };
-        if !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+        if !account_route && !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
             return Err(foreign());
         }
     }
@@ -497,6 +584,8 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     } else {
         target.set_query(head.uri.query());
     }
+    let location_context_dir =
+        parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()).map(str::to_owned);
     if let Some(context) = parsed_location_context {
         if send_input {
             let raw = super::prompt::context(&context)?;
@@ -512,7 +601,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
                 }
                 prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
-        } else if !message_list {
+        } else if !message_list && !account_route {
             // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
@@ -552,11 +641,12 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if !message_list && (seen_directory || (prompt_query.is_none() && value != directory)) {
+                if !message_list && !account_route && (seen_directory || (prompt_query.is_none() && value != directory))
+                {
                     return Err(foreign());
                 }
                 seen_directory = true;
-                explicit = (key == "directory") == session_list;
+                explicit = account_route || (key == "directory") == session_list;
             }
             "project" if session_list => {
                 if value.is_empty() || project.replace(value.into_owned()).is_some() {
@@ -599,7 +689,12 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         explicit = true;
     }
     if session_path.is_some_and(|path| path.split('/').next() == Some("global")) {
-        return Ok(unavailable());
+        if !global_form {
+            return Ok(unavailable());
+        }
+        if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
+            return Ok(unavailable());
+        }
     }
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
@@ -638,29 +733,41 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         initial_identity: &initial_identity,
         input_checkout: &input_checkout,
     };
-    let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
-            recheck: &recheck,
-            head: &head,
-            route,
-            control,
-            send_input,
-            command,
-            body_limit,
-            declared,
-            pending_body: &mut pending_body,
-            prompt_input: &mut prompt_input,
-            prompt_locations: &prompt_locations,
-            trace_fence,
-            explicit,
-            session_list,
-            target: &mut target,
-        }))
-        .await?
-        {
-            mutation::MutationOutcome::Ready(prepared) => prepared,
-            mutation::MutationOutcome::Early(response) => return Ok(response),
-        };
+    let mutation::PreparedMutation {
+        fork,
+        root_permissions,
+        input,
+        rules_lock,
+        mutation,
+        account_manual,
+        account_context_dir,
+        account_verified_locs,
+        receipt,
+    } = match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
+        recheck: &recheck,
+        head: &head,
+        route,
+        control,
+        send_input,
+        command,
+        body_limit,
+        declared,
+        pending_body: &mut pending_body,
+        prompt_input: &mut prompt_input,
+        prompt_locations: &prompt_locations,
+        trace_fence,
+        explicit: explicit || global_form_directory.is_some(),
+        requested_dirs: &requested_dirs,
+        location_context_dir: location_context_dir.as_deref(),
+        session_list,
+        target: &mut target,
+    }))
+    .await?
+    {
+        mutation::MutationOutcome::Ready(prepared) => prepared,
+        mutation::MutationOutcome::Early(response) => return Ok(response),
+    };
+    let method_str = head.method.to_string();
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     // Forward all sanitized request headers across every proxied route (including Accept,
     // conditionals, Range, If-Range), matching TS `sanitizeInstanceProxyRequestHeaders`
@@ -701,6 +808,10 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             upstream = upstream.header(name, value);
         }
     }
+    if let Some(dir) = global_form_directory.as_ref().or(account_context_dir.as_ref()) {
+        let encoded = percent_encoding::utf8_percent_encode(dir, percent_encoding::NON_ALPHANUMERIC).to_string();
+        upstream = upstream.header("x-opencode-directory", encoded);
+    }
     if let Some(input) = &input {
         upstream = upstream.json(input);
     }
@@ -740,17 +851,21 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         endpoint,
         principal,
         upstream,
+        method: method_str,
         route,
         opened,
         directory,
         id,
         message_list,
+        account_route,
         fork,
         actual,
         project,
         root_permissions,
         receipt,
         mutation,
+        account_manual,
+        account_verified_locs,
         rules_lock,
     }))
     .await

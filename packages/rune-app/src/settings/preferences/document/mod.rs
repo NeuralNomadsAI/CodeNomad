@@ -2,8 +2,11 @@ mod choice;
 mod runtime;
 
 pub(super) use choice::Choice;
-pub(in crate::settings) use choice::env_var_is_masked;
 use choice::{ChoiceValue, Choices, is_transcript};
+pub(in crate::settings) use choice::{
+    OpenCodeBinariesOp, OpenCodeBinaryEntry, env_var_is_masked, normalize_opencode_binary,
+    parse_opencode_binaries,
+};
 
 use crate::settings::transcript_preset::{self, Row};
 use codenomad_client::{
@@ -223,9 +226,109 @@ impl Document {
         );
     }
 
+    pub(super) fn stage_palette_mutation(
+        &mut self,
+        mutation: crate::settings::palettes::PaletteMutation,
+    ) {
+        if matches!(
+            mutation.op,
+            crate::settings::palettes::PaletteOp::SetMode { .. }
+        ) {
+            self.write.requested.remove(&Choice::Mode);
+            self.write.pending.remove(&Choice::Mode);
+            self.write.failed.remove(&Choice::Mode);
+            self.write.retry.remove(&Choice::Mode);
+        } else if let Some(dark) = mutation.target_dark() {
+            self.write.requested.remove(&Choice::Palette(dark));
+            self.write.pending.remove(&Choice::Palette(dark));
+            self.write.failed.remove(&Choice::Palette(dark));
+            self.write.retry.remove(&Choice::Palette(dark));
+        } else {
+            for dark in [false, true] {
+                self.write.requested.remove(&Choice::Palette(dark));
+                self.write.pending.remove(&Choice::Palette(dark));
+                self.write.failed.remove(&Choice::Palette(dark));
+                self.write.retry.remove(&Choice::Palette(dark));
+            }
+        }
+        if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null)) {
+            self.read.fresh_for_write = false;
+        }
+        self.stage_value(
+            Choice::PaletteMutation,
+            ChoiceValue::Palette(Box::new(mutation)),
+        );
+    }
+
+    pub(super) fn clear_palette_mutation(&mut self) {
+        self.write.requested.remove(&Choice::PaletteMutation);
+        self.write.pending.remove(&Choice::PaletteMutation);
+        self.write.failed.remove(&Choice::PaletteMutation);
+        self.write.retry.remove(&Choice::PaletteMutation);
+        self.write.uncertain.remove(&Choice::PaletteMutation);
+    }
+
+    pub(super) fn settle_palette_mutation_on_auth_expired(&mut self) {
+        let had_unsent = self.write.pending.remove(&Choice::PaletteMutation)
+            | self.write.retry.remove(&Choice::PaletteMutation);
+        let had_sent = self
+            .write
+            .uncertain
+            .remove(&Choice::PaletteMutation)
+            .is_some()
+            || self.flight.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            })
+            || self.barrier.as_ref().is_some_and(|flight| {
+                matches!(&flight.operation, Operation::Write(sent) if sent.contains_key(&Choice::PaletteMutation))
+            });
+        let had_requested = self
+            .write
+            .requested
+            .remove(&Choice::PaletteMutation)
+            .is_some();
+        if had_unsent || had_sent || had_requested {
+            self.write.failed.insert(Choice::PaletteMutation);
+        }
+    }
+
+    pub(super) fn palette_mutation_pending(&self) -> bool {
+        (self.write.requested.contains_key(&Choice::PaletteMutation)
+            || self.write.pending.contains(&Choice::PaletteMutation)
+            || self.write.uncertain.contains_key(&Choice::PaletteMutation))
+            && !self.choice_failed(Choice::PaletteMutation)
+    }
+
+    pub(super) fn palette_mutation_failed(&self) -> bool {
+        self.choice_failed(Choice::PaletteMutation)
+    }
+
     pub(super) fn environment_pending(&self) -> bool {
         self.write.requested.contains_key(&Choice::Environment)
             && !self.choice_failed(Choice::Environment)
+    }
+
+    pub(super) fn stage_opencode_binary(&mut self, path: String) {
+        self.stage_value(Choice::OpenCodeBinary, ChoiceValue::OpenCodeBinary(path));
+    }
+
+    pub(super) fn clear_failed_opencode_binary(&mut self, path: &str) {
+        if self.write.failed.contains(&Choice::OpenCodeBinary)
+            && !self.choice_pending(Choice::OpenCodeBinary)
+            && self.write.requested.get(&Choice::OpenCodeBinary)
+                == Some(&ChoiceValue::OpenCodeBinary(path.to_owned()))
+        {
+            self.write.failed.remove(&Choice::OpenCodeBinary);
+            self.write.requested.remove(&Choice::OpenCodeBinary);
+        }
+    }
+
+    pub(super) fn stage_opencode_binaries(&mut self, op: OpenCodeBinariesOp) {
+        self.stage_value(Choice::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op));
+    }
+
+    pub(super) fn transport_epoch(&self) -> u64 {
+        self.transport_epoch
     }
 
     pub(super) fn reset_shortcuts(&mut self) {
@@ -358,10 +461,16 @@ impl Document {
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
                 | Choice::ShortcutReset
+                | Choice::OpenCodeBinary
+                | Choice::OpenCodeBinaries
+                | Choice::PaletteMutation
         ) {
             self.write.failed.remove(&choice);
         }
-        if matches!(choice, Choice::NotificationRoute(..)) {
+        if matches!(
+            choice,
+            Choice::NotificationRoute(..) | Choice::OpenCodeBinaries
+        ) {
             self.read.fresh_for_write = false;
         }
         if self.confirmed_epoch != self.transport_epoch && !self.refreshing() {
@@ -447,7 +556,11 @@ impl Document {
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         match self.write.requested.get(&choice)? {
             ChoiceValue::Text(value) => Some(*value),
-            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
+            ChoiceValue::Shortcut(_)
+            | ChoiceValue::Palette(_)
+            | ChoiceValue::Environment { .. }
+            | ChoiceValue::OpenCodeBinary(_)
+            | ChoiceValue::OpenCodeBinaries(_) => None,
         }
     }
 
@@ -525,6 +638,15 @@ impl Document {
         {
             self.invalidate();
         }
+    }
+
+    pub(super) fn needs_fresh_palette_snapshot(&self) -> bool {
+        self.write.pending.contains(&Choice::PaletteMutation)
+            && matches!(
+                self.write.requested.get(&Choice::PaletteMutation),
+                Some(ChoiceValue::Palette(mutation))
+                    if mutation.needs_fresh_snapshot(self.snapshot.as_ref().unwrap_or(&Value::Null))
+            )
     }
 
     fn has_stale_sensitive_write(&self) -> bool {

@@ -48,7 +48,7 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
     };
     Ok(host::Launch {
         root: root.into(),
-        identity,
+        identity: Some(identity),
         // `CLI_CONFIG` and `CLI_UNRESTRICTED_ROOT` as `serve` reads them; settings beside the data otherwise.
         settings: crate::settings::document::Location::resolve(
             &env::var("CLI_CONFIG").unwrap_or_else(|_| data.to_string_lossy().into_owned()),
@@ -201,18 +201,29 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
         return next.run(req).await;
     }
     let method = req.method().clone();
-    let path = req.uri().path().to_owned();
-    let keys = req
-        .uri()
-        .query()
-        .map(|q| q.split('&').map(|p| p.split('=').next().unwrap_or("").to_owned()).collect::<Vec<_>>())
-        .unwrap_or_default();
+    let raw_path = req.uri().path().to_owned();
+    let sensitive_path = crate::auth::remote::is_no_store_account_path(&raw_path);
+    let path = if sensitive_path { "<account-route>".to_owned() } else { raw_path };
+    let keys = if sensitive_path {
+        Vec::new()
+    } else {
+        req.uri()
+            .query()
+            .map(|q| q.split('&').map(|p| p.split('=').next().unwrap_or("").to_owned()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
     let started = chrono::Utc::now().timestamp_millis();
     let response = next.run(req).await;
     let status = response.status();
     if status.as_u16() < 400 || status.as_u16() == 404 && path.ends_with("/session-favorites") {
         return response;
     }
+    let no_store = sensitive_path
+        || response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.to_ascii_lowercase().contains("no-store"));
     let small = response
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -226,6 +237,10 @@ pub async fn refusal_trace(req: Request, next: Next) -> Response {
             took()
         ))
     };
+    if no_store {
+        line("<redacted>");
+        return response;
+    }
     if !small {
         line("<stream>");
         return response;

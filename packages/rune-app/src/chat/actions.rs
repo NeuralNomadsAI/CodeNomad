@@ -42,6 +42,7 @@ pub struct Display {
     pub(crate) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
+    pub(crate) queue: super::queue::Queue,
     focused_key: Option<String>,
     task_focus_pinned: std::cell::Cell<bool>,
     #[cfg(test)]
@@ -73,13 +74,119 @@ struct SessionDisplay {
     execute_search: (u64, HashMap<String, bool>),
     compact_diffs: (u64, HashSet<String>),
 }
+impl SessionDisplay {
+    fn task_anchors_bytes(&self) -> usize {
+        self.task_anchors
+            .iter()
+            .fold(0usize, |total, (key, state)| {
+                total
+                    .saturating_add(key.len())
+                    .saturating_add(state.visible.iter().map(String::len).sum::<usize>())
+                    .saturating_add(state.selected.iter().map(String::len).sum::<usize>())
+            })
+    }
+
+    fn retained_bytes(&self) -> usize {
+        let keys_len = |set: &HashSet<String>| set.iter().map(String::len).sum::<usize>();
+        let map_keys_len =
+            |keys: usize, bytes: usize| keys.saturating_mul(32).saturating_add(bytes);
+        let mut total = keys_len(&self.toggled)
+            .saturating_add(map_keys_len(
+                self.expansion.len(),
+                self.expansion.keys().map(String::len).sum(),
+            ))
+            .saturating_add(keys_len(&self.group_search_collapsed.1))
+            .saturating_add(map_keys_len(
+                self.revealed.len(),
+                self.revealed.keys().map(String::len).sum(),
+            ))
+            .saturating_add(map_keys_len(
+                self.task_revealed.len(),
+                self.task_revealed.keys().map(String::len).sum(),
+            ))
+            .saturating_add(map_keys_len(
+                self.task_mount_gen.len(),
+                self.task_mount_gen.keys().map(String::len).sum(),
+            ))
+            .saturating_add(self.search_revealed.iter().map(String::len).sum::<usize>())
+            .saturating_add(keys_len(&self.compact_diffs.1))
+            .saturating_add(self.task_anchors_bytes());
+        for (key, set) in &self.unwrapped {
+            total = total
+                .saturating_add(key.len())
+                .saturating_add(set.len().saturating_mul(size_of::<usize>()));
+        }
+        for (key, set) in &self.diagram_sources {
+            total = total
+                .saturating_add(key.len())
+                .saturating_add(set.len().saturating_mul(size_of::<usize>()));
+        }
+        total
+    }
+}
+
 impl Display {
+    pub(crate) fn evictable_rendered_bytes(&self, active_outline_ptr: Option<usize>) -> usize {
+        let live_ansi: usize = self
+            .live_ansi
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.len().saturating_add(1024))
+            .sum();
+        self.diffs
+            .retained_bytes()
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.children.retained_bytes())
+            .saturating_add(self.task_deliveries.borrow().retained_bytes())
+            .saturating_add(live_ansi)
+            .saturating_add(self.active.task_anchors_bytes())
+            .saturating_add(self.saved_sessions_bytes())
+            .saturating_add(self.timeline.evictable_outline_bytes(active_outline_ptr))
+    }
+
+    pub(crate) fn retained_bytes(
+        &self,
+        seen_outlines: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        let live_ansi: usize = self
+            .live_ansi
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.len().saturating_add(1024))
+            .sum();
+        self.diffs
+            .retained_bytes()
+            .saturating_add(self.pictures.retained_bytes())
+            .saturating_add(self.children.retained_bytes())
+            .saturating_add(self.task_deliveries.borrow().retained_bytes())
+            .saturating_add(live_ansi)
+            .saturating_add(self.active.retained_bytes())
+            .saturating_add(self.saved_sessions_bytes())
+            .saturating_add(self.timeline.outline_retained_bytes(seen_outlines))
+    }
+
+    pub(crate) fn saved_sessions_bytes(&self) -> usize {
+        self.saved
+            .iter()
+            .map(|(id, session)| id.len().saturating_add(session.retained_bytes()))
+            .sum()
+    }
+
+    pub(crate) fn evict_inactive_sessions(&mut self) -> usize {
+        let freed = self.saved_sessions_bytes();
+        self.saved.clear();
+        freed
+    }
+
     pub(crate) fn evict_rendered(&mut self) {
         self.suspend_rendered();
         self.receipts.clear();
+        self.saved.clear();
+        self.timeline.evict_inactive_outline();
     }
     pub(super) fn suspend_rendered(&mut self) {
         self.messages.suspend();
+        self.queue.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
@@ -113,9 +220,11 @@ impl Display {
             };
         } else if self.session != session {
             self.messages = Default::default();
+            self.queue = Default::default();
             self.timeline = Default::default();
             self.search_highlight = None;
-            let next = self.saved.remove(session).unwrap_or_default();
+            let mut next = self.saved.remove(session).unwrap_or_default();
+            next.reading.clear_row_guard();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
                 std::mem::replace(&mut self.active, next),

@@ -28,6 +28,7 @@ pub(super) fn modal_open(s: &State) -> bool {
         || notifications::history_open(s)
         || crate::files::modal_open(s)
         || workspace::mission_confirmation(s).is_some()
+        || s.status_services.confirm_open()
         || (!s.screen.is_launcher()
             && (s
                 .transcript_display

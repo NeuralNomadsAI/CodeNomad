@@ -60,4 +60,5 @@ export const integrationMessages = {
   "integrations.install.title": "התקנת אינטגרציה",
   "integrations.install.confirm": "להתקין את {name} ({scope})? הקוד ירוץ עם ההרשאות שלך ב־OpenCode.",
   "integrations.install.error": "לא אושר. יש לרענן כדי לבדוק.",
+  "settings.nav.integrations": "אינטגרציות",
 }

@@ -22,7 +22,7 @@ pub fn trigger<S: 'static>(
         .help(help)
         .expanded(open)
         .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
+        .build(&kit(layout::dark()))
         .on_key(layout::enter_action(invoke))
         .key(TRIGGER)
 }
