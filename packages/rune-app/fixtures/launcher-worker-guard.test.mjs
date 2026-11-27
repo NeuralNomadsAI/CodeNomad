@@ -72,6 +72,35 @@ test('evaluateWorkerExit separates bridge, supervisor, and worker statuses and l
   assert.equal(incompleteTree.workerStopError, 'Fixture supervisor reported incomplete child tree termination')
   assert.equal(incompleteTree.finalResult, 1)
 
+  const bridge86SupervisorSignaled = evaluateWorkerExit({
+    supervisorExit: { code: null, signal: 'SIGKILL' },
+    bridgeExit: { code: 86, signal: null },
+    workerStarted: true,
+    proof: { result: 0 },
+  })
+  assert.equal(bridge86SupervisorSignaled.workerExited, false)
+  assert.equal(bridge86SupervisorSignaled.workerExitCode, null)
+  assert.equal(bridge86SupervisorSignaled.supervisorExitCode, null)
+  assert.equal(bridge86SupervisorSignaled.supervisorExitSignal, 'SIGKILL')
+  assert.equal(bridge86SupervisorSignaled.bridgeExitCode, 86)
+  assert.equal(bridge86SupervisorSignaled.bridgeExitSignal, null)
+  assert.equal(bridge86SupervisorSignaled.interrupted, 'SIGKILL')
+  assert.equal(bridge86SupervisorSignaled.workerStopError, 'Owned worker exit was not confirmed after stop')
+  assert.equal(bridge86SupervisorSignaled.finalResult, 1)
+
+  const bridge86Alone = evaluateWorkerExit({
+    supervisorExit: { code: 0, signal: null },
+    bridgeExit: { code: 86, signal: null },
+    workerStarted: true,
+    proof: { result: 0 },
+  })
+  assert.equal(bridge86Alone.workerExited, false)
+  assert.equal(bridge86Alone.workerExitCode, null)
+  assert.equal(bridge86Alone.supervisorExitCode, 0)
+  assert.equal(bridge86Alone.bridgeExitCode, 86)
+  assert.equal(bridge86Alone.workerStopError, 'Owned worker exit was not confirmed after stop')
+  assert.equal(bridge86Alone.finalResult, 1)
+
   const posixKilledWorkerCollapsed = evaluateWorkerExit({
     supervisorExit: { code: 1, signal: null },
     bridgeExit: { code: 1, signal: null },

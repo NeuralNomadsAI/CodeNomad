@@ -130,7 +130,7 @@ export function evaluateWorkerExit({
       ? new Error(`Owned worker did not start (supervisor exit code=${supervisorExit?.code ?? bridgeExit?.code ?? null}, signal=${supervisorExit?.signal ?? bridgeExit?.signal ?? null})`)
       : null
   )
-  const supervisorIncompleteTree = supervisorExit?.code === 86 || bridgeExit?.code === 86
+  const supervisorIncompleteTree = supervisorExit?.code === 86
   const signaled = Boolean(supervisorExit?.signal || bridgeExit?.signal)
   const bridgeFailed = bridgeExit !== null && (bridgeExit.code !== 0 || bridgeExit.signal !== null || supervisorExit === null)
   const supervisorCleanZero = supervisorExit !== null && supervisorExit.code === 0 && supervisorExit.signal === null
