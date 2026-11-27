@@ -40,9 +40,10 @@ function fixture() {
     },
   } as unknown as MissionCalendarControl
   const storage = { get: async (key: string) => values.get(key), set: async (key: string, value: MissionJsonValue) => { values.set(key, value) } }
-  const run = (number: number, news?: MissionCalendarNews, automationID = "aut_a", mission: Record<string, unknown> = {}) =>
-    runMissionCalendar(control, storage, "key", { automationID, run: number }, { objective: "Review", template: "custom", ...mission }, news, () => clock += 1_000)
-  return { missions, calls, run, unusable, failStarts: (value: boolean) => { failStart = value }, failDeletes: (value: boolean) => { failDelete = value },
+  const run = (number: number, news?: MissionCalendarNews, automationID = "aut_a", mission: Record<string, unknown> = {}, prepared?: string) =>
+    runMissionCalendar(control, storage, "key", { automationID, run: number }, { objective: "Review", template: "custom", ...mission }, { news, prepared, now: () => clock += 1_000 })
+  const prepare = (id: string, coordinatorSessionId = "ses_prepared") => { missions.set(id, { id, status: "active", runState: "prepared", revision: 1, coordinatorSessionId }) }
+  return { missions, calls, run, unusable, prepare, failStarts: (value: boolean) => { failStart = value }, failDeletes: (value: boolean) => { failDelete = value },
     end: (id: string, status: Fake["status"] = "completed") => { missions.get(id)!.status = status } }
 }
 const launched = (missionID: string, history: unknown[] = [], coordinatorSessionID = "ses_1") => ({ outcome: "launched", missionID, status: "active", coordinatorSessionID, history })
@@ -164,4 +165,37 @@ test("a programmed Mission waits only for events read from Git and the forges", 
   assert.equal(missionCalendarEventsSchema.safeParse([{ kind: "files-changed", paths: ["package.json"] }]).success, true)
   for (const event of [{ kind: "mission-completed", missionID: "msn_other" }, { kind: "conversation-message", conversationID: "ses_other" }])
     assert.equal(missionCalendarEventsSchema.safeParse([event]).success, false)
+})
+
+test("the Mission prepared with the programming is what the first launch starts", async () => {
+  const f = fixture()
+  f.prepare("msn_prepared")
+  let changed = false
+  const news: MissionCalendarNews = async () => ({ checkpoints: [], changed })
+  const run = (number: number) => f.run(number, news, "aut_a", {}, "msn_prepared")
+  assert.deepEqual(await run(1), { outcome: "idle", missionID: "msn_prepared", history: [] })
+  assert.equal(f.calls.length, 0, "waiting for news asks nothing of Missions")
+  changed = true
+  assert.deepEqual(await run(2), launched("msn_prepared", [], "ses_prepared"))
+  assert.deepEqual(f.calls, ["start msn_prepared calendar-start 1"], "started, not created")
+  assert.equal((await run(3)).outcome, "waiting")
+  f.end("msn_prepared")
+  assert.deepEqual(await run(4), launched("msn_calendar_aut_a_4", [{ at: 3_000, outcome: "completed" }], "ses_prepared"))
+  assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_4"])
+})
+
+test("a prepared Mission a person started, removed or replaced by an edit is followed", async () => {
+  const started = fixture()
+  started.prepare("msn_prepared")
+  started.missions.get("msn_prepared")!.runState = "running"
+  assert.deepEqual([(await started.run(1, undefined, "aut_a", {}, "msn_prepared")).outcome, started.missions.size], ["waiting", 1])
+  const removed = fixture()
+  assert.equal((await removed.run(1, undefined, "aut_a", {}, "msn_gone")).missionID, "msn_calendar_aut_a_1")
+  const edited = fixture()
+  edited.prepare("msn_first"); edited.prepare("msn_second")
+  const quiet: MissionCalendarNews = async () => ({ checkpoints: [], changed: false })
+  assert.equal((await edited.run(1, quiet, "aut_a", {}, "msn_first")).missionID, "msn_first")
+  assert.equal((await edited.run(2, quiet, "aut_b", {}, "msn_second")).missionID, "msn_second")
+  assert.equal((await edited.run(3, undefined, "aut_b", {}, "msn_second")).missionID, "msn_second")
+  assert.deepEqual(edited.calls, ["start msn_second calendar-start 1"])
 })

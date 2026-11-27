@@ -11,11 +11,12 @@
 //    by itself, so the coordinator can finish.
 // 6. A calendar waiting for commits on a local branch launches nothing until one lands,
 //    then coordinates in the conversation it names.
+// 7. A programming saved with a prepared Mission launches by starting that Mission.
 // Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -244,6 +245,27 @@ try {
   console.log("PASS 6 (a calendar waiting for commits launches only once one lands, in the conversation it names)")
   await calendars().delete("cal_commits")
   assert.deepEqual(await calendars().list(), [])
+
+  // A person programs a Mission with CodeNomad open: its backend lease registers Missions, and the Mission is prepared at once.
+  const lease = path.join(presenceDir, `${randomUUID()}.lease`)
+  await writeFile(lease, "")
+  const prepared = (await until("the prepared Mission", () => daemon.client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "req_prepared_e2e", objective: OBJECTIVE,
+    title: "Prepared E2E", template: "custom", prepared: true }, callOpts), created => !!created?.mission?.id, 30_000)).mission
+  await rm(lease)
+  await calendars().save("cal_prepared", [rule("cal_prepared", { objective: OBJECTIVE, title: "Prepared E2E", template: "custom", prepared: prepared.id,
+    when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] })])
+  const programmed = () => daemon.client.experimental.automation.get({ automationID: watchingPrepared.id })
+  const watchingPrepared = { id: (await calendars().list())[0].rules[0].automationID }
+  const still = await until("two runs without a commit", programmed, info => info.runCount >= 2 || info.lastOutcome === "failed", 150_000)
+  assert.notEqual(still.lastOutcome, "failed", still.lastOutput)
+  assert.equal((await calendars().list())[0].missionID, prepared.id, "the programmed Mission is the prepared one")
+  assert.equal((await missions(daemon)).find(mission => mission.id === prepared.id).runState, "prepared")
+  git("commit", "-q", "--allow-empty", "-m", "third")
+  await until("the prepared Mission starts", () => missions(daemon).then(list => list.find(mission => mission.id === prepared.id)?.runState, () => "unregistered"),
+    state => state === "running" || state === "unregistered", 60_000)
+  assert.deepEqual([(await calendars().list())[0].last?.outcome, (await calendars().list())[0].last?.missionID], ["launched", prepared.id])
+  console.log("PASS 7 (a programming saved with a prepared Mission launches by starting that Mission)")
+  await calendars().delete("cal_prepared")
 } finally {
   console.log("seen:", JSON.stringify({ ...seen, delegated: [...seen.delegated] }))
   if (daemon) await daemon.stop().catch(() => {})

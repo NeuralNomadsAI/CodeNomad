@@ -24,7 +24,10 @@ test("events alone become one Automation that asks every fifteen minutes, in the
   assert.equal(automation!.action.code, MISSION_CALENDAR_CODE)
   assert.deepEqual(automation!.action.args, { calendar: "cal_sync", title: "Sync", objective: "Review what changed", template: "custom", taskMode: "native",
     profiles: { coordinator: profile, roles: { specialist: profile } }, coordinatorGoal: true, coordinatorSessionID: "ses_coordinator",
-    when: [{ ...commits }, { ...pulls }] })
+    when: [{ ...commits }, { ...pulls }], launch: { when: [{ ...commits }, { ...pulls }] } })
+  const prepared = missionCalendarAutomations(configuration({ when: [commits] }), "cal_sync", "msn_prepared")
+  assert.ok(Array.isArray(prepared))
+  assert.equal(prepared[0]!.action.args.prepared, "msn_prepared", "the Mission the first launch starts")
 })
 
 test("each date rule is an Automation of the same calendar, with the events after the rules as its condition", () => {
