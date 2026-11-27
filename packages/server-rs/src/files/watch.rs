@@ -12,18 +12,24 @@ use uuid::Uuid;
 
 pub type Signal = (Uuid, String, Uuid);
 type Tx = tokio::sync::mpsc::Sender<Signal>;
-type TargetMap = Arc<Mutex<HashMap<PathBuf, Vec<Signal>>>>;
+type TargetMap = Arc<Mutex<HashMap<PathBuf, TargetState>>>;
 
 const MAX_WATCHES: usize = 256;
+
+struct TargetState {
+    identity: String,
+    signals: Vec<Signal>,
+}
 
 pub struct Watches {
     tx: Tx,
     entries: VecDeque<Entry>,
-    /// One shared OS watcher instance multiplexed across up to `MAX_WATCHES` observed files so
-    /// Linux inotify user instances stay at 1 instead of scaling with observed files.
+    /// One shared OS watcher instance multiplexed across up to `MAX_WATCHES` observed paths so
+    /// Linux inotify user instances stay at 1 instead of scaling with observed directories.
     watcher: Option<RecommendedWatcher>,
-    /// Watched physical path -> active entry signals. Never held across `watcher.watch`/`unwatch`
-    /// so the notify callback thread can never deadlock against registry mutations.
+    /// Watched physical path -> tracked identity and active entry signals. Never held across
+    /// `watcher.watch`/`unwatch` so the notify callback thread can never deadlock against registry
+    /// mutations.
     targets: TargetMap,
 }
 struct Entry {
@@ -35,39 +41,57 @@ struct Entry {
 
 fn dispatch_event(targets: &TargetMap, tx: &Tx, event: notify::Result<notify::Event>) {
     let signals: Vec<Signal> = match event {
-        Err(_) => targets.lock().unwrap_or_else(|e| e.into_inner()).values().flatten().cloned().collect(),
+        Err(_) => targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .flat_map(|state| state.signals.iter().cloned())
+            .collect(),
         Ok(event) => {
             if matches!(event.kind, EventKind::Access(_)) {
                 return;
             }
             let map = targets.lock().unwrap_or_else(|e| e.into_inner());
             if event.need_rescan() || event.paths.is_empty() {
-                map.values().flatten().cloned().collect()
+                map.values().flat_map(|state| state.signals.iter().cloned()).collect()
             } else {
                 let mut matched = Vec::new();
                 for path in &event.paths {
                     let simplified = dunce::simplified(path);
-                    if let Some(list) = map.get(simplified) {
-                        matched.extend(list.iter().cloned());
-                        continue;
-                    }
+                    let parent = simplified.parent();
                     let mut hit = false;
-                    #[cfg(windows)]
+                    // Exact match (events on the watched path itself) and direct child match
+                    // (NonRecursive directory watches report `<dir>/<child>` on all platforms).
+                    if let Some(state) = map.get(simplified) {
+                        matched.extend(state.signals.iter().cloned());
+                        hit = true;
+                    }
+                    if let Some(parent_path) = parent
+                        && let Some(state) = map.get(parent_path)
                     {
+                        matched.extend(state.signals.iter().cloned());
+                        hit = true;
+                    }
+                    #[cfg(windows)]
+                    if !hit {
                         let needle = simplified.to_string_lossy();
-                        for (target, list) in map.iter() {
-                            if target.to_string_lossy().eq_ignore_ascii_case(&needle) {
-                                matched.extend(list.iter().cloned());
+                        let parent_needle = parent.map(|p| p.to_string_lossy());
+                        for (target, state) in map.iter() {
+                            let candidate = target.to_string_lossy();
+                            if candidate.eq_ignore_ascii_case(&needle)
+                                || parent_needle.as_ref().is_some_and(|p| candidate.eq_ignore_ascii_case(p))
+                            {
+                                matched.extend(state.signals.iter().cloned());
                                 hit = true;
                             }
                         }
                     }
                     if !hit {
                         // Coalesced directory notifications (e.g. macOS FSEvents) report an
-                        // ancestor directory path rather than the individual watched file.
-                        for (target, list) in map.iter() {
+                        // ancestor directory path rather than the individual watched path.
+                        for (target, state) in map.iter() {
                             if target.starts_with(simplified) {
-                                matched.extend(list.iter().cloned());
+                                matched.extend(state.signals.iter().cloned());
                             }
                         }
                     }
@@ -104,9 +128,9 @@ impl Watches {
         {
             let mut map = self.targets.lock().unwrap_or_else(|e| e.into_inner());
             for (target, key) in removed {
-                let empty = if let Some(list) = map.get_mut(&target) {
-                    list.retain(|existing| existing != &key);
-                    list.is_empty()
+                let empty = if let Some(state) = map.get_mut(&target) {
+                    state.signals.retain(|existing| existing != &key);
+                    state.signals.is_empty()
                 } else {
                     false
                 };
@@ -159,7 +183,6 @@ pub fn observe(app: &Shared, w: &Workspace, logical: &str, target: &Path) {
     let Ok(identity) = crate::files::host_identity(target) else { return };
     let normalized = dunce::simplified(target).to_path_buf();
     let mut registry = app.file_watches.lock().unwrap();
-    let mut replaced_same_target = false;
     if let Some(index) = registry.entries.iter().position(|e| e.key.0 == w.id && e.root == w.path && e.key.1 == logical)
     {
         let previous = registry.entries.remove(index).unwrap();
@@ -167,7 +190,6 @@ pub fn observe(app: &Shared, w: &Workspace, logical: &str, target: &Path) {
             registry.entries.push_back(previous);
             return;
         }
-        replaced_same_target = previous.target == normalized;
         registry.detach_keys(vec![(previous.target, previous.key)]);
     }
     if registry.entries.len() == MAX_WATCHES
@@ -176,18 +198,32 @@ pub fn observe(app: &Shared, w: &Workspace, logical: &str, target: &Path) {
         registry.detach_keys(vec![(evicted.target, evicted.key)]);
     }
     let key = (w.id, logical.to_owned(), Uuid::new_v4());
-    let needs_watch = {
+    let (needs_watch, prev_identity) = {
         let mut map = registry.targets.lock().unwrap_or_else(|e| e.into_inner());
-        let list = map.entry(normalized.clone()).or_default();
-        let was_empty = list.is_empty();
-        list.push(key.clone());
-        was_empty || replaced_same_target
+        match map.get_mut(&normalized) {
+            Some(state) => {
+                let prev =
+                    (state.identity != identity).then(|| std::mem::replace(&mut state.identity, identity.clone()));
+                state.signals.push(key.clone());
+                (prev.is_some(), prev)
+            }
+            None => {
+                map.insert(normalized.clone(), TargetState { identity: identity.clone(), signals: vec![key.clone()] });
+                (true, None)
+            }
+        }
     };
     if needs_watch {
         let watched = registry
             .ensure_watcher()
             .is_some_and(|watcher| watcher.watch(&normalized, RecursiveMode::NonRecursive).is_ok());
         if !watched {
+            if let Some(prev) = prev_identity {
+                let mut map = registry.targets.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(state) = map.get_mut(&normalized) {
+                    state.identity = prev;
+                }
+            }
             registry.detach_keys(vec![(normalized, key)]);
             return;
         }
@@ -313,13 +349,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_watcher_multiplexes_same_dir_files_and_survives_sibling_unwatch() {
-        let dir = crate::shared::test_dir("watch-shared");
+    async fn shared_watcher_reports_child_changes_in_listed_directories_and_survives_sibling_unwatch() {
+        let dir = crate::shared::test_dir("watch-shared-dirs");
         let dir_canon = dunce::canonicalize(&dir).unwrap();
-        let file_a = dir_canon.join("a.txt");
-        let file_b = dir_canon.join("b.txt");
-        std::fs::write(&file_a, "v1").unwrap();
-        std::fs::write(&file_b, "v1").unwrap();
+        let dir_a = dir_canon.join("nested_a");
+        let dir_b = dir_canon.join("nested_b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
 
         let (app, rx) = test_app(&dir_canon);
         let ws_a = test_workspace(dir_canon.clone());
@@ -331,8 +367,9 @@ mod tests {
         let runner = tokio::spawn(run(app.clone(), rx, stop.clone()));
         let sub = app.events.subscribe();
 
-        observe(&app, &ws_a, "a.txt", &file_a);
-        observe(&app, &ws_b, "b.txt", &file_b);
+        // Mirror `files::list`: observe the listed directories themselves (NonRecursive).
+        observe(&app, &ws_a, "nested_a", &dir_a);
+        observe(&app, &ws_b, "nested_b", &dir_b);
         {
             let reg = app.file_watches.lock().unwrap();
             assert!(reg.watcher.is_some(), "single shared watcher should be initialized");
@@ -340,7 +377,15 @@ mod tests {
             assert_eq!(reg.targets.lock().unwrap().len(), 2);
         }
 
-        // Forgetting ws_a unwatches a.txt while keeping b.txt live on the same shared watcher.
+        // Creating a child file inside a watched directory must emit workspace.filesChanged
+        // for that listed directory (as checked by `bench/files.mjs`).
+        std::fs::write(dir_a.join("watch.txt"), "hello").unwrap();
+        assert!(
+            wait_file_change(&app, &sub, ws_a.id, "nested_a").await,
+            "child creation inside watched directory must emit workspace.filesChanged"
+        );
+
+        // Forgetting ws_a unwatches nested_a while keeping nested_b live on the same shared watcher.
         app.file_watches.lock().unwrap().forget(ws_a.id);
         {
             let reg = app.file_watches.lock().unwrap();
@@ -348,10 +393,10 @@ mod tests {
             assert_eq!(reg.targets.lock().unwrap().len(), 1);
         }
 
-        std::fs::write(&file_b, "v2-updated").unwrap();
+        std::fs::write(dir_b.join("watch.txt"), "v2-updated").unwrap();
         assert!(
-            wait_file_change(&app, &sub, ws_b.id, "b.txt").await,
-            "remaining sibling watch must still emit workspace.filesChanged"
+            wait_file_change(&app, &sub, ws_b.id, "nested_b").await,
+            "remaining sibling directory watch must still emit workspace.filesChanged"
         );
 
         stop.cancel();
@@ -366,6 +411,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_watcher_rearms_when_shared_directory_identity_changes() {
+        let dir = crate::shared::test_dir("watch-rearm");
+        let dir_canon = dunce::canonicalize(&dir).unwrap();
+        let watched = dir_canon.join("replaceable");
+        let displaced = dir_canon.join("replaceable-old");
+        std::fs::create_dir_all(&watched).unwrap();
+
+        let (app, rx) = test_app(&dir_canon);
+        let ws1 = test_workspace(dir_canon.clone());
+        let ws2 = test_workspace(dir_canon.clone());
+        app.inner.lock().unwrap().workspaces.push(ws1.clone());
+        app.inner.lock().unwrap().workspaces.push(ws2.clone());
+
+        let stop = CancellationToken::new();
+        let runner = tokio::spawn(run(app.clone(), rx, stop.clone()));
+        let sub = app.events.subscribe();
+
+        observe(&app, &ws1, "replaceable", &watched);
+        let old_identity = crate::files::host_identity(&watched).unwrap();
+
+        // Keep the old directory alive under a different name so the recreated directory is
+        // guaranteed to have a distinct physical identity (inode / MFT file index).
+        std::fs::rename(&watched, &displaced).unwrap();
+        std::fs::create_dir_all(&watched).unwrap();
+        let new_identity = crate::files::host_identity(&watched).unwrap();
+        assert_ne!(old_identity, new_identity);
+
+        observe(&app, &ws2, "replaceable", &watched);
+        {
+            let reg = app.file_watches.lock().unwrap();
+            let targets = reg.targets.lock().unwrap();
+            assert_eq!(targets.get(&watched).map(|s| s.identity.as_str()), Some(new_identity.as_str()));
+        }
+        app.file_watches.lock().unwrap().forget(ws1.id);
+
+        std::fs::write(watched.join("after.txt"), "ok").unwrap();
+        assert!(
+            wait_file_change(&app, &sub, ws2.id, "replaceable").await,
+            "shared directory watch must continue firing after identity replacement"
+        );
+
+        stop.cancel();
+        runner.await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn shared_watcher_refcounts_duplicate_targets_and_evicts_at_cap() {
         let dir = crate::shared::test_dir("watch-cap");
         let dir_canon = dunce::canonicalize(&dir).unwrap();
@@ -373,37 +465,37 @@ mod tests {
         let ws1 = test_workspace(dir_canon.clone());
         let ws2 = test_workspace(dir_canon.clone());
 
-        let shared_file = dir_canon.join("shared.txt");
-        std::fs::write(&shared_file, "x").unwrap();
-        observe(&app, &ws1, "shared.txt", &shared_file);
-        observe(&app, &ws2, "shared.txt", &shared_file);
+        let shared_dir = dir_canon.join("shared");
+        std::fs::create_dir_all(&shared_dir).unwrap();
+        observe(&app, &ws1, "shared", &shared_dir);
+        observe(&app, &ws2, "shared", &shared_dir);
         {
             let reg = app.file_watches.lock().unwrap();
             assert_eq!(reg.entries.len(), 2);
             let targets = reg.targets.lock().unwrap();
             assert_eq!(targets.len(), 1);
-            assert_eq!(targets.get(&shared_file).map(Vec::len), Some(2));
+            assert_eq!(targets.get(&shared_dir).map(|s| s.signals.len()), Some(2));
         }
         app.file_watches.lock().unwrap().forget(ws1.id);
         {
             let reg = app.file_watches.lock().unwrap();
             assert_eq!(reg.entries.len(), 1);
             let targets = reg.targets.lock().unwrap();
-            assert_eq!(targets.get(&shared_file).map(Vec::len), Some(1));
+            assert_eq!(targets.get(&shared_dir).map(|s| s.signals.len()), Some(1));
         }
 
         // Fill past MAX_WATCHES and verify entries + target map stay bounded cleanly.
         for i in 0..=MAX_WATCHES {
-            let file = dir_canon.join(format!("f-{i}.txt"));
-            std::fs::write(&file, "x").unwrap();
-            observe(&app, &ws2, &format!("f-{i}.txt"), &file);
+            let sub = dir_canon.join(format!("d-{i}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            observe(&app, &ws2, &format!("d-{i}"), &sub);
         }
         {
             let reg = app.file_watches.lock().unwrap();
             assert_eq!(reg.entries.len(), MAX_WATCHES);
             let targets = reg.targets.lock().unwrap();
             assert_eq!(targets.len(), MAX_WATCHES);
-            assert!(!targets.contains_key(&shared_file), "oldest entry must be evicted and unwatched");
+            assert!(!targets.contains_key(&shared_dir), "oldest entry must be evicted and unwatched");
         }
 
         app.file_watches.lock().unwrap().forget_under(&dir_canon);
