@@ -60,6 +60,7 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                 title,
                 status: None,
                 closable: true,
+                temporary: false,
             })
             .collect();
         let select = |s: &mut Gallery, id: &str, _: &mut rune::Tx| {

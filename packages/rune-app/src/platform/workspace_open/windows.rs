@@ -1,4 +1,4 @@
-use super::{DefaultMode, OpenError, Target, windows_default_mode};
+use super::{DefaultMode, Editor, OpenError, Target, WorkspaceTarget, windows_default_mode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use codenomad_client::git::{GitError, Refusal};
 use std::{
@@ -40,6 +40,102 @@ pub async fn open(
     .await
     .map_err(|_| OpenError::Failed)?
     .map_err(|_| OpenError::Failed)
+}
+
+pub async fn open_workspace(
+    backend: crate::backend::Backend,
+    slug: String,
+    expected_root: Option<String>,
+    target: WorkspaceTarget,
+    owner: Weak<()>,
+) -> Result<(), String> {
+    let checkout = backend
+        .workspace_checkout(&slug)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(expected) = expected_root.as_deref()
+        && !codenomad_client::same_server_path(&checkout, expected)
+    {
+        return Err("Workspace changed".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let folder = resolve_root(Path::new(&checkout))?;
+        if owner.strong_count() == 0 {
+            return Ok(());
+        }
+        launch_workspace(&folder, target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+fn resolve_root(root: &Path) -> io::Result<PathBuf> {
+    if !root.is_absolute() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let canonical = root.canonicalize()?;
+    if !canonical.is_dir() {
+        return Err(io::ErrorKind::NotADirectory.into());
+    }
+    Ok(canonical)
+}
+
+fn editor_candidates(
+    editor: Editor,
+    local_app_data: Option<&Path>,
+    program_files: Option<&Path>,
+) -> Vec<PathBuf> {
+    let raw = match editor {
+        Editor::VsCode => vec![
+            local_app_data.map(|path| path.join("Programs/Microsoft VS Code/Code.exe")),
+            program_files.map(|path| path.join("Microsoft VS Code/Code.exe")),
+        ],
+        Editor::Cursor => vec![local_app_data.map(|path| path.join("Programs/cursor/Cursor.exe"))],
+        Editor::Zed => vec![local_app_data.map(|path| path.join("Programs/Zed/Zed.exe"))],
+        Editor::VsCodium => vec![
+            local_app_data.map(|path| path.join("Programs/VSCodium/VSCodium.exe")),
+            program_files.map(|path| path.join("VSCodium/VSCodium.exe")),
+        ],
+    };
+    raw.into_iter()
+        .flatten()
+        .filter(|path| path.is_absolute() && path.is_file())
+        .collect()
+}
+
+fn launch_workspace(folder: &Path, target: WorkspaceTarget) -> io::Result<()> {
+    match target {
+        WorkspaceTarget::Folder => launch(folder, Target::Default),
+        WorkspaceTarget::Terminal => launch(folder, Target::Terminal),
+        WorkspaceTarget::Editor(editor) => {
+            let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+            let program_files = std::env::var_os("ProgramFiles").map(PathBuf::from);
+            let candidates =
+                editor_candidates(editor, local_app_data.as_deref(), program_files.as_deref());
+            let path = launch_path(folder);
+            let mut last_error = None;
+            for executable in candidates {
+                let result = Command::new(&executable)
+                    .arg(&path)
+                    .current_dir(&path)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                match result {
+                    Ok(_) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            Err(last_error.unwrap_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "No supported application was found",
+                )
+            }))
+        }
+    }
 }
 
 fn resolve(root: &Path, path: &str) -> io::Result<PathBuf> {
@@ -99,6 +195,21 @@ fn chooser_started(
     Ok(false)
 }
 
+const OPEN_TARGET_ENV: &str = "CODENOMAD_OPEN_TARGET";
+// Constant scripts read the target path from the process environment so no path
+// characters (including PowerShell 5.1 typographic quotes) are ever parsed as code.
+const POWERSHELL_TERMINAL_SCRIPT: &str = "$p=$env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue; Set-Location -LiteralPath $p";
+const POWERSHELL_EDIT_SCRIPT: &str = "$ErrorActionPreference='Stop'; $p=$env:CODENOMAD_OPEN_TARGET; Remove-Item Env:CODENOMAD_OPEN_TARGET -ErrorAction SilentlyContinue; Start-Process -FilePath $p -Verb Edit";
+
+fn encode_powershell(script: &str) -> String {
+    STANDARD.encode(
+        script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let folder = selected.is_dir();
     let path = launch_path(selected);
@@ -110,15 +221,6 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let system =
         std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     let powershell = system.join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let encoded = |script: String| {
-        STANDARD.encode(
-            script
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        )
-    };
-    let literal = || path.to_string_lossy().replace('\'', "''");
     let spawn = |command: &mut Command| {
         command
             .current_dir(cwd)
@@ -149,13 +251,11 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         Target::Reveal => start(explorer().raw_arg(format!("/select,\"{}\"", path.display()))),
         Target::Terminal if folder => hidden(
             Command::new(system.join("System32/cmd.exe"))
+                .env(OPEN_TARGET_ENV, &path)
                 .args(["/D", "/C", "start", ""])
                 .arg(&powershell)
                 .args(["-NoExit", "-EncodedCommand"])
-                .arg(encoded(format!(
-                    "Set-Location -LiteralPath '{}'",
-                    literal()
-                ))),
+                .arg(encode_powershell(POWERSHELL_TERMINAL_SCRIPT)),
         ),
         Target::Terminal => Err(io::ErrorKind::NotADirectory.into()),
         Target::Default => {
@@ -164,8 +264,13 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
                 return start(explorer().arg(&path));
             }
             if mode == DefaultMode::Edit
-                && hidden(Command::new(&powershell).args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
-                    .arg(encoded(format!("$ErrorActionPreference='Stop'; Start-Process -FilePath '{}' -Verb Edit", literal())))).is_ok()
+                && hidden(
+                    Command::new(&powershell)
+                        .env(OPEN_TARGET_ENV, &path)
+                        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+                        .arg(encode_powershell(POWERSHELL_EDIT_SCRIPT)),
+                )
+                .is_ok()
             {
                 return Ok(());
             }
@@ -231,6 +336,66 @@ mod tests {
                 Some(0) => assert!(started.unwrap()),
                 _ => assert!(!started.unwrap()),
             }
+        }
+    }
+
+    #[test]
+    fn resolve_root_accepts_only_existing_absolute_directories() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .unwrap();
+        assert_eq!(resolve_root(&root).unwrap(), root);
+        assert!(resolve_root(Path::new("relative/dir")).is_err());
+        assert!(resolve_root(&root.join("Cargo.toml")).is_err());
+        assert!(resolve_root(&root.join("nonexistent-dir-xyz")).is_err());
+    }
+
+    #[test]
+    fn editor_candidates_discovers_only_existing_absolute_executables() {
+        let base = std::env::temp_dir().join(format!(
+            "codenomad-editor-candidates-{}",
+            std::process::id()
+        ));
+        let local = base.join("local");
+        let prog = base.join("prog");
+        let vscode_local = local.join("Programs/Microsoft VS Code/Code.exe");
+        let vscode_prog = prog.join("Microsoft VS Code/Code.exe");
+        let zed_local = local.join("Programs/Zed/Zed.exe");
+        std::fs::create_dir_all(vscode_local.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(vscode_prog.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(zed_local.parent().unwrap()).unwrap();
+        std::fs::write(&vscode_local, b"").unwrap();
+        std::fs::write(&vscode_prog, b"").unwrap();
+        std::fs::write(&zed_local, b"").unwrap();
+
+        assert_eq!(
+            editor_candidates(Editor::VsCode, Some(&local), Some(&prog)),
+            vec![vscode_local, vscode_prog]
+        );
+        assert_eq!(
+            editor_candidates(Editor::Zed, Some(&local), Some(&prog)),
+            vec![zed_local]
+        );
+        assert!(editor_candidates(Editor::Cursor, Some(&local), Some(&prog)).is_empty());
+        assert!(editor_candidates(Editor::VsCodium, Some(&local), Some(&prog)).is_empty());
+        assert!(
+            editor_candidates(Editor::VsCode, Some(Path::new("relative/local")), None).is_empty()
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn powershell_scripts_pass_target_as_env_data_without_interpolation() {
+        for script in [POWERSHELL_TERMINAL_SCRIPT, POWERSHELL_EDIT_SCRIPT] {
+            assert!(script.contains("$env:CODENOMAD_OPEN_TARGET"));
+            assert!(!script.contains('\u{2019}'));
+            let decoded_bytes = STANDARD.decode(encode_powershell(script)).unwrap();
+            let utf16: Vec<u16> = decoded_bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            assert_eq!(String::from_utf16(&utf16).unwrap(), script);
         }
     }
 }

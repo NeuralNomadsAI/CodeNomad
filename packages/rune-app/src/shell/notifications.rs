@@ -13,7 +13,7 @@ pub(crate) use attention::{Attention, collect};
 mod in_app;
 mod messages;
 pub(crate) use in_app::{
-    entry as history_entry, layers as app_layers, measure as measure_notices,
+    entry as history_entry, layers as app_layers, measure as measure_notices, open_history,
     tick as poll_app_notices,
 };
 pub(crate) use messages::{emit, emit_from, emit_outcome};

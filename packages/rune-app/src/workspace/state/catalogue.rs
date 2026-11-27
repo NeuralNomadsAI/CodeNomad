@@ -414,6 +414,7 @@ mod tests {
                 &Project {
                     id: "first".into(),
                     path: "/first".into(),
+                    temporary: false,
                 },
             );
             workspace::new_tab(s, tx);
@@ -422,6 +423,7 @@ mod tests {
                 &Project {
                     id: "second".into(),
                     path: "/second".into(),
+                    temporary: false,
                 },
             );
             let ui = s.workspace.as_ref().unwrap();
@@ -452,6 +454,7 @@ mod tests {
             let project = Project {
                 id: "p1".into(),
                 path: "/repo".into(),
+                temporary: false,
             };
             s.screen.launcher_mut().unwrap().project = Some(project.clone());
             workspace::opened(s, &project);

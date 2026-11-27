@@ -499,6 +499,110 @@ pub(crate) fn mode(s: &State) -> Mode {
     s.git.owner.as_ref().map_or(Mode::Workspace, Ui::mode)
 }
 
+pub(crate) fn conversation_checkout(
+    s: &State,
+    workspace_id: &str,
+    project_root: &str,
+) -> Option<(String, Option<String>)> {
+    if let Some(owner) = &s.git.owner
+        && owner.backend.workspace == workspace_id
+    {
+        if owner.session_checkout_removed() {
+            return None;
+        }
+        if !owner.session_slug.is_empty() {
+            if owner.session_slug == "root" {
+                return Some(("root".into(), Some(project_root.to_owned())));
+            }
+            let expected = owner
+                .inventory
+                .as_ref()
+                .and_then(|inv| inv.trees.iter().find(|t| t.slug == owner.session_slug))
+                .map(|t| t.directory.clone())
+                .or_else(|| {
+                    owner
+                        .backend
+                        .session_directory
+                        .as_deref()
+                        .filter(|dir| !dir.is_empty())
+                        .map(str::to_owned)
+                });
+            return Some((owner.session_slug.clone(), expected));
+        }
+    }
+    Some(("root".into(), Some(project_root.to_owned())))
+}
+
+#[cfg(test)]
+mod conversation_checkout_tests {
+    use super::conversation_checkout;
+    use crate::{backend::Backend, git::Ui, init};
+    use codenomad_client::git::{Repository, Worktree, Worktrees};
+
+    #[test]
+    fn conversation_checkout_uses_session_slug_not_browsed_git_slug() {
+        let mut s = init();
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.workspace = "ws-1".into();
+        backend.session = "ses-1".into();
+        backend.session_directory = Some("/repo-wt-a".into());
+        let mut ui = Ui::new(
+            backend,
+            Some("/repo".into()),
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        ui.session_slug = "wt-a".into();
+        ui.slug = "wt-b".into();
+        ui.inventory = Some(Worktrees {
+            repository: Repository::Git,
+            trees: vec![
+                Worktree {
+                    slug: "root".into(),
+                    label: None,
+                    directory: "/repo".into(),
+                    service_directory: None,
+                    branch: Some("main".into()),
+                    head: None,
+                    missing: false,
+                },
+                Worktree {
+                    slug: "wt-a".into(),
+                    label: None,
+                    directory: "/repo-wt-a".into(),
+                    service_directory: None,
+                    branch: Some("feat-a".into()),
+                    head: None,
+                    missing: false,
+                },
+                Worktree {
+                    slug: "wt-b".into(),
+                    label: None,
+                    directory: "/repo-wt-b".into(),
+                    service_directory: None,
+                    branch: Some("feat-b".into()),
+                    head: None,
+                    missing: false,
+                },
+            ],
+        });
+        s.git.owner = Some(ui);
+
+        assert_eq!(
+            conversation_checkout(&s, "ws-1", "/repo"),
+            Some(("wt-a".into(), Some("/repo-wt-a".into())))
+        );
+        // Removed conversation worktree refuses opening instead of falling back to root.
+        s.git.owner.as_mut().unwrap().session_slug = "wt-gone".into();
+        assert_eq!(conversation_checkout(&s, "ws-1", "/repo"), None);
+        // Different workspace falls back to root.
+        assert_eq!(
+            conversation_checkout(&s, "ws-other", "/other"),
+            Some(("root".into(), Some("/other".into())))
+        );
+    }
+}
+
 pub(crate) fn files_checkout(s: &State, directory: &str) -> Option<String> {
     let owner = s.git.owner.as_ref()?;
     if let Some(tree) = owner.tree() {

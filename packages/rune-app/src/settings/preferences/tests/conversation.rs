@@ -895,6 +895,7 @@ fn closing_project_without_conversation_uses_the_renewed_cookie() {
         let project = crate::catalog::Project {
             id: "project".into(),
             path: "C:/fixture".into(),
+            temporary: false,
         };
         launcher.project = Some(project.clone());
         launcher.connection = Some(previous);
@@ -1020,6 +1021,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         launcher.project = Some(crate::catalog::Project {
             id: "project".into(),
             path: "C:/fixture".into(),
+            temporary: false,
         });
         launcher.connection = Some(backend.clone());
         root.screen = crate::Screen::Chat {

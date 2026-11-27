@@ -40,7 +40,9 @@ impl Ui {
             } if workspace_id == &self.backend.workspace && session_id == &self.backend.session => {
                 self.close_preview();
             }
-            WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {
+            WorkspaceEvent::Stopped { workspace_id, .. }
+                if workspace_id == &self.backend.workspace =>
+            {
                 self.stopped = true;
                 self.reset_tree();
                 self.inventory = None;

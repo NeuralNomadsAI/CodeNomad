@@ -45,14 +45,15 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= crate::timeline::sync_outline_mutation(s);
     let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;
-    ui.stage();
+    let stashed = s.temporary.stashed_for_snapshot();
+    ui.stage_with_stashed(stashed);
     let previous_error = (
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.partial,
     );
     if ui.persistence.poll_save_ready(ui.revision, now, tx) {
-        let snapshot = ui.snapshot();
+        let snapshot = ui.snapshot_with_stashed(stashed);
         ui.persistence.start_save(&snapshot, s.wake.clone());
     }
     let error = (

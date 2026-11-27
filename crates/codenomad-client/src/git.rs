@@ -584,6 +584,7 @@ impl Backend {
             &Project {
                 id: self.workspace.clone(),
                 path: directory.into(),
+                temporary: false,
             },
             None,
         )

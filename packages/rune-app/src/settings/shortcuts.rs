@@ -63,7 +63,7 @@ pub(crate) fn save_label(s: &State) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), FILE_SAVE))
 }
 
-fn shortcut_label(s: &State, action: &str) -> String {
+pub(crate) fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
 }
 

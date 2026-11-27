@@ -587,7 +587,7 @@ pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
         | WorkspaceEvent::SessionMoved { workspace_id, .. }
         | WorkspaceEvent::ServicesConfigChanged { workspace_id }
         | WorkspaceEvent::NativeStreamStatus { workspace_id, .. }
-        | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
+        | WorkspaceEvent::Stopped { workspace_id, .. } => Some(workspace_id.as_str()),
         WorkspaceEvent::PluginsChanged { workspace_id, .. }
         | WorkspaceEvent::McpStatusChanged { workspace_id } => workspace_id.as_deref(),
         _ => None,
@@ -733,21 +733,35 @@ pub(crate) fn stop_unlisted_detached(
             .map(|git| git.workspace_id().to_owned())
             .filter(|id| !live.contains(id.as_str()))
         {
-            crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            crate::git::event(
+                s,
+                &WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                },
+            );
             changed = true;
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
             if !live.contains(workspace_id.as_str()) {
-                files.event(WorkspaceEvent::Stopped { workspace_id });
+                files.event(WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted: false,
+                    temporary_retained: false,
+                });
                 changed = true;
             }
         }
         if let Some(workspace_id) = s.status_services.workspace_id().map(str::to_owned)
             && !live.contains(workspace_id.as_str())
         {
-            s.status_services
-                .event(&WorkspaceEvent::Stopped { workspace_id });
+            s.status_services.event(&WorkspaceEvent::Stopped {
+                workspace_id,
+                deleted: false,
+                temporary_retained: false,
+            });
             changed = true;
         }
     }
@@ -782,7 +796,14 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    crate::git::event(
+                        s,
+                        &WorkspaceEvent::Stopped {
+                            workspace_id,
+                            deleted: false,
+                            temporary_retained: false,
+                        },
+                    );
                     changed = true;
                 }
                 Some(_) => {
@@ -803,7 +824,11 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    files.event(WorkspaceEvent::Stopped { workspace_id });
+                    files.event(WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
+                    });
                     changed = true;
                 }
                 Some(_) => {
@@ -823,8 +848,11 @@ pub(crate) fn reconcile_detached_online(
                     if !opened_after.contains(workspace_id.as_str())
                         && !live.contains(workspace_id.as_str()) =>
                 {
-                    s.status_services
-                        .event(&WorkspaceEvent::Stopped { workspace_id });
+                    s.status_services.event(&WorkspaceEvent::Stopped {
+                        workspace_id,
+                        deleted: false,
+                        temporary_retained: false,
+                    });
                     changed = true;
                 }
                 Some(_) => {

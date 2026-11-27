@@ -288,6 +288,7 @@ fn reopen(s: &mut State) {
         &Project {
             id: "reopened".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
 }
@@ -316,6 +317,7 @@ fn closed_occurrences_merge_each_session_with_latest_clear_authority() {
         &Project {
             id: "successor".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
@@ -353,6 +355,7 @@ fn clearing_or_sending_an_inherited_draft_retires_older_closed_text() {
             &Project {
                 id: "successor".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
@@ -435,6 +438,7 @@ fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
             &Project {
                 id: "successor".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         assert_eq!(
@@ -481,6 +485,7 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 &Project {
                     id: "third".into(),
                     path: "/fixture".into(),
+                    temporary: false,
                 },
             );
             rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -495,6 +500,7 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 &Project {
                     id: "fourth".into(),
                     path: "/fixture".into(),
+                    temporary: false,
                 },
             );
             rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -538,6 +544,7 @@ fn an_unbound_or_failed_open_keeps_its_source_and_binding_revalidates_pending_te
             &Project {
                 id: "retry".into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
         rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
@@ -558,6 +565,7 @@ fn delivery_retires_pending_copies_but_preserves_independent_occurrence_authorit
         &Project {
             id: "pending".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let ui = rt.state.workspace.as_mut().unwrap();
@@ -690,6 +698,7 @@ fn delivery_folder_spelling_preserves_only_the_same_server_project_scope() {
             &Project {
                 id: "fresh-record".into(),
                 path: path.into(),
+                temporary: false,
             },
         );
         assert_eq!(
@@ -1019,6 +1028,7 @@ fn cross_tab_recovery_preserves_closed_pending_and_independent_drafts_without_uu
         &Project {
             id: "project-b".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     {
@@ -1859,6 +1869,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-d".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let delivered = bound(&mut r6_b, &backend("ses_r6_bloq"));
@@ -1964,6 +1975,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r7b".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let delivered = bound(&mut r7_b, &backend("ses_r7_atomic"));
@@ -2017,6 +2029,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r7m1".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     // Switch to Tab E (index 1), author an independent draft, and close Tab E before D binds.
@@ -2134,6 +2147,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r8b".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     assert!(recover_missing_session_draft(&mut r8_b, "ses_r8_indep"));
@@ -2239,6 +2253,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r9b1".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let delivered = bound(&mut r9_b1, &backend("ses_r9_keep_b"));
@@ -2308,6 +2323,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r9b2".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let delivered = bound(&mut r9_b2, &backend("ses_r9_deriv"));
@@ -2361,6 +2377,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r10b".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     assert!(recover_missing_session_draft(&mut r10_b, "ses_r10_norm"));
@@ -2423,6 +2440,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r10-c".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     new_tab(&mut r10_m1, &mut tx);
@@ -2434,6 +2452,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r10-d".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     select(&mut r10_m1, "tab-2", &mut tx);
@@ -2517,6 +2536,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
             &Project {
                 id: id.into(),
                 path: "/fixture".into(),
+                temporary: false,
             },
         );
     }
@@ -2553,6 +2573,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r12-f".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let snap_4 = r12.workspace.as_ref().unwrap().snapshot();
@@ -2606,6 +2627,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r13-b1".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let snap_b1 = r13_b1.workspace.as_ref().unwrap().snapshot();
@@ -2669,6 +2691,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r13-d".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     // Switch to E (tab-2), author independent draft, and close E before D binds.
@@ -2767,6 +2790,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r13-clrshift".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     // D initially projects "restored new"; now switch to C (tab-2) and clear "restored new".
@@ -2875,6 +2899,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r13-m1".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     let snap_m1 = r13_m1.workspace.as_ref().unwrap().snapshot();
@@ -3066,6 +3091,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r14-c".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     new_tab(&mut r14_m2, &mut tx);
@@ -3077,6 +3103,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r14-d".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     select(&mut r14_m2, "tab-0", &mut tx);
@@ -3521,6 +3548,7 @@ fn closed_clear_preserves_independent_closed_draft_snapshot_legacy_marker_and_ho
         &Project {
             id: "proj-r17-b".into(),
             path: "/fixture".into(),
+            temporary: false,
         },
     );
     assert!(crate::workspace::state::drafts::poll_pending_deleted(
@@ -4437,6 +4465,7 @@ fn fallback_packing_and_restored_probe_fencing_regressions() {
         let proj = Project {
             id: "ws-batch".into(),
             path: "/fixture".into(),
+            temporary: false,
         };
         let mut t0 = closed("ses_49_00", "");
         t0.drafts.clear();
@@ -5026,6 +5055,7 @@ fn fallback_packing_and_restored_probe_fencing_regressions() {
         let proj = Project {
             id: "ws-serial".into(),
             path: "/fixture".into(),
+            temporary: false,
         };
         let mut tab = closed("ses_ser_0", "keep ser 0");
         tab.active_session_id = None;
@@ -5490,6 +5520,7 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
             let proj = Project {
                 id: "ws-passive-a".into(),
                 path: "/fixture".into(),
+                temporary: false,
             };
             let mut tab = closed("ses_passive_live", "keep passive");
             tab.active_session_id = None;
@@ -5720,6 +5751,7 @@ fn fallback_exact_2d_and_real_catalogue_epoch_regressions() {
             let proj_old = Project {
                 id: "ws-passive-b".into(),
                 path: "/fixture".into(),
+                temporary: false,
             };
             let mut tab_old = closed("ses_passive_deleted", "recover passive");
             tab_old.active_session_id = None;
@@ -6101,6 +6133,7 @@ fn fallback_mixed_surviving_quota_and_paginated_inventory_epochs() {
         let proj = Project {
             id: "ws-inv-pages".into(),
             path: "/fixture".into(),
+            temporary: false,
         };
         let mut tab = closed("ses_inv_p1", "recover inv p1");
         tab.active_session_id = None;

@@ -171,7 +171,7 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
             {
                 ui.closed_pending_deleted.push((scope, id));
                 ui.changed();
-                ui.stage();
+                ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
             }
         }
     }
@@ -250,6 +250,38 @@ impl LiveDraft {
 }
 
 impl LiveDraft {
+    pub(super) fn has_content(&self) -> bool {
+        self.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+            || self
+                .parts
+                .as_ref()
+                .is_some_and(|(draft, _)| !draft.attachments.is_empty())
+            || self.unconfirmed.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_oversized(text: String) -> Self {
+        Self {
+            text: Some(text),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_device_attachment(name: &str, bytes: &[u8]) -> Self {
+        let mut draft = Draft::default();
+        let _ = draft.attach(crate::composer::draft::Attachment::Device {
+            name: name.into(),
+            mime: "application/octet-stream".into(),
+            bytes: std::sync::Arc::from(bytes),
+            token: None,
+        });
+        Self {
+            parts: Some((draft, false)),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
         self.text.as_ref().map_or(0, String::len).saturating_add(
             self.parts
@@ -270,6 +302,17 @@ impl Ui {
 impl super::Entry {
     pub(super) fn has_unsaved_large_drafts(&self) -> bool {
         self.live_drafts.values().any(|draft| draft.text.is_some())
+    }
+
+    pub(super) fn has_in_memory_only_drafts(&self) -> bool {
+        self.live_drafts.values().any(|draft| {
+            draft.text.is_some()
+                || draft
+                    .parts
+                    .as_ref()
+                    .is_some_and(|(d, _)| d.inline_usage().0 != 0)
+                || draft.unconfirmed.is_some()
+        })
     }
 }
 
@@ -676,7 +719,7 @@ pub fn capture(s: &mut State) {
         }
         ui.changed();
     }
-    ui.stage();
+    ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
 }
 
@@ -1665,7 +1708,7 @@ fn recover_missing_session_draft_with_uuid_impl(
                 ui.closed_pending_deleted
                     .push((project_scope.clone(), session_id.into()));
                 ui.changed();
-                ui.stage();
+                ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
             }
             return RecoveryOutcome {
                 recovered: false,
@@ -1732,7 +1775,7 @@ fn recover_missing_session_draft_with_uuid_impl(
                     .push((project_scope.clone(), session_id.into()));
                 if !closed_bundles.is_empty() {
                     ui.changed();
-                    ui.stage();
+                    ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
                 }
             }
             return RecoveryOutcome {
@@ -1916,7 +1959,7 @@ fn recover_missing_session_draft_with_uuid_impl(
 
         if mutated {
             ui.changed();
-            ui.stage();
+            ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
         }
         (recovered, false, mutated)
     };
@@ -2492,7 +2535,7 @@ pub(super) fn poll_restored_draft_checks(s: &mut State) -> bool {
         {
             ui.closed_pending_deleted.push((scope, id));
             ui.changed();
-            ui.stage();
+            ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
         }
     }
     pump_restored_draft_probes(s);
@@ -2643,7 +2686,7 @@ pub fn adopt_recovered_draft(s: &mut State, session_id: &str) -> bool {
     }
     item.saved = Tab::Workspace(saved);
     ui.changed();
-    ui.stage();
+    ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     true
 }
 
@@ -2660,6 +2703,8 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
+            temporary: false,
             occurrence: 0,
             workspace_id: Some("ws".into()),
             active_session_id: None,
@@ -2725,6 +2770,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         backend.workspace = "ws".into();
@@ -2792,6 +2838,8 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
+            temporary: false,
             occurrence: occ,
             workspace_id: Some("ws".into()),
             active_session_id: None,
@@ -2859,6 +2907,8 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
+            temporary: false,
             occurrence: occ,
             workspace_id: Some("ws".into()),
             active_session_id: None,
@@ -2923,6 +2973,8 @@ mod tests {
                 backend_id: None,
                 server_id: None,
                 folder: "/repo".into(),
+                project_name: None,
+                temporary: false,
                 occurrence: occ,
                 workspace_id: Some("ws".into()),
                 active_session_id: active_id.map(str::to_owned),
@@ -3026,6 +3078,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         backend.workspace = "ws".into();
@@ -3231,6 +3284,7 @@ mod tests {
             &crate::catalog::Project {
                 id: "ws".into(),
                 path: "/repo".into(),
+                temporary: false,
             },
         );
         let saved_scope2 = match &rt2.state.workspace.as_ref().unwrap().entries
@@ -3274,6 +3328,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         crate::workspace::opened(&mut s, &project);
@@ -3351,6 +3406,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         backend.workspace = "ws".into();

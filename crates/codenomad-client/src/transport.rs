@@ -91,8 +91,13 @@ pub enum WorkspaceEvent {
         workspace_id: String,
         session_id: String,
     },
+    TemporaryChanged {
+        folders: Vec<String>,
+    },
     Stopped {
         workspace_id: String,
+        deleted: bool,
+        temporary_retained: bool,
     },
 }
 #[derive(Debug)]

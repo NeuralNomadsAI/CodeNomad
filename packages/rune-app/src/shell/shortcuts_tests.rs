@@ -51,6 +51,7 @@ fn workspace_state(tabs: usize) -> State {
             let next = Project {
                 id: format!("project-{i}"),
                 path: format!("/repo-{i}"),
+                temporary: false,
             };
             if let Some(l) = s.screen.launcher_mut() {
                 l.project = Some(next.clone());
@@ -191,6 +192,7 @@ fn session_new_creates_and_binds_session_immediately_and_honors_guards_and_overr
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());
@@ -435,6 +437,7 @@ fn session_prev_and_next_select_visible_sessions_and_respect_overrides() {
         let project = Project {
             id: "proj-1".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let l = s.screen.launcher_mut().unwrap();
         l.connection = Some(http.backend.clone());

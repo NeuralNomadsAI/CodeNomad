@@ -214,6 +214,8 @@ fn hidden_panel_keeps_reader_live_and_workspace_stop_closes_it() {
         assert_eq!(bytes(&ui.reader), Some(b"a".as_slice()));
         ui.event(WorkspaceEvent::Stopped {
             workspace_id: "owned".into(),
+            deleted: false,
+            temporary_retained: false,
         });
         assert!(ui.reader.target().is_none() && !ui.reader.busy());
         ui.online(true);
