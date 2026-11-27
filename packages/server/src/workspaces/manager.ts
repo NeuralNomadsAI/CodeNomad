@@ -568,7 +568,9 @@ export class WorkspaceManager {
       try {
         const checkoutRoot = await discoverCheckoutRoot(root)
         media?.current()
-        return { slug: "root", directory: target, worktreeDirectory: checkoutRoot ?? root, exact: true }
+        if (!checkoutRoot || checkoutRoot === root) {
+          return { slug: "root", directory: target, worktreeDirectory: root, exact: true }
+        }
       } catch {
         media?.current()
       }

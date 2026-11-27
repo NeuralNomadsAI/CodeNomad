@@ -560,6 +560,11 @@ test("needsPendingRequestLiveness skips idle recovered projects and activates fo
     setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, idle]])))
     assert.equal(needsPendingRequestLiveness(h.id), false)
 
+    setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, { ...idle, generationRecovery: "pending" }]])))
+    assert.equal(needsPendingRequestLiveness(h.id), true, "acknowledged prompt awaiting execution start needs liveness polling")
+    setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, idle]])))
+    assert.equal(needsPendingRequestLiveness(h.id), false)
+
     serverApi.getPendingRequests = async () => { throw new HttpResponseError("Unavailable", 503, null, "timeout") }
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(needsPendingRequestLiveness(h.id), true, "incomplete recovery needs liveness retries")

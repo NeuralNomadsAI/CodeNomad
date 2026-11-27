@@ -1308,7 +1308,7 @@ function needsPendingRequestLiveness(instanceId: string): boolean {
   if (incompletePendingRecovery().has(instanceId)) return true
   if (getPermissionQueue(instanceId).length > 0 || getFormQueue(instanceId).length > 0) return true
   const instanceSessions = sessions().get(instanceId)
-  if (Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")) return true
+  if (Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending")) return true
   const compactions = pendingCompactions.get(instanceId)
   if (Array.from(compactions?.values() ?? []).some((entry) => entry.active && !entry.signal.aborted)) return true
   return false
