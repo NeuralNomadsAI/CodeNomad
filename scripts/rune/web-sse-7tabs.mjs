@@ -114,7 +114,8 @@ export function parseCdpSseFrame(event) {
   const rootData = isObject(parsed?.data) ? parsed.data : null
   const nativeType = eventObj?.type ?? (parsed?.type === 'session.text.delta' || isNamedDelta ? 'session.text.delta' : null)
   const hasStrayDelta = rootData?.delta != null || parsed?.delta != null || eventObj?.delta != null
-  const strayAssistantMessageID = rootData?.assistantMessageID ?? parsed?.assistantMessageID ?? eventObj?.assistantMessageID ?? null
+  const strayAssistantMessageIDs = [rootData?.assistantMessageID, parsed?.assistantMessageID, eventObj?.assistantMessageID]
+    .filter(value => typeof value === 'string' && value.length > 0)
   return {
     requestId: event.requestId,
     eventName,
@@ -125,7 +126,7 @@ export function parseCdpSseFrame(event) {
     assistantMessageID: eventData?.assistantMessageID ?? null,
     delta: eventData?.delta ?? null,
     hasStrayDelta,
-    strayAssistantMessageID,
+    strayAssistantMessageIDs,
   }
 }
 
@@ -141,7 +142,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     || Boolean(f.hasStrayDelta)
     || (f.type !== 'instance.event' && (
       (typeof f.assistantMessageID === 'string' && injectedIds.has(f.assistantMessageID))
-      || (typeof f.strayAssistantMessageID === 'string' && injectedIds.has(f.strayAssistantMessageID))
+      || (Array.isArray(f.strayAssistantMessageIDs) && f.strayAssistantMessageIDs.some(id => injectedIds.has(id)))
     )),
   )
   for (const frame of actualFrames) {
@@ -153,6 +154,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     assert.equal(typeof frame.instanceId, 'string', 'Injected SSE frame instanceId must be a string')
     assert.equal(typeof frame.sessionID, 'string', 'Injected SSE frame sessionID must be a string')
     assert.equal(typeof frame.delta, 'string', 'Injected SSE frame delta must be a string')
+    assert(!frame.hasStrayDelta, `Injected SSE frame for ${frame.assistantMessageID} carried stray delta outside event.data`)
   }
   const key = ({assistantMessageID, workspaceId, sessionID, text}) =>
     `${assistantMessageID}\0${workspaceId}\0${sessionID}\0${text}`
