@@ -13,7 +13,7 @@ mod media_path;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::worktrees) use git_discovery::valid_git_admin;
+pub(in crate::worktrees) use git_discovery::valid_git_admin_in;
 pub use git_discovery::{common_directory, resolve_directory, within};
 use git_discovery::{
     head_cannot_name_repository, repository_root, shares_common_directory, shares_common_directory_strict,
@@ -351,7 +351,7 @@ fn catalogue_proof(
     })
 }
 
-fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
+pub(in crate::worktrees) fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
     if raw.starts_with("\\\\") || raw.starts_with("//") || raw.starts_with(r"\??\") {
         return Err(());
     }

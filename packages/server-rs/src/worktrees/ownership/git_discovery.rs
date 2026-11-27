@@ -118,10 +118,29 @@ fn strip_eol(s: &str) -> &str {
     s.strip_suffix('\n').map_or(s, |r| r.strip_suffix('\r').unwrap_or(r))
 }
 
+fn valid_git_dir_entry(scope: &Path, path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if scope.as_os_str().is_empty() {
+        return std::fs::metadata(path).is_ok();
+    }
+    if meta.is_dir() && !meta.file_type().is_symlink() && std::fs::read_link(path).is_err() {
+        return true;
+    }
+    path.to_str()
+        .is_some_and(|s| super::resolve_media_path_checked(scope, s).ok().flatten().is_some_and(|(p, a)| p == a))
+}
+
 /// Validates that a Git admin/common directory pair still contains `objects`, `refs`, and a
 /// structurally valid `HEAD` (symlink to `refs/...`, `ref: refs/...`, or 40/64-hex OID).
 pub(in crate::worktrees) fn valid_git_admin(admin: &Path, common: &Path) -> bool {
-    if std::fs::metadata(common.join("objects")).is_err() || std::fs::metadata(common.join("refs")).is_err() {
+    valid_git_admin_in(Path::new(""), admin, common)
+}
+
+/// Scope-bounded variant of [`valid_git_admin`] that never follows `objects`/`refs` links outside `scope`.
+pub(in crate::worktrees) fn valid_git_admin_in(scope: &Path, admin: &Path, common: &Path) -> bool {
+    if !valid_git_dir_entry(scope, &common.join("objects")) || !valid_git_dir_entry(scope, &common.join("refs")) {
         return false;
     }
     let head_path = admin.join("HEAD");

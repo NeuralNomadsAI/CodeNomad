@@ -77,7 +77,61 @@ fn file_identity_stamp(path: &Path) -> Option<String> {
     }
 }
 
+fn resolve_symlink_file_in(scope: &Path, path: &Path) -> Result<Option<PathBuf>, std::io::ErrorKind> {
+    let mut cur = path.to_path_buf();
+    for _ in 0..40 {
+        let raw_target = match std::fs::read_link(&cur) {
+            Ok(target) => target,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(std::io::ErrorKind::NotFound),
+            Err(_) => return Ok(None),
+        };
+        let simplified = dunce::simplified(&raw_target);
+        if super::ownership::reject_network_path(&simplified.to_string_lossy(), simplified).is_err() {
+            return Ok(None);
+        }
+        let joined = if simplified.is_absolute() {
+            simplified.to_path_buf()
+        } else {
+            let Some(parent) = cur.parent() else {
+                return Ok(None);
+            };
+            parent.join(simplified)
+        };
+        let Some(parent) = joined.parent() else {
+            return Ok(None);
+        };
+        let Some(name) = joined.file_name() else {
+            return Ok(None);
+        };
+        let Some(parent_str) = parent.to_str() else {
+            return Ok(None);
+        };
+        let (real_parent, anchor) = match super::ownership::resolve_media_path_checked(scope, parent_str) {
+            Ok(Some(pair)) => pair,
+            Ok(None) | Err(()) => return Ok(None),
+        };
+        if real_parent != anchor {
+            return Err(std::io::ErrorKind::NotFound);
+        }
+        let candidate = real_parent.join(name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(meta) if meta.file_type().is_symlink() => cur = candidate,
+            Ok(meta) if meta.is_file() => {
+                let real = dunce::canonicalize(&candidate).map_err(|e| e.kind())?;
+                return Ok(real.starts_with(scope).then_some(real));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(std::io::ErrorKind::NotFound),
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
 fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
+    config_stamp_in(Path::new(""), path)
+}
+
+fn config_stamp_in(scope: &Path, path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(Some(ConfigStamp {
             entry: meta_stamp(&meta)?,
@@ -88,25 +142,37 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
             let entry = meta_stamp(&meta)?;
             // Represent a dangling config symlink (e.g. unused `config.worktree`) with `target: None`
             // rather than failing the inventory scan (TS `git-worktrees.ts:72-85`).
-            match dunce::canonicalize(path) {
-                Ok(real) => match std::fs::metadata(&real) {
-                    Ok(target_meta) if target_meta.is_file() => {
-                        let id = file_identity_stamp(&real)?;
-                        Some(Some(ConfigStamp {
-                            entry,
-                            identity: None,
-                            target: Some((real, meta_stamp(&target_meta)?, id)),
-                        }))
-                    }
+            let real = if scope.as_os_str().is_empty() {
+                match dunce::canonicalize(path) {
+                    Ok(real) => real,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        Some(Some(ConfigStamp { entry, identity: None, target: None }))
+                        return Some(Some(ConfigStamp { entry, identity: None, target: None }));
                     }
-                    _ => None,
-                },
+                    Err(_) => return None,
+                }
+            } else {
+                match resolve_symlink_file_in(scope, path) {
+                    Ok(Some(real)) => real,
+                    Ok(None) => return None,
+                    Err(std::io::ErrorKind::NotFound) => {
+                        return Some(Some(ConfigStamp { entry, identity: None, target: None }));
+                    }
+                    Err(_) => return None,
+                }
+            };
+            match std::fs::symlink_metadata(&real) {
+                Ok(target_meta) if target_meta.is_file() => {
+                    let id = file_identity_stamp(&real)?;
+                    Some(Some(ConfigStamp {
+                        entry,
+                        identity: None,
+                        target: Some((real, meta_stamp(&target_meta)?, id)),
+                    }))
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     Some(Some(ConfigStamp { entry, identity: None, target: None }))
                 }
-                Err(_) => None,
+                _ => None,
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
@@ -165,34 +231,38 @@ fn is_local_git_target(text: &str) -> bool {
     }
 }
 
-fn config_stamp_matches(path: &Path, expected: &Option<ConfigStamp>) -> bool {
+fn config_stamp_matches_in(scope: &Path, path: &Path, expected: &Option<ConfigStamp>) -> bool {
     match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => expected.is_none(),
         Ok(meta) => {
             let Some(exp) = expected.as_ref() else {
                 return false;
             };
-            meta_stamp(&meta).as_ref() == Some(&exp.entry) && config_stamp(path).as_ref() == Some(expected)
+            meta_stamp(&meta).as_ref() == Some(&exp.entry) && config_stamp_in(scope, path).as_ref() == Some(expected)
         }
         Err(_) => false,
     }
 }
 
 fn canonical_dir_in(scope: &Path, path: &Path, expected: &Path) -> bool {
-    if !scope.as_os_str().is_empty() && expected.starts_with(scope) {
-        path.to_str().is_some_and(|s| {
-            super::ownership::resolve_media_path_checked(scope, s)
-                .ok()
-                .flatten()
-                .is_some_and(|(p, a)| p == a && p == expected)
-        })
+    if !scope.as_os_str().is_empty() {
+        expected.starts_with(scope)
+            && path.to_str().is_some_and(|s| {
+                super::ownership::resolve_media_path_checked(scope, s)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|(p, a)| p == a && p == expected)
+            })
     } else {
         dunce::canonicalize(path).ok().as_deref() == Some(expected)
     }
 }
 
 fn canonical_file_in(scope: &Path, path: &Path, expected: &Path) -> bool {
-    if !scope.as_os_str().is_empty() && expected.starts_with(scope) {
+    if !scope.as_os_str().is_empty() {
+        if !expected.starts_with(scope) {
+            return false;
+        }
         let Some(parent) = path.parent() else {
             return false;
         };
@@ -228,9 +298,9 @@ impl Physical {
             && identity(&self.root).ok().as_ref() == Some(&self.root_id)
             && identity(&self.admin).ok().as_ref() == Some(&self.admin_id)
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
-            && super::ownership::valid_git_admin(&self.admin, &self.common)
-            && config_stamp_matches(&self.common.join("config"), &self.stamp[0])
-            && config_stamp_matches(&self.admin.join("config.worktree"), &self.stamp[1])
+            && super::ownership::valid_git_admin_in(scope, &self.admin, &self.common)
+            && config_stamp_matches_in(scope, &self.common.join("config"), &self.stamp[0])
+            && config_stamp_matches_in(scope, &self.admin.join("config.worktree"), &self.stamp[1])
             && match (&self.marker, &self.backlink, &self.common_marker) {
                 (Some(marker), Some(backlink), Some(common_marker)) => {
                     small(&self.root.join(".git")).ok().as_ref() == Some(marker)
