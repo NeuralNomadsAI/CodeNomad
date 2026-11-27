@@ -144,25 +144,36 @@ fn option_label(option: agent_forms::NormalizedOption<'_>, index: usize) -> Stri
         .unwrap_or_else(|| format!("{} {}", t("question-receipt.answer"), index + 1))
 }
 
+pub fn form_panel(s: &State, form: &Form) -> (El, El) {
+    let Some(a) = s.agent.as_ref() else {
+        return (rune::el(), rune::el());
+    };
+    let eval = agent_forms::evaluate_form(form, &a.drafts);
+    (
+        fields_with_eval(s, form, &eval),
+        actions_with_eval(s, form, eval.can_answer),
+    )
+}
+
 pub fn fields(s: &State, form: &Form) -> El {
+    let Some(a) = s.agent.as_ref() else {
+        return rune::el();
+    };
+    let eval = agent_forms::evaluate_form(form, &a.drafts);
+    fields_with_eval(s, form, &eval)
+}
+
+fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'_>) -> El {
     let Some(a) = s.agent.as_ref() else {
         return rune::el();
     };
     let scope = s.input_scope.clone();
     let locked = a.forms_mutating();
-    let supported = agent_forms::supported(form);
-    let mut match_budget = super::string_constraints::MatchBudget::new();
-    let evaluated_active = agent_forms::evaluate_active_fields(form, &a.drafts, &mut match_budget);
-    let has_unanswerable_active = evaluated_active
-        .iter()
-        .any(|(f, _)| agent_forms::field_unanswerable_budgeted(f, &mut match_budget));
-    let has_invalid_hidden_active = evaluated_active
-        .iter()
-        .any(|(f, res)| f["hidden"] == true && res.is_err());
     let visible: Vec<(
         &serde_json::Value,
         &Result<Option<serde_json::Value>, agent_forms::ValidationError>,
-    )> = evaluated_active
+    )> = eval
+        .active
         .iter()
         .filter(|(f, _)| f["hidden"] != true)
         .map(|(f, res)| (*f, res))
@@ -180,7 +191,7 @@ pub fn fields(s: &State, form: &Form) -> El {
             &form.title,
             header_required,
         ));
-    if !supported || has_unanswerable_active || has_invalid_hidden_active {
+    if !eval.supported || eval.has_unanswerable_active || eval.has_invalid_hidden_active {
         body = body.child(form_controls::form_error(t("rune.unsupported_question")))
     }
     let untitled_count = visible
@@ -221,12 +232,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                 const CHOICES: [(&str, &str); 2] = [("rune.yes", "true"), ("rune.no", "false")];
                 let req_note = required.then(|| t("toolCall.question.status.required"));
                 let group_desc = join_notes(&[field_desc, error_text.as_deref()]);
-                let option_note = join_notes(&[
-                    Some(field_name.as_str()),
-                    field_desc,
-                    req_note,
-                    error_text.as_deref(),
-                ]);
+                let option_note = join_notes(&[req_note, error_text.as_deref()]);
                 let items = CHOICES
                     .iter()
                     .enumerate()
@@ -283,8 +289,6 @@ pub fn fields(s: &State, form: &Form) -> El {
                 let radio_invalid =
                     !valid.is_empty() && is_invalid && !custom_conflict && !custom_active;
                 let radio_note = join_notes(&[
-                    Some(field_name.as_str()),
-                    field_desc,
                     req_note,
                     radio_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
@@ -389,8 +393,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                 if let Some(msg) = &error_text {
                     children.push(form_controls::field_error(&error_key, msg));
                 }
-                let container_desc =
-                    join_notes(&[field_desc, shared_req_note, error_text.as_deref()]);
+                let container_desc = join_notes(&[shared_req_note, error_text.as_deref()]);
                 body = body.child(form_controls::field_container(
                     &container_key,
                     &field_name,
@@ -428,12 +431,15 @@ pub fn fields(s: &State, form: &Form) -> El {
                 let req_note =
                     (required && has_choices).then(|| t("toolCall.question.status.required"));
                 let choice_note = join_notes(&[
-                    Some(field_name.as_str()),
-                    field_desc,
                     req_note,
                     checkbox_invalid.then_some(error_text.as_deref()).flatten(),
                 ]);
                 let group_desc = join_notes(&[field_desc, req_note, error_text.as_deref()]);
+                let container_desc = join_notes(&[
+                    (!has_choices).then_some(field_desc).flatten(),
+                    req_note,
+                    error_text.as_deref(),
+                ]);
                 let mut items: Vec<El> = valid
                     .into_iter()
                     .enumerate()
@@ -537,7 +543,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                 body = body.child(form_controls::field_container(
                     &container_key,
                     &field_name,
-                    group_desc.as_deref(),
+                    container_desc.as_deref(),
                     shared_required,
                     children,
                 ));
@@ -551,6 +557,14 @@ pub fn actions(s: &State, form: &Form) -> El {
     let Some(a) = s.agent.as_ref() else {
         return rune::el();
     };
+    let can_answer = agent_forms::answer(form, &a.drafts).is_ok();
+    actions_with_eval(s, form, can_answer)
+}
+
+fn actions_with_eval(s: &State, form: &Form, can_answer: bool) -> El {
+    let Some(a) = s.agent.as_ref() else {
+        return rune::el();
+    };
     let scope = s.input_scope.clone();
     let id = form.id.clone();
     let cancel = id.clone();
@@ -559,7 +573,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(button(
             "answer-question",
             t("rune.answer"),
-            a.forms_locked() || agent_forms::answer(form, &a.drafts).is_err(),
+            a.forms_locked() || !can_answer,
             crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.answer_form(&id)

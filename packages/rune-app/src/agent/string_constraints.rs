@@ -14,6 +14,7 @@ const MAX_NESTING: usize = 32;
 const MAX_AST_NODES: usize = 1024;
 const MAX_COMPILE_WORK: usize = 4096;
 const MAX_MATCH_STEPS: usize = 200_000;
+const MAX_SINGLE_MATCH_STEPS: usize = 50_000;
 const MAX_CACHE_ENTRIES: usize = 64;
 const MAX_MATCH_CACHE_ENTRIES: usize = 256;
 
@@ -85,9 +86,29 @@ fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget)
     if budget.remaining == 0 {
         return true;
     }
-    // Defer to OpenCode (`true`) if matching hits the shared work budget.
-    let Some(matched) = pat.is_match_budgeted(value, budget) else {
-        return true;
+    // Cap each individual match so one pathological pattern cannot starve the rest of the form,
+    // and cache pairs that exhaust the per-match cap on their own so repeated renders do zero work.
+    let before = budget.remaining;
+    let single_cap = before.min(MAX_SINGLE_MATCH_STEPS);
+    let mut call_budget = MatchBudget {
+        remaining: single_cap,
+    };
+    let outcome = pat.is_match_budgeted(value, &mut call_budget);
+    let spent = single_cap - call_budget.remaining;
+    budget.remaining = before.saturating_sub(spent);
+    let matched = match outcome {
+        Some(matched) => matched,
+        None => {
+            if spent >= MAX_SINGLE_MATCH_STEPS
+                && let Ok(mut map) = cache.lock()
+            {
+                if map.len() >= MAX_MATCH_CACHE_ENTRIES {
+                    map.clear();
+                }
+                map.insert(key, true);
+            }
+            return true;
+        }
     };
     if let Ok(mut map) = cache.lock() {
         if map.len() >= MAX_MATCH_CACHE_ENTRIES {
@@ -503,6 +524,53 @@ fn looks_like_slash_date(s: &str) -> bool {
         && b.bytes().next().is_some_and(|x| x.is_ascii_digit())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
+    let b = s.as_bytes();
+    if b.len() >= 7 && matches!(b[0], b'+' | b'-') {
+        let digits = &s[1..7];
+        if digits.bytes().all(|x| x.is_ascii_digit()) {
+            let mag = digits.parse::<i64>().ok()?;
+            if b[0] == b'-' && mag == 0 {
+                // ECMAScript Date treats `-000000` as invalid (`NaN`).
+                return None;
+            }
+            let year = if b[0] == b'-' { -mag } else { mag };
+            return Some((year, 7));
+        }
+    }
+    if b.len() >= 4
+        && let Some(year) = parse_ascii_digits(&s[0..4])
+    {
+        return Some((i64::from(year), 4));
+    }
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn days_in_month_i64(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn within_js_date_range(year: i64, month: u32, day: u32, sod_ms: i64, tz_offset_ms: i64) -> bool {
+    const MAX_JS_DATE_MS: i128 = 8_640_000_000_000_000;
+    let days = days_from_civil(year, i64::from(month), i64::from(day));
+    let ms = i128::from(days) * 86_400_000 + i128::from(sod_ms) - i128::from(tz_offset_ms);
+    ms.abs() <= MAX_JS_DATE_MS
+}
+
 fn is_valid_date_time(value: &str) -> bool {
     let s = trim_es(value);
     if s.is_empty() {
@@ -519,90 +587,124 @@ fn is_valid_date_time(value: &str) -> bool {
         if !s.is_ascii() {
             return false;
         }
-        // OpenCode validates `date-time` via `new Date(value)`: ISO date-only forms
-        // (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) are valid in addition to full date-time strings.
-        if s.len() == 4 && parse_ascii_digits(s).is_some() {
-            return true;
-        }
-        if s.len() == 7
-            && s.as_bytes()[4] == b'-'
-            && parse_ascii_digits(&s[0..4]).is_some()
-            && parse_ascii_digits(&s[5..7]).is_some_and(|m| (1..=12).contains(&m))
-        {
-            return true;
-        }
-        if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-            return is_valid_date(s);
-        }
-        let iso_prefix = s.len() >= 10
-            && s.as_bytes()[4] == b'-'
-            && s.as_bytes()[7] == b'-'
-            && parse_ascii_digits(&s[0..4]).is_some();
-        if !iso_prefix {
+        // OpenCode validates `date-time` via `new Date(value)`: standard 4-digit and ECMAScript
+        // 6-digit extended ISO years (`±YYYYYY`) in date-only and date-time forms are valid.
+        let iso_candidate = parse_iso_year_prefix(s).filter(|&(_, ylen)| {
+            let tail = &s.as_bytes()[ylen..];
+            tail.is_empty() || tail[0] == b'-'
+        });
+        let Some((year, ylen)) = iso_candidate else {
             // Defer non-ISO JavaScript `Date.parse` formats (e.g. RFC 2822
             // `"Thu, 26 Nov 2026 14:30:00 GMT"`, `"Nov 26, 2026"`, `"2026/11/26"`) to OpenCode
             // instead of falsely blocking valid protocol defaults on desktop.
             let has_digit = s.bytes().any(|b| b.is_ascii_digit());
             return has_digit && (contains_js_month_name(s) || looks_like_slash_date(s));
+        };
+        let rest_after_year = &s[ylen..];
+        if rest_after_year.is_empty() {
+            return within_js_date_range(year, 1, 1, 0, 0);
         }
-        if s.len() < 16 || !is_valid_date(&s[0..10]) {
+        if rest_after_year.len() == 3 {
+            let Some(month) = parse_ascii_digits(&rest_after_year[1..3]) else {
+                return false;
+            };
+            return (1..=12).contains(&month) && within_js_date_range(year, month, 1, 0, 0);
+        }
+        if rest_after_year.len() < 6 || rest_after_year.as_bytes()[3] != b'-' {
             return false;
         }
-        let b = s.as_bytes();
-        if !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' {
-            return false;
-        }
-        let Some(hour) = parse_ascii_digits(&s[11..13]) else {
+        let Some(month) = parse_ascii_digits(&rest_after_year[1..3]) else {
             return false;
         };
-        let Some(minute) = parse_ascii_digits(&s[14..16]) else {
+        let Some(day) = parse_ascii_digits(&rest_after_year[4..6]) else {
+            return false;
+        };
+        if !(1..=12).contains(&month) || !(1..=days_in_month_i64(year, month)).contains(&day) {
+            return false;
+        }
+        let after_date = &rest_after_year[6..];
+        if after_date.is_empty() {
+            return within_js_date_range(year, month, day, 0, 0);
+        }
+        let b = after_date.as_bytes();
+        if b.len() < 6 || !matches!(b[0], b'T' | b't' | b' ') || b[3] != b':' {
+            return false;
+        }
+        let Some(hour) = parse_ascii_digits(&after_date[1..3]) else {
+            return false;
+        };
+        let Some(minute) = parse_ascii_digits(&after_date[4..6]) else {
             return false;
         };
         if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
             return false;
         }
-        let mut rest = &s[16..];
+        let mut second = 0u32;
+        let mut millis = 0u32;
+        let mut rest = &after_date[6..];
         if let Some(after_colon) = rest.strip_prefix(':') {
             if after_colon.len() < 2 {
                 return false;
             }
-            let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
+            let Some(sec) = parse_ascii_digits(&after_colon[0..2]) else {
                 return false;
             };
-            if second > 59 || (hour == 24 && second != 0) {
+            if sec > 59 || (hour == 24 && sec != 0) {
                 return false;
             }
+            second = sec;
             rest = &after_colon[2..];
             if let Some(after_dot) = rest.strip_prefix('.') {
                 let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
                 if frac_len == 0 {
                     return false;
                 }
-                if hour == 24 && !after_dot[..frac_len].bytes().all(|d| d == b'0') {
+                let frac = &after_dot[..frac_len];
+                if hour == 24 && !frac.bytes().all(|d| d == b'0') {
                     return false;
                 }
+                let mut m = 0u32;
+                for i in 0..3 {
+                    let d = frac.as_bytes().get(i).copied().unwrap_or(b'0') - b'0';
+                    m = m * 10 + u32::from(d);
+                }
+                millis = m;
                 rest = &after_dot[frac_len..];
             }
         }
+        let sod_ms = (i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second)) * 1000
+            + i64::from(millis);
         if rest.is_empty() || rest == "Z" || rest == "z" {
-            return true;
+            return within_js_date_range(year, month, day, sod_ms, 0);
         }
         let rb = rest.as_bytes();
-        let (tz_h_str, tz_m_str) = if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':'
-        {
-            (&rest[1..3], &rest[4..6])
-        } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
-            (&rest[1..3], &rest[3..5])
-        } else {
-            return false;
-        };
+        let (sign, tz_h_str, tz_m_str) =
+            if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
+                (
+                    if rb[0] == b'-' { -1i64 } else { 1i64 },
+                    &rest[1..3],
+                    &rest[4..6],
+                )
+            } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
+                (
+                    if rb[0] == b'-' { -1i64 } else { 1i64 },
+                    &rest[1..3],
+                    &rest[3..5],
+                )
+            } else {
+                return false;
+            };
         let Some(tz_h) = parse_ascii_digits(tz_h_str) else {
             return false;
         };
         let Some(tz_m) = parse_ascii_digits(tz_m_str) else {
             return false;
         };
-        tz_h <= 23 && tz_m <= 59
+        if tz_h > 23 || tz_m > 59 {
+            return false;
+        }
+        let tz_offset_ms = sign * (i64::from(tz_h) * 3600 + i64::from(tz_m) * 60) * 1000;
+        within_js_date_range(year, month, day, sod_ms, tz_offset_ms)
     }
 }
 

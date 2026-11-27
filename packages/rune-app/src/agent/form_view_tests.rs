@@ -223,12 +223,13 @@ fn question_form_exposes_native_radio_checkbox_states_localized_names_and_mutati
             let prod_key = agent_forms::string_option_key("raw_env_key", "prod");
             let opt_staging = find_node(&tree, &staging_key).unwrap();
             let opt_prod = find_node(&tree, &prod_key).unwrap();
+            let env_group = find_node(&tree, &agent_forms::field_group_key("raw_env_key")).unwrap();
+            assert_eq!(env_group["role"], "radio-group");
+            assert_eq!(env_group["name"], "Environment");
+            assert_eq!(env_group["description"], "Pick deployment target");
             assert_eq!(opt_staging["role"], "radio-button");
             assert_eq!(opt_staging["name"], "Staging");
-            assert_eq!(
-                opt_staging["description"],
-                "Pre-production · Environment · Pick deployment target"
-            );
+            assert_eq!(opt_staging["description"], "Pre-production");
             assert!(has_state(opt_staging, "unchecked"), "{opt_staging}");
             assert!(has_state(opt_prod, "unchecked"), "{opt_prod}");
 
@@ -2760,23 +2761,31 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             radios.iter().all(|r| r.get("rq").is_none()),
             "individual radios in web mirror must not set aria-required: {radios:?}"
         );
+        let group_of =
+            |r: &serde_json::Value| r["a"].as_u64().and_then(|idx| web_items.get(idx as usize));
         assert!(
             radios.iter().any(|r| {
                 r["t"] == "Yes"
-                    && r["d"].as_str().is_some_and(|d| {
-                        d.contains("Proceed now?") && d.contains("Question Required")
+                    && r["d"]
+                        .as_str()
+                        .is_some_and(|d| d.contains("Question Required"))
+                    && group_of(r).is_some_and(|g| {
+                        g["o"] == "radiogroup" && g["t"] == "Proceed now?" && g["rq"] == json!(true)
                     })
             }),
-            "first Yes radio web mirror must carry its own question title and requiredness: {radios:?}"
+            "first Yes radio web mirror must link to its radiogroup title and expose requiredness: {web_items:?}"
         );
         assert!(
             radios.iter().any(|r| {
                 r["t"] == "Yes"
-                    && r["d"].as_str().is_some_and(|d| {
-                        d.contains("Notify team?") && d.contains("Question Required")
+                    && r["d"]
+                        .as_str()
+                        .is_some_and(|d| d.contains("Question Required"))
+                    && group_of(r).is_some_and(|g| {
+                        g["o"] == "radiogroup" && g["t"] == "Notify team?" && g["rq"] == json!(true)
                     })
             }),
-            "second Yes radio web mirror must carry its own question title and requiredness: {radios:?}"
+            "second Yes radio web mirror must link to its radiogroup title and expose requiredness: {web_items:?}"
         );
     });
 }
@@ -2916,35 +2925,52 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
         let mut drt = Runtime::new(state, render_form, (420.0, 820.0), Env::new(false, 1.0));
         drt.frame(0.0);
         let web_items: Vec<serde_json::Value> = serde_json::from_str(&drt.a11y_json()).unwrap();
+        let group_of = |item: &serde_json::Value| {
+            item["a"]
+                .as_u64()
+                .and_then(|idx| web_items.get(idx as usize))
+        };
         assert!(
             web_items.iter().any(|item| {
                 item["o"] == "radio"
                     && item["t"] == "Yes"
-                    && item["d"].as_str().is_some_and(|d| {
-                        d.contains("Database") && d.contains("Keep the existing database?")
+                    && group_of(item).is_some_and(|g| {
+                        g["o"] == "radiogroup"
+                            && g["t"] == "Database"
+                            && g["d"]
+                                .as_str()
+                                .is_some_and(|d| d.contains("Keep the existing database?"))
                     })
             }),
-            "boolean radio web mirror must expose both header and field description: {web_items:?}"
+            "boolean radio web mirror must link to radiogroup carrying header and field description once: {web_items:?}"
         );
         assert!(
             web_items.iter().any(|item| {
                 item["o"] == "radio"
                     && item["t"] == "Staging"
-                    && item["d"].as_str().is_some_and(|d| {
-                        d.contains("Tier") && d.contains("Which deployment tier should be used?")
+                    && group_of(item).is_some_and(|g| {
+                        g["o"] == "radiogroup"
+                            && g["t"] == "Tier"
+                            && g["d"].as_str().is_some_and(|d| {
+                                d.contains("Which deployment tier should be used?")
+                            })
                     })
             }),
-            "string radio web mirror must expose both header and field description: {web_items:?}"
+            "string radio web mirror must link to radiogroup carrying header and field description once: {web_items:?}"
         );
         assert!(
             web_items.iter().any(|item| {
                 item["o"] == "checkbox"
                     && item["t"] == "Metrics"
-                    && item["d"].as_str().is_some_and(|d| {
-                        d.contains("Extras") && d.contains("Select optional modules to enable.")
+                    && group_of(item).is_some_and(|g| {
+                        g["o"] == "group"
+                            && g["t"] == "Extras"
+                            && g["d"]
+                                .as_str()
+                                .is_some_and(|d| d.contains("Select optional modules to enable."))
                     })
             }),
-            "multiselect checkbox web mirror must expose both header and field description: {web_items:?}"
+            "multiselect checkbox web mirror must link to group carrying header and field description once: {web_items:?}"
         );
 
         // 3. Refreshing a hidden custom multiselect with `options: []` and `default: ["opaque-token"]`
@@ -3690,15 +3716,15 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .expect("quoted literal comma, hidden [''], UTF-16 parity, unicode email, and valid IPv6 URL must submit");
         assert_eq!(r13_ans["hidden_empty_custom"], json!([""]));
         assert_eq!(r13_ans["single_custom"], json!(["Doe, Jane"]));
-        // Backslash-escaped comma also submits as a single item under maxItems=1.
+        // Ordinary unquoted backslashes (e.g. Windows UNC paths) remain literal.
         r13_drafts
             .get_mut(&("form-r13".into(), "single_custom".into()))
             .unwrap()
             .custom_editor()
-            .text = r"Doe\, Jane".into();
-        let r13_esc = agent_forms::answer(&r13_form, &r13_drafts)
-            .expect("escaped literal comma must submit as one item under maxItems=1");
-        assert_eq!(r13_esc["single_custom"], json!(["Doe, Jane"]));
+            .text = r"\\serveur\partage".into();
+        let r13_unc = agent_forms::answer(&r13_form, &r13_drafts)
+            .expect("UNC path with leading double backslash must submit verbatim");
+        assert_eq!(r13_unc["single_custom"], json!([r"\\serveur\partage"]));
         // Oversized character class under bounded repeat defers cleanly in bounded time.
         let huge_class = format!("[{}]{{256}}", "a".repeat(2500));
         let huge_class_form = Form {
@@ -4229,9 +4255,9 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
                 .is_empty(),
             "oversized multiselect default must not retain unbounded preserved checkboxes"
         );
-        assert_eq!(
-            find_node(&humtree, "form-unsupported").unwrap()["name"],
-            "Unsupported form"
+        assert!(
+            find_node(&humtree, &agent_forms::field_error_key("tags")).is_some(),
+            "oversized visible multiselect default must surface field limit error while untouched"
         );
         assert!(has_state(
             find_node(&humtree, "answer-question").unwrap(),
@@ -4637,5 +4663,260 @@ fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_a
         )
         .expect("RFC 2822 hidden date-time default must submit verbatim");
         assert_eq!(r28ans["when"], json!("Thu, 26 Nov 2026 14:30:00 GMT"));
+    });
+}
+
+#[test]
+fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_extended_years_shared_budget_and_group_descriptions()
+ {
+    crate::strings::with_locale("en", || {
+        // 1 & 2. Ordinary unquoted backslashes stay literal (`\\serveur\partage`) and edited
+        // custom multiselect text obeys the exact user-typed order (`beta, alpha`).
+        let custom_order_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-custom".into(),
+            title: "Custom order".into(),
+            fields: vec![
+                json!({
+                    "key": "paths",
+                    "title": "Paths",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": []
+                }),
+                json!({
+                    "key": "ordered",
+                    "title": "Ordered",
+                    "type": "multiselect",
+                    "custom": true,
+                    "options": [],
+                    "default": ["alpha", "beta"]
+                }),
+            ],
+        };
+        let mut drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&custom_order_form), &mut drafts);
+        drafts
+            .get_mut(&("form-r18-custom".into(), "paths".into()))
+            .unwrap()
+            .custom_editor()
+            .text = r"\\serveur\partage".into();
+        drafts
+            .get_mut(&("form-r18-custom".into(), "ordered".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "beta, alpha".into();
+        let ans = agent_forms::answer(&custom_order_form, &drafts)
+            .expect("literal UNC path and reordered custom values must submit");
+        assert_eq!(ans["paths"], json!([r"\\serveur\partage"]));
+        assert_eq!(ans["ordered"], json!(["beta", "alpha"]));
+
+        // 3. Visible multiselect with `minItems: 1` (no `required`, no `default`) blocks submit
+        // even while untouched, enables after checking, and blocks again if unchecked.
+        let vis_min_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-vis-min".into(),
+            title: "Visible minItems".into(),
+            fields: vec![json!({
+                "key": "env",
+                "title": "Environment",
+                "type": "multiselect",
+                "minItems": 1,
+                "options": [{"value": "prod", "label": "Prod"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(vis_min_form);
+        let mut vrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        vrt.frame(0.0);
+        let vtree = vrt.accessibility_json();
+        assert!(
+            has_state(find_node(&vtree, "answer-question").unwrap(), "disabled"),
+            "untouched visible multiselect with minItems=1 must disable Answer"
+        );
+        let prod_key = agent_forms::multi_option_key("env", "prod");
+        tap(&mut vrt, &prod_key);
+        let vtree_checked = vrt.accessibility_json();
+        assert!(
+            !has_state(
+                find_node(&vtree_checked, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "checking option must satisfy visible minItems=1"
+        );
+        tap(&mut vrt, &prod_key);
+        let vtree_unchecked = vrt.accessibility_json();
+        assert!(
+            has_state(
+                find_node(&vtree_unchecked, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "unchecking option must disable Answer again"
+        );
+
+        // 4. Visible multiselect with 65 copies of `prod` in default can be replaced by checking
+        // `prod`, enabling Answer and submitting `["prod"]`.
+        let oversized_65_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-over65".into(),
+            title: "Oversized 65".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "options": [{"value": "prod", "label": "Prod"}],
+                "default": vec![json!("prod"); 65]
+            })],
+        };
+        let (state, _rx) = state_with_form(oversized_65_form);
+        let mut ort = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        ort.frame(0.0);
+        let otree = ort.accessibility_json();
+        assert!(
+            find_node(&otree, "form-unsupported").is_none(),
+            "recoverable visible oversized default must not lock the form as unsupported"
+        );
+        assert!(has_state(
+            find_node(&otree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        let target_prod = agent_forms::multi_option_key("targets", "prod");
+        tap(&mut ort, &target_prod);
+        let otree2 = ort.accessibility_json();
+        assert!(
+            !has_state(find_node(&otree2, "answer-question").unwrap(), "disabled"),
+            "checking an option must replace the oversized default and enable Answer"
+        );
+        let oans = agent_forms::answer(
+            &ort.state.agent.as_ref().unwrap().forms[0],
+            &ort.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("replaced oversized multiselect default must submit");
+        assert_eq!(oans["targets"], json!(["prod"]));
+
+        // 5. Desktop accepts ECMAScript extended-year ISO date-times (`+010000-01-01T00:00:00.000Z`)
+        // in hidden required fields and rejects out-of-range / `-000000` dates.
+        let ext_year_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-ext-year".into(),
+            title: "Extended year".into(),
+            fields: vec![json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "+010000-01-01T00:00:00.000Z"
+            })],
+        };
+        let mut edrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&ext_year_form), &mut edrafts);
+        let eans = agent_forms::answer(&ext_year_form, &edrafts)
+            .expect("extended-year ISO date-time must pass desktop validation");
+        assert_eq!(eans["when"], json!("+010000-01-01T00:00:00.000Z"));
+        for bad_date in [
+            "-000000-01-01T00:00:00.000Z",
+            "+999999-01-01T00:00:00.000Z",
+            "+010000-02-30T00:00:00.000Z",
+        ] {
+            let bad_field = json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "required": true
+            });
+            let mut bd = agent_forms::Draft::default();
+            bd.editor().text = bad_date.into();
+            assert!(
+                agent_forms::value(&bad_field, &bd).is_err(),
+                "invalid extended-year date-time `{bad_date}` must be rejected"
+            );
+        }
+
+        // 6. 32 required radio groups with `a{256}b` and 1,000-char `'a'` first option share one
+        // form-level budget and cache per-match exhaustion across single-pass `form_panel` rebuilds.
+        let long_a = "a".repeat(1000);
+        let hard_fields: Vec<serde_json::Value> = (0..32)
+            .map(|i| {
+                json!({
+                    "key": format!("g{i}"),
+                    "title": format!("Group {i}"),
+                    "type": "string",
+                    "required": true,
+                    "pattern": "a{256}b",
+                    "options": [{"value": long_a, "label": "Long A"}]
+                })
+            })
+            .collect();
+        let hard_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-budget".into(),
+            title: "Shared budget".into(),
+            fields: hard_fields,
+        };
+        let (state, _rx) = state_with_form(hard_form);
+        let t0 = std::time::Instant::now();
+        let mut brt = Runtime::new(
+            state,
+            |s: &State, cx: &mut Cx<State>| {
+                layout::render(cx, |_| {
+                    let Some(a) = s.agent.as_ref() else {
+                        return col();
+                    };
+                    let (body, foot) = super::form_view::form_panel(s, &a.forms[0]);
+                    col().full_width().full_height().child(body).child(foot)
+                })
+            },
+            (420.0, 520.0),
+            Env::new(false, 1.0),
+        );
+        brt.frame(0.0);
+        brt.frame(1.0 / 60.0);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(2),
+            "32x a{{256}}b form_panel rebuilds must stay bounded via shared budget + cache"
+        );
+
+        // 7. 64-radio group with a 1 MiB field description keeps the description once on the
+        // `radiogroup` and never duplicates it onto the 64 individual `radio-button` nodes.
+        let big_desc = "D".repeat(1_048_576);
+        let radio_opts: Vec<serde_json::Value> = (0..64)
+            .map(|i| json!({"value": format!("v{i}"), "label": format!("Option {i}")}))
+            .collect();
+        let big_desc_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r18-big-desc".into(),
+            title: "Big description".into(),
+            fields: vec![json!({
+                "key": "choice",
+                "title": "Choice",
+                "description": big_desc,
+                "type": "string",
+                "options": radio_opts
+            })],
+        };
+        let (state, _rx) = state_with_form(big_desc_form);
+        let mut drt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        drt.frame(0.0);
+        let dtree = drt.accessibility_json();
+        let group_node = find_node(&dtree, &agent_forms::field_group_key("choice")).unwrap();
+        assert_eq!(
+            group_node["description"].as_str().map(str::len),
+            Some(1_048_576),
+            "radiogroup must retain the field description once"
+        );
+        for i in 0..64 {
+            let opt_key = agent_forms::string_option_key("choice", &format!("v{i}"));
+            let opt_node = find_node(&dtree, &opt_key).unwrap();
+            assert!(
+                opt_node["description"].is_null(),
+                "radio option {i} must not duplicate the 1 MiB field description"
+            );
+        }
     });
 }
