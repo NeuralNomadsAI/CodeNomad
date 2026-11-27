@@ -198,7 +198,7 @@ fn launcher_address_and_password_fields_preserve_focus_editing_and_a11y() {
 }
 
 #[test]
-fn direct_recovery_fields_pair_inside_dialog_without_leaking_password() {
+fn direct_recovery_fields_mount_inside_dialog_without_leaking_password() {
     let mut s = crate::init();
     s.phase = crate::Phase::Ready;
     let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
@@ -226,9 +226,22 @@ fn direct_recovery_fields_pair_inside_dialog_without_leaking_password() {
         .find(|n| n.key.as_deref() == Some("direct-recovery-password"))
         .unwrap();
     assert_eq!(dialog.role, "dialog");
+    let dialog_prefix = format!("{}/", dialog.path);
     assert!(
-        user.path.starts_with(&dialog.path) && pass.path.starts_with(&dialog.path),
-        "username and password must share the dialog credential scope"
+        user.path.starts_with(&dialog_prefix) && pass.path.starts_with(&dialog_prefix),
+        "username and password must be descendants of the recovery dialog"
+    );
+    let has_intervening_scope = |field_path: &str| {
+        elements.iter().any(|n| {
+            n.path.starts_with(&dialog_prefix)
+                && n.path != field_path
+                && field_path.starts_with(&format!("{}/", n.path))
+                && matches!(n.role, "form" | "dialog" | "alertdialog")
+        })
+    };
+    assert!(
+        !has_intervening_scope(&user.path) && !has_intervening_scope(&pass.path),
+        "no intermediate form or dialog scope may split recovery username and password"
     );
 
     let (ux, uy) = rt.find("direct-recovery-username").unwrap();
