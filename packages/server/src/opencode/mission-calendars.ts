@@ -45,7 +45,9 @@ export function missionCalendars(client: Client, location: { directory: string; 
   // The reserved prefix keeps ordinary sends, favourites and permission modes off the carrier.
   const carrier = `${MISSION_SCHEDULE_CARRIER_SESSION_PREFIX}calendar_${stableToken(`${projectID}\0${location.directory}`, 24)}`
   const options = { ...locationRequestOptions(location), signal }
-  const own = async () => (await client.experimental.automation.list({ sessionID: carrier, directory: location.directory }, options))
+  // OpenCode refuses to list the Automations of a conversation that does not exist: before the first calendar, there is no carrier.
+  const own = async () => (await client.experimental.automation.list({ sessionID: carrier, directory: location.directory }, options)
+    .catch(error => { if ((error as { _tag?: unknown })?._tag === "SessionNotFoundError") return []; throw error }))
     .filter(info => info.sessionID === carrier && info.action.type === "code" && info.action.code === MISSION_CALENDAR_CODE)
   const calendarOf = (info: AutomationInfo) => {
     const args = info.action.type === "code" ? info.action.args as { calendar?: unknown } | undefined : undefined

@@ -14,8 +14,9 @@ function steps(fail?: string) {
 
 test("a schedule is taken over when it runs or is paused and nothing of it is under way", () => {
   assert.deepEqual([{}, { state: "paused" }, { state: "stopped" }, { state: "finished" }, { kind: "one-time" }, { pendingPassage: { id: "p" } },
-    { control: { pending: true } }, { control: { pending: false } }, { blockReason: "failed" }].map(extra => convertibleMissionSchedule(schedule(extra))),
-  [true, true, false, false, false, false, false, true, false])
+    { control: { pending: true } }, { control: { pending: false } }, { blockReason: "failed" }, { blockReason: "ended-without-report" }, { blockReason: "native-uncertain" },
+    { blockReason: "deleting" }].map(extra => convertibleMissionSchedule(schedule(extra))),
+  [true, true, false, false, false, false, false, true, true, true, false, false])
 })
 
 test("a running schedule is saved paused under its identity, deleted, then resumed", async () => {
@@ -28,10 +29,12 @@ test("a running schedule is saved paused under its identity, deleted, then resum
   assert.deepEqual(s.calls[2], ["resume", "msn_sync"])
 })
 
-test("a paused schedule stays paused, and a failed step leaves the schedule in charge", async () => {
-  const paused = steps()
-  await convertMissionSchedule(schedule({ state: "paused" }), paused)
-  assert.deepEqual(paused.calls.map(call => (call as unknown[])[0]), ["save", "remove"])
+test("a paused schedule and one held by a failed passage stay paused, and a failed step leaves the schedule in charge", async () => {
+  for (const extra of [{ state: "paused" }, { blockReason: "failed" }]) {
+    const paused = steps()
+    await convertMissionSchedule(schedule(extra), paused)
+    assert.deepEqual(paused.calls.map(call => (call as unknown[])[0]), ["save", "remove"], JSON.stringify(extra))
+  }
   const refused = steps("save")
   await assert.rejects(convertMissionSchedule(schedule(), refused))
   assert.equal(refused.calls.length, 1, "nothing is deleted when the save is refused")

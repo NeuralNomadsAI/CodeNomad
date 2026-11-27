@@ -173,6 +173,8 @@ try {
   // The server's own adapter creates the carrier conversation and the Automations.
   const projectID = (await daemon.client.location.get({ location })).project.id
   const calendars = () => missionCalendars(daemon.client, location, projectID)
+  // A project that never had a programmed Mission has no carrier conversation yet: its list is empty, not an error.
+  assert.deepEqual(await calendars().list(), [])
   const rule = (calendar, args) => ({ name: args.title, trigger: { type: "every", every: "15 seconds" }, action: { type: "code", code: MISSION_CALENDAR_CODE, args: { calendar, ...args } } })
   await calendars().save("cal_e2e", [rule("cal_e2e", { objective: OBJECTIVE, title: "Calendar E2E", template: "custom", coordinatorGoal: true })])
   const automation = { id: (await calendars().list())[0].rules[0].automationID }
@@ -210,7 +212,9 @@ try {
   const replaced = await until("the next launch", () => missions(daemon), list => list.some(mission => mission.id !== first.id), 90_000)
   const second = replaced.find(mission => mission.id !== first.id)
   assert.deepEqual([replaced.length, second.coordinatorSessionId], [1, first.coordinatorSessionId], "the new launch replaces the first Mission, in the same conversation")
-  assert.deepEqual((await calendars().list())[0].last?.history.map(item => item.outcome), ["completed"])
+  // The run publishes its result once its program returns, after the Mission it launched is already there.
+  const published = await until("the launch's result", () => calendars().list(), list => list[0]?.last?.missionID === second.id, 30_000)
+  assert.deepEqual(published[0].last.history.map(item => item.outcome), ["completed"])
   await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 120_000)
   await calendars().pause("cal_e2e")
   await daemon.stop()

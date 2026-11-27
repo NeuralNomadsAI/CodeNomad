@@ -24,7 +24,10 @@ async function fixture() {
     config: { get: async () => [] }, session, location: { get: async () => ({ directory, project: { id: projectID } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     experimental: { automation: {
-      list: async ({ sessionID }: any) => automations.filter(item => item.sessionID === sessionID).map(item => ({ ...item })),
+      list: async ({ sessionID }: any) => {
+        if (!sessions.has(sessionID)) throw Object.assign(new Error("Session not found"), { _tag: "SessionNotFoundError", sessionID })
+        return automations.filter(item => item.sessionID === sessionID).map(item => ({ ...item }))
+      },
       create: async (input: any) => { const value = { id: `aut_${++next}`, tz: "UTC", status: "active", runCount: 0, ...input }; automations.push(value); return value },
       pause: async ({ automationID }: any) => { row(automationID).status = "paused" },
       resume: async ({ automationID }: any) => { row(automationID).status = "active" },
