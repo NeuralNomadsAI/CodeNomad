@@ -256,3 +256,53 @@ fn owned_deferred_image_fetches_passive_bytes_and_refuses_other_sessions() {
         http.quiet().await;
     });
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn offscreen_decoded_images_evict_lru_past_budget_while_keeping_visible_images() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    // 8x4 RGBA = 128 bytes each.
+    let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC").unwrap();
+    let cache = ImageCache::new(Arc::new(|| {}));
+    let mut pictures = Pictures::default();
+    let leases = [Rc::new(()), Rc::new(()), Rc::new(())];
+    let make_ready = || {
+        let img = cache.load(png.as_slice());
+        img.wait().unwrap();
+        img
+    };
+    for (idx, (key, visible, last_seen)) in [
+        ("off-old", false, 1),
+        ("off-new", false, 2),
+        ("on-screen", true, 3),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        pictures.images.insert(
+            key.into(),
+            Entry {
+                lease: Rc::downgrade(&leases[idx]),
+                media: PictureSource::Inline(key.into()),
+                mime: "image/png".into(),
+                visible,
+                clip_gate: None,
+                request: None,
+                image: Some(make_ready()),
+                settled: true,
+                last_seen,
+            },
+        );
+    }
+    // 3 images = 384 bytes; budget 256 evicts only oldest offscreen (`off-old`) and keeps visible.
+    assert!(pictures.evict_offscreen_decoded(None, 256));
+    assert!(pictures.images["off-old"].image.is_none());
+    assert!(!pictures.images["off-old"].settled);
+    assert!(pictures.images["off-new"].image.is_some());
+    assert!(pictures.images["on-screen"].image.is_some());
+    // Budget 64 evicts the remaining offscreen image (`off-new`) but never evicts `on-screen`.
+    assert!(pictures.evict_offscreen_decoded(None, 64));
+    assert!(pictures.images["off-new"].image.is_none());
+    assert!(pictures.images["on-screen"].image.is_some());
+}

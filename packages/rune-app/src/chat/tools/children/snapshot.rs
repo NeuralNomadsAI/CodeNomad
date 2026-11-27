@@ -219,6 +219,7 @@ pub(super) fn snapshot(page: crate::history::Page) -> Snapshot {
         steps: tools,
         steps_truncated,
         steps_incomplete: steps_truncated || page.older.is_some(),
+        older_pages: page.older.is_some(),
         truncated_tools,
         truncated_tool_images,
         dropped_tool_images,

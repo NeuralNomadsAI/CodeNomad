@@ -21,6 +21,7 @@ use std::{
 };
 
 const CONCURRENT: usize = 2;
+const DECODED_BUDGET: usize = 64 * 1024 * 1024;
 
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) mod browser_fixture;
@@ -41,6 +42,7 @@ pub(crate) struct Pictures {
     waiting: VecDeque<String>,
     preview: Option<(String, String, Image)>,
     hover: Option<(String, String)>,
+    access_tick: u64,
 }
 
 struct Entry {
@@ -52,6 +54,13 @@ struct Entry {
     request: Option<(Sender<()>, Receiver<Option<Arc<Vec<u8>>>>)>,
     image: Option<Image>,
     settled: bool,
+    last_seen: u64,
+}
+
+fn decoded_bytes(image: &Image) -> usize {
+    attachment::decoded_size(image).map_or(0, |[w, h]| {
+        (w as usize).saturating_mul(h as usize).saturating_mul(4)
+    })
 }
 
 fn entry_in_view(entry: &Entry, view: Option<(&Clock, [f32; 4])>) -> bool {
@@ -178,7 +187,17 @@ impl Pictures {
         source: &PictureSource,
         mime: &str,
     ) -> (String, Rc<()>, Rc<DrawnRect>, LocalImageState) {
-        let key = source_key(key, source, mime);
+        self.local_slot_for(key, source, mime, None)
+    }
+
+    pub(super) fn local_slot_for(
+        &self,
+        key: &str,
+        source: &PictureSource,
+        mime: &str,
+        origin: Option<u64>,
+    ) -> (String, Rc<()>, Rc<DrawnRect>, LocalImageState) {
+        let key = source_key_with_origin(key, source, mime, origin);
         let entry = self.images.get(&key).filter(|entry| entry.media == *source);
         let lease = entry
             .and_then(|entry| entry.lease.upgrade())
@@ -238,6 +257,8 @@ impl Pictures {
             return false;
         }
         if visible {
+            self.access_tick = self.access_tick.wrapping_add(1);
+            let tick = self.access_tick;
             let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
                 lease: Rc::downgrade(lease),
                 media: media.clone(),
@@ -247,10 +268,14 @@ impl Pictures {
                 request: None,
                 image: None,
                 settled: false,
+                last_seen: tick,
             });
             entry.visible = true;
             entry.clip_gate = Some((drawn.clone(), clip.clone()));
             let in_view = entry_in_view(entry, Some((clock, bounds)));
+            if in_view {
+                entry.last_seen = tick;
+            }
             if in_view
                 && entry.request.is_none()
                 && entry.image.is_none()
@@ -291,6 +316,8 @@ impl Pictures {
         if matches!(media, PictureSource::Unavailable) {
             return false;
         }
+        self.access_tick = self.access_tick.wrapping_add(1);
+        let tick = self.access_tick;
         let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
             lease: Rc::downgrade(lease),
             media: media.clone(),
@@ -300,9 +327,13 @@ impl Pictures {
             request: None,
             image: None,
             settled: false,
+            last_seen: tick,
         });
         entry.clip_gate = Some((drawn.clone(), clip.clone()));
         let in_view = entry_in_view(entry, Some((clock, bounds)));
+        if in_view {
+            entry.last_seen = tick;
+        }
         if in_view
             && entry.request.is_none()
             && entry.image.is_none()
@@ -319,15 +350,16 @@ impl Pictures {
     }
 
     #[cfg(test)]
-    pub(super) fn local_visible_or_queued(
+    pub(super) fn local_visible_or_queued_for(
         &self,
         key: &str,
         source: &PictureSource,
         mime: &str,
+        origin: Option<u64>,
         clock: &Clock,
         bounds: [f32; 4],
     ) -> bool {
-        let key = source_key(key, source, mime);
+        let key = source_key_with_origin(key, source, mime, origin);
         self.waiting.iter().any(|queued| queued == &key)
             || self.images.get(&key).is_some_and(|entry| {
                 entry.request.is_some() || entry_in_view(entry, Some((clock, bounds)))
@@ -346,6 +378,8 @@ impl Pictures {
             return;
         }
         if visible {
+            self.access_tick = self.access_tick.wrapping_add(1);
+            let tick = self.access_tick;
             let entry = self.images.entry(key.into()).or_insert_with(|| Entry {
                 lease: Rc::downgrade(lease),
                 media: media.clone(),
@@ -355,7 +389,9 @@ impl Pictures {
                 request: None,
                 image: None,
                 settled: false,
+                last_seen: tick,
             });
+            entry.last_seen = tick;
             if !entry.visible && entry.request.is_none() && entry.image.is_none() && !entry.settled
             {
                 self.waiting.push_back(key.into());
@@ -415,7 +451,12 @@ impl Pictures {
             }
         }
         let mut changed = false;
+        self.access_tick = self.access_tick.wrapping_add(1);
+        let tick = self.access_tick;
         for entry in self.images.values_mut() {
+            if entry_in_view(entry, view) {
+                entry.last_seen = tick;
+            }
             if let Some(bytes) = entry
                 .request
                 .as_ref()
@@ -447,6 +488,9 @@ impl Pictures {
                 entry.settled = true;
                 changed = true;
             }
+        }
+        if self.evict_offscreen_decoded(view, DECODED_BUDGET) {
+            changed = true;
         }
         let running = self
             .images
@@ -496,6 +540,59 @@ impl Pictures {
         }
         changed
     }
+
+    fn evict_offscreen_decoded(&mut self, view: Option<(&Clock, [f32; 4])>, budget: usize) -> bool {
+        let mut total = self.images.values().fold(0usize, |acc, entry| {
+            acc.saturating_add(
+                entry
+                    .image
+                    .as_ref()
+                    .filter(|image| image.is_ready())
+                    .map_or(0, decoded_bytes),
+            )
+        });
+        if total <= budget {
+            return false;
+        }
+        let preview_key = self
+            .preview
+            .as_ref()
+            .and_then(|(anchor, _, _)| anchor.strip_suffix("-enlarge"));
+        let hover_key = self.hover.as_ref().map(|(anchor, _)| anchor.as_str());
+        let mut candidates: Vec<(u64, String, usize)> = self
+            .images
+            .iter()
+            .filter_map(|(key, entry)| {
+                if entry_in_view(entry, view)
+                    || preview_key == Some(key.as_str())
+                    || hover_key == Some(key.as_str())
+                {
+                    return None;
+                }
+                let bytes = entry
+                    .image
+                    .as_ref()
+                    .filter(|image| image.is_ready())
+                    .map(decoded_bytes)
+                    .filter(|&bytes| bytes > 0)?;
+                Some((entry.last_seen, key.clone(), bytes))
+            })
+            .collect();
+        candidates.sort_by_key(|(last_seen, _, _)| *last_seen);
+        let mut evicted = false;
+        for (_, key, bytes) in candidates {
+            if total <= budget {
+                break;
+            }
+            if let Some(entry) = self.images.get_mut(&key) {
+                entry.image = None;
+                entry.settled = false;
+                total = total.saturating_sub(bytes);
+                evicted = true;
+            }
+        }
+        evicted
+    }
 }
 
 pub(super) fn tool<'a>(
@@ -542,8 +639,17 @@ pub(super) fn view(
 }
 
 fn source_key(key: &str, source: &PictureSource, mime: &str) -> String {
+    source_key_with_origin(key, source, mime, None)
+}
+
+fn source_key_with_origin(
+    key: &str,
+    source: &PictureSource,
+    mime: &str,
+    origin: Option<u64>,
+) -> String {
     let mut stamp = DefaultHasher::new();
-    (source, mime).hash(&mut stamp);
+    (source, mime, origin).hash(&mut stamp);
     format!("{key}-{:x}", stamp.finish())
 }
 

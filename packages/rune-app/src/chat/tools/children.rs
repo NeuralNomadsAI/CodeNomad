@@ -147,11 +147,20 @@ struct Snapshot {
     steps: Steps,
     steps_truncated: bool,
     steps_incomplete: bool,
+    older_pages: bool,
     truncated_tools: HashSet<(String, String)>,
     truncated_tool_images: Box<[(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)]>,
     dropped_tool_images: Box<[crate::chat::document::ToolImageShadows]>,
     truncated_tool_images_overflow: bool,
     reports: Reports,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(in crate::chat) struct ChildToolState<'a> {
+    pub steps: &'a [(String, Arc<Tool>)],
+    pub truncated_images: &'a [(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)],
+    pub dropped_images: &'a [crate::chat::document::ToolImageShadows],
+    pub older_pages: bool,
 }
 
 enum ChildUpdate {
@@ -435,24 +444,19 @@ impl Children {
         &self,
         parent: Option<&str>,
         id: &str,
-    ) -> (
-        &[(String, Arc<Tool>)],
-        &[(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)],
-        &[crate::chat::document::ToolImageShadows],
-    ) {
+    ) -> ChildToolState<'_> {
         let key = child_key(parent, id);
         if self.unavailable.contains(&key) {
-            return (&[], &[], &[]);
+            return ChildToolState::default();
         }
         self.entries
             .get(&key)
             .filter(|entry| !entry.load_error && !entry.snapshot.truncated_tool_images_overflow)
-            .map_or((&[], &[], &[]), |entry| {
-                (
-                    entry.snapshot.steps.as_slice(),
-                    entry.snapshot.truncated_tool_images.as_ref(),
-                    entry.snapshot.dropped_tool_images.as_ref(),
-                )
+            .map_or_else(ChildToolState::default, |entry| ChildToolState {
+                steps: entry.snapshot.steps.as_slice(),
+                truncated_images: entry.snapshot.truncated_tool_images.as_ref(),
+                dropped_images: entry.snapshot.dropped_tool_images.as_ref(),
+                older_pages: entry.snapshot.older_pages,
             })
     }
 

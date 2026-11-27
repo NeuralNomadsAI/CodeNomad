@@ -13,6 +13,7 @@ fn candidate(paths: &[&str], tag: &str) -> Candidate {
         source: PictureSource::Inline(tag.into()),
         mime: "image/png".into(),
         call: None,
+        origin: 0,
     }
 }
 
@@ -249,6 +250,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
             source: PictureSource::Unavailable,
             mime: "image/png".into(),
             call: Some(2),
+            origin: 2,
         },
         candidate(&["/tmp/chart.png"], "stale-old"),
     ];
@@ -266,6 +268,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
             source: PictureSource::Unavailable,
             mime: "image/png".into(),
             call: Some(2),
+            origin: 2,
         },
         candidate(&["/a/chart.png"], "other-file"),
     ];
@@ -273,6 +276,35 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         match_local_image(&ambiguous_with_unavailable, "chart.png", true),
         None
     );
+
+    // Two distinct tool calls each returning an unqualified short name (`chart.png`, no full path)
+    // cannot prove they refer to the same file and must stay ambiguous.
+    let unqualified_two_calls = vec![
+        Candidate {
+            paths: vec![KnownPath::new("chart.png").unwrap()],
+            source: PictureSource::Inline("call-2".into()),
+            mime: "image/png".into(),
+            call: Some(2),
+            origin: 2,
+        },
+        Candidate {
+            paths: vec![KnownPath::new("chart.png").unwrap()],
+            source: PictureSource::Inline("call-1".into()),
+            mime: "image/png".into(),
+            call: Some(1),
+            origin: 1,
+        },
+    ];
+    assert_eq!(
+        match_local_image(&unqualified_two_calls, "chart.png", true),
+        None
+    );
+    assert_eq!(filename_label_for(r"./out\chart.png", true), "chart.png");
+    assert_eq!(
+        filename_label_for(r"./out\chart.png", false),
+        r"out\chart.png"
+    );
+    assert_eq!(filename_label_for(r"/tmp/a\b.png", true), r"a\b.png");
 
     // Two distinct images with the same name returned by a single tool call must be ambiguous,
     // even when an older tool call returned a single image with that name.
@@ -997,11 +1029,12 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
         });
         rt.frame(1.0 / 60.0);
         let mut failed = false;
+        let origin = Some(candidate_origin("m1", "call-http", 0));
         rt.update(|s, _| {
             failed = matches!(
                 s.transcript_display
                     .pictures
-                    .local_slot("fragment-m2:0-local-image-0", &source, "image/png")
+                    .local_slot_for("fragment-m2:0-local-image-0", &source, "image/png", origin)
                     .3,
                 LocalImageState::Failed
             );
@@ -1039,14 +1072,16 @@ fn offscreen_failed_image_is_not_requeued_on_reconnect_while_other_prose_stays_v
     // the offscreen failed image must NOT be re-queued.
     rt.update(|s, _| {
         let bounds = s.tool_diff_preferences.history_bounds.get();
+        let origin = Some(candidate_origin("m1", "call-http", 0));
         s.transcript_display
             .pictures
             .retry_interrupted_in_view(&s.transcript_display.tool_clock, bounds);
         assert!(
-            !s.transcript_display.pictures.local_visible_or_queued(
+            !s.transcript_display.pictures.local_visible_or_queued_for(
                 "fragment-m2:0-local-image-0",
                 &source,
                 "image/png",
+                origin,
                 &s.transcript_display.tool_clock,
                 bounds,
             ),
@@ -1125,14 +1160,16 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
             });
             rt.frame(1.0 / 60.0);
         }
+        let origin = Some(candidate_origin("m1", "call-http", 0));
         // Initially inside the 900px window but clipped below the 15-line pane -> must not queue.
         rt.update(|s, _| {
             let bounds = s.tool_diff_preferences.history_bounds.get();
             assert!(
-                !s.transcript_display.pictures.local_visible_or_queued(
+                !s.transcript_display.pictures.local_visible_or_queued_for(
                     "skill-doc-local-image-0",
                     &source,
                     "image/png",
+                    origin,
                     &s.transcript_display.tool_clock,
                     bounds,
                 ),
@@ -1157,7 +1194,7 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
                 failed = matches!(
                     s.transcript_display
                         .pictures
-                        .local_slot("skill-doc-local-image-0", &source, "image/png")
+                        .local_slot_for("skill-doc-local-image-0", &source, "image/png", origin)
                         .3,
                     LocalImageState::Failed
                 );
@@ -1184,10 +1221,11 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
                 .pictures
                 .retry_interrupted_in_view(&s.transcript_display.tool_clock, bounds);
             assert!(
-                !s.transcript_display.pictures.local_visible_or_queued(
+                !s.transcript_display.pictures.local_visible_or_queued_for(
                     "skill-doc-local-image-0",
                     &source,
                     "image/png",
+                    origin,
                     &s.transcript_display.tool_clock,
                     bounds,
                 ),
@@ -1199,10 +1237,11 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
         //    needing a fresh on_visible(true) callback.
         rt.update(|s, _| {
             let bounds = s.tool_diff_preferences.history_bounds.get();
-            let (_, _, drawn, _) = s.transcript_display.pictures.local_slot(
+            let (_, _, drawn, _) = s.transcript_display.pictures.local_slot_for(
                 "skill-doc-local-image-0",
                 &source,
                 "image/png",
+                origin,
             );
             let rect = drawn.get();
             assert!(
@@ -1212,10 +1251,11 @@ fn clipped_tool_pane_keeps_failed_image_unqueued_across_reconnect() {
             let pane_clip = s.transcript_display.tool_clock.clip_rect("skill-pane-clip");
             pane_clip.set([0.0, 0.0, 800.0, rect[1] + rect[3] + 4.0]);
             assert!(
-                s.transcript_display.pictures.local_visible_or_queued(
+                s.transcript_display.pictures.local_visible_or_queued_for(
                     "skill-doc-local-image-0",
                     &source,
                     "image/png",
+                    origin,
                     &s.transcript_display.tool_clock,
                     bounds,
                 ),
@@ -1406,22 +1446,23 @@ fn reverted_root_messages_and_truncated_child_rereads_do_not_expose_stale_pixels
         },
     );
     assert!(child_state.transcript_display.children.poll());
-    let (steps, shadows, dropped) = child_state
+    let tool_state = child_state
         .transcript_display
         .children
         .verified_tool_state(None, "child-trunc");
-    assert_eq!(steps.len(), 5);
-    assert!(dropped.is_empty());
+    assert_eq!(tool_state.steps.len(), 5);
+    assert!(tool_state.dropped_images.is_empty());
     assert!(
-        !steps[0].1.pictures.is_empty(),
+        !tool_state.steps[0].1.pictures.is_empty(),
         "older small read must stay intact under water-filling"
     );
     assert!(
-        steps[4].1.pictures.is_empty(),
+        tool_state.steps[4].1.pictures.is_empty(),
         "oversized newer reread must have its pictures truncated"
     );
     assert!(
-        shadows
+        tool_state
+            .truncated_images
             .iter()
             .any(|(m, t, _)| m.as_ref() == "c5" && t.as_ref() == "call-new"),
         "truncated newer reread must record its image path shadow"
@@ -1492,12 +1533,13 @@ fn dropped_child_tool_over_step_limit_keeps_short_name_ambiguous() {
         },
     );
     assert!(state.transcript_display.children.poll());
-    let (steps, _, dropped) = state
+    let tool_state = state
         .transcript_display
         .children
         .verified_tool_state(None, "child-201-ambig");
-    assert_eq!(steps.len(), 200);
-    assert_eq!(dropped.len(), 1);
+    assert_eq!(tool_state.steps.len(), 200);
+    assert_eq!(tool_state.dropped_images.len(), 1);
+    assert!(!tool_state.older_pages);
     let plan = prepare(
         &state,
         "task-201",
@@ -1667,4 +1709,105 @@ fn rendered_local_image_in_task_prompt_stays_visible_with_hidden_inputs() {
             "decoded local image alt must not steal active highlight from paintable output"
         );
     });
+}
+
+#[test]
+fn incomplete_child_page_refuses_relative_match_while_resolving_exact_path() {
+    let read_b = history::decode_message(&json!({
+        "id": "m2", "type": "assistant", "time": {"completed": 2},
+        "content": [{
+            "type": "tool", "id": "call-b", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/b/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": format!("data:image/png;base64,{PNG_B}")}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    let _lease = state.transcript_display.children.install(
+        "child-paged",
+        history::Page {
+            rows: vec![read_b.into()],
+            older: Some("cursor-older".into()),
+            newer: None,
+            running: false,
+            user_file_references: false,
+        },
+    );
+    assert!(state.transcript_display.children.poll());
+    let plan = prepare(
+        &state,
+        "task-paged",
+        "![Short](chart.png)\n\n![Exact](/b/chart.png)",
+        false,
+        Conversation::Child {
+            parent: None,
+            id: "child-paged",
+        },
+    );
+    let fallback = plan.fallback_label();
+    assert_eq!(
+        fallback("chart.png", true).as_deref(),
+        Some("chart.png"),
+        "incomplete child history with older pages must refuse short relative name"
+    );
+    assert_eq!(
+        fallback("/b/chart.png", true),
+        None,
+        "exact absolute path on latest child page still resolves"
+    );
+}
+
+#[test]
+fn reread_same_http_url_in_new_tool_call_uses_distinct_cache_key() {
+    let url = "https://example.test/chart.png";
+    let call_1 = history::decode_message(&json!({
+        "id": "m1", "type": "assistant", "time": {"completed": 1},
+        "content": [{
+            "type": "tool", "id": "call-1", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": url}]
+            }
+        }]
+    }))
+    .unwrap();
+    let call_2 = history::decode_message(&json!({
+        "id": "m2", "type": "assistant", "time": {"completed": 2},
+        "content": [{
+            "type": "tool", "id": "call-2", "name": "read",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "/tmp/chart.png"},
+                "content": [{"type": "file", "name": "chart.png", "mime": "image/png", "uri": url}]
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![call_1.clone().into()];
+    let plan_1 = prepare(
+        &state,
+        "frag",
+        "![Chart](/tmp/chart.png)",
+        false,
+        Conversation::Root,
+    );
+    let key_1 = plan_1.stamp[0].1.clone();
+    state.messages = vec![call_1.into(), call_2.into()];
+    let plan_2 = prepare(
+        &state,
+        "frag",
+        "![Chart](/tmp/chart.png)",
+        false,
+        Conversation::Root,
+    );
+    let key_2 = plan_2.stamp[0].1.clone();
+    assert_ne!(
+        key_1, key_2,
+        "rereading the same HTTP URL in a newer tool call must bust the previous call's cache slot"
+    );
 }

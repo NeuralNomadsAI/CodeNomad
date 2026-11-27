@@ -59,6 +59,7 @@ pub(super) struct Candidate {
     pub(super) source: PictureSource,
     pub(super) mime: String,
     pub(super) call: Option<u64>,
+    pub(super) origin: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -410,11 +411,18 @@ pub(crate) fn is_file_url(src: &str) -> bool {
 }
 
 fn filename_label(local: &str) -> String {
-    local
-        .split('/')
-        .rfind(|segment| !segment.is_empty())
-        .unwrap_or(local)
-        .to_owned()
+    filename_label_for(local, cfg!(windows))
+}
+
+fn filename_label_for(local: &str, windows_host: bool) -> String {
+    let segment = if windows_host && !local.starts_with('/') {
+        local
+            .split(['/', '\\'])
+            .rfind(|segment| !segment.is_empty())
+    } else {
+        local.split('/').rfind(|segment| !segment.is_empty())
+    };
+    segment.unwrap_or(local).to_owned()
 }
 
 fn starts_with_any_ascii_ci(value: &str, prefixes: &[&str]) -> bool {
@@ -589,16 +597,25 @@ pub(super) fn match_local_image<'a>(
     path: &str,
     decoded_fallback: bool,
 ) -> Option<&'a Candidate> {
+    match_local_image_with_options(candidates, path, decoded_fallback, true)
+}
+
+fn match_local_image_with_options<'a>(
+    candidates: &'a [Candidate],
+    path: &str,
+    decoded_fallback: bool,
+    allow_relative: bool,
+) -> Option<&'a Candidate> {
     let available = |candidate: &'a Candidate| {
         (!matches!(candidate.source, PictureSource::Unavailable)).then_some(candidate)
     };
-    match match_path(candidates, path) {
+    match match_path(candidates, path, allow_relative) {
         Match::Found(candidate) => available(candidate),
         Match::Ambiguous => None,
         Match::Miss if decoded_fallback => {
             let decoded = decode_uri_component(path);
             if decoded.as_ref() != path {
-                match match_path(candidates, decoded.as_ref()) {
+                match match_path(candidates, decoded.as_ref(), allow_relative) {
                     Match::Found(candidate) => available(candidate),
                     Match::Ambiguous | Match::Miss => None,
                 }
@@ -612,7 +629,7 @@ pub(super) fn match_local_image<'a>(
 
 /// Exact normalized path match, or a unique relative suffix match against completed session tool
 /// images (scanned newest first so re-read files resolve to their latest image).
-fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
+fn match_path<'a>(candidates: &'a [Candidate], path: &str, allow_relative: bool) -> Match<'a> {
     let target = comparable(path);
     if target.is_empty() || has_parent_segment(&target) {
         return Match::Miss;
@@ -639,6 +656,9 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
         }
         return matched.map_or(Match::Miss, Match::Found);
     }
+    if !allow_relative {
+        return Match::Ambiguous;
+    }
     let mut stripped = target.as_str();
     while let Some(rest) = stripped.strip_prefix("./") {
         stripped = rest;
@@ -649,9 +669,10 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     let rel = format!("/{stripped}");
     let win_stripped = comparable_relative_windows(path);
     let win_rel = win_stripped.as_deref().map(|s| format!("/{s}"));
-    let mut matched_paths: HashMap<&str, (Option<u64>, Option<&'a Candidate>)> = HashMap::new();
+    let mut matched_paths: HashMap<&str, (Option<u64>, bool, Option<&'a Candidate>)> =
+        HashMap::new();
     for candidate in candidates {
-        let mut best: Option<&str> = None;
+        let mut best: Option<(&str, bool)> = None;
         for known in &candidate.paths {
             let mut known_key = known.comparable.as_str();
             while let Some(rest) = known_key.strip_prefix("./") {
@@ -667,18 +688,26 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
             } else {
                 (known_key == stripped, known.comparable.ends_with(&rel))
             };
-            if (exact || suffix) && best.is_none_or(|prev| known_key.len() > prev.len()) {
-                best = Some(known_key);
+            let is_absolute = known.windows || known.comparable.starts_with('/');
+            if (exact || suffix)
+                && best.is_none_or(|(prev_key, prev_abs)| {
+                    (is_absolute, known_key.len()) > (prev_abs, prev_key.len())
+                })
+            {
+                best = Some((known_key, is_absolute));
             }
         }
-        if let Some(key) = best {
+        if let Some((key, is_absolute)) = best {
             match matched_paths.entry(key) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
-                    slot.insert((candidate.call, Some(candidate)));
+                    slot.insert((candidate.call, is_absolute, Some(candidate)));
                 }
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
-                    let (owner_call, entry) = slot.get_mut();
-                    if owner_call.is_some() && *owner_call == candidate.call {
+                    let (owner_call, prev_abs, entry) = slot.get_mut();
+                    if !*prev_abs
+                        || !is_absolute
+                        || (owner_call.is_some() && *owner_call == candidate.call)
+                    {
                         *entry = None;
                     }
                 }
@@ -688,8 +717,8 @@ fn match_path<'a>(candidates: &'a [Candidate], path: &str) -> Match<'a> {
     match matched_paths.len() {
         0 => Match::Miss,
         1 => match matched_paths.into_values().next() {
-            Some((_, Some(candidate))) => Match::Found(candidate),
-            Some((_, None)) => Match::Ambiguous,
+            Some((_, _, Some(candidate))) => Match::Found(candidate),
+            Some((_, _, None)) => Match::Ambiguous,
             None => Match::Miss,
         },
         _ => Match::Ambiguous,
@@ -726,7 +755,17 @@ pub(in crate::chat) fn tool_image_paths(tool: &Tool) -> ToolImageShadows {
     out.into_boxed_slice()
 }
 
-fn collect_tool_candidates(tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
+fn candidate_origin(row_id: &str, tool_id: &str, picture_index: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    row_id.hash(&mut hasher);
+    0u8.hash(&mut hasher);
+    tool_id.hash(&mut hasher);
+    0u8.hash(&mut hasher);
+    picture_index.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn collect_tool_candidates(row_id: &str, tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
     if tool.status != "completed" || tool.pictures.is_empty() {
         return;
     }
@@ -738,7 +777,7 @@ fn collect_tool_candidates(tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
         .filter(|value| !value.is_empty())
         .and_then(KnownPath::new);
     let single = tool.pictures.len() == 1;
-    for picture in &tool.pictures {
+    for (picture_index, picture) in tool.pictures.iter().enumerate() {
         let mut paths = Vec::new();
         if let Some(known) = picture
             .name
@@ -760,6 +799,7 @@ fn collect_tool_candidates(tool: &Tool, call: u64, out: &mut Vec<Candidate>) {
                 source: picture.source.clone(),
                 mime: picture.mime.clone(),
                 call: Some(call),
+                origin: candidate_origin(row_id, &tool.id, picture_index),
             });
         }
     }
@@ -771,7 +811,7 @@ pub(super) fn session_candidates(messages: &[Row]) -> Vec<Candidate> {
     for row in messages.iter().rev() {
         for part in row.parts.iter().rev() {
             if let Part::Tool(tool) = part {
-                collect_tool_candidates(tool, next_call, &mut out);
+                collect_tool_candidates(&row.id, tool, next_call, &mut out);
                 next_call += 1;
             }
         }
@@ -791,6 +831,7 @@ fn push_shadow_candidates(shadows: &ToolImageShadows, call: u64, out: &mut Vec<C
                 source: PictureSource::Unavailable,
                 mime: String::new(),
                 call: Some(call),
+                origin: 0,
             });
         }
     }
@@ -812,7 +853,7 @@ fn child_candidates(
             push_shadow_candidates(&truncated_images[idx].2, call, &mut out);
             continue;
         }
-        collect_tool_candidates(tool, call, &mut out);
+        collect_tool_candidates(row_id, tool, call, &mut out);
     }
     for shadows in dropped_images {
         let call = next_call;
@@ -858,16 +899,26 @@ pub(super) fn prepare(
     if local_occurrences.is_empty() {
         return Plan::empty(clip);
     }
-    let candidates = match conversation {
-        Conversation::Root => session_candidates(crate::chat::anchors::visible_rows(s)),
+    let (candidates, allow_relative) = match conversation {
+        Conversation::Root => (
+            session_candidates(crate::chat::anchors::visible_rows(s)),
+            true,
+        ),
         Conversation::Child { parent, id } => {
-            let (steps, truncated_images, dropped_images) = s
+            let tool_state = s
                 .transcript_display
                 .children
                 .verified_tool_state(parent, id);
-            child_candidates(steps, truncated_images, dropped_images)
+            (
+                child_candidates(
+                    tool_state.steps,
+                    tool_state.truncated_images,
+                    tool_state.dropped_images,
+                ),
+                !tool_state.older_pages,
+            )
         }
-        Conversation::None => Vec::new(),
+        Conversation::None => (Vec::new(), false),
     };
     if candidates.is_empty() {
         return Plan::empty(clip);
@@ -882,17 +933,24 @@ pub(super) fn prepare(
     };
     let mut resolved: HashMap<String, Option<&Candidate>> = HashMap::new();
     for (index, (raw_src, local, label)) in local_occurrences.into_iter().enumerate() {
-        let matched = *resolved
-            .entry(raw_src.clone())
-            .or_insert_with(|| match_local_image(&candidates, &local, !is_file_url(&raw_src)));
+        let matched = *resolved.entry(raw_src.clone()).or_insert_with(|| {
+            match_local_image_with_options(
+                &candidates,
+                &local,
+                !is_file_url(&raw_src),
+                allow_relative,
+            )
+        });
         let Some(matched) = matched else {
             plan.occurrences.entry(raw_src).or_default().push(None);
             continue;
         };
-        let (key, lease, drawn, state) = s.transcript_display.pictures.local_slot(
+        let origin = matches!(matched.source, PictureSource::Http(_)).then_some(matched.origin);
+        let (key, lease, drawn, state) = s.transcript_display.pictures.local_slot_for(
             &format!("{group}-local-image-{index}"),
             &matched.source,
             &matched.mime,
+            origin,
         );
         match state {
             LocalImageState::Ready(image) => {
