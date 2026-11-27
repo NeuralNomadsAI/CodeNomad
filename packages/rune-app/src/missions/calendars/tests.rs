@@ -442,7 +442,7 @@ fn hide_cancels_calendar_read_and_ignores_stale_completion() {
         .unwrap();
     let (changed, _) = panel
         .calendars
-        .poll(&panel.backend, &panel.reads, &panel.wake);
+        .poll(true, &panel.backend, &panel.reads, &panel.wake);
     assert!(!changed);
     assert!(panel.calendars.entries.is_empty());
     assert!(panel.calendars.busy_read());
@@ -614,7 +614,7 @@ fn http_crud_pause_resume_delete_and_auth_expired_round_trip() {
             for _ in 0..200 {
                 let _ = panel
                     .calendars
-                    .poll(&panel.backend, &panel.reads, &panel.wake);
+                    .poll(true, &panel.backend, &panel.reads, &panel.wake);
                 if done(panel) {
                     return;
                 }
@@ -741,7 +741,7 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
         .unwrap();
     let (changed, mutated) = panel
         .calendars
-        .poll(&panel.backend, &panel.reads, &panel.wake);
+        .poll(true, &panel.backend, &panel.reads, &panel.wake);
     assert!(changed);
     assert!(mutated);
     assert!(panel.calendars.entries[0].paused);
@@ -751,7 +751,25 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
     );
     panel.calendars.cancel();
 
-    // A 404 calendar-missing mutation also schedules a follow-up resync read.
+    // A 404 calendar-missing mutation while hidden does not start a background read.
+    panel.calendars.active_mutation = Some(98);
+    panel
+        .calendars
+        .out
+        .try_send(Completion {
+            kind: OpKind::Mutate,
+            serial: 98,
+            outcome: Ok(CalendarOutcome::Missing),
+        })
+        .unwrap();
+    let (changed, mutated) = panel
+        .calendars
+        .poll(false, &panel.backend, &panel.reads, &panel.wake);
+    assert!(changed);
+    assert!(!mutated);
+    assert!(!panel.calendars.busy_read());
+
+    // A 404 calendar-missing mutation while visible schedules a follow-up resync read.
     panel.calendars.active_mutation = Some(99);
     panel
         .calendars
@@ -764,7 +782,7 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
         .unwrap();
     let (changed, mutated) = panel
         .calendars
-        .poll(&panel.backend, &panel.reads, &panel.wake);
+        .poll(true, &panel.backend, &panel.reads, &panel.wake);
     assert!(changed);
     assert!(!mutated);
     assert_eq!(
@@ -773,14 +791,14 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
     );
     assert!(
         panel.calendars.busy_read(),
-        "Missing triggers follow-up read"
+        "Missing triggers follow-up read while visible"
     );
     panel.calendars.cancel();
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn passive_refresh_does_not_flicker_loading_and_route_absent_pauses_until_reconnect() {
+fn passive_refresh_does_not_flicker_loading_and_recovers_after_transient_first_error() {
     let mut panel = test_panel("http://127.0.0.1:1/");
     // While an initial/passive read is running with no entries, section does not flicker into view.
     let (cancel, _rx) = bounded(1);
@@ -827,44 +845,49 @@ fn passive_refresh_does_not_flicker_loading_and_route_absent_pauses_until_reconn
         "passive refresh must not flicker a Loading note over the snapshot"
     );
 
-    // Hiding cancels delete confirmation as well as active reads.
+    // Reconnect retires in-flight reads without dismissing an open delete confirmation modal;
+    // hiding the panel cancels both reads and the modal.
     rt.state.0.calendars.request_delete("cal_keep");
     assert!(rt.state.0.calendars.pending_delete().is_some());
+    rt.state.0.calendars.on_reconnect();
+    assert!(!rt.state.0.calendars.busy_read());
+    assert!(
+        rt.state.0.calendars.pending_delete().is_some(),
+        "reconnect must not dismiss open delete modal"
+    );
     rt.state.0.calendars.cancel();
     assert!(rt.state.0.calendars.pending_delete().is_none());
 
-    // An uncoded error on initial read (e.g. older server 404) suppresses further passive reads until reconnect.
-    let mut older = test_panel("http://127.0.0.1:1/");
-    older.calendars.active_read = Some((3, bounded(1).0));
-    older
+    // A transient initial read error keeps the empty section hidden without permanently blocking
+    // subsequent passive recovery reads.
+    let mut recovering = test_panel("http://127.0.0.1:1/");
+    recovering.calendars.active_read = Some((3, bounded(1).0));
+    recovering
         .calendars
         .out
         .try_send(Completion {
             kind: OpKind::Read,
             serial: 3,
-            outcome: Err("unexpected Mission calendar response (404 Not Found)".into()),
+            outcome: Err("transient network timeout".into()),
         })
         .unwrap();
-    let _ = older
-        .calendars
-        .poll(&older.backend, &older.reads, &older.wake);
-    assert!(older.calendars.unavailable);
-    assert!(!older.calendars.failed);
-    older
-        .calendars
-        .refresh(&older.backend, &older.reads, &older.wake);
-    assert!(
-        !older.calendars.busy_read(),
-        "route_absent skips repeated doomed passive reads"
+    let _ = recovering.calendars.poll(
+        true,
+        &recovering.backend,
+        &recovering.reads,
+        &recovering.wake,
     );
+    assert!(recovering.calendars.unavailable);
+    assert!(!recovering.calendars.failed);
 
-    // Reconnect clears route_absent so the next refresh probes again.
     let rt_tokio = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt_tokio.enter();
-    older.calendars.on_reconnect();
-    older
+    recovering
         .calendars
-        .refresh(&older.backend, &older.reads, &older.wake);
-    assert!(older.calendars.busy_read());
-    older.calendars.cancel();
+        .refresh(&recovering.backend, &recovering.reads, &recovering.wake);
+    assert!(
+        recovering.calendars.busy_read(),
+        "passive refresh must still retry and recover after a transient first-load error"
+    );
+    recovering.calendars.cancel();
 }

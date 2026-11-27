@@ -40,7 +40,6 @@ pub(crate) struct Calendars {
     active_read: Option<(u64, Sender<()>)>,
     active_mutation: Option<u64>,
     owed_refresh: bool,
-    route_absent: bool,
     pub(super) entries: Vec<CalendarView>,
     pub(super) selected: Option<String>,
     pub(super) loaded: bool,
@@ -62,7 +61,6 @@ impl Default for Calendars {
             active_read: None,
             active_mutation: None,
             owed_refresh: false,
-            route_absent: false,
             entries: Vec::new(),
             selected: None,
             loaded: false,
@@ -87,7 +85,6 @@ impl Calendars {
         self.entries.len().saturating_mul(512)
     }
 
-    #[cfg(test)]
     pub(crate) fn busy_read(&self) -> bool {
         self.active_read.is_some()
     }
@@ -113,28 +110,28 @@ impl Calendars {
     }
 
     pub(crate) fn cancel(&mut self) {
-        if let Some((_, cancel)) = self.active_read.take() {
-            cancel.close();
-        }
-        self.owed_refresh = false;
+        self.cancel_reads();
         self.delete_confirm = None;
     }
 
     pub(crate) fn on_reconnect(&mut self) {
-        self.cancel();
-        self.route_absent = false;
+        // Retire in-flight reads without dismissing an open delete confirmation modal.
+        self.cancel_reads();
+    }
+
+    fn cancel_reads(&mut self) {
+        if let Some((_, cancel)) = self.active_read.take() {
+            cancel.close();
+        }
+        self.owed_refresh = false;
     }
 
     pub(crate) fn reset_for_rebind(&mut self) {
         self.cancel();
         self.active_mutation = None;
-        self.route_absent = false;
     }
 
     pub(crate) fn refresh(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
-        if self.route_absent {
-            return;
-        }
         if self.active_mutation.is_some() || self.active_read.is_some() {
             self.owed_refresh = true;
             return;
@@ -143,8 +140,7 @@ impl Calendars {
     }
 
     pub(crate) fn retry_refresh(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
-        self.route_absent = false;
-        self.failed = false;
+        // Keep `failed` set until a fresh read succeeds so the retry control remains stable and disabled while retrying.
         self.refresh(backend, reads, wake);
     }
 
@@ -181,7 +177,13 @@ impl Calendars {
     /// Returns `(ui_changed, mutated_successfully)` so `Panel::poll` can also
     /// refresh one-time `summaries` when a calendar `PUT`/delete updates the
     /// prepared Mission line (#1803).
-    pub(crate) fn poll(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) -> (bool, bool) {
+    pub(crate) fn poll(
+        &mut self,
+        visible: bool,
+        backend: &Backend,
+        reads: &Reads,
+        wake: &Wake,
+    ) -> (bool, bool) {
         let mut changed = false;
         let mut mutated = false;
         while let Ok(done) = self.incoming.try_recv() {
@@ -199,9 +201,9 @@ impl Calendars {
                     let owed = std::mem::take(&mut self.owed_refresh);
                     self.apply_outcome(OpKind::Read, done.outcome, backend);
                     if owed
+                        && visible
                         && self.active_mutation.is_none()
                         && self.auth_expired.is_none()
-                        && !self.route_absent
                     {
                         self.start_read(backend, reads, wake);
                     }
@@ -224,7 +226,7 @@ impl Calendars {
                         mutated = true;
                     }
                     self.apply_outcome(OpKind::Mutate, done.outcome, backend);
-                    if (owed || needs_resync) && self.auth_expired.is_none() && !self.route_absent {
+                    if (owed || needs_resync) && visible && self.auth_expired.is_none() {
                         self.start_read(backend, reads, wake);
                     }
                 }
@@ -240,7 +242,6 @@ impl Calendars {
                 self.loaded = true;
                 self.failed = false;
                 self.unavailable = false;
-                self.route_absent = false;
                 if kind == OpKind::Mutate {
                     self.feedback = None;
                     self.editor = None;
@@ -284,10 +285,9 @@ impl Calendars {
                     if self.loaded {
                         self.failed = true;
                     } else {
-                        // Older servers without `/missions/calendars` return 404 without a code:
-                        // stay safely inactive until reconnect or rebind instead of repeating doomed reads.
+                        // Older servers without `/missions/calendars` or transient initial errors
+                        // keep the empty section hidden without permanently blocking later passive recovery.
                         self.unavailable = true;
-                        self.route_absent = true;
                     }
                 } else {
                     self.feedback = Some("missions.control.mutation.error");

@@ -70,11 +70,15 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
         section = section
             .child(theme::note(t("missions.scheduleList.readFailed"), "alert"))
             .child(
-                layout::button(t("missionsPanel.reader.retry"), false, move |state| {
-                    if let Some(panel) = retry_owner.get(state).0 {
-                        panel.refresh_calendars();
-                    }
-                })
+                layout::button(
+                    t("missionsPanel.reader.retry"),
+                    calendars.busy_read(),
+                    move |state| {
+                        if let Some(panel) = retry_owner.get(state).0 {
+                            panel.refresh_calendars();
+                        }
+                    },
+                )
                 .key("mission-calendars-retry"),
             );
     }

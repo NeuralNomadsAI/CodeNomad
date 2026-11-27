@@ -750,7 +750,8 @@ impl Panel {
             &self.wake,
         );
         let (cal_changed, cal_mutated) =
-            self.calendars.poll(&self.backend, &self.reads, &self.wake);
+            self.calendars
+                .poll(self.visible, &self.backend, &self.reads, &self.wake);
         changed |= cal_changed;
         if cal_mutated && self.visible {
             for kind in KINDS {
