@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 type Owner<S> = fn(&mut S) -> (Option<&mut Panel>, &mut TextEdit);
 
-struct Scoped<S> {
+pub(super) struct Scoped<S> {
     owner: Owner<S>,
     scope: std::rc::Rc<()>,
 }
@@ -30,7 +30,7 @@ impl<S> Clone for Scoped<S> {
 }
 
 impl<S> Scoped<S> {
-    fn get<'a>(&self, state: &'a mut S) -> (Option<&'a mut Panel>, &'a mut TextEdit) {
+    pub(super) fn get<'a>(&self, state: &'a mut S) -> (Option<&'a mut Panel>, &'a mut TextEdit) {
         let (panel, fallback) = (self.owner)(state);
         (
             panel.filter(|panel| std::rc::Rc::ptr_eq(&panel.scope, &self.scope)),
@@ -130,10 +130,14 @@ pub(crate) fn panel_body<S: 'static>(
                 }
             }));
         }
-        body = body
-            .child(actions)
-            .child(detail(ui, scoped.clone(), open_task, on_reader_open));
+        body = body.child(actions).child(detail(
+            ui,
+            scoped.clone(),
+            open_task.clone(),
+            on_reader_open,
+        ));
     }
+    body = body.child(super::calendars::view(ui, scoped.clone(), open_task));
     if !ui.cleanups.is_empty() {
         body = body.child(
             text(t("missions.progress.cleanupHistory"))

@@ -157,6 +157,9 @@ impl Panel {
     }
 
     pub(crate) fn owns_conversation_target(&self, session_id: &str) -> bool {
+        if self.calendars.owns_conversation(session_id) {
+            return true;
+        }
         let Some(snapshot) = &self.detail.snapshot else {
             return false;
         };
