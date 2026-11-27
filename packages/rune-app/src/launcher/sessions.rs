@@ -188,6 +188,7 @@ pub fn list(s: &mut State, more: bool) {
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
+            p.id.clone(),
             b.sessions(&p, cursor.as_deref()).await?,
             cursor,
         ))

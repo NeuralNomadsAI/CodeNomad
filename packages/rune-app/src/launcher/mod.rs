@@ -104,7 +104,7 @@ enum Reply {
     Connected(Backend, Vec<Project>, String),
     AuthenticationExpired(Backend),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
-    Listed(Sessions, Option<String>),
+    Listed(String, Sessions, Option<String>),
     Created(Backend, String, String, String, Option<u64>, Option<u64>),
     CreatedUnbound(Session, String),
     CreatePrecheckFailed,
@@ -888,30 +888,37 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             #[cfg(target_arch = "wasm32")]
             linked::load(s);
         }
-        Ok(Reply::Listed(rows, cursor)) => {
-            let listed_ids: HashSet<String> = rows.rows.iter().map(|row| row.id.clone()).collect();
-            let record_present = !l.authentication_required && !stale_connection;
-            if let Some(cursor) = cursor {
-                l.consume_cursor(&cursor);
-                l.apply_listing(rows, true, selected.as_deref());
-                if l.next.is_none() {
-                    l.check_omitted_visits();
+        Ok(Reply::Listed(workspace_id, rows, cursor)) => {
+            let matches_current = l.project.as_ref().is_some_and(|p| p.id == workspace_id);
+            let stopped_in_flight = stopped_during_pending.contains_key(&workspace_id);
+            if matches_current && !stopped_in_flight {
+                let listed_ids: HashSet<String> =
+                    rows.rows.iter().map(|row| row.id.clone()).collect();
+                let record_present = !l.authentication_required
+                    && !stale_connection
+                    && !stopped_during_pending_overflow;
+                if let Some(cursor) = cursor {
+                    l.consume_cursor(&cursor);
+                    l.apply_listing(rows, true, selected.as_deref());
+                    if l.next.is_none() {
+                        l.check_omitted_visits();
+                    }
+                } else if cfg!(target_os = "windows")
+                    || l.creation_uncertain_linked.is_some() && cfg!(not(target_arch = "wasm32"))
+                {
+                    l.apply_directory_refresh(rows, selected.as_deref());
+                    crate::workspace::schedule_catalogue(s);
+                } else {
+                    l.apply_listing(rows, false, selected.as_deref());
+                    if l.next.is_none() {
+                        l.check_omitted_visits();
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    linked::load(s);
                 }
-            } else if cfg!(target_os = "windows")
-                || l.creation_uncertain_linked.is_some() && cfg!(not(target_arch = "wasm32"))
-            {
-                l.apply_directory_refresh(rows, selected.as_deref());
-                crate::workspace::schedule_catalogue(s);
-            } else {
-                l.apply_listing(rows, false, selected.as_deref());
-                if l.next.is_none() {
-                    l.check_omitted_visits();
+                if record_present && !listed_ids.is_empty() {
+                    crate::workspace::note_restored_draft_sessions_present(s, &listed_ids);
                 }
-                #[cfg(target_arch = "wasm32")]
-                linked::load(s);
-            }
-            if record_present && !listed_ids.is_empty() {
-                crate::workspace::note_restored_draft_sessions_present(s, &listed_ids);
             }
         }
         Ok(Reply::Created(b, title, slug, submitted, dismiss, ticket)) => {

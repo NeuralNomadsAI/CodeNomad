@@ -181,20 +181,6 @@ pub(super) fn drain_window_deleted_sessions_closing_with_uuid(
     }
 }
 
-pub(super) fn drain_incoming_session_deleted(
-    incoming: Option<&codenomad_client::Receiver<crate::transport::Event>>,
-) -> bool {
-    let mut deleted = false;
-    if let Some(incoming) = incoming {
-        while let Ok(event) = incoming.try_recv() {
-            if matches!(event, crate::transport::Event::SessionDeleted) {
-                deleted = true;
-            }
-        }
-    }
-    deleted
-}
-
 #[derive(Default)]
 pub(super) struct LiveDraft {
     text: Option<String>,
@@ -844,15 +830,16 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
 
 pub fn bound_with_adopt(s: &mut State, backend: &Backend, adopt_recovered: bool) -> String {
     crate::composer::recall::restore(s);
-    capture(s);
     let previous = super::active_session(s).map(str::to_owned);
     let same_session =
         !s.screen.is_launcher() && previous.as_deref() == Some(backend.session.as_str());
+    let stream_deleted = if !same_session && previous.is_some() {
+        crate::chat::events::drain_outgoing_incoming_deleted(s)
+    } else {
+        false
+    };
+    capture(s);
     let outgoing_deleted = if !same_session {
-        let stream_deleted = previous
-            .is_some()
-            .then(|| drain_incoming_session_deleted(s.incoming.as_ref()))
-            .unwrap_or(false);
         drain_window_deleted_sessions(s);
         if let Some(prev) = previous.as_deref() {
             let had_pending = s.workspace.as_mut().is_some_and(|ui| {
@@ -1356,8 +1343,16 @@ pub(super) fn collect_open_clear_authorities(
     scope: &super::ProjectScope,
     session_id: &str,
 ) -> Vec<ClearAuthority> {
-    ui.entries
-        .iter()
+    collect_open_clear_authorities_for(&ui.entries, scope, session_id)
+}
+
+pub(super) fn collect_open_clear_authorities_for<'a>(
+    entries: impl IntoIterator<Item = &'a super::Entry>,
+    scope: &super::ProjectScope,
+    session_id: &str,
+) -> Vec<ClearAuthority> {
+    entries
+        .into_iter()
         .filter_map(|entry| {
             let Tab::Workspace(saved) = &entry.saved else {
                 return None;
@@ -3509,6 +3504,229 @@ mod tests {
         assert!(
             !any_inactive_resurrected,
             "queued confirmation on inactive cached tab must clear prompt before session.deleted recovery"
+        );
+    }
+
+    #[test]
+    fn unselect_and_rebind_drain_queued_confirmation_before_session_deleted_recovery() {
+        use crate::transport::{Command, Event, PromptOutcome};
+
+        let mut rt = rune::Runtime::new(
+            crate::init(),
+            crate::view,
+            (800.0, 600.0),
+            rune::Env::new(false, 1.0),
+        );
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        rt.state.workspace = Some(ui);
+        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/repo".into(),
+            temporary: false,
+        };
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        backend.workspace = "ws".into();
+        backend.session = "ses-unselect".into();
+        let (cmd_tx, cmd_rx) = codenomad_client::bounded(8);
+        let (ev_tx, ev_rx) = codenomad_client::bounded(8);
+        rt.state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        crate::workspace::opened(&mut rt.state, &project);
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx.clone());
+        rt.state.incoming = Some(ev_rx);
+        rt.state.draft = rune::edit::TextEdit::new("confirmed before unselect");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt) = cmd_rx.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id = prompt.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+
+        // Queue InboxDelta confirmation ahead of SessionDeleted, then unselect the session.
+        ev_tx
+            .try_send(Event::InboxDelta(
+                codenomad_client::inbox::InboxDelta::Removed(attempt_id),
+            ))
+            .unwrap();
+        ev_tx.try_send(Event::SessionDeleted).unwrap();
+        assert!(crate::workspace::unselect_session(
+            &mut rt.state,
+            "ses-unselect"
+        ));
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let resurrected_unselect = ui.entries.iter().any(|e| {
+            matches!(&e.saved, Tab::Workspace(w) if w.drafts.values().any(|t| t == "confirmed before unselect"))
+        });
+        assert!(
+            !resurrected_unselect,
+            "unselect_session must process queued InboxDelta confirmation before SessionDeleted recovery"
+        );
+
+        // Repeat the same check when switching sessions via bound_with_adopt.
+        let (ev_tx2, ev_rx2) = codenomad_client::bounded(8);
+        backend.session = "ses-rebind-a".into();
+        let _ = bound(&mut rt.state, &backend);
+        rt.state.phase = crate::Phase::Ready;
+        rt.state.commands = Some(cmd_tx);
+        rt.state.incoming = Some(ev_rx2);
+        rt.state.draft = rune::edit::TextEdit::new("confirmed before rebind");
+        rt.update(|s, tx| crate::composer::send(s, tx, false));
+        let Command::Prompt(prompt2) = cmd_rx.try_recv().unwrap() else {
+            panic!("expected prompt command")
+        };
+        let attempt_id2 = prompt2.id.expect("prompt id");
+        crate::composer::acknowledge(&mut rt.state, &attempt_id2, PromptOutcome::Unconfirmed);
+        capture(&mut rt.state);
+
+        ev_tx2
+            .try_send(Event::InboxDelta(
+                codenomad_client::inbox::InboxDelta::Removed(attempt_id2),
+            ))
+            .unwrap();
+        ev_tx2.try_send(Event::SessionDeleted).unwrap();
+        let mut next_backend = backend.clone();
+        next_backend.session = "ses-rebind-b".into();
+        let _ = bound(&mut rt.state, &next_backend);
+
+        let ui = rt.state.workspace.as_ref().unwrap();
+        let resurrected_rebind = ui.entries.iter().any(|e| {
+            matches!(&e.saved, Tab::Workspace(w) if w.drafts.values().any(|t| t == "confirmed before rebind"))
+        });
+        assert!(
+            !resurrected_rebind,
+            "bound_with_adopt must process queued InboxDelta confirmation before SessionDeleted recovery"
+        );
+    }
+
+    #[test]
+    fn stashed_projection_and_project_name_budget_in_deferred_fallback() {
+        let make_ws =
+            |folder: &str, active: Option<&str>, drafts: &[(&str, &str)]| super::super::Workspace {
+                backend_id: None,
+                server_id: None,
+                folder: folder.into(),
+                project_name: None,
+                temporary: false,
+                occurrence: 1,
+                workspace_id: None,
+                active_session_id: active.map(str::to_owned),
+                drafts: drafts
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                attachment_drafts: Default::default(),
+                attachment_parts: Default::default(),
+                view: Default::default(),
+            };
+        // Medium #2: a stashed temporary tab holding a pending projection must count toward
+        // projected_count in snapshot_with_stashed so the deferred closed draft is not duplicated
+        // under __no_session_draft__.
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        let mut closed_ws = make_ws(
+            "/tmp/stashed-proj",
+            Some("ses-del"),
+            &[("ses-del", "only once")],
+        );
+        closed_ws.temporary = true;
+        let scope = super::super::ProjectScope::from_workspace(&closed_ws);
+        ui.closed.push(closed_ws.clone());
+        ui.closed_restored.push(Default::default());
+        ui.closed_derived_from.push(Default::default());
+        ui.closed_unconfirmed_attempts.push(Default::default());
+        ui.closed_pending_deleted
+            .push((scope.clone(), "ses-del".into()));
+
+        let mut stashed_entry =
+            super::super::entry("tab-stashed".into(), Tab::Workspace(closed_ws.clone()));
+        stashed_entry.pending_drafts.insert("ses-del".into());
+        let stashed = super::super::StashedTemporary {
+            tab_key: "tab-stashed".into(),
+            original_index: 0,
+            was_active: true,
+            created_blank_key: Some("tab-0".into()),
+            project: crate::catalog::Project {
+                id: "ws-stashed".into(),
+                path: "/tmp/stashed-proj".into(),
+                temporary: true,
+            },
+            backend: Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            folder: "/tmp/stashed-proj".into(),
+            backend_id: None,
+            server_id: None,
+            entry: stashed_entry,
+            return_focus: None,
+        };
+        let snap = ui.snapshot_with_stashed(Some(&stashed));
+        let local_copies = snap
+            .tabs
+            .iter()
+            .filter(|tab| matches!(tab, Tab::Workspace(w) if w.drafts.contains_key(NO_SESSION_DRAFT_ID)))
+            .count();
+        assert_eq!(
+            local_copies, 0,
+            "stashed temporary tab already projecting the closed draft must not duplicate it under __no_session_draft__"
+        );
+
+        // Medium #3: an optional project_name that pushes snapshot_string_units close to
+        // MAX_STRINGS must yield to a deferred closed_pending_deleted draft.
+        let mut ui2 = Ui::new();
+        ui2.fixture_ready();
+        let mut tab_a = make_ws("/repo/a", Some("ses-a"), &[("ses-a", &"a".repeat(32_000))]);
+        tab_a.project_name = Some("N".repeat(200));
+        let tab_b = make_ws(
+            "/repo/b",
+            Some("ses-b"),
+            &[
+                ("ses-b", &"b".repeat(32_000)),
+                ("ses-b2", &"c".repeat(32_000)),
+                ("ses-b3", &"e".repeat(2_000)),
+            ],
+        );
+        ui2.entries = vec![
+            super::super::entry("tab-0".into(), Tab::Workspace(tab_a.clone())),
+            super::super::entry("tab-1".into(), Tab::Workspace(tab_b)),
+        ];
+        ui2.active = 0;
+        // Closed draft for /repo/a fits only once tab_a.project_name (200 UTF-16 units) is dropped.
+        let current_u = super::super::super::snapshot_string_units(&ui2.snapshot()).unwrap();
+        let remaining_with_name = super::super::super::MAX_STRINGS.saturating_sub(current_u);
+        assert!(
+            remaining_with_name < 200,
+            "expected budget headroom with project_name < 200, got {remaining_with_name}"
+        );
+        let key_u = NO_SESSION_DRAFT_ID.encode_utf16().count();
+        let draft_len = remaining_with_name.saturating_sub(key_u) + 80;
+        let deferred_text = "d".repeat(draft_len);
+        let closed_a = make_ws("/repo/a", Some("ses-gone"), &[("ses-gone", &deferred_text)]);
+        let scope_a = super::super::ProjectScope::from_workspace(&closed_a);
+        ui2.closed.push(closed_a);
+        ui2.closed_restored.push(Default::default());
+        ui2.closed_derived_from.push(Default::default());
+        ui2.closed_unconfirmed_attempts.push(Default::default());
+        ui2.closed_pending_deleted
+            .push((scope_a, "ses-gone".into()));
+
+        let snap2 = ui2.snapshot();
+        let Tab::Workspace(saved_a) = &snap2.tabs[0] else {
+            panic!("expected workspace tab")
+        };
+        assert_eq!(
+            saved_a.drafts.get(NO_SESSION_DRAFT_ID).map(String::as_str),
+            Some(deferred_text.as_str()),
+            "deferred closed draft must fit by yielding optional project_name"
+        );
+        assert!(
+            saved_a.project_name.is_none(),
+            "optional project_name must be dropped when its budget is needed for the deferred draft"
+        );
+        assert!(
+            crate::workspace::encode(&snap2).is_ok(),
+            "resulting snapshot must still encode cleanly within v1 bounds"
         );
     }
 }

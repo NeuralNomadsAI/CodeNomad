@@ -41,6 +41,60 @@ pub(crate) fn drain_active_incoming_deleted(s: &mut State) -> bool {
     drain_chat(s, 1024, true, true, false, None).1
 }
 
+/// Drains queued prompt confirmations and `Event::SessionDeleted` from the outgoing session's
+/// incoming channel before leaving or rebinding that session, without starting new refreshes on
+/// the session being left.
+pub(crate) fn drain_outgoing_incoming_deleted(s: &mut State) -> bool {
+    let mut session_deleted = false;
+    while let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) {
+        match event {
+            Event::SessionDeleted => session_deleted = true,
+            Event::InboxDelta(delta) => match &delta {
+                codenomad_client::inbox::InboxDelta::Upsert(item) => {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+                codenomad_client::inbox::InboxDelta::Delivery { id, .. }
+                | codenomad_client::inbox::InboxDelta::Removed(id) => {
+                    composer::confirm_unconfirmed_id(s, id);
+                }
+            },
+            Event::Inbox {
+                items,
+                authoritative: true,
+                ..
+            } => {
+                for item in &items {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+            }
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
+            }
+            Event::Message(m) => {
+                if m.role == "user" {
+                    composer::confirm_unconfirmed_id(s, &m.id);
+                }
+            }
+            Event::History(messages) => {
+                for m in &messages {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                for m in &page.rows {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    session_deleted
+}
+
 fn drain_chat(
     s: &mut State,
     limit: usize,

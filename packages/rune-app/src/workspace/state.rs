@@ -691,703 +691,752 @@ impl Ui {
         // Limit: if CSPRNG fails and more closed drafts exist than available v1 slots or global
         // v1 budget allows, extra copies cannot be stored without substituting weak UUIDs or
         // changing the v1 schema.
-        if !self.closed_pending_deleted.is_empty()
-            && let Ok(mut used_units) = super::snapshot_string_units(&snap)
-            && used_units <= super::MAX_STRINGS
-            && let Ok(encoded) = super::snapshot_bytes(&snap)
-            && encoded.len() <= super::MAX_BYTES
-        {
-            let mut used_bytes = encoded.len();
-            let tab_has_room = |w: &Workspace, extra: &[&str]| -> bool {
-                let mut keys: HashSet<&str> = w
-                    .drafts
-                    .keys()
-                    .chain(w.attachment_drafts.iter())
-                    .chain(w.attachment_parts.keys())
-                    .map(String::as_str)
-                    .collect();
-                for key in extra {
-                    keys.insert(*key);
+        if !self.closed_pending_deleted.is_empty() {
+            // Optional project names drop before drafts (matching save_snapshot.rs), so exclude
+            // them while computing fallback draft budgets and restore as many as still fit in
+            // reverse drop order (active tab first).
+            let original_project_names: Vec<Option<String>> = snap
+                .tabs
+                .iter_mut()
+                .map(|tab| match tab {
+                    Tab::Workspace(w) => w.project_name.take(),
+                    Tab::Blank => None,
+                })
+                .collect();
+            let mut any_fallback_added = false;
+            if let Ok(mut used_units) = super::snapshot_string_units(&snap)
+                && used_units <= super::MAX_STRINGS
+                && let Ok(encoded) = super::snapshot_bytes(&snap)
+                && encoded.len() <= super::MAX_BYTES
+            {
+                let mut used_bytes = encoded.len();
+                let tab_has_room = |w: &Workspace, extra: &[&str]| -> bool {
+                    let mut keys: HashSet<&str> = w
+                        .drafts
+                        .keys()
+                        .chain(w.attachment_drafts.iter())
+                        .chain(w.attachment_parts.keys())
+                        .map(String::as_str)
+                        .collect();
+                    for key in extra {
+                        keys.insert(*key);
+                    }
+                    keys.len() <= super::MAX_DRAFTS
+                };
+                #[derive(Clone, Copy)]
+                struct TabContainers {
+                    drafts_empty: bool,
+                    att_empty: bool,
+                    parts_empty: bool,
                 }
-                keys.len() <= super::MAX_DRAFTS
-            };
-            #[derive(Clone, Copy)]
-            struct TabContainers {
-                drafts_empty: bool,
-                att_empty: bool,
-                parts_empty: bool,
-            }
-            struct BundleCost {
-                has_text: bool,
-                has_att: bool,
-                has_parts: bool,
-                valid: bool,
-                text_u16: usize,
-                text_json: usize,
-                parts_json: usize,
-            }
-            impl BundleCost {
-                fn from_bundle(b: &drafts::ClosedBundle) -> Self {
-                    let text = b.text.as_deref().filter(|t| !t.is_empty());
-                    let has_text = text.is_some();
-                    let has_att = b.attachment_draft || b.attachment_parts.is_some();
-                    let has_parts = b.attachment_parts.is_some();
-                    let text_u16 = text.map_or(0, |t| t.encode_utf16().count());
-                    let parts_valid = b.attachment_parts.as_ref().is_none_or(|p| p.valid());
-                    let valid =
-                        (has_text || has_att) && text_u16 <= super::MAX_DRAFT && parts_valid;
-                    let text_json = text
-                        .and_then(|t| serde_json::to_vec(t).ok().map(|v| v.len()))
-                        .unwrap_or(0);
-                    let parts_json = b
-                        .attachment_parts
-                        .as_ref()
-                        .and_then(|p| serde_json::to_vec(&p.encode()).ok().map(|v| v.len()))
-                        .unwrap_or(0);
-                    Self {
-                        has_text,
-                        has_att,
-                        has_parts,
-                        valid,
-                        text_u16,
-                        text_json,
-                        parts_json,
-                    }
+                struct BundleCost {
+                    has_text: bool,
+                    has_att: bool,
+                    has_parts: bool,
+                    valid: bool,
+                    text_u16: usize,
+                    text_json: usize,
+                    parts_json: usize,
                 }
-                fn units(&self, key_u16: usize, key_valid: bool) -> Option<usize> {
-                    if !self.valid || !key_valid {
-                        return None;
+                impl BundleCost {
+                    fn from_bundle(b: &drafts::ClosedBundle) -> Self {
+                        let text = b.text.as_deref().filter(|t| !t.is_empty());
+                        let has_text = text.is_some();
+                        let has_att = b.attachment_draft || b.attachment_parts.is_some();
+                        let has_parts = b.attachment_parts.is_some();
+                        let text_u16 = text.map_or(0, |t| t.encode_utf16().count());
+                        let parts_valid = b.attachment_parts.as_ref().is_none_or(|p| p.valid());
+                        let valid =
+                            (has_text || has_att) && text_u16 <= super::MAX_DRAFT && parts_valid;
+                        let text_json = text
+                            .and_then(|t| serde_json::to_vec(t).ok().map(|v| v.len()))
+                            .unwrap_or(0);
+                        let parts_json = b
+                            .attachment_parts
+                            .as_ref()
+                            .and_then(|p| serde_json::to_vec(&p.encode()).ok().map(|v| v.len()))
+                            .unwrap_or(0);
+                        Self {
+                            has_text,
+                            has_att,
+                            has_parts,
+                            valid,
+                            text_u16,
+                            text_json,
+                            parts_json,
+                        }
                     }
-                    let mut u = 0usize;
-                    if self.has_text {
-                        u = u.saturating_add(key_u16).saturating_add(self.text_u16);
+                    fn units(&self, key_u16: usize, key_valid: bool) -> Option<usize> {
+                        if !self.valid || !key_valid {
+                            return None;
+                        }
+                        let mut u = 0usize;
+                        if self.has_text {
+                            u = u.saturating_add(key_u16).saturating_add(self.text_u16);
+                        }
+                        if self.has_att {
+                            u = u.saturating_add(key_u16);
+                        }
+                        Some(u)
                     }
-                    if self.has_att {
-                        u = u.saturating_add(key_u16);
-                    }
-                    Some(u)
-                }
-                fn bytes(&self, key_json: usize, c: TabContainers) -> usize {
-                    let mut n = 0usize;
-                    if self.has_text {
-                        n = n
-                            .saturating_add(key_json)
-                            .saturating_add(1)
-                            .saturating_add(self.text_json)
-                            .saturating_add(usize::from(!c.drafts_empty));
-                    }
-                    if self.has_att {
-                        n = n.saturating_add(key_json).saturating_add(if c.att_empty {
-                            ",\"attachmentDrafts\":[]".len()
-                        } else {
-                            1
-                        });
-                    }
-                    if self.has_parts {
-                        n = n
-                            .saturating_add(key_json)
-                            .saturating_add(1)
-                            .saturating_add(self.parts_json)
-                            .saturating_add(if c.parts_empty {
-                                ",\"attachmentParts\":{}".len()
+                    fn bytes(&self, key_json: usize, c: TabContainers) -> usize {
+                        let mut n = 0usize;
+                        if self.has_text {
+                            n = n
+                                .saturating_add(key_json)
+                                .saturating_add(1)
+                                .saturating_add(self.text_json)
+                                .saturating_add(usize::from(!c.drafts_empty));
+                        }
+                        if self.has_att {
+                            n = n.saturating_add(key_json).saturating_add(if c.att_empty {
+                                ",\"attachmentDrafts\":[]".len()
                             } else {
                                 1
                             });
-                    }
-                    n
-                }
-                fn apply_containers(&self, c: TabContainers) -> TabContainers {
-                    TabContainers {
-                        drafts_empty: c.drafts_empty && !self.has_text,
-                        att_empty: c.att_empty && !self.has_att,
-                        parts_empty: c.parts_empty && !self.has_parts,
-                    }
-                }
-            }
-            // Exact maximum-cardinality, lexicographically smallest (newest-first) subset under a
-            // single additive budget, given `(bundle_idx, weight)` sorted by ascending `bundle_idx`.
-            fn best_subset_1d(pool: &[(usize, usize)], cap: usize, budget: usize) -> Vec<usize> {
-                if cap == 0 || pool.is_empty() {
-                    return Vec::new();
-                }
-                let mut weights: Vec<usize> = pool.iter().map(|&(_, w)| w).collect();
-                weights.sort_unstable();
-                let mut k_max = 0usize;
-                let mut sum = 0usize;
-                for w in weights.into_iter().take(cap) {
-                    if sum.saturating_add(w) <= budget {
-                        sum += w;
-                        k_max += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if k_max == 0 {
-                    return Vec::new();
-                }
-                let mut chosen = Vec::with_capacity(k_max);
-                let mut rem = budget;
-                let mut need = k_max;
-                for (pos, &(idx, w)) in pool.iter().enumerate() {
-                    if need == 0 {
-                        break;
-                    }
-                    if w > rem {
-                        continue;
-                    }
-                    let after_need = need - 1;
-                    let suffix = &pool[pos + 1..];
-                    if suffix.len() < after_need {
-                        continue;
-                    }
-                    if after_need == 0 {
-                        chosen.push(idx);
-                        break;
-                    }
-                    let mut tail: Vec<usize> = suffix.iter().map(|&(_, sw)| sw).collect();
-                    tail.select_nth_unstable(after_need - 1);
-                    let min_tail: usize = tail[..after_need]
-                        .iter()
-                        .copied()
-                        .fold(0usize, usize::saturating_add);
-                    if min_tail <= rem - w {
-                        chosen.push(idx);
-                        rem -= w;
-                        need -= 1;
-                    }
-                }
-                chosen
-            }
-            // Exact min-cost bipartite slot assignment with an exact surviving-tab quota
-            // (Hungarian algorithm on an m x m matrix, m <= MAX_TABS = 32):
-            // places `chosen` into `target_surv` surviving slots and `k - target_surv` deferred
-            // slots while minimizing (exact JSON bytes, slot index).
-            fn assign_slots_exact_surv(
-                chosen: &[usize],
-                slots: &[(usize, bool, TabContainers)],
-                costs: &[BundleCost],
-                ses_json: usize,
-                target_surv: usize,
-            ) -> Option<(Vec<(usize, usize)>, usize)> {
-                let k = chosen.len();
-                let m = slots.len();
-                let surv_slots = slots.iter().filter(|s| !s.1).count();
-                let def_slots = m - surv_slots;
-                let target_def = k.checked_sub(target_surv)?;
-                if target_surv > surv_slots || target_def > def_slots {
-                    return None;
-                }
-                if k == 0 {
-                    return Some((Vec::new(), 0));
-                }
-                let extra_surv = surv_slots - target_surv;
-                const FORBIDDEN: i64 = 1i64 << 42;
-                let mut u = vec![0i64; m + 1];
-                let mut v = vec![0i64; m + 1];
-                let mut p = vec![0usize; m + 1];
-                let mut way = vec![0usize; m + 1];
-                for i in 1..=m {
-                    p[0] = i;
-                    let mut j0 = 0usize;
-                    let mut minv = vec![i64::MAX; m + 1];
-                    let mut used = vec![false; m + 1];
-                    loop {
-                        used[j0] = true;
-                        let i0 = p[j0];
-                        let mut delta = i64::MAX;
-                        let mut j1 = 0usize;
-                        for j in 1..=m {
-                            if !used[j] {
-                                let (_, is_def, c) = slots[j - 1];
-                                let w = if i0 <= k {
-                                    let b_cost = costs[chosen[i0 - 1]].bytes(ses_json, c) as i64;
-                                    b_cost * 64 + (j - 1) as i64
-                                } else if i0 <= k + extra_surv {
-                                    if is_def { FORBIDDEN } else { 0 }
-                                } else if is_def {
-                                    0
+                        }
+                        if self.has_parts {
+                            n = n
+                                .saturating_add(key_json)
+                                .saturating_add(1)
+                                .saturating_add(self.parts_json)
+                                .saturating_add(if c.parts_empty {
+                                    ",\"attachmentParts\":{}".len()
                                 } else {
-                                    FORBIDDEN
-                                };
-                                let cur = w - u[i0] - v[j];
-                                if cur < minv[j] {
-                                    minv[j] = cur;
-                                    way[j] = j0;
-                                }
-                                if minv[j] < delta {
-                                    delta = minv[j];
-                                    j1 = j;
-                                }
-                            }
+                                    1
+                                });
                         }
-                        for j in 0..=m {
-                            if used[j] {
-                                u[p[j]] += delta;
-                                v[j] -= delta;
-                            } else {
-                                minv[j] -= delta;
-                            }
-                        }
-                        j0 = j1;
-                        if p[j0] == 0 {
-                            break;
-                        }
+                        n
                     }
-                    loop {
-                        let j1 = way[j0];
-                        p[j0] = p[j1];
-                        j0 = j1;
-                        if j0 == 0 {
-                            break;
+                    fn apply_containers(&self, c: TabContainers) -> TabContainers {
+                        TabContainers {
+                            drafts_empty: c.drafts_empty && !self.has_text,
+                            att_empty: c.att_empty && !self.has_att,
+                            parts_empty: c.parts_empty && !self.has_parts,
                         }
                     }
                 }
-                let mut assigns = Vec::with_capacity(k);
-                let mut total_bytes = 0usize;
-                for j in 1..=m {
-                    if p[j] != 0 && p[j] <= k {
-                        let bundle_idx = chosen[p[j] - 1];
-                        let (tab_idx, _, c) = slots[j - 1];
-                        total_bytes =
-                            total_bytes.saturating_add(costs[bundle_idx].bytes(ses_json, c));
-                        assigns.push((tab_idx, bundle_idx));
+                // Exact maximum-cardinality, lexicographically smallest (newest-first) subset under a
+                // single additive budget, given `(bundle_idx, weight)` sorted by ascending `bundle_idx`.
+                fn best_subset_1d(
+                    pool: &[(usize, usize)],
+                    cap: usize,
+                    budget: usize,
+                ) -> Vec<usize> {
+                    if cap == 0 || pool.is_empty() {
+                        return Vec::new();
                     }
-                }
-                Some((assigns, total_bytes))
-            }
-            type BundleSig = (usize, bool, bool, bool, usize, usize);
-            struct Exact2dCtx<'a> {
-                pool: &'a [usize],
-                ses_units: &'a [Option<usize>],
-                costs: &'a [BundleCost],
-                b_lb: &'a [usize],
-                slots: &'a [(usize, bool, TabContainers)],
-                ses_json: usize,
-                rem_u: usize,
-                rem_b: usize,
-                target_surv: usize,
-                min_u: &'a [Vec<usize>],
-                min_b: &'a [Vec<usize>],
-                lb_failed: Vec<Vec<Vec<(usize, usize)>>>,
-            }
-            impl Exact2dCtx<'_> {
-                fn dfs(
-                    &mut self,
-                    pos: usize,
-                    need: usize,
-                    cur_u: usize,
-                    cur_b_lb: usize,
-                    chosen: &mut Vec<usize>,
-                    banned: &mut Vec<BundleSig>,
-                ) -> (
-                    Option<(Vec<usize>, Vec<(usize, usize)>, usize, usize)>,
-                    bool,
-                ) {
-                    if need == 0 {
-                        if let Some((assigns, total_b)) = assign_slots_exact_surv(
-                            chosen,
-                            self.slots,
-                            self.costs,
-                            self.ses_json,
-                            self.target_surv,
-                        ) && total_b <= self.rem_b
-                        {
-                            return (
-                                Some((chosen.clone(), assigns, cur_u, self.target_surv)),
-                                true,
-                            );
+                    let mut weights: Vec<usize> = pool.iter().map(|&(_, w)| w).collect();
+                    weights.sort_unstable();
+                    let mut k_max = 0usize;
+                    let mut sum = 0usize;
+                    for w in weights.into_iter().take(cap) {
+                        if sum.saturating_add(w) <= budget {
+                            sum += w;
+                            k_max += 1;
+                        } else {
+                            break;
                         }
-                        return (None, true);
                     }
-                    let n = self.pool.len();
-                    if n - pos < need
-                        || cur_u.saturating_add(self.min_u[pos][need]) > self.rem_u
-                        || cur_b_lb.saturating_add(self.min_b[pos][need]) > self.rem_b
-                    {
-                        return (None, false);
+                    if k_max == 0 {
+                        return Vec::new();
                     }
-                    if banned.is_empty()
-                        && self.lb_failed[pos][need]
+                    let mut chosen = Vec::with_capacity(k_max);
+                    let mut rem = budget;
+                    let mut need = k_max;
+                    for (pos, &(idx, w)) in pool.iter().enumerate() {
+                        if need == 0 {
+                            break;
+                        }
+                        if w > rem {
+                            continue;
+                        }
+                        let after_need = need - 1;
+                        let suffix = &pool[pos + 1..];
+                        if suffix.len() < after_need {
+                            continue;
+                        }
+                        if after_need == 0 {
+                            chosen.push(idx);
+                            break;
+                        }
+                        let mut tail: Vec<usize> = suffix.iter().map(|&(_, sw)| sw).collect();
+                        tail.select_nth_unstable(after_need - 1);
+                        let min_tail: usize = tail[..after_need]
                             .iter()
-                            .any(|&(fu, fb)| fu <= cur_u && fb <= cur_b_lb)
-                    {
-                        return (None, false);
-                    }
-                    let b_idx = self.pool[pos];
-                    let u_cost = self.ses_units[b_idx].unwrap_or(usize::MAX);
-                    let bc = &self.costs[b_idx];
-                    let sig: BundleSig = (
-                        u_cost,
-                        bc.has_text,
-                        bc.has_att,
-                        bc.has_parts,
-                        bc.text_json,
-                        bc.parts_json,
-                    );
-                    let mut any_leaf = false;
-                    let mut added_ban = false;
-                    if !banned.contains(&sig) {
-                        let nu = cur_u.saturating_add(u_cost);
-                        let nb = cur_b_lb.saturating_add(self.b_lb[pos]);
-                        if nu <= self.rem_u && nb <= self.rem_b {
-                            chosen.push(b_idx);
-                            let (found, leaf) = self.dfs(pos + 1, need - 1, nu, nb, chosen, banned);
-                            if found.is_some() {
-                                return (found, true);
-                            }
-                            chosen.pop();
-                            any_leaf |= leaf;
+                            .copied()
+                            .fold(0usize, usize::saturating_add);
+                        if min_tail <= rem - w {
+                            chosen.push(idx);
+                            rem -= w;
+                            need -= 1;
                         }
-                        banned.push(sig);
-                        added_ban = true;
                     }
-                    let (found, leaf) = self.dfs(pos + 1, need, cur_u, cur_b_lb, chosen, banned);
-                    if added_ban {
-                        banned.pop();
-                    }
-                    if found.is_some() {
-                        return (found, true);
-                    }
-                    any_leaf |= leaf;
-                    if !any_leaf && banned.is_empty() {
-                        let list = &mut self.lb_failed[pos][need];
-                        list.retain(|&(eu, eb)| !(eu >= cur_u && eb >= cur_b_lb));
-                        list.push((cur_u, cur_b_lb));
-                    }
-                    (None, any_leaf)
+                    chosen
                 }
-            }
-            let apply_bundle =
-                |snap: &mut Snapshot, dest: usize, key: &str, bundle: &drafts::ClosedBundle| {
-                    let Tab::Workspace(w) = &mut snap.tabs[dest] else {
-                        return;
+                // Exact min-cost bipartite slot assignment with an exact surviving-tab quota
+                // (Hungarian algorithm on an m x m matrix, m <= MAX_TABS = 32):
+                // places `chosen` into `target_surv` surviving slots and `k - target_surv` deferred
+                // slots while minimizing (exact JSON bytes, slot index).
+                fn assign_slots_exact_surv(
+                    chosen: &[usize],
+                    slots: &[(usize, bool, TabContainers)],
+                    costs: &[BundleCost],
+                    ses_json: usize,
+                    target_surv: usize,
+                ) -> Option<(Vec<(usize, usize)>, usize)> {
+                    let k = chosen.len();
+                    let m = slots.len();
+                    let surv_slots = slots.iter().filter(|s| !s.1).count();
+                    let def_slots = m - surv_slots;
+                    let target_def = k.checked_sub(target_surv)?;
+                    if target_surv > surv_slots || target_def > def_slots {
+                        return None;
+                    }
+                    if k == 0 {
+                        return Some((Vec::new(), 0));
+                    }
+                    let extra_surv = surv_slots - target_surv;
+                    const FORBIDDEN: i64 = 1i64 << 42;
+                    let mut u = vec![0i64; m + 1];
+                    let mut v = vec![0i64; m + 1];
+                    let mut p = vec![0usize; m + 1];
+                    let mut way = vec![0usize; m + 1];
+                    for i in 1..=m {
+                        p[0] = i;
+                        let mut j0 = 0usize;
+                        let mut minv = vec![i64::MAX; m + 1];
+                        let mut used = vec![false; m + 1];
+                        loop {
+                            used[j0] = true;
+                            let i0 = p[j0];
+                            let mut delta = i64::MAX;
+                            let mut j1 = 0usize;
+                            for j in 1..=m {
+                                if !used[j] {
+                                    let (_, is_def, c) = slots[j - 1];
+                                    let w = if i0 <= k {
+                                        let b_cost =
+                                            costs[chosen[i0 - 1]].bytes(ses_json, c) as i64;
+                                        b_cost * 64 + (j - 1) as i64
+                                    } else if i0 <= k + extra_surv {
+                                        if is_def { FORBIDDEN } else { 0 }
+                                    } else if is_def {
+                                        0
+                                    } else {
+                                        FORBIDDEN
+                                    };
+                                    let cur = w - u[i0] - v[j];
+                                    if cur < minv[j] {
+                                        minv[j] = cur;
+                                        way[j] = j0;
+                                    }
+                                    if minv[j] < delta {
+                                        delta = minv[j];
+                                        j1 = j;
+                                    }
+                                }
+                            }
+                            for j in 0..=m {
+                                if used[j] {
+                                    u[p[j]] += delta;
+                                    v[j] -= delta;
+                                } else {
+                                    minv[j] -= delta;
+                                }
+                            }
+                            j0 = j1;
+                            if p[j0] == 0 {
+                                break;
+                            }
+                        }
+                        loop {
+                            let j1 = way[j0];
+                            p[j0] = p[j1];
+                            j0 = j1;
+                            if j0 == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    let mut assigns = Vec::with_capacity(k);
+                    let mut total_bytes = 0usize;
+                    for j in 1..=m {
+                        if p[j] != 0 && p[j] <= k {
+                            let bundle_idx = chosen[p[j] - 1];
+                            let (tab_idx, _, c) = slots[j - 1];
+                            total_bytes =
+                                total_bytes.saturating_add(costs[bundle_idx].bytes(ses_json, c));
+                            assigns.push((tab_idx, bundle_idx));
+                        }
+                    }
+                    Some((assigns, total_bytes))
+                }
+                type BundleSig = (usize, bool, bool, bool, usize, usize);
+                struct Exact2dCtx<'a> {
+                    pool: &'a [usize],
+                    ses_units: &'a [Option<usize>],
+                    costs: &'a [BundleCost],
+                    b_lb: &'a [usize],
+                    slots: &'a [(usize, bool, TabContainers)],
+                    ses_json: usize,
+                    rem_u: usize,
+                    rem_b: usize,
+                    target_surv: usize,
+                    min_u: &'a [Vec<usize>],
+                    min_b: &'a [Vec<usize>],
+                    lb_failed: Vec<Vec<Vec<(usize, usize)>>>,
+                }
+                impl Exact2dCtx<'_> {
+                    fn dfs(
+                        &mut self,
+                        pos: usize,
+                        need: usize,
+                        cur_u: usize,
+                        cur_b_lb: usize,
+                        chosen: &mut Vec<usize>,
+                        banned: &mut Vec<BundleSig>,
+                    ) -> (
+                        Option<(Vec<usize>, Vec<(usize, usize)>, usize, usize)>,
+                        bool,
+                    ) {
+                        if need == 0 {
+                            if let Some((assigns, total_b)) = assign_slots_exact_surv(
+                                chosen,
+                                self.slots,
+                                self.costs,
+                                self.ses_json,
+                                self.target_surv,
+                            ) && total_b <= self.rem_b
+                            {
+                                return (
+                                    Some((chosen.clone(), assigns, cur_u, self.target_surv)),
+                                    true,
+                                );
+                            }
+                            return (None, true);
+                        }
+                        let n = self.pool.len();
+                        if n - pos < need
+                            || cur_u.saturating_add(self.min_u[pos][need]) > self.rem_u
+                            || cur_b_lb.saturating_add(self.min_b[pos][need]) > self.rem_b
+                        {
+                            return (None, false);
+                        }
+                        if banned.is_empty()
+                            && self.lb_failed[pos][need]
+                                .iter()
+                                .any(|&(fu, fb)| fu <= cur_u && fb <= cur_b_lb)
+                        {
+                            return (None, false);
+                        }
+                        let b_idx = self.pool[pos];
+                        let u_cost = self.ses_units[b_idx].unwrap_or(usize::MAX);
+                        let bc = &self.costs[b_idx];
+                        let sig: BundleSig = (
+                            u_cost,
+                            bc.has_text,
+                            bc.has_att,
+                            bc.has_parts,
+                            bc.text_json,
+                            bc.parts_json,
+                        );
+                        let mut any_leaf = false;
+                        let mut added_ban = false;
+                        if !banned.contains(&sig) {
+                            let nu = cur_u.saturating_add(u_cost);
+                            let nb = cur_b_lb.saturating_add(self.b_lb[pos]);
+                            if nu <= self.rem_u && nb <= self.rem_b {
+                                chosen.push(b_idx);
+                                let (found, leaf) =
+                                    self.dfs(pos + 1, need - 1, nu, nb, chosen, banned);
+                                if found.is_some() {
+                                    return (found, true);
+                                }
+                                chosen.pop();
+                                any_leaf |= leaf;
+                            }
+                            banned.push(sig);
+                            added_ban = true;
+                        }
+                        let (found, leaf) =
+                            self.dfs(pos + 1, need, cur_u, cur_b_lb, chosen, banned);
+                        if added_ban {
+                            banned.pop();
+                        }
+                        if found.is_some() {
+                            return (found, true);
+                        }
+                        any_leaf |= leaf;
+                        if !any_leaf && banned.is_empty() {
+                            let list = &mut self.lb_failed[pos][need];
+                            list.retain(|&(eu, eb)| !(eu >= cur_u && eb >= cur_b_lb));
+                            list.push((cur_u, cur_b_lb));
+                        }
+                        (None, any_leaf)
+                    }
+                }
+                let apply_bundle =
+                    |snap: &mut Snapshot, dest: usize, key: &str, bundle: &drafts::ClosedBundle| {
+                        let Tab::Workspace(w) = &mut snap.tabs[dest] else {
+                            return;
+                        };
+                        if let Some(text) = &bundle.text
+                            && !text.is_empty()
+                        {
+                            w.drafts.insert(key.into(), text.clone());
+                        }
+                        if bundle.attachment_draft || bundle.attachment_parts.is_some() {
+                            w.attachment_drafts.insert(key.into());
+                        }
+                        if let Some(parts) = &bundle.attachment_parts {
+                            w.attachment_parts.insert(key.into(), parts.clone());
+                        }
                     };
-                    if let Some(text) = &bundle.text
-                        && !text.is_empty()
-                    {
-                        w.drafts.insert(key.into(), text.clone());
+                let local_u16 = super::NO_SESSION_DRAFT_ID.encode_utf16().count();
+                let local_json = serde_json::to_vec(super::NO_SESSION_DRAFT_ID)
+                    .map(|v| v.len())
+                    .unwrap_or(usize::MAX);
+                for (scope, id) in &self.closed_pending_deleted {
+                    let clear_authorities =
+                        drafts::collect_open_clear_authorities_for(refs.iter().copied(), scope, id);
+                    let (closed_bundles, _) = drafts::collect_closed_bundles_for_recovery(
+                        self,
+                        scope,
+                        id,
+                        &clear_authorities,
+                    );
+                    if closed_bundles.is_empty() {
+                        continue;
                     }
-                    if bundle.attachment_draft || bundle.attachment_parts.is_some() {
-                        w.attachment_drafts.insert(key.into());
-                    }
-                    if let Some(parts) = &bundle.attachment_parts {
-                        w.attachment_parts.insert(key.into(), parts.clone());
-                    }
-                };
-            let local_u16 = super::NO_SESSION_DRAFT_ID.encode_utf16().count();
-            let local_json = serde_json::to_vec(super::NO_SESSION_DRAFT_ID)
-                .map(|v| v.len())
-                .unwrap_or(usize::MAX);
-            for (scope, id) in &self.closed_pending_deleted {
-                let clear_authorities = drafts::collect_open_clear_authorities(self, scope, id);
-                let (closed_bundles, _) = drafts::collect_closed_bundles_for_recovery(
-                    self,
-                    scope,
-                    id,
-                    &clear_authorities,
-                );
-                if closed_bundles.is_empty() {
-                    continue;
-                }
-                let projected_count = self
-                    .entries
-                    .iter()
-                    .filter(|entry| {
-                        entry.pending_drafts.contains(id)
-                            && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
-                    })
-                    .count();
-                let no_session_free = !snap.tabs.iter().any(|tab| {
-                    matches!(tab, Tab::Workspace(w) if scope.matches(w)
+                    let projected_count = refs
+                        .iter()
+                        .filter(|entry| {
+                            entry.pending_drafts.contains(id)
+                                && matches!(&entry.saved, Tab::Workspace(w) if scope.matches(w))
+                        })
+                        .count();
+                    let no_session_free = !snap.tabs.iter().any(|tab| {
+                        matches!(tab, Tab::Workspace(w) if scope.matches(w)
                         && (w.drafts.get(super::NO_SESSION_DRAFT_ID).is_some_and(|t| !t.is_empty())
                             || w.attachment_drafts.contains(super::NO_SESSION_DRAFT_ID)
                             || w.attachment_parts.contains_key(super::NO_SESSION_DRAFT_ID)))
-                });
-                let unprojected: Vec<_> =
-                    closed_bundles.into_iter().skip(projected_count).collect();
-                if unprojected.is_empty() {
-                    continue;
-                }
-                let rem_units = super::MAX_STRINGS.saturating_sub(used_units);
-                let rem_bytes = super::MAX_BYTES.saturating_sub(used_bytes);
-                let ses_u16 = id.encode_utf16().count();
-                let ses_valid = super::draft_id(id) && ses_u16 <= 256;
-                let ses_json = serde_json::to_vec(id)
-                    .map(|v| v.len())
-                    .unwrap_or(usize::MAX);
-                let costs: Vec<BundleCost> =
-                    unprojected.iter().map(BundleCost::from_bundle).collect();
-                let local_units: Vec<Option<usize>> =
-                    costs.iter().map(|c| c.units(local_u16, true)).collect();
-                let ses_units: Vec<Option<usize>> =
-                    costs.iter().map(|c| c.units(ses_u16, ses_valid)).collect();
-                let tab_containers: Vec<Option<TabContainers>> = snap
-                    .tabs
-                    .iter()
-                    .map(|tab| match tab {
-                        Tab::Workspace(w) => Some(TabContainers {
-                            drafts_empty: w.drafts.is_empty(),
-                            att_empty: w.attachment_drafts.is_empty(),
-                            parts_empty: w.attachment_parts.is_empty(),
-                        }),
-                        Tab::Blank => None,
-                    })
-                    .collect();
-                let can_host_session = |i: usize, extra_local: bool| -> bool {
-                    matches!(
-                        &snap.tabs[i],
-                        Tab::Workspace(w)
-                            if scope.matches(w)
-                                && !refs[i].cleared.contains(id)
-                                && !w.drafts.contains_key(id)
-                                && !w.attachment_drafts.contains(id)
-                                && !w.attachment_parts.contains_key(id)
-                                && if extra_local {
-                                    tab_has_room(w, &[super::NO_SESSION_DRAFT_ID, id.as_str()])
-                                } else {
-                                    tab_has_room(w, &[id.as_str()])
-                                }
-                    )
-                };
-                // Maximize genuinely encodable preserved drafts across all `(no_session_dest,
-                // local_bundle_idx)` placements using exact precomputed UTF-16/byte costs, then
-                // break ties by surviving tabs, priority of kept bundles, local recovery slot
-                // usage, newest local bundle, and tab order; validate the winner once with full
-                // v1 `encode`.
-                #[derive(PartialEq, Eq, PartialOrd, Ord)]
-                struct FallbackRank {
-                    kept: usize,
-                    surviving: usize,
-                    kept_priority: std::cmp::Reverse<Vec<usize>>,
-                    used_no_session: bool,
-                    newest_local: std::cmp::Reverse<usize>,
-                    dest_surviving: bool,
-                    dest_order: std::cmp::Reverse<usize>,
-                }
-                let mut candidates: Vec<(Option<usize>, Option<usize>)> = vec![(None, None)];
-                if no_session_free {
-                    for (i, tab) in snap.tabs.iter().enumerate() {
-                        if let Tab::Workspace(w) = tab
-                            && scope.matches(w)
-                            && !refs[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
-                            && tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
-                        {
-                            for bundle_idx in 0..unprojected.len() {
-                                if local_units[bundle_idx].is_some() {
-                                    candidates.push((Some(i), Some(bundle_idx)));
-                                }
-                            }
-                        }
+                    });
+                    let unprojected: Vec<_> =
+                        closed_bundles.into_iter().skip(projected_count).collect();
+                    if unprojected.is_empty() {
+                        continue;
                     }
-                }
-                let mut best: Option<(
-                    FallbackRank,
-                    Option<(usize, usize)>,
-                    Vec<(usize, usize)>,
-                    usize,
-                )> = None;
-                for (no_session_dest, local_bundle_idx) in candidates {
-                    let (local_u, local_b) =
-                        if let (Some(dest), Some(lb)) = (no_session_dest, local_bundle_idx) {
-                            let Some(lu) = local_units[lb] else {
-                                continue;
-                            };
-                            let Some(c) = tab_containers[dest] else {
-                                continue;
-                            };
-                            let lb_bytes = costs[lb].bytes(local_json, c);
-                            if lu > rem_units || lb_bytes > rem_bytes {
-                                continue;
-                            }
-                            (lu, lb_bytes)
-                        } else {
-                            (0, 0)
-                        };
-                    let rem_u = rem_units - local_u;
-                    let rem_b = rem_bytes - local_b;
-                    let mut slots: Vec<(usize, bool, TabContainers)> = Vec::new();
-                    let mut surviving_slots = 0usize;
-                    for prefer_surviving in [true, false] {
-                        for i in 0..snap.tabs.len() {
-                            if refs[i].closing_deferred == prefer_surviving {
-                                continue;
-                            }
-                            let is_local_dest = no_session_dest == Some(i);
-                            if !can_host_session(i, is_local_dest) {
-                                continue;
-                            }
-                            let Some(mut c) = tab_containers[i] else {
-                                continue;
-                            };
-                            if is_local_dest && let Some(lb) = local_bundle_idx {
-                                c = costs[lb].apply_containers(c);
-                            }
-                            slots.push((i, !prefer_surviving, c));
-                            if prefer_surviving {
-                                surviving_slots += 1;
-                            }
-                        }
-                    }
-                    let pool: Vec<usize> = (0..unprojected.len())
-                        .filter(|&b| local_bundle_idx != Some(b))
-                        .filter(|&b| {
-                            ses_units[b].is_some_and(|u| u <= rem_u)
-                                && slots
-                                    .iter()
-                                    .any(|&(_, _, c)| costs[b].bytes(ses_json, c) <= rem_b)
+                    let rem_units = super::MAX_STRINGS.saturating_sub(used_units);
+                    let rem_bytes = super::MAX_BYTES.saturating_sub(used_bytes);
+                    let ses_u16 = id.encode_utf16().count();
+                    let ses_valid = super::draft_id(id) && ses_u16 <= 256;
+                    let ses_json = serde_json::to_vec(id)
+                        .map(|v| v.len())
+                        .unwrap_or(usize::MAX);
+                    let costs: Vec<BundleCost> =
+                        unprojected.iter().map(BundleCost::from_bundle).collect();
+                    let local_units: Vec<Option<usize>> =
+                        costs.iter().map(|c| c.units(local_u16, true)).collect();
+                    let ses_units: Vec<Option<usize>> =
+                        costs.iter().map(|c| c.units(ses_u16, ses_valid)).collect();
+                    let tab_containers: Vec<Option<TabContainers>> = snap
+                        .tabs
+                        .iter()
+                        .map(|tab| match tab {
+                            Tab::Workspace(w) => Some(TabContainers {
+                                drafts_empty: w.drafts.is_empty(),
+                                att_empty: w.attachment_drafts.is_empty(),
+                                parts_empty: w.attachment_parts.is_empty(),
+                            }),
+                            Tab::Blank => None,
                         })
                         .collect();
-                    let pool_u: Vec<(usize, usize)> = pool
-                        .iter()
-                        .filter_map(|&b| Some((b, ses_units[b]?)))
-                        .collect();
-                    let (chosen_ses, ses_assigns, ses_u, ses_surviving) = {
-                        let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
-                        let cand_max_surv = cand_u.len().min(surviving_slots);
-                        if let Some((assigns, total_b)) = assign_slots_exact_surv(
-                            &cand_u,
-                            &slots,
-                            &costs,
-                            ses_json,
-                            cand_max_surv,
-                        ) && total_b <= rem_b
-                        {
-                            let u_sum: usize = cand_u
-                                .iter()
-                                .filter_map(|&b| ses_units[b])
-                                .fold(0usize, usize::saturating_add);
-                            (cand_u, assigns, u_sum, cand_max_surv)
-                        } else if pool.is_empty() || slots.is_empty() {
-                            (Vec::new(), Vec::new(), 0, 0)
-                        } else {
-                            let b_lb: Vec<usize> = pool
-                                .iter()
-                                .map(|&b| {
-                                    slots
+                    let can_host_session = |i: usize, extra_local: bool| -> bool {
+                        matches!(
+                            &snap.tabs[i],
+                            Tab::Workspace(w)
+                                if scope.matches(w)
+                                    && !refs[i].cleared.contains(id)
+                                    && !w.drafts.contains_key(id)
+                                    && !w.attachment_drafts.contains(id)
+                                    && !w.attachment_parts.contains_key(id)
+                                    && if extra_local {
+                                        tab_has_room(w, &[super::NO_SESSION_DRAFT_ID, id.as_str()])
+                                    } else {
+                                        tab_has_room(w, &[id.as_str()])
+                                    }
+                        )
+                    };
+                    // Maximize genuinely encodable preserved drafts across all `(no_session_dest,
+                    // local_bundle_idx)` placements using exact precomputed UTF-16/byte costs, then
+                    // break ties by surviving tabs, priority of kept bundles, local recovery slot
+                    // usage, newest local bundle, and tab order; validate the winner once with full
+                    // v1 `encode`.
+                    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+                    struct FallbackRank {
+                        kept: usize,
+                        surviving: usize,
+                        kept_priority: std::cmp::Reverse<Vec<usize>>,
+                        used_no_session: bool,
+                        newest_local: std::cmp::Reverse<usize>,
+                        dest_surviving: bool,
+                        dest_order: std::cmp::Reverse<usize>,
+                    }
+                    let mut candidates: Vec<(Option<usize>, Option<usize>)> = vec![(None, None)];
+                    if no_session_free {
+                        for (i, tab) in snap.tabs.iter().enumerate() {
+                            if let Tab::Workspace(w) = tab
+                                && scope.matches(w)
+                                && !refs[i].cleared.contains(super::NO_SESSION_DRAFT_ID)
+                                && tab_has_room(w, &[super::NO_SESSION_DRAFT_ID])
+                            {
+                                for bundle_idx in 0..unprojected.len() {
+                                    if local_units[bundle_idx].is_some() {
+                                        candidates.push((Some(i), Some(bundle_idx)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let mut best: Option<(
+                        FallbackRank,
+                        Option<(usize, usize)>,
+                        Vec<(usize, usize)>,
+                        usize,
+                    )> = None;
+                    for (no_session_dest, local_bundle_idx) in candidates {
+                        let (local_u, local_b) =
+                            if let (Some(dest), Some(lb)) = (no_session_dest, local_bundle_idx) {
+                                let Some(lu) = local_units[lb] else {
+                                    continue;
+                                };
+                                let Some(c) = tab_containers[dest] else {
+                                    continue;
+                                };
+                                let lb_bytes = costs[lb].bytes(local_json, c);
+                                if lu > rem_units || lb_bytes > rem_bytes {
+                                    continue;
+                                }
+                                (lu, lb_bytes)
+                            } else {
+                                (0, 0)
+                            };
+                        let rem_u = rem_units - local_u;
+                        let rem_b = rem_bytes - local_b;
+                        let mut slots: Vec<(usize, bool, TabContainers)> = Vec::new();
+                        let mut surviving_slots = 0usize;
+                        for prefer_surviving in [true, false] {
+                            for i in 0..snap.tabs.len() {
+                                if refs[i].closing_deferred == prefer_surviving {
+                                    continue;
+                                }
+                                let is_local_dest = no_session_dest == Some(i);
+                                if !can_host_session(i, is_local_dest) {
+                                    continue;
+                                }
+                                let Some(mut c) = tab_containers[i] else {
+                                    continue;
+                                };
+                                if is_local_dest && let Some(lb) = local_bundle_idx {
+                                    c = costs[lb].apply_containers(c);
+                                }
+                                slots.push((i, !prefer_surviving, c));
+                                if prefer_surviving {
+                                    surviving_slots += 1;
+                                }
+                            }
+                        }
+                        let pool: Vec<usize> = (0..unprojected.len())
+                            .filter(|&b| local_bundle_idx != Some(b))
+                            .filter(|&b| {
+                                ses_units[b].is_some_and(|u| u <= rem_u)
+                                    && slots
                                         .iter()
-                                        .map(|&(_, _, c)| costs[b].bytes(ses_json, c))
-                                        .min()
-                                        .unwrap_or(usize::MAX)
-                                })
-                                .collect();
-                            let mut sorted_b = b_lb.clone();
-                            sorted_b.sort_unstable();
-                            let mut k_b_max = 0usize;
-                            let mut b_sum = 0usize;
-                            for w in sorted_b.into_iter().take(slots.len()) {
-                                if b_sum.saturating_add(w) <= rem_b {
-                                    b_sum += w;
-                                    k_b_max += 1;
-                                } else {
-                                    break;
-                                }
-                            }
-                            let k_upper = cand_u.len().min(k_b_max);
-                            let n = pool.len();
-                            let mut min_u = vec![vec![usize::MAX; k_upper + 1]; n + 1];
-                            let mut min_b = vec![vec![usize::MAX; k_upper + 1]; n + 1];
-                            for pos in 0..=n {
-                                min_u[pos][0] = 0;
-                                min_b[pos][0] = 0;
-                                let mut su: Vec<usize> =
-                                    pool[pos..].iter().filter_map(|&b| ses_units[b]).collect();
-                                su.sort_unstable();
-                                let mut sb: Vec<usize> = b_lb[pos..].to_vec();
-                                sb.sort_unstable();
-                                let mut acc_u = 0usize;
-                                let mut acc_b = 0usize;
-                                for need in 1..=k_upper.min(n - pos) {
-                                    acc_u = acc_u.saturating_add(su[need - 1]);
-                                    acc_b = acc_b.saturating_add(sb[need - 1]);
-                                    min_u[pos][need] = acc_u;
-                                    min_b[pos][need] = acc_b;
-                                }
-                            }
-                            let def_slots = slots.len() - surviving_slots;
-                            let mut found_exact = None;
-                            for target_k in (1..=k_upper).rev() {
-                                let max_surv = target_k.min(surviving_slots);
-                                let min_surv = target_k.saturating_sub(def_slots);
-                                for target_surv in (min_surv..=max_surv).rev() {
-                                    let mut ctx = Exact2dCtx {
-                                        pool: &pool,
-                                        ses_units: &ses_units,
-                                        costs: &costs,
-                                        b_lb: &b_lb,
-                                        slots: &slots,
-                                        ses_json,
-                                        rem_u,
-                                        rem_b,
-                                        target_surv,
-                                        min_u: &min_u,
-                                        min_b: &min_b,
-                                        lb_failed: vec![vec![Vec::new(); target_k + 1]; n + 1],
-                                    };
-                                    let mut chosen = Vec::with_capacity(target_k);
-                                    let mut banned = Vec::new();
-                                    if let (Some(res), _) =
-                                        ctx.dfs(0, target_k, 0, 0, &mut chosen, &mut banned)
-                                    {
-                                        found_exact = Some(res);
+                                        .any(|&(_, _, c)| costs[b].bytes(ses_json, c) <= rem_b)
+                            })
+                            .collect();
+                        let pool_u: Vec<(usize, usize)> = pool
+                            .iter()
+                            .filter_map(|&b| Some((b, ses_units[b]?)))
+                            .collect();
+                        let (chosen_ses, ses_assigns, ses_u, ses_surviving) = {
+                            let cand_u = best_subset_1d(&pool_u, slots.len(), rem_u);
+                            let cand_max_surv = cand_u.len().min(surviving_slots);
+                            if let Some((assigns, total_b)) = assign_slots_exact_surv(
+                                &cand_u,
+                                &slots,
+                                &costs,
+                                ses_json,
+                                cand_max_surv,
+                            ) && total_b <= rem_b
+                            {
+                                let u_sum: usize = cand_u
+                                    .iter()
+                                    .filter_map(|&b| ses_units[b])
+                                    .fold(0usize, usize::saturating_add);
+                                (cand_u, assigns, u_sum, cand_max_surv)
+                            } else if pool.is_empty() || slots.is_empty() {
+                                (Vec::new(), Vec::new(), 0, 0)
+                            } else {
+                                let b_lb: Vec<usize> = pool
+                                    .iter()
+                                    .map(|&b| {
+                                        slots
+                                            .iter()
+                                            .map(|&(_, _, c)| costs[b].bytes(ses_json, c))
+                                            .min()
+                                            .unwrap_or(usize::MAX)
+                                    })
+                                    .collect();
+                                let mut sorted_b = b_lb.clone();
+                                sorted_b.sort_unstable();
+                                let mut k_b_max = 0usize;
+                                let mut b_sum = 0usize;
+                                for w in sorted_b.into_iter().take(slots.len()) {
+                                    if b_sum.saturating_add(w) <= rem_b {
+                                        b_sum += w;
+                                        k_b_max += 1;
+                                    } else {
                                         break;
                                     }
                                 }
-                                if found_exact.is_some() {
-                                    break;
+                                let k_upper = cand_u.len().min(k_b_max);
+                                let n = pool.len();
+                                let mut min_u = vec![vec![usize::MAX; k_upper + 1]; n + 1];
+                                let mut min_b = vec![vec![usize::MAX; k_upper + 1]; n + 1];
+                                for pos in 0..=n {
+                                    min_u[pos][0] = 0;
+                                    min_b[pos][0] = 0;
+                                    let mut su: Vec<usize> =
+                                        pool[pos..].iter().filter_map(|&b| ses_units[b]).collect();
+                                    su.sort_unstable();
+                                    let mut sb: Vec<usize> = b_lb[pos..].to_vec();
+                                    sb.sort_unstable();
+                                    let mut acc_u = 0usize;
+                                    let mut acc_b = 0usize;
+                                    for need in 1..=k_upper.min(n - pos) {
+                                        acc_u = acc_u.saturating_add(su[need - 1]);
+                                        acc_b = acc_b.saturating_add(sb[need - 1]);
+                                        min_u[pos][need] = acc_u;
+                                        min_b[pos][need] = acc_b;
+                                    }
                                 }
+                                let def_slots = slots.len() - surviving_slots;
+                                let mut found_exact = None;
+                                for target_k in (1..=k_upper).rev() {
+                                    let max_surv = target_k.min(surviving_slots);
+                                    let min_surv = target_k.saturating_sub(def_slots);
+                                    for target_surv in (min_surv..=max_surv).rev() {
+                                        let mut ctx = Exact2dCtx {
+                                            pool: &pool,
+                                            ses_units: &ses_units,
+                                            costs: &costs,
+                                            b_lb: &b_lb,
+                                            slots: &slots,
+                                            ses_json,
+                                            rem_u,
+                                            rem_b,
+                                            target_surv,
+                                            min_u: &min_u,
+                                            min_b: &min_b,
+                                            lb_failed: vec![vec![Vec::new(); target_k + 1]; n + 1],
+                                        };
+                                        let mut chosen = Vec::with_capacity(target_k);
+                                        let mut banned = Vec::new();
+                                        if let (Some(res), _) =
+                                            ctx.dfs(0, target_k, 0, 0, &mut chosen, &mut banned)
+                                        {
+                                            found_exact = Some(res);
+                                            break;
+                                        }
+                                    }
+                                    if found_exact.is_some() {
+                                        break;
+                                    }
+                                }
+                                found_exact.unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0))
                             }
-                            found_exact.unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0))
+                        };
+                        let kept = usize::from(local_bundle_idx.is_some()) + chosen_ses.len();
+                        if kept == 0 {
+                            continue;
                         }
-                    };
-                    let kept = usize::from(local_bundle_idx.is_some()) + chosen_ses.len();
-                    if kept == 0 {
-                        continue;
+                        let mut kept_indices = chosen_ses;
+                        if let Some(lb) = local_bundle_idx {
+                            kept_indices.push(lb);
+                            kept_indices.sort_unstable();
+                        }
+                        let surviving = ses_surviving
+                            + usize::from(
+                                no_session_dest.is_some_and(|i| !refs[i].closing_deferred),
+                            );
+                        let rank = FallbackRank {
+                            kept,
+                            surviving,
+                            kept_priority: std::cmp::Reverse(kept_indices),
+                            used_no_session: local_bundle_idx.is_some(),
+                            newest_local: std::cmp::Reverse(local_bundle_idx.unwrap_or(usize::MAX)),
+                            dest_surviving: no_session_dest
+                                .is_some_and(|i| !refs[i].closing_deferred),
+                            dest_order: std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX)),
+                        };
+                        if best
+                            .as_ref()
+                            .is_none_or(|(best_rank, ..)| rank > *best_rank)
+                        {
+                            best = Some((
+                                rank,
+                                no_session_dest.zip(local_bundle_idx),
+                                ses_assigns,
+                                local_u + ses_u,
+                            ));
+                        }
                     }
-                    let mut kept_indices = chosen_ses;
-                    if let Some(lb) = local_bundle_idx {
-                        kept_indices.push(lb);
-                        kept_indices.sort_unstable();
-                    }
-                    let surviving = ses_surviving
-                        + usize::from(no_session_dest.is_some_and(|i| !refs[i].closing_deferred));
-                    let rank = FallbackRank {
-                        kept,
-                        surviving,
-                        kept_priority: std::cmp::Reverse(kept_indices),
-                        used_no_session: local_bundle_idx.is_some(),
-                        newest_local: std::cmp::Reverse(local_bundle_idx.unwrap_or(usize::MAX)),
-                        dest_surviving: no_session_dest.is_some_and(|i| !refs[i].closing_deferred),
-                        dest_order: std::cmp::Reverse(no_session_dest.unwrap_or(usize::MAX)),
-                    };
-                    if best
-                        .as_ref()
-                        .is_none_or(|(best_rank, ..)| rank > *best_rank)
-                    {
-                        best = Some((
-                            rank,
-                            no_session_dest.zip(local_bundle_idx),
-                            ses_assigns,
-                            local_u + ses_u,
-                        ));
+                    if let Some((_, local_assign, ses_assigns, delta_u)) = best {
+                        let added = local_assign.is_some() || !ses_assigns.is_empty();
+                        let mut cand = snap.clone();
+                        if let Some((dest, lb)) = local_assign {
+                            apply_bundle(
+                                &mut cand,
+                                dest,
+                                super::NO_SESSION_DRAFT_ID,
+                                &unprojected[lb],
+                            );
+                        }
+                        for (dest, b) in ses_assigns {
+                            apply_bundle(&mut cand, dest, id, &unprojected[b]);
+                        }
+                        if let Ok(encoded) = super::encode(&cand) {
+                            snap = cand;
+                            used_units += delta_u;
+                            used_bytes = encoded.len();
+                            any_fallback_added |= added;
+                        }
                     }
                 }
-                if let Some((_, local_assign, ses_assigns, delta_u)) = best {
-                    let mut cand = snap.clone();
-                    if let Some((dest, lb)) = local_assign {
-                        apply_bundle(
-                            &mut cand,
-                            dest,
-                            super::NO_SESSION_DRAFT_ID,
-                            &unprojected[lb],
-                        );
+            }
+            if !any_fallback_added {
+                for (tab, name) in snap.tabs.iter_mut().zip(original_project_names) {
+                    if let Tab::Workspace(w) = tab {
+                        w.project_name = name;
                     }
-                    for (dest, b) in ses_assigns {
-                        apply_bundle(&mut cand, dest, id, &unprojected[b]);
+                }
+            } else {
+                for index in super::project_name_drop_order(&snap).into_iter().rev() {
+                    let Some(name) = original_project_names[index].as_ref() else {
+                        continue;
+                    };
+                    if let Tab::Workspace(w) = &mut snap.tabs[index] {
+                        w.project_name = Some(name.clone());
+                    } else {
+                        continue;
                     }
-                    if let Ok(encoded) = super::encode(&cand) {
-                        snap = cand;
-                        used_units += delta_u;
-                        used_bytes = encoded.len();
+                    let fits = super::snapshot_string_units(&snap)
+                        .is_ok_and(|u| u <= super::MAX_STRINGS)
+                        && super::snapshot_bytes(&snap).is_ok_and(|b| b.len() <= super::MAX_BYTES);
+                    if !fits && let Tab::Workspace(w) = &mut snap.tabs[index] {
+                        w.project_name = None;
                     }
                 }
             }
@@ -1653,8 +1702,8 @@ pub fn unselect_session(s: &mut State, id: &str) -> bool {
     if active_session(s) != Some(id) {
         return false;
     }
+    let stream_deleted = crate::chat::events::drain_outgoing_incoming_deleted(s);
     capture(s);
-    let stream_deleted = drafts::drain_incoming_session_deleted(s.incoming.as_ref());
     drafts::drain_window_deleted_sessions(s);
     let was_pending_deleted = {
         let Some(ui) = &mut s.workspace else {
