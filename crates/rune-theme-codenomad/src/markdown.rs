@@ -29,19 +29,6 @@ pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) 
     !ranges.is_empty() || active_image.is_some() || unhighlighted_image
 }
 
-pub fn prose_has_match_with_images(
-    source: &str,
-    truncated: bool,
-    query: crate::timeline::search::Query<'_>,
-    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
-    image_search_text: &dyn Fn(&str) -> ImageSearch,
-) -> bool {
-    let source = literal_breaks_with_images(source, truncated, fallback_label);
-    let (ranges, active_image, unhighlighted_image) =
-        prose_ranges_with_images(&source, query, 1, image_search_text);
-    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
-}
-
 pub fn prose_has_highlight_with_images(
     source: &str,
     truncated: bool,

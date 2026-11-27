@@ -81,7 +81,7 @@ pub(super) fn bounded_prose_matches(
     let local = local_images::prepare(s, key, &shown, truncated, conversation);
     let fallback = local.fallback_label();
     let image_search = local.image_search_text();
-    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback, &image_search)
+    markdown::prose_has_highlight_with_images(&shown, truncated, query, &fallback, &image_search)
 }
 
 pub(super) fn skill_prose_matches(

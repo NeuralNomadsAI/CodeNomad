@@ -61,6 +61,10 @@ fn local_image_path_matches_solid_rules() {
         local_image_path("file:///C|/out.png").as_deref(),
         Some("C:/out.png")
     );
+    assert_eq!(
+        local_image_path("file:///A:chart.png").as_deref(),
+        Some("/A:chart.png")
+    );
     assert_eq!(local_image_path("file://server:123/share/out.png"), None);
     assert_eq!(local_image_path("file:///tmp/a/../out.png"), None);
     assert_eq!(local_image_path("file:///tmp/%2e%2e/out%ZZ.png"), None);
@@ -202,6 +206,66 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         match_local_image(&posix_dot_reread, "chart.png", true).map(|c| &c.source),
         Some(&PictureSource::Inline("posix-new".into()))
     );
+
+    // A newer unavailable read (e.g. over media budget) must shadow older pixels of the same file
+    // and still participate in ambiguity checks for shared suffixes.
+    let shadowed_by_unavailable = vec![
+        Candidate {
+            paths: vec![KnownPath::new("/tmp/chart.png").unwrap()],
+            source: PictureSource::Unavailable,
+            mime: "image/png".into(),
+        },
+        candidate(&["/tmp/chart.png"], "stale-old"),
+    ];
+    assert_eq!(
+        match_local_image(&shadowed_by_unavailable, "/tmp/chart.png", true),
+        None
+    );
+    assert_eq!(
+        match_local_image(&shadowed_by_unavailable, "chart.png", true),
+        None
+    );
+    let ambiguous_with_unavailable = vec![
+        Candidate {
+            paths: vec![KnownPath::new("/b/chart.png").unwrap()],
+            source: PictureSource::Unavailable,
+            mime: "image/png".into(),
+        },
+        candidate(&["/a/chart.png"], "other-file"),
+    ];
+    assert_eq!(
+        match_local_image(&ambiguous_with_unavailable, "chart.png", true),
+        None
+    );
+
+    // A lifted remote image in a task prompt must not claim the active highlight away from
+    // subsequent paintable prose (such as task output).
+    let s = init();
+    let terms = vec!["Plan".into()];
+    let query = rune_theme_codenomad::timeline::search::Query {
+        terms: &terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(!super::super::bounded_prose_matches_for(
+        &s,
+        "task-card",
+        "task-card-task-prompt",
+        "![Plan](https://example.test/plan.png)",
+        4096,
+        Conversation::Root,
+        query,
+    ));
+    assert!(super::super::bounded_prose_matches_for(
+        &s,
+        "task-card",
+        "task-card-task-output",
+        "Plan",
+        4096,
+        Conversation::None,
+        query,
+    ));
     let win_shared_short = vec![
         candidate(&["Chart.PNG", r"C:\Work\B\Chart.PNG"], "win-b"),
         candidate(&["chart.png", r"C:\Work\A\chart.png"], "win-a"),

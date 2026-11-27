@@ -449,7 +449,7 @@ fn has_windows_drive_prefix(value: &str) -> bool {
 fn strip_leading_drive_slash(path: &str) -> Cow<'_, str> {
     let bytes = path.as_bytes();
     if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() {
-        if bytes[2] == b':' {
+        if bytes[2] == b':' && (bytes.len() == 3 || bytes[3] == b'/') {
             return Cow::Borrowed(&path[1..]);
         }
         if bytes[2] == b'|' && (bytes.len() == 3 || bytes[3] == b'/') {
@@ -559,14 +559,17 @@ pub(super) fn match_local_image<'a>(
     path: &str,
     decoded_fallback: bool,
 ) -> Option<&'a Candidate> {
+    let available = |candidate: &'a Candidate| {
+        (!matches!(candidate.source, PictureSource::Unavailable)).then_some(candidate)
+    };
     match match_path(candidates, path) {
-        Match::Found(candidate) => Some(candidate),
+        Match::Found(candidate) => available(candidate),
         Match::Ambiguous => None,
         Match::Miss if decoded_fallback => {
             let decoded = decode_uri_component(path);
             if decoded.as_ref() != path {
                 match match_path(candidates, decoded.as_ref()) {
-                    Match::Found(candidate) => Some(candidate),
+                    Match::Found(candidate) => available(candidate),
                     Match::Ambiguous | Match::Miss => None,
                 }
             } else {
@@ -650,9 +653,6 @@ fn collect_tool_candidates(tool: &Tool, out: &mut Vec<Candidate>) {
         .and_then(KnownPath::new);
     let single = tool.pictures.len() == 1;
     for picture in &tool.pictures {
-        if matches!(picture.source, PictureSource::Unavailable) {
-            continue;
-        }
         let mut paths = Vec::new();
         if let Some(known) = picture
             .name
