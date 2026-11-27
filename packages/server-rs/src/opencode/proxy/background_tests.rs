@@ -35,6 +35,7 @@ struct RecordedBackground {
 
 struct FakeNative {
     root: PathBuf,
+    root_sub: PathBuf,
     linked: PathBuf,
     foreign: PathBuf,
     backgrounds: Mutex<Vec<RecordedBackground>>,
@@ -72,7 +73,7 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
                 release.notified().await;
             }
             let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-            let owned = parsed["input"]["sessionID"].as_str() == Some("ses_carrier_rpc");
+            let owned = parsed["input"]["sessionID"].as_str() == Some("ses_bg_carrier_rpc");
             ok(json!({"output": {"owned": owned}}))
         }
         (Method::GET, p) if p.starts_with("/api/session/") => {
@@ -91,11 +92,12 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
                 ok(json!({"data": data}))
             };
             match id {
-                "ses_owned" => session(&f.root, None),
-                "ses_linked" => session(&f.linked, None),
-                "ses_foreign" => session(&f.foreign, None),
-                "ses_carrier_marker" => session(&f.root, Some(json!({"codenomad.schedule-carrier": true}))),
-                "ses_carrier_rpc" => session(&f.root, None),
+                "ses_bg_owned" => session(&f.root, None),
+                "ses_bg_sub" => session(&f.root_sub, None),
+                "ses_bg_linked" => session(&f.linked, None),
+                "ses_bg_foreign" => session(&f.foreign, None),
+                "ses_bg_carrier_marker" => session(&f.root, Some(json!({"codenomad.schedule-carrier": true}))),
+                "ses_bg_carrier_rpc" => session(&f.root, None),
                 "ses_cn_schedule_1" => session(&f.root, None),
                 _ => (
                     Status::NOT_FOUND,
@@ -163,11 +165,15 @@ impl Harness {
         .await;
         git_fixture(&root, &["worktree", "add", "--quiet", "--detach", linked.to_str().unwrap()]).await;
         let root = dunce::canonicalize(&root).unwrap();
+        let root_sub = root.join("packages").join("app");
+        std::fs::create_dir_all(&root_sub).unwrap();
+        let root_sub = dunce::canonicalize(&root_sub).unwrap();
         let linked = dunce::canonicalize(&linked).unwrap();
         let foreign = dunce::canonicalize(&foreign).unwrap();
 
         let native = Arc::new(FakeNative {
             root: root.clone(),
+            root_sub,
             linked: linked.clone(),
             foreign: foreign.clone(),
             backgrounds: Mutex::new(Vec::new()),
@@ -275,13 +281,14 @@ async fn background_relays_empty_post_without_content_type_and_preserves_204() {
     let h = Harness::new("bg-relay").await;
 
     // 1. Standard codenomad-client / @opencode/client call: empty POST body, no Content-Type.
-    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_owned", None, None, None, None)).await.unwrap();
+    let res =
+        proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", None, None, None, None)).await.unwrap();
     assert_eq!(res.status(), Status::NO_CONTENT);
     let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
     assert!(body.is_empty());
 
     // 2. Linked worktree session with ambient workspace root `x-codenomad-location` header.
-    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_linked", None, None, None, Some(&h.root)))
+    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_linked", None, None, None, Some(&h.root)))
         .await
         .unwrap();
     assert_eq!(res.status(), Status::NO_CONTENT);
@@ -289,27 +296,35 @@ async fn background_relays_empty_post_without_content_type_and_preserves_204() {
     // 3. Explicit empty JSON object `{}` with case-insensitive `Application/JSON; charset=utf-8`.
     let res = proxy::relay(
         State(h.app.clone()),
-        h.background_req("ses_owned", None, Some("Application/JSON; charset=utf-8"), Some(b"{}".to_vec()), None),
+        h.background_req("ses_bg_owned", None, Some("Application/JSON; charset=utf-8"), Some(b"{}".to_vec()), None),
     )
     .await
     .unwrap();
     assert_eq!(res.status(), Status::NO_CONTENT);
 
-    // 4. Positive owned `location[directory]` query matching the session's directory.
+    // 4. Positive owned `location[directory]` query (including separate workspace root for linked session) and subfolder session.
     let owned_q = format!(
         "location[directory]={}",
         percent_encoding::utf8_percent_encode(h.root.to_string_lossy().as_ref(), percent_encoding::NON_ALPHANUMERIC)
     );
-    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_owned", Some(&owned_q), None, None, None))
+    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", Some(&owned_q), None, None, None))
         .await
         .unwrap();
+    assert_eq!(res.status(), Status::NO_CONTENT);
+
+    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_linked", Some(&owned_q), None, None, None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), Status::NO_CONTENT);
+
+    let res = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_sub", None, None, None, None)).await.unwrap();
     assert_eq!(res.status(), Status::NO_CONTENT);
 
     // 5. Upstream error status & body passthrough.
     *h.native.error_override.lock().unwrap() =
         Some((Status::CONFLICT, json!({"_tag": "SessionBusyError", "message": "Cannot background"})));
     let err_resp =
-        proxy::relay(State(h.app.clone()), h.background_req("ses_owned", None, None, None, None)).await.unwrap();
+        proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", None, None, None, None)).await.unwrap();
     assert_eq!(err_resp.status(), Status::CONFLICT);
     let err_json: Value =
         serde_json::from_slice(&axum::body::to_bytes(err_resp.into_body(), 4096).await.unwrap()).unwrap();
@@ -317,22 +332,22 @@ async fn background_relays_empty_post_without_content_type_and_preserves_204() {
     *h.native.error_override.lock().unwrap() = None;
 
     let recorded = h.recorded();
-    assert_eq!(recorded.len(), 5);
-    assert_eq!(recorded[0].path, "/api/session/ses_owned/background");
+    assert_eq!(recorded.len(), 7);
+    assert_eq!(recorded[0].path, "/api/session/ses_bg_owned/background");
     assert_eq!(recorded[0].query, None);
     assert_eq!(recorded[0].content_type, None, "empty POST must not synthesize Content-Type");
     assert!(recorded[0].body.is_empty(), "empty POST must not synthesize {{}} body");
 
-    assert_eq!(recorded[1].path, "/api/session/ses_linked/background");
+    assert_eq!(recorded[1].path, "/api/session/ses_bg_linked/background");
     assert_eq!(recorded[1].query, None);
     assert_eq!(recorded[1].content_type, None);
     assert!(recorded[1].body.is_empty());
 
-    assert_eq!(recorded[2].path, "/api/session/ses_owned/background");
+    assert_eq!(recorded[2].path, "/api/session/ses_bg_owned/background");
     assert_eq!(recorded[2].content_type.as_deref(), Some("application/json"));
     assert_eq!(recorded[2].body, b"{}");
 
-    assert_eq!(recorded[3].path, "/api/session/ses_owned/background");
+    assert_eq!(recorded[3].path, "/api/session/ses_bg_owned/background");
     assert_eq!(recorded[3].content_type, None);
     assert!(recorded[3].body.is_empty());
 }
@@ -343,8 +358,9 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
     let h = Harness::new("bg-guards").await;
 
     // Foreign session -> 403 with session_located_elsewhere.
-    let err =
-        proxy::relay(State(h.app.clone()), h.background_req("ses_foreign", None, None, None, None)).await.unwrap_err();
+    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_foreign", None, None, None, None))
+        .await
+        .unwrap_err();
     assert_eq!(err.0, Status::FORBIDDEN);
     assert_eq!(err.1.0["reason"], SESSION_LOCATED_ELSEWHERE);
 
@@ -358,17 +374,17 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
         "location[directory]={}",
         percent_encoding::utf8_percent_encode(h.foreign.to_string_lossy().as_ref(), percent_encoding::NON_ALPHANUMERIC)
     );
-    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_owned", Some(&foreign_q), None, None, None))
+    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", Some(&foreign_q), None, None, None))
         .await
         .unwrap_err();
     assert_eq!(err.0, Status::FORBIDDEN);
-    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_owned", None, None, None, Some(&h.foreign)))
+    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", None, None, None, Some(&h.foreign)))
         .await
         .unwrap_err();
     assert_eq!(err.0, Status::FORBIDDEN);
 
     // Mission schedule carriers -> 403.
-    for carrier_id in ["ses_cn_schedule_1", "ses_carrier_marker", "ses_carrier_rpc"] {
+    for carrier_id in ["ses_cn_schedule_1", "ses_bg_carrier_marker", "ses_bg_carrier_rpc"] {
         let err =
             proxy::relay(State(h.app.clone()), h.background_req(carrier_id, None, None, None, None)).await.unwrap_err();
         assert_eq!(err.0, Status::FORBIDDEN, "carrier {carrier_id} must be refused");
@@ -376,7 +392,7 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
     let err = proxy::relay(
         State(h.app.clone()),
         h.background_req(
-            "ses_owned",
+            "ses_bg_owned",
             None,
             Some("application/json"),
             Some(br#"{"metadata":{"schedule":true}}"#.to_vec()),
@@ -390,7 +406,13 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
     // Body validation: parentID (403), non-object/invalid JSON/non-JSON (400), unknown field (501).
     let err = proxy::relay(
         State(h.app.clone()),
-        h.background_req("ses_owned", None, Some("application/json"), Some(br#"{"parentID":"ses_1"}"#.to_vec()), None),
+        h.background_req(
+            "ses_bg_owned",
+            None,
+            Some("application/json"),
+            Some(br#"{"parentID":"ses_1"}"#.to_vec()),
+            None,
+        ),
     )
     .await
     .unwrap_err();
@@ -402,7 +424,7 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
         (Some("application/jsonp"), b"{}".to_vec()),
         (Some("text/plain"), b"{}".to_vec()),
     ] {
-        let err = proxy::relay(State(h.app.clone()), h.background_req("ses_owned", None, ct, Some(payload), None))
+        let err = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", None, ct, Some(payload), None))
             .await
             .unwrap_err();
         assert_eq!(err.0, Status::BAD_REQUEST);
@@ -410,7 +432,7 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
 
     let unknown = proxy::relay(
         State(h.app.clone()),
-        h.background_req("ses_owned", None, Some("application/json"), Some(br#"{"extra":true}"#.to_vec()), None),
+        h.background_req("ses_bg_owned", None, Some("application/json"), Some(br#"{"extra":true}"#.to_vec()), None),
     )
     .await
     .unwrap();
@@ -425,16 +447,17 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
     // Active worktree deletion fence -> 409 Conflict.
     let key = fence::identity(&fence::checkout_root(&h.app.scope, &h.linked));
     let _deletion = fence::block(std::slice::from_ref(&key)).await.unwrap();
-    let err =
-        proxy::relay(State(h.app.clone()), h.background_req("ses_linked", None, None, None, None)).await.unwrap_err();
+    let err = proxy::relay(State(h.app.clone()), h.background_req("ses_bg_linked", None, None, None, None))
+        .await
+        .unwrap_err();
     assert_eq!(err.0, Status::CONFLICT);
     drop(_deletion);
 
     // Active per-session fence -> 409 Conflict.
-    let session_key = fence::session("ses_owned");
+    let session_key = fence::session("ses_bg_owned");
     let _session_lock = fence::block(std::slice::from_ref(&session_key)).await.unwrap();
     let err =
-        proxy::relay(State(h.app.clone()), h.background_req("ses_owned", None, None, None, None)).await.unwrap_err();
+        proxy::relay(State(h.app.clone()), h.background_req("ses_bg_owned", None, None, None, None)).await.unwrap_err();
     assert_eq!(err.0, Status::CONFLICT);
     drop(_session_lock);
 
@@ -442,7 +465,7 @@ async fn background_enforces_ownership_carrier_body_validation_and_deletion_fenc
     let (entered, release) = (Arc::new(tokio::sync::Notify::new()), Arc::new(tokio::sync::Notify::new()));
     *h.native.stall_carrier_read.lock().unwrap() = Some((entered.clone(), release.clone()));
     let cancel = CancellationToken::new();
-    let mut req = h.background_req("ses_owned", None, None, None, None);
+    let mut req = h.background_req("ses_bg_owned", None, None, None, None);
     req.extensions_mut().insert(Principal(cancel.clone()));
     let app_bg = h.app.clone();
     let mut task = tokio::spawn(async move { proxy::relay(State(app_bg), req).await });
@@ -528,7 +551,7 @@ async fn remote_control_catalog_admits_session_background() {
         };
 
         let mut req = client
-            .post(format!("{base}/workspaces/{}/instance/api/session/ses_owned/background", h.ws_id))
+            .post(format!("{base}/workspaces/{}/instance/api/session/ses_bg_owned/background", h.ws_id))
             .header(header::HOST, host)
             .header(header::COOKIE, cookie);
         if is_server {
@@ -545,7 +568,7 @@ async fn remote_control_catalog_admits_session_background() {
         let recorded = h.recorded();
         assert_eq!(recorded.len(), 2);
         for rec in recorded {
-            assert_eq!(rec.path, "/api/session/ses_owned/background");
+            assert_eq!(rec.path, "/api/session/ses_bg_owned/background");
             assert_eq!(rec.content_type, None);
             assert!(rec.body.is_empty());
         }

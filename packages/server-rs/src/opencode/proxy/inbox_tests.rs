@@ -40,13 +40,17 @@ struct RecordedInbox {
 
 struct FakeNative {
     root: PathBuf,
+    root_sub: PathBuf,
     linked: PathBuf,
+    linked_sub: PathBuf,
     foreign: PathBuf,
     calls: Mutex<Vec<RecordedInbox>>,
     error_override: Mutex<Option<(Status, Value)>>,
     stall_session_get: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
+    stall_session_get_nth: Mutex<Option<(usize, usize, Arc<Notify>, Arc<Notify>)>>,
     stall_carrier_read: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
     stall_inbox_get: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
+    stall_inbox_write: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
 }
 
 async fn git_fixture(path: &Path, args: &[&str]) {
@@ -79,7 +83,7 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
                 release.notified().await;
             }
             let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-            let owned = parsed["input"]["sessionID"].as_str() == Some("ses_carrier_rpc");
+            let owned = parsed["input"]["sessionID"].as_str() == Some("ses_inb_carrier_rpc");
             ok(json!({"output": {"owned": owned}}))
         }
         (Method::GET, p) if p.starts_with("/api/session/") && p.ends_with("/inbox") => {
@@ -102,6 +106,11 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
             }))
         }
         (Method::PATCH | Method::DELETE, p) if p.starts_with("/api/session/") && p.contains("/inbox/") => {
+            let stall = f.stall_inbox_write.lock().unwrap().clone();
+            if let Some((entered, release)) = stall {
+                entered.notify_one();
+                release.notified().await;
+            }
             f.calls.lock().unwrap().push(RecordedInbox { method, path, query, content_type, body });
             if let Some((status, payload)) = f.error_override.lock().unwrap().clone() {
                 return (status, Json(payload)).into_response();
@@ -111,6 +120,19 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
         (Method::GET, p) if p.starts_with("/api/session/") && !p[13..].contains('/') => {
             let stall = f.stall_session_get.lock().unwrap().clone();
             if let Some((entered, release)) = stall {
+                entered.notify_one();
+                release.notified().await;
+            }
+            let nth_stall = {
+                let mut guard = f.stall_session_get_nth.lock().unwrap();
+                if let Some((target, seen, entered, release)) = guard.as_mut() {
+                    *seen += 1;
+                    if *seen == *target { Some((entered.clone(), release.clone())) } else { None }
+                } else {
+                    None
+                }
+            };
+            if let Some((entered, release)) = nth_stall {
                 entered.notify_one();
                 release.notified().await;
             }
@@ -129,11 +151,13 @@ async fn fake_native(State(f): State<Arc<FakeNative>>, request: Request) -> Resp
                 ok(json!({"data": data}))
             };
             match id {
-                "ses_owned" => session(&f.root, None),
-                "ses_linked" => session(&f.linked, None),
-                "ses_foreign" => session(&f.foreign, None),
-                "ses_carrier_marker" => session(&f.root, Some(json!({"codenomad.schedule-carrier": true}))),
-                "ses_carrier_rpc" => session(&f.root, None),
+                "ses_inb_owned" => session(&f.root, None),
+                "ses_inb_sub" => session(&f.root_sub, None),
+                "ses_inb_linked" => session(&f.linked, None),
+                "ses_inb_linked_sub" => session(&f.linked_sub, None),
+                "ses_inb_foreign" => session(&f.foreign, None),
+                "ses_inb_carrier_marker" => session(&f.root, Some(json!({"codenomad.schedule-carrier": true}))),
+                "ses_inb_carrier_rpc" => session(&f.root, None),
                 "ses_cn_schedule_1" => session(&f.root, None),
                 _ => (
                     Status::NOT_FOUND,
@@ -194,18 +218,28 @@ impl Harness {
         .await;
         git_fixture(&root, &["worktree", "add", "--quiet", "--detach", linked.to_str().unwrap()]).await;
         let root = dunce::canonicalize(&root).unwrap();
+        let root_sub = root.join("sub");
+        std::fs::create_dir_all(&root_sub).unwrap();
+        let root_sub = dunce::canonicalize(&root_sub).unwrap();
         let linked = dunce::canonicalize(&linked).unwrap();
+        let linked_sub = linked.join("sub");
+        std::fs::create_dir_all(&linked_sub).unwrap();
+        let linked_sub = dunce::canonicalize(&linked_sub).unwrap();
         let foreign = dunce::canonicalize(&foreign).unwrap();
 
         let native = Arc::new(FakeNative {
             root: root.clone(),
+            root_sub,
             linked: linked.clone(),
+            linked_sub,
             foreign: foreign.clone(),
             calls: Mutex::new(Vec::new()),
             error_override: Mutex::new(None),
             stall_session_get: Mutex::new(None),
+            stall_session_get_nth: Mutex::new(None),
             stall_carrier_read: Mutex::new(None),
             stall_inbox_get: Mutex::new(None),
+            stall_inbox_write: Mutex::new(None),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let native_conn = Native::test_connection(listener.local_addr().unwrap());
@@ -307,7 +341,7 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
     // 1. GET /inbox on root & linked worktree (with ambient workspace root header).
     let list_res = proxy::relay(
         State(h.app.clone()),
-        h.req(Method::GET, "/api/session/ses_owned/inbox", None, None, None, CancellationToken::new()),
+        h.req(Method::GET, "/api/session/ses_inb_owned/inbox", None, None, None, CancellationToken::new()),
     )
     .await
     .unwrap();
@@ -319,7 +353,7 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
 
     let linked_list = proxy::relay(
         State(h.app.clone()),
-        h.req(Method::GET, "/api/session/ses_linked/inbox", None, None, Some(&h.root), CancellationToken::new()),
+        h.req(Method::GET, "/api/session/ses_inb_linked/inbox", None, None, Some(&h.root), CancellationToken::new()),
     )
     .await
     .unwrap();
@@ -330,7 +364,7 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
         State(h.app.clone()),
         h.req(
             Method::PATCH,
-            "/api/session/ses_owned/inbox/inb_1",
+            "/api/session/ses_inb_owned/inbox/inb_1",
             Some("Application/JSON; charset=utf-8"),
             Some(br#"{"delivery":"steer"}"#.to_vec()),
             None,
@@ -345,7 +379,7 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
         State(h.app.clone()),
         h.req(
             Method::PATCH,
-            "/api/session/ses_linked/inbox/inb_1",
+            "/api/session/ses_inb_linked/inbox/inb_1",
             None,
             None,
             Some(&h.root),
@@ -359,7 +393,7 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
     // 3. DELETE /inbox/:inboxID with empty body (no synthesized Content-Type or JSON).
     let del_res = proxy::relay(
         State(h.app.clone()),
-        h.req(Method::DELETE, "/api/session/ses_owned/inbox/inb_1", None, None, None, CancellationToken::new()),
+        h.req(Method::DELETE, "/api/session/ses_inb_owned/inbox/inb_1", None, None, None, CancellationToken::new()),
     )
     .await
     .unwrap();
@@ -371,14 +405,14 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
         json!({"_tag": "InboxItemNotFoundError", "inboxID": "inb_missing", "message": "Not queued"}),
     ));
     for (method, route, ct, body) in [
-        (Method::GET, "/api/session/ses_owned/inbox", None, None),
+        (Method::GET, "/api/session/ses_inb_owned/inbox", None, None),
         (
             Method::PATCH,
-            "/api/session/ses_owned/inbox/inb_missing",
+            "/api/session/ses_inb_owned/inbox/inb_missing",
             Some("application/json"),
             Some(br#"{"delivery":"queue"}"#.to_vec()),
         ),
-        (Method::DELETE, "/api/session/ses_owned/inbox/inb_missing", None, None),
+        (Method::DELETE, "/api/session/ses_inb_owned/inbox/inb_missing", None, None),
     ] {
         let resp =
             proxy::relay(State(h.app.clone()), h.req(method.clone(), route, ct, body, None, CancellationToken::new()))
@@ -393,10 +427,10 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
     let recorded = h.recorded();
     assert_eq!(recorded.len(), 8);
     assert_eq!(recorded[0].method, Method::GET);
-    assert_eq!(recorded[0].path, "/api/session/ses_owned/inbox");
+    assert_eq!(recorded[0].path, "/api/session/ses_inb_owned/inbox");
     assert_eq!(recorded[0].query, None);
     assert_eq!(recorded[2].method, Method::PATCH);
-    assert_eq!(recorded[2].path, "/api/session/ses_owned/inbox/inb_1");
+    assert_eq!(recorded[2].path, "/api/session/ses_inb_owned/inbox/inb_1");
     assert_eq!(recorded[2].content_type.as_deref(), Some("application/json"));
     assert_eq!(serde_json::from_slice::<Value>(&recorded[2].body).unwrap(), json!({"delivery": "steer"}));
     assert_eq!(recorded[3].method, Method::PATCH);
@@ -405,6 +439,56 @@ async fn inbox_relays_get_patch_delete_and_preserves_bodies_and_errors() {
     assert_eq!(recorded[4].method, Method::DELETE);
     assert_eq!(recorded[4].content_type, None);
     assert!(recorded[4].body.is_empty());
+
+    // 5. Cross-worktree owned query (`location[directory]=<root>` for linked session) and subfolder sessions.
+    *h.native.error_override.lock().unwrap() = None;
+    let root_q = format!(
+        "location[directory]={}",
+        percent_encoding::utf8_percent_encode(h.root.to_string_lossy().as_ref(), percent_encoding::NON_ALPHANUMERIC)
+    );
+    let cross_get = proxy::relay(
+        State(h.app.clone()),
+        h.req(
+            Method::GET,
+            &format!("/api/session/ses_inb_linked/inbox?{root_q}"),
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(cross_get.status(), Status::OK);
+
+    let cross_patch = proxy::relay(
+        State(h.app.clone()),
+        h.req(
+            Method::PATCH,
+            &format!("/api/session/ses_inb_linked/inbox/inb_1?{root_q}"),
+            Some("application/json"),
+            Some(br#"{"delivery":"queue"}"#.to_vec()),
+            None,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(cross_patch.status(), Status::NO_CONTENT);
+
+    for (method, route, ctx) in [
+        (Method::GET, "/api/session/ses_inb_sub/inbox", Some(h.native.root_sub.as_path())),
+        (Method::PATCH, "/api/session/ses_inb_sub/inbox/inb_1", Some(h.native.root_sub.as_path())),
+        (Method::GET, "/api/session/ses_inb_linked_sub/inbox", Some(h.root.as_path())),
+        (Method::DELETE, "/api/session/ses_inb_linked_sub/inbox/inb_1", Some(h.root.as_path())),
+    ] {
+        let resp =
+            proxy::relay(State(h.app.clone()), h.req(method.clone(), route, None, None, ctx, CancellationToken::new()))
+                .await
+                .unwrap();
+        let expected = if method == Method::GET { Status::OK } else { Status::NO_CONTENT };
+        assert_eq!(resp.status(), expected, "{method} {route}");
+    }
 }
 
 #[tokio::test]
@@ -414,13 +498,13 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
 
     // 1. Disallowed methods and paths fail closed with 403 (unallowlisted) or 400 (dot traversal).
     for (method, route) in [
-        (Method::POST, "/api/session/ses_owned/inbox"),
-        (Method::POST, "/api/session/ses_owned/inbox/inb_1"),
-        (Method::GET, "/api/session/ses_owned/inbox/inb_1"),
-        (Method::PUT, "/api/session/ses_owned/inbox/inb_1"),
-        (Method::PATCH, "/api/session/ses_owned/inbox"),
-        (Method::DELETE, "/api/session/ses_owned/inbox"),
-        (Method::DELETE, "/api/session/ses_owned/inbox/inb_1/extra"),
+        (Method::POST, "/api/session/ses_inb_owned/inbox"),
+        (Method::POST, "/api/session/ses_inb_owned/inbox/inb_1"),
+        (Method::GET, "/api/session/ses_inb_owned/inbox/inb_1"),
+        (Method::PUT, "/api/session/ses_inb_owned/inbox/inb_1"),
+        (Method::PATCH, "/api/session/ses_inb_owned/inbox"),
+        (Method::DELETE, "/api/session/ses_inb_owned/inbox"),
+        (Method::DELETE, "/api/session/ses_inb_owned/inbox/inb_1/extra"),
     ] {
         let err = proxy::relay(
             State(h.app.clone()),
@@ -434,7 +518,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
         State(h.app.clone()),
         h.req(
             Method::GET,
-            "/api/session/ses_owned/%2e%2e/ses_foreign/inbox",
+            "/api/session/ses_inb_owned/%2e%2e/ses_inb_foreign/inbox",
             None,
             None,
             None,
@@ -470,7 +554,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     // 3. Ownership, foreign ambient location, missing session, and schedule carriers.
     let foreign = proxy::relay(
         State(h.app.clone()),
-        h.req(Method::GET, "/api/session/ses_foreign/inbox", None, None, None, CancellationToken::new()),
+        h.req(Method::GET, "/api/session/ses_inb_foreign/inbox", None, None, None, CancellationToken::new()),
     )
     .await
     .unwrap_err();
@@ -481,7 +565,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
         State(h.app.clone()),
         h.req(
             Method::DELETE,
-            "/api/session/ses_owned/inbox/inb_1",
+            "/api/session/ses_inb_owned/inbox/inb_1",
             None,
             None,
             Some(&h.foreign),
@@ -500,7 +584,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     .unwrap_err();
     assert_eq!(missing.0, Status::NOT_FOUND);
 
-    for carrier_id in ["ses_cn_schedule_1", "ses_carrier_marker", "ses_carrier_rpc"] {
+    for carrier_id in ["ses_cn_schedule_1", "ses_inb_carrier_marker", "ses_inb_carrier_rpc"] {
         let err = proxy::relay(
             State(h.app.clone()),
             h.req(
@@ -528,7 +612,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
             State(h.app.clone()),
             h.req(
                 Method::PATCH,
-                "/api/session/ses_owned/inbox/inb_1",
+                "/api/session/ses_inb_owned/inbox/inb_1",
                 ct,
                 Some(payload),
                 None,
@@ -543,7 +627,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
         State(h.app.clone()),
         h.req(
             Method::PATCH,
-            "/api/session/ses_owned/inbox/inb_1",
+            "/api/session/ses_inb_owned/inbox/inb_1",
             Some("application/json"),
             Some(br#"{"parentID":"ses_1"}"#.to_vec()),
             None,
@@ -559,20 +643,20 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     let _wt_lock = fence::block(std::slice::from_ref(&wt_key)).await.unwrap();
     let err = proxy::relay(
         State(h.app.clone()),
-        h.req(Method::DELETE, "/api/session/ses_linked/inbox/inb_1", None, None, None, CancellationToken::new()),
+        h.req(Method::DELETE, "/api/session/ses_inb_linked/inbox/inb_1", None, None, None, CancellationToken::new()),
     )
     .await
     .unwrap_err();
     assert_eq!(err.0, Status::CONFLICT);
     drop(_wt_lock);
 
-    let ses_key = fence::session("ses_owned");
+    let ses_key = fence::session("ses_inb_owned");
     let _ses_lock = fence::block(std::slice::from_ref(&ses_key)).await.unwrap();
     let err = proxy::relay(
         State(h.app.clone()),
         h.req(
             Method::PATCH,
-            "/api/session/ses_owned/inbox/inb_1",
+            "/api/session/ses_inb_owned/inbox/inb_1",
             Some("application/json"),
             Some(br#"{"delivery":"steer"}"#.to_vec()),
             None,
@@ -588,7 +672,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     *h.native.stall_session_get.lock().unwrap() = Some((entered.clone(), release.clone()));
     let cancel = CancellationToken::new();
-    let req = h.req(Method::GET, "/api/session/ses_owned/inbox", None, None, None, cancel.clone());
+    let req = h.req(Method::GET, "/api/session/ses_inb_owned/inbox", None, None, None, cancel.clone());
     let app = h.app.clone();
     let mut task = tokio::spawn(async move { proxy::relay(State(app), req).await });
     tokio::select! {
@@ -608,7 +692,7 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     let cancel = CancellationToken::new();
     let req = h.req(
         Method::PATCH,
-        "/api/session/ses_owned/inbox/inb_1",
+        "/api/session/ses_inb_owned/inbox/inb_1",
         Some("application/json"),
         Some(br#"{"delivery":"steer"}"#.to_vec()),
         None,
@@ -628,12 +712,67 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     release.notify_waiters();
     *h.native.stall_carrier_read.lock().unwrap() = None;
 
+    // 7. Principal revocation during the final under-fence `session_record_at` (#3) aborts immediately with 401.
+    let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    *h.native.stall_session_get_nth.lock().unwrap() = Some((3, 0, entered.clone(), release.clone()));
+    let cancel = CancellationToken::new();
+    let req = h.req(
+        Method::PATCH,
+        "/api/session/ses_inb_owned/inbox/inb_1",
+        Some("application/json"),
+        Some(br#"{"delivery":"steer"}"#.to_vec()),
+        None,
+        cancel.clone(),
+    );
+    let app = h.app.clone();
+    let mut task = tokio::spawn(async move { proxy::relay(State(app), req).await });
+    tokio::select! {
+        res = &mut task => panic!("relay exited before under-fence session.get stall: {res:?}"),
+        waited = tokio::time::timeout(Duration::from_secs(15), entered.notified()) => {
+            waited.expect("timed out waiting for under-fence session.get stall");
+        }
+    }
+    cancel.cancel();
+    let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(err.0, Status::UNAUTHORIZED, "revocation during under-fence session.get must abort with 401");
+    release.notify_waiters();
+    *h.native.stall_session_get_nth.lock().unwrap() = None;
+
+    // 8. Replacing the session checkout at the same path before under-fence recheck fails closed with 403.
+    let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    *h.native.stall_carrier_read.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let req = h.req(
+        Method::PATCH,
+        "/api/session/ses_inb_linked/inbox/inb_1",
+        Some("application/json"),
+        Some(br#"{"delivery":"steer"}"#.to_vec()),
+        None,
+        CancellationToken::new(),
+    );
+    let app = h.app.clone();
+    let mut task = tokio::spawn(async move { proxy::relay(State(app), req).await });
+    tokio::select! {
+        res = &mut task => panic!("relay exited before checkout-replacement carrier stall: {res:?}"),
+        waited = tokio::time::timeout(Duration::from_secs(15), entered.notified()) => {
+            waited.expect("timed out waiting for checkout-replacement carrier stall");
+        }
+    }
+    let linked_backup = h.dir.join("linked_replaced_backup");
+    std::fs::rename(&h.linked, &linked_backup).unwrap();
+    std::fs::create_dir(&h.linked).unwrap();
+    release.notify_waiters();
+    let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
+    let _ = std::fs::remove_dir(&h.linked);
+    std::fs::rename(&linked_backup, &h.linked).unwrap();
+    *h.native.stall_carrier_read.lock().unwrap() = None;
+    assert_eq!(err.0, Status::FORBIDDEN, "replaced checkout at same path must be rejected under fence");
+
     assert!(h.recorded().is_empty(), "none of the rejected or pre-dispatch revoked calls may reach native inbox");
 
     let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     *h.native.stall_inbox_get.lock().unwrap() = Some((entered.clone(), release.clone()));
     let cancel = CancellationToken::new();
-    let req = h.req(Method::GET, "/api/session/ses_owned/inbox", None, None, None, cancel.clone());
+    let req = h.req(Method::GET, "/api/session/ses_inb_owned/inbox", None, None, None, cancel.clone());
     let app = h.app.clone();
     let mut task = tokio::spawn(async move { proxy::relay(State(app), req).await });
     tokio::select! {
@@ -647,6 +786,37 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     assert_eq!(err.0, Status::UNAUTHORIZED, "revocation while awaiting GET /inbox headers must abort with 401");
     release.notify_waiters();
     *h.native.stall_inbox_get.lock().unwrap() = None;
+
+    // 9. Closing workspace while awaiting PATCH /inbox headers returns 404 immediately while holding fences until native finishes.
+    let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    *h.native.stall_inbox_write.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let req = h.req(
+        Method::PATCH,
+        "/api/session/ses_inb_owned/inbox/inb_1",
+        Some("application/json"),
+        Some(br#"{"delivery":"steer"}"#.to_vec()),
+        None,
+        CancellationToken::new(),
+    );
+    let app = h.app.clone();
+    let mut task = tokio::spawn(async move { proxy::relay(State(app), req).await });
+    tokio::select! {
+        res = &mut task => panic!("relay exited before PATCH /inbox stall: {res:?}"),
+        waited = tokio::time::timeout(Duration::from_secs(15), entered.notified()) => {
+            waited.expect("timed out waiting for PATCH /inbox stall");
+        }
+    }
+    h.app.inner.lock().unwrap().workspaces.retain(|w| w.id != h.ws_id);
+    h.app.workspace_closed.notify_waiters();
+    let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(err.0, Status::NOT_FOUND, "workspace close while awaiting mutation headers must return 404");
+    let ses_keys = [fence::session("ses_inb_owned")];
+    let ses_lock = fence::block(&ses_keys);
+    tokio::pin!(ses_lock);
+    assert!(futures_util::poll!(&mut ses_lock).is_pending(), "mutation fence must remain held until native drains");
+    release.notify_waiters();
+    assert!(tokio::time::timeout(Duration::from_secs(10), ses_lock).await.unwrap().is_ok());
+    *h.native.stall_inbox_write.lock().unwrap() = None;
 }
 
 #[tokio::test]
@@ -730,7 +900,7 @@ async fn remote_control_admits_inbox_for_browser_ingress_and_server_device_and_r
             req.send()
         };
 
-        let prefix = format!("/workspaces/{}/instance/api/session/ses_owned/inbox", h.ws_id);
+        let prefix = format!("/workspaces/{}/instance/api/session/ses_inb_owned/inbox", h.ws_id);
         assert_eq!(send(Method::GET, prefix.clone(), None).await.unwrap().status(), Status::OK);
         assert_eq!(
             send(Method::PATCH, format!("{prefix}/inb_1"), Some(json!({"delivery": "steer"}))).await.unwrap().status(),

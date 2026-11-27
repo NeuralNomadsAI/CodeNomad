@@ -63,6 +63,12 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     } = ctx;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
+    let self_invalidated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let self_invalidated_dispatch = Arc::clone(&self_invalidated);
+    let observer_app = app.clone();
+    let observer_endpoint = endpoint.clone();
+    let observer_id = id.clone();
+    let observer_workspace = workspace.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| {
         Box::pin(async move {
             for loc in &account_verified_locs {
@@ -122,6 +128,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     return Err(upstream_error());
                 }
                 if unauthorized {
+                    self_invalidated_dispatch.store(true, std::sync::atomic::Ordering::Release);
                     app.native.invalidate(&endpoint);
                 }
                 return Ok((
@@ -361,13 +368,19 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             struct InvalidateOnDrop {
                 app: Shared,
                 endpoint: std::sync::Arc<Endpoint>,
+                self_invalidated: Arc<std::sync::atomic::AtomicBool>,
             }
             impl Drop for InvalidateOnDrop {
                 fn drop(&mut self) {
+                    self.self_invalidated.store(true, std::sync::atomic::Ordering::Release);
                     self.app.native.invalidate(&self.endpoint);
                 }
             }
-            let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
+            let invalidate = unauthorized.then(|| InvalidateOnDrop {
+                app: app.clone(),
+                endpoint: endpoint.clone(),
+                self_invalidated: Arc::clone(&self_invalidated_dispatch),
+            });
             let bytes = futures_util::stream::unfold(
                 (
                     response.bytes_stream(),
@@ -474,7 +487,29 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         })
     };
     if let Some(permit) = mutation {
-        crate::opencode::proxy_write::forward(permit, rules_lock, observer, dispatch).await
+        let retire_app = observer_app.clone();
+        let retire_ep = observer_endpoint.clone();
+        let guards = crate::opencode::proxy_write::ObserverGuards {
+            principal: observer,
+            retired: Box::pin(async move {
+                retire_app.native.wait_retired(&retire_ep).await;
+                if self_invalidated.load(std::sync::atomic::Ordering::Acquire) {
+                    std::future::pending::<()>().await;
+                }
+            }),
+            closed: Box::pin(async move {
+                loop {
+                    let notified = observer_app.workspace_closed.notified();
+                    if !observer_app.workspace(&observer_id).is_ok_and(|current| {
+                        current.id == observer_workspace.id && current.path == observer_workspace.path
+                    }) {
+                        return;
+                    }
+                    notified.await;
+                }
+            }),
+        };
+        crate::opencode::proxy_write::forward(permit, rules_lock, guards, dispatch).await
     } else {
         dispatch(tokio_util::sync::CancellationToken::new()).await
     }
