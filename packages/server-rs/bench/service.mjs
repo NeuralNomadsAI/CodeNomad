@@ -11,12 +11,14 @@ import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import { spawnFixtureChild, stopFixtureChild, stopFixtureHandle } from "../../../scripts/native-fixture-guards.mjs"
-import { assertOutsideAccount } from "./private-profile.mjs"
-import { out, privateGit, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertOutsideAccount, assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
-const exe = process.argv[2]
-assert(path.isAbsolute(exe ?? "") && process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
+const rawExe = process.argv[2]
+assert(path.isAbsolute(rawExe ?? ""), "usage: node service.mjs <absolute opencode executable> (Windows)")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+assert(process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
+const { spawnFixtureChild, stopFixtureChild, stopFixtureHandle } = await import("../../../scripts/native-fixture-guards.mjs")
+const { out, privateGit, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 // This bench deliberately restarts the backend while keeping its daemon alive.
 // One job owns the whole bench; per-backend jobs would invalidate that experiment.
 if (!process.argv.includes("--owned-service-worker")) {
@@ -52,6 +54,7 @@ const password = `bench-${Math.random().toString(36).slice(2)}`
 async function profile(label) {
   const root = path.join(out, "tmp", "opencode", `service-${label}-${Date.now()}`)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => INHERITED.test(k)))
+  await sanitizeBenchEnvPath(env, { allowedRoot: root })
   Object.assign(env, { HOME: root, USERPROFILE: root, APPDATA: path.join(root, "AppData", "Roaming"), LOCALAPPDATA: path.join(root, "AppData", "Local"),
     ProgramData: path.join(root, "ProgramData"), TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"),
     XDG_CONFIG_HOME: path.join(root, "xdg-config"), XDG_DATA_HOME: path.join(root, "xdg-data"), XDG_CACHE_HOME: path.join(root, "xdg-cache"),

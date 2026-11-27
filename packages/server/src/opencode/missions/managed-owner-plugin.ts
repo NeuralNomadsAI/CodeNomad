@@ -3,15 +3,9 @@ import { fromPromise } from "@opencode/plugin/promise/adapter"
 import { Context, Effect, Exit, Scope } from "effect"
 import { desktopPlugin as promisePlugin } from "./desktop-plugin"
 import { CODENOMAD_MISSIONS_RPC_ID, CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
-import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
-import { controlNativeRecurrence } from "./native-recurrence-control"
-import { nativeRecurrenceHandlers } from "./native-recurrence-create"
 import { HUMAN_ANSWER_RPC } from "../../missions/human-answer"
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent, readNativeRecurrenceCurrentPage } from "./native-recurrence-current"
-import { readNativeRecurrencePage } from "./native-recurrence-reader"
-import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
@@ -22,6 +16,7 @@ import { registerNativeMissionScheduleRuntime } from "./native-mission-schedule-
 import { useNativeMissionDocuments } from "./native-mission-document-access"
 import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import type { NativeJournalRange } from "./native-journal-range"
+import { registerNativeCoordinatorGoalRuntime } from "./native-coordinator-goal"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts): Plugin.Context["rpc"] {
   const documentInvocation = nativeInvocation()
@@ -36,23 +31,18 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
             const store = yield* acquireNativeMissionDocumentStore(ctx, run)
             return yield* Effect.tryPromise({ try: () => applyMissionDocumentActivation(store, input, () => true, ctx.location.directory), catch: error => error })
           }))), catch: error => error,
-        })).pipe(Effect.orDie), recurrenceSnapshot: (input: { scheduleID?: string }) => readNativeRecurrenceSnapshot(ctx, input),
-        ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
+        })).pipe(Effect.orDie),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
         recurrenceCurrentPage: (input: unknown) => readNativeRecurrenceCurrentPage(ctx, input),
-        recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input),
-        recurrenceControl: (input: unknown) => controlNativeRecurrence(ctx, input),
-        recurrenceRunNow: (input: unknown) => runNativeRecurrenceNow(ctx, input),
-        recurrenceRunNowStatus: (input: unknown) => readNativeRecurrenceRunNow(ctx, input),
-        recurrenceControlStatus: (input: unknown) => readNativeRecurrenceControlStatus(ctx, input) } as typeof handlers
+        recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input) } as typeof handlers
       : handlers)
   return new Proxy(ctx.rpc, { get(target, key) {
     return key === "register" ? register : Reflect.get(target, key)
   } })
 }
 
-// The Promise adapter preserves the shipped Missions plugin. Recurrence reads
-// and paused CREATE run in the sealed service Effect graph. The retired signed
+// The Promise adapter preserves the shipped Missions plugin. Schedule handlers and
+// current-passage reads run in the sealed service Effect graph. The retired signed
 // `authority-v2` namespace and its managed-owner observer are not part of the
 // shipped lifecycle: setup never reads, creates or repairs those bytes.
 export function desktopPlugin(presenceDirectory: string | readonly string[], artifacts?: NativeScheduleArtifacts) {
@@ -96,6 +86,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
     const persistent = yield* withNativeRecurrenceRpc(ctx, artifacts).register(CODENOMAD_MISSIONS_RPC,
       forwarding as Parameters<typeof ctx.rpc.register<typeof CODENOMAD_MISSIONS_RPC>>[1]).pipe(Effect.orDie)
     const documentBusiness = yield* registerNativeMissionScheduleRuntime(ctx, artifacts, invocation).pipe(Effect.orDie)
+    const coordinatorGoal = yield* registerNativeCoordinatorGoalRuntime(ctx, invocation).pipe(Effect.orDie)
     const register: typeof ctx.rpc.register = (definition, handlers) => definition.id !== CODENOMAD_MISSIONS_RPC_ID
       ? ctx.rpc.register(definition, handlers)
       : Effect.sync(() => {
@@ -126,7 +117,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
-         try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness, currentJournalRange)).effect(nativeCtx)) }
+         try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness, currentJournalRange, coordinatorGoal)).effect(nativeCtx)) }
         catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
         return scope
     }), owned => Scope.close(owned, Exit.void))

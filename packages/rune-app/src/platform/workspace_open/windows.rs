@@ -10,6 +10,20 @@ use std::{
     time::Duration,
 };
 
+fn map_checkout_error(error: &codenomad_client::history::Error) -> OpenError {
+    if error.downcast_ref::<GitError>() == Some(&GitError::CheckoutUnavailable) {
+        OpenError::CheckoutUnavailable
+    } else if let Some(refusal) = error.downcast_ref::<Refusal>() {
+        match refusal.status {
+            403 | 404 => OpenError::CheckoutUnavailable,
+            409 => OpenError::WorktreeChanged,
+            _ => OpenError::Failed,
+        }
+    } else {
+        OpenError::Failed
+    }
+}
+
 pub async fn open(
     backend: crate::backend::Backend,
     slug: String,
@@ -18,15 +32,10 @@ pub async fn open(
     target: Target,
     owner: Weak<()>,
 ) -> Result<(), OpenError> {
-    let checkout = backend.workspace_checkout(&slug).await.map_err(|error| {
-        if error.downcast_ref::<GitError>() == Some(&GitError::CheckoutUnavailable) {
-            OpenError::CheckoutUnavailable
-        } else if let Some(message) = error.downcast_ref::<Refusal>().and_then(Refusal::message) {
-            OpenError::Server(message.to_owned())
-        } else {
-            OpenError::Failed
-        }
-    })?;
+    let checkout = backend
+        .workspace_checkout(&slug)
+        .await
+        .map_err(|error| map_checkout_error(&error))?;
     if !codenomad_client::same_server_path(&checkout, &directory) {
         return Err(OpenError::WorktreeChanged);
     }
@@ -336,6 +345,61 @@ mod tests {
                 Some(0) => assert!(started.unwrap()),
                 _ => assert!(!started.unwrap()),
             }
+        }
+    }
+
+    #[test]
+    fn checkout_refusals_map_to_localized_open_errors_without_raw_server_text() {
+        let not_found: codenomad_client::history::Error =
+            Refusal::new(404, None, Some("Workspace not found".into())).into();
+        let forbidden: codenomad_client::history::Error =
+            Refusal::new(403, None, Some("Access denied".into())).into();
+        let conflict: codenomad_client::history::Error =
+            Refusal::new(409, None, Some("Worktree deletion is in progress".into())).into();
+        let server: codenomad_client::history::Error =
+            Refusal::new(500, None, Some("Internal server error".into())).into();
+        let transport: codenomad_client::history::Error =
+            "reqwest: error sending request for url (http://127.0.0.1:9999)".into();
+
+        assert_eq!(
+            map_checkout_error(&not_found),
+            OpenError::CheckoutUnavailable
+        );
+        assert_eq!(
+            map_checkout_error(&forbidden),
+            OpenError::CheckoutUnavailable
+        );
+        assert_eq!(map_checkout_error(&conflict), OpenError::WorktreeChanged);
+        assert_eq!(map_checkout_error(&server), OpenError::Failed);
+        assert_eq!(map_checkout_error(&transport), OpenError::Failed);
+        assert_eq!(
+            map_checkout_error(&GitError::CheckoutUnavailable.into()),
+            OpenError::CheckoutUnavailable
+        );
+        let (en_unavailable, en_changed, en_failed) = crate::strings::with_locale("en", || {
+            (
+                crate::strings::t("gitPanel.error.checkoutUnavailable"),
+                crate::strings::t("gitPanel.error.worktreeChanged"),
+                crate::strings::t("rune.failed"),
+            )
+        });
+        for lang in ["en", "fr"] {
+            crate::strings::with_locale(lang, || {
+                let unavailable = map_checkout_error(&not_found).localized(lang);
+                let changed = map_checkout_error(&conflict).localized(lang);
+                let failed = map_checkout_error(&server).localized(lang);
+                assert_eq!(
+                    unavailable,
+                    crate::strings::t("gitPanel.error.checkoutUnavailable")
+                );
+                assert_eq!(changed, crate::strings::t("gitPanel.error.worktreeChanged"));
+                assert_eq!(failed, crate::strings::t("rune.failed"));
+                if lang == "fr" {
+                    assert_ne!(unavailable, en_unavailable);
+                    assert_ne!(changed, en_changed);
+                    assert_ne!(failed, en_failed);
+                }
+            });
         }
     }
 

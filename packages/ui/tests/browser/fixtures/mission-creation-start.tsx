@@ -48,7 +48,7 @@ function Fixture() {
   const Controls = () => {
     const controls = createMissionScheduleControls({ instanceId: "fixture", projectID: "project", directory: "/fixture",
       document: () => doc()!, active, enabled: () => true, refreshVersion: () => 0, refresh: () => {}, onDeleted: () => {} })
-    return <button onClick={() => void controls.reconcile()}>Refresh saved request</button>
+    return <output data-held-control>{controls.held()?.phase ?? ""}</output>
   }
   return <><output data-saved>{saved()}</output><Show when={mounted()}><Editor /></Show>
     <Show when={doc()}><Controls /></Show><AlertDialog /></>
@@ -65,7 +65,6 @@ function RealEditorFixture() {
       document: () => doc()!, active: () => true, enabled: () => true, refreshVersion: () => 0, refresh: () => {}, onDeleted: () => {} })
     return <section aria-label="Created mission controls">
       <output data-held-control>{JSON.stringify(controls.held() ?? null)}</output>
-      <button disabled={!controls.held() || controls.busy()} onClick={() => void controls.reconcile()}>Refresh saved request</button>
     </section>
   }
   Object.assign(window, { realCreationStartFixture: {

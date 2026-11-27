@@ -8,9 +8,11 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import { resolveWslServiceDirectory } from "../../workspaces/spawn"
 import type { AutonomousProfileSource } from "../../opencode/missions/autonomous-environment"
 import { rejectAuthority, type AuthorityBinding } from "../authority-protocol"
-import { physical } from "./private-files"
-import type { HostAuthorityDescriptor } from "./model"
+import { physical } from "../physical-path"
+import type { Scope } from "../../host-lifetime/protocol"
 import type { CanonicalMissionRoots } from "../mission-roots"
+
+export interface HostAuthorityDescriptor { scope: Scope; physicalProfile: string; executionHost: string }
 
 /** Call only inside authenticated Play's owned project/family fence. Bind the
  * returned source in that one signed Play, never a browser/RPC path option. */

@@ -77,6 +77,6 @@ Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın. Başl
 1. Bağlantı göstergesini kontrol edin ve aynı arka uca/projeye yeniden bağlanın.
 2. Kurtarmanın bekleyen yerel istekleri uzlaştırmasına izin verin; Kapsamın eksik olması durumunda bilinen talepler ve taslaklar korunur.
 
-Art arda iki eksik denemeden sonra, tam kurtarma gerçekleşene kadar her proje tarayıcı sekmesi başına yalnızca bir kurtarma uyarısı gösterir.
+Geçici kurtarma hataları bildirim oluşturmadan arka planda yeniden denenir. Dahili OpenCode eklentisi bekleyen istekleri listeleyemezse, kurtarma başarılı olana kadar tarayıcı sekmesinde arka uç başına yalnızca bir bildirim gösterilir.
 
-Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).
+Eksik bir yanıt, yetkili bir boş kuyruk değildir ve eksik eklenti bildirimi bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).

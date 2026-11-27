@@ -205,14 +205,32 @@ opaque device/inode identity distinct from mtime.
 
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed
   `directory`, validates it through the manager's worktree ownership,
-  and uses the bounded filesystem content reader (5 MiB, base64). This also works
-  for the explicitly opened directory in Git-degraded mode.
+  and uses the bounded filesystem content reader (5 MiB, base64). It returns a
+  quoted lowercase SHA-256 `version` over the file bytes and emits the same value
+  as `ETag`. This also works for the explicitly opened directory in Git-degraded
+  mode.
 - `/api/workspaces/:id/worktrees/:slug/git-history` returns up to 50 commits plus
   a continuation flag. Later pages retain their original HEAD hash.
 - `PUT /api/workspaces/:id/files/content` accepts the exact browsed `directory`
   alongside the relative path, checks current ownership and the deletion fence,
-  and uses the shared filesystem writer. It never redirects a linked-worktree
-  edit to the root checkout.
+  and uses the shared filesystem writer (`versioned-file.ts`). It never redirects
+  a linked-worktree edit to the root checkout. Callers may supply either a
+  non-empty `expectedVersion` in the JSON body or an `If-Match` header (both
+  together or an empty selector return 400; omitting both remains accepted). Under
+  canonical-path and physical-identity locks (`file-access.ts`), conditional saves
+  verify the current file handle's bytes before writing and return
+  `409 { error: "File changed on disk" }` when missing or different. Existing
+  single-link files stage to a sibling temporary file, re-verify target and parent
+  identity, and publish via `rename` (preserving POSIX mode and ownership where
+  permitted; Node.js `fs` does not copy POSIX ACLs, xattrs or NTFS alternate
+  streams across `rename`); hardlinks (`nlink > 1`), non-writable parent
+  directories, rename limitations, and unpreservable POSIX ownership fall back to
+  a verified in-place write on the open handle. New files stage to a temporary file and publish
+  atomically with no-clobber `link` (or an exclusive `wx` create-and-write
+  fallback when hard links are unavailable). Successful saves return `204` with
+  the new `ETag`. The Solid editor forwards `expectedVersion` and maps save-time
+  `409` and `file_too_large`/`413` rejections to localized alerts while keeping
+  the draft.
 - `/git-history/:commit` returns the message and files; an optional `path` returns
   before/after text against the first parent (empty for a root commit).
 - Commit IDs are full SHA-1/SHA-256 hashes. Files must belong to the commit's
@@ -242,6 +260,10 @@ opaque device/inode identity distinct from mtime.
   reread only changed visible directories, while explicit writes remain immediate.
 - `server/routes/files-history.test.ts`: real temporary root/linked repositories,
   route ownership, file bounds, history/diff and directory-only reading.
+- `server/routes/workspace-file-version.test.ts`: preview `version`/`ETag`,
+  `expectedVersion`/`If-Match` 204/409/400 contracts, alias serialization,
+  staging-failure isolation, in-place hardlink preservation, read-only refusal,
+  oversized saves and `If-Match` relay forwarding.
 - `workspaces/git-history.test.ts`: root/merge/rename/delete/binary/gitlink cases
   and snapshot pagination across a new HEAD.
 - `workspaces/git-init.test.ts` and `server/routes/git-init.test.ts`: exact-folder

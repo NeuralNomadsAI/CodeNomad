@@ -1,5 +1,4 @@
 import { timingSafeEqual } from "node:crypto"
-import { resolve } from "node:path"
 import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
@@ -8,7 +7,7 @@ import type { DeveloperCdpDiagnostic, DeveloperCdpIdentity, DeveloperCdpSelectio
 import { StaleDeveloperDocument } from "../../developer-cdp"
 import { parseDeveloperTarget, type DeveloperTargetSelector } from "../../automation/developer-target-selector"
 import { NativeRequestRefused, type NativeParent } from "../../native-parent"
-import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { admitMissionInput } from "./mission-input"
@@ -34,8 +33,6 @@ import { isRestartSuccessor, readDeveloperRestart, readDeveloperTarget, sameDeve
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
-import { BrowserPage } from "../../automation/browser-page"
-import { BROWSER_DISCOVERY_TIMEOUT_MS, browserTargetRefusal, isBrowserTarget } from "../../automation/browser-target"
 import type { SettingsService } from "../../settings/service"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -107,11 +104,8 @@ export function isAutomationPluginRequest(
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
   const inspectedTargets = new DeveloperInspectionTargets()
-  const browserPage = new BrowserPage(deps.nativeParent)
-  app.addHook("onClose", async () => browserPage.close())
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
-    let executionTimer: NodeJS.Timeout | undefined
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown
@@ -130,7 +124,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "developer-restart", "developer-reconnect", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "developer-restart", "developer-reconnect", "browser-claim", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
@@ -173,42 +167,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
-    const browserDiscovery = body.mode === "browser-probe" || body.mode === "browser-claim" && !preferenceProbe && body.purpose !== "mission"
-    const notOwner = (error: string) => reply.code(404).send({ error,
-      ...(preferenceProbe ? { code: "mission-not-owner" } : browserDiscovery ? { code: "browser-not-owner" } : {}) })
-    const inventoryUnavailable = () => reply.code(503).send({ code: "inventory-unavailable", error: "The preview inventory could not be verified" })
-    let discoveryDeadline: number | undefined
-    let readSignal = lifetime.signal
-    if (browserDiscovery) {
-      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
-        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser discovery deadline" })
-      }
-      const now = Date.now()
-      discoveryDeadline = Math.min(body.deadline ?? Infinity, now + BROWSER_DISCOVERY_TIMEOUT_MS)
-      if (discoveryDeadline <= now || lifetime.signal.aborted) return inventoryUnavailable()
-      if (!deps.nativeParent.available || deps.nativeParent.browserAutomationUnavailable) {
-        return reply.code(404).send({ code: "no-preview-host", error: "Browser automation is unavailable in this host" })
-      }
-      readSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(discoveryDeadline - now)])
-    }
-    let executionDeadline: number | undefined
-    const executionExpired = () => executionDeadline !== undefined && (readSignal.aborted || executionDeadline <= Date.now())
-    const expiredExecution = () => reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
-    if (body.mode === "browser-execute") {
-      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
-        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
-      }
-      const now = Date.now()
-      executionDeadline = Math.min(body.deadline ?? Infinity, now + 90_000)
-      if (executionExpired()) return expiredExecution()
-      const deadline = new AbortController()
-      readSignal = AbortSignal.any([lifetime.signal, deadline.signal])
-      executionTimer = setTimeout(() => deadline.abort(), executionDeadline - now)
-    }
+    const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
+    const readSignal = lifetime.signal
     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : readSignal
-    const discoveryExpired = () => discoveryDeadline !== undefined && (readSignal.aborted || discoveryDeadline <= Date.now())
 
     let reconnect: { native: DeveloperNativeStatus; target: DeveloperTarget; restartId: string } | undefined
     if (body.mode === "developer-reconnect") {
@@ -238,54 +201,27 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     try {
       signal.throwIfAborted()
       const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient(), readSignal)
-      if (executionExpired()) return expiredExecution()
       signal.throwIfAborted()
       location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), readSignal)).location
     } catch (error) {
-      if (executionExpired()) return expiredExecution()
       if (reconnect) return reconnectWaiting(reconnect)
       if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
-      if (browserDiscovery && (discoveryExpired() || !isSessionNotFoundError(error) || error.sessionID !== body.sessionID)) return inventoryUnavailable()
       return notOwner("Session not found")
     }
-    if (executionExpired()) return expiredExecution()
-    if (discoveryExpired()) return inventoryUnavailable()
-    // Open needs the complete set for occurrence selection. Other modes can
-    // proceed with one validated owner without waiting for unrelated inventories.
-    const openingBrowser = body.mode === "browser-execute" && (body.command as { action?: unknown } | undefined)?.action === "open"
-    let workspaceIDs: string[] | undefined
     let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
-      if (executionExpired()) return expiredExecution()
       const reads = workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery || openingBrowser })) return workspace.id }
-        catch (error) {
-          const failure = error as NodeJS.ErrnoException | undefined
-          const missingRoot = openingBrowser && failure?.code === "ENOENT" && failure.syscall === "realpath"
-            && typeof failure.path === "string" && resolve(failure.path) === resolve(workspace.path)
-          if (!missingRoot) ownershipReadFailed = true
-        }
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe })) return workspace.id }
+        catch { ownershipReadFailed = true }
         throw new Error("Not an owner")
       })
-      if (openingBrowser) {
-        const results = await lifetime.wait(Promise.allSettled(reads), readSignal)
-        if (executionExpired()) return expiredExecution()
-        if (ownershipReadFailed) return reply.code(409).send({ error: "Could not verify the owning project tabs" })
-        workspaceIDs = results.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
-        owned = workspaceIDs.length > 0
-      } else {
-        owned = await lifetime.wait(Promise.any(reads), readSignal).then(() => true, () => false)
-      }
+      owned = await lifetime.wait(Promise.any(reads), readSignal).then(() => true, () => false)
     } catch (error) {
-      if (executionExpired()) return expiredExecution()
       if (preferenceProbe) return preferenceUnavailable()
-      if (browserDiscovery) return inventoryUnavailable()
       throw error
     }
-    if (executionExpired()) return expiredExecution()
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
-    if (browserDiscovery && (discoveryExpired() || !owned && ownershipReadFailed)) return inventoryUnavailable()
     if (!owned) return reconnect ? reconnectWaiting(reconnect) : notOwner("Session is not owned by this CodeNomad instance")
 
     if (body.mode === "developer-restart") {
@@ -410,59 +346,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
-    if (body.mode === "browser-execute" && deps.nativeParent.browserAutomationUnavailable) {
-      return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
-    }
-
     if (body.mode === "browser-claim") {
       return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
-    }
-    if (body.mode === "browser-probe" && discoveryDeadline !== undefined) {
-      if (discoveryExpired()) return inventoryUnavailable()
-      try {
-        const result = await lifetime.wait(deps.nativeParent.request<{ available: boolean; target?: string }>(
-          "browser.probe", { sessionID: body.sessionID }, { deadline: discoveryDeadline }))
-        if (discoveryExpired()) return inventoryUnavailable()
-        if (result?.available === false) return reply.code(404).send(browserTargetRefusal("No visible browser target"))
-        if (result?.available !== true || !isBrowserTarget(result.target)) return reply.code(409).send({ code: "unsupported", error: "The desktop host cannot pin a browser target" })
-        return reply.send({ result: { available: true, target: result.target } })
-      } catch (error) {
-        const refusal = browserTargetRefusal(error instanceof Error ? error.message : String(error))
-        return reply.code(refusal.code === "hidden-preview" ? 404 : refusal.code === "browser-unavailable" ? 503 : 409).send(refusal)
-      }
-    }
-    if (executionDeadline !== undefined) {
-      let command
-      try {
-        command = parseBrowserAction(body.command)
-      } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
-      }
-      const target = command.action === "open" ? undefined : body.target
-      if (command.action !== "open" && !isBrowserTarget(target)) {
-        return reply.code(400).send({ code: "target-required", error: "A current browser target is required" })
-      }
-      if (executionExpired()) return expiredExecution()
-      try {
-        const work = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? deps.nativeParent.request("browser.execute", {
-            sessionID: body.sessionID, command, ...(target ? { target } : {}), ...(workspaceIDs ? { workspaceIDs } : {}),
-          }, { deadline: executionDeadline })
-          : browserPage.execute(body.sessionID, command, readSignal, target as string, executionDeadline)
-        const result = await lifetime.wait(work, readSignal)
-        if (executionExpired()) return expiredExecution()
-        return reply.send({ result })
-      } catch (error) {
-        if (executionExpired()) return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
-        const message = error instanceof Error ? error.message : String(error)
-        const code = !openingBrowser ? undefined
-          : /Multiple owning tabs/.test(message) ? "ambiguous-target"
-          : /No visible local window has the owning project tab|Owning project tabs are unavailable/.test(message) ? "no-occurrence"
-          : /Browser (?:open (?:target|renderer|registration) changed|(?:open )?navigation changed)/.test(message) ? "target-gone"
-          : /Browser preview (?:already exists|open is already in progress)/.test(message) ? "preview-in-use"
-          : undefined
-        return reply.code(409).send(code ? { error: message, code } : browserTargetRefusal(message))
-      }
     }
 
     let command
@@ -579,6 +464,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
-    } finally { clearTimeout(executionTimer); lifetime.dispose() }
+    } finally { lifetime.dispose() }
   })
 }

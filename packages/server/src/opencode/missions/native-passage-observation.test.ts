@@ -2,28 +2,10 @@ import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { Context, Effect } from "effect"
-import { acquireNativePassageObservation, qualifyNativePassageStorage } from "./native-passage-observation"
+import { acquireNativePassageObservation } from "./native-passage-observation"
 import { passageFixture } from "./native-passage-test-fixture"
-import { observeNativePassageSettlement, observePassageFamilySettlement } from "./native-recurrence-settlement"
+import { observePassageFamilySettlement } from "./native-recurrence-settlement"
 import type { CoordinatorBaseline } from "../../missions/mission-coordinator-baseline"
-import { RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
-import { stableToken } from "../../missions/journal"
-
-test("terminal storage capability checks real columns and JSON projections without rows or effects", async () => {
-  const db = new DatabaseSync(":memory:")
-  try {
-    db.exec(`CREATE TABLE session_message(id TEXT,seq INTEGER,type TEXT,data TEXT); CREATE TABLE kv(key TEXT,value TEXT);
-      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT)`)
-    const sql: string[] = []
-    const graph = Context.make(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: {
-      unsafe: (query: string) => { sql.push(query); return { withoutTransform: Effect.sync(() => db.prepare(query).all()) } },
-    } } })
-    await Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph)))
-    assert.equal(sql.length, 3); assert.ok(sql.every(query => query.endsWith("WHERE 0")))
-    db.exec("DROP TABLE session_message; CREATE TABLE session_message(id TEXT,type TEXT,data TEXT)")
-    await assert.rejects(Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph))), /seq/)
-  } finally { db.close() }
-})
 
 test("an old inactive claim remains uncertain across wakes until a correlated native terminal releases it", async () => {
   const f = await passageFixture(), db = new DatabaseSync(":memory:")
@@ -48,27 +30,21 @@ test("an old inactive claim remains uncertain across wakes until a correlated na
       ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
       ["@opencode/Shell", { list: () => Effect.succeed([]) }],
     ] as const) graph = Context.add(graph, tag(name), value)
-    const observe = async (serviceStartedAt: number) => observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!,
-      storage: f.storage, native: await Effect.runPromise(acquireNativePassageObservation(serviceStartedAt).pipe(Effect.provide(graph))),
-      directory: f.root, current: () => true, signal: new AbortController().signal })
+    const observe = async (serviceStartedAt: number) => f.observe(await Effect.runPromise(acquireNativePassageObservation(serviceStartedAt).pipe(Effect.provide(graph))))
     assert.equal(await observe(500), undefined, "a claim written by this service process may still be running")
     running.add(f.passage.coordinatorSessionID)
     assert.equal(await observe(2000), undefined, "a resumed (live) execution is not interrupted")
     running.clear()
-    const before = await f.calendar.read("schedule")
+    const before = await f.document()
     for (let wake = 0; wake < 3; wake++) assert.equal(await observe(2000), undefined, "old inactive claim never becomes terminal by age")
-    assert.deepEqual(await f.calendar.read("schedule"), before, "no archive, cursor advance or replacement pending")
+    assert.deepEqual(await f.document(), before, "no archive, cursor advance or replacement pending")
     db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_terminal',?,'idle',?)")
       .run(f.passage.coordinatorSessionID, JSON.stringify({ outcome: "interrupted" }))
     assert.equal(await observe(2000), undefined, "even a stale idle cannot override a surviving claim")
     db.prepare("UPDATE session_v2 SET time_suspended=NULL").run()
-    const settled = (await observe(2000))!
-    assert.equal(settled.result.outcome, "ended-without-report")
-    assert.equal(settled.result.reason, "interrupted")
-    const archived = await f.calendar.finish("schedule", settled.result, 30, () => true, settled.expectedRevision)
-    assert.equal(archived.history.at(-1)?.result.reason, "interrupted")
+    assert.equal((await observe(2000))?.outcome, "ended-without-report")
     assert.deepEqual(f.counts().sends, 1, "settlement never sends a continuation")
-  } finally { db.close(); await f.dispose() }
+  } finally { db.close() }
 })
 
 // Native `serve` (as of the minimum supported OpenCode) leaves the `event` table empty; each execution terminal is
@@ -100,9 +76,8 @@ async function idleFamily(finish?: "completed", shells: unknown[] = []) {
     ["@opencode/Shell", { list: () => Effect.sync(() => shells) }],
   ] as const) graph = Context.add(graph, tag(name), value)
   const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
-  const observe = async () => (await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
-    native, directory: f.root, current: () => true, signal: new AbortController().signal }))?.result
-  return { f, db, idle, coordinator, child, observe, native, dispose: async () => { db.close(); await f.dispose() } }
+  const observe = () => f.observe(native)
+  return { f, db, idle, coordinator, child, observe, native, dispose: () => db.close() }
 }
 
 test("adoption checkpoints separate old/pruned children, inherited running work, new helpers and continued children without clocks", async () => {
@@ -162,7 +137,7 @@ test("adoption checkpoints separate old/pruned children, inherited running work,
     t.db.prepare("UPDATE session_v2 SET metadata=NULL WHERE id=?").run(t.child)
     assert.equal(t.db.prepare("SELECT time_updated FROM session_v2 WHERE id=?").get(t.child)!.time_updated, 10)
     assert.equal(await observe(), undefined, "equal recency timestamps cannot hide admitted and removed work beyond the durable sequence")
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("running shells block H11 only for the chosen family or indeterminate ownership", async () => {
@@ -187,7 +162,7 @@ test("running shells block H11 only for the chosen family or indeterminate owner
     }
     shells.length = 0
     assert.equal((await t.observe())?.outcome, "completed")
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("a native failed turn without a final report archives failed, read from the idle projection", async () => {
@@ -199,11 +174,9 @@ test("a native failed turn without a final report archives failed, read from the
     t.idle("msg_idle_child", t.child, "failed")
     const failed = (await t.observe())!
     assert.equal(failed.outcome, "failed", "a descendant's native failure counts for the family")
-    assert.equal(failed.reason, undefined)
-    assert.deepEqual(failed.cursors, [], "failed passages never advance watched cursors")
     assert.equal(t.db.prepare("SELECT count(*) AS count FROM event").get()!.count, 0)
     assert.equal(t.f.counts().sends, 1, "classification never retries or replays")
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("a completed final report wins over a later native failure during wrap-up", async () => {
@@ -212,7 +185,7 @@ test("a completed final report wins over a later native failure during wrap-up",
     t.idle("msg_idle_fail", t.coordinator, "failed")
     t.idle("msg_idle_child_ok", t.child, "succeeded")
     assert.equal((await t.observe())?.outcome, "completed")
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("terminal correlation uses the exact original input and native sequence, excluding unrelated failure history", async () => {
@@ -231,7 +204,7 @@ test("terminal correlation uses the exact original input and native sequence, ex
     t.db.prepare("DELETE FROM session_message WHERE id=?").run(t.f.passage.messageID)
     for (let wake = 0; wake < 3; wake++) assert.equal(await t.observe(), undefined, "pruned original keeps the exact pending uncertain")
     assert.equal(t.f.counts().sends, 1)
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("an undelivered native background result blocks family settlement even after the child's terminal", async () => {
@@ -249,7 +222,7 @@ test("an undelivered native background result blocks family settlement even afte
     assert.equal((await t.observe())?.outcome, "completed", "unrelated known ownership is excluded")
     t.db.prepare("UPDATE kv SET value='{}'").run()
     await assert.rejects(t.observe(), /background coverage unavailable/, "unknown background ownership fails closed")
-  } finally { await t.dispose() }
+  } finally { t.dispose() }
 })
 
 test("read/grep/edit/webfetch/shell completed calls do not block real passage settlement", async () => {
@@ -287,19 +260,9 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
       ["@opencode/Shell", { list: () => Effect.succeed([]) }],
     ] as const) graph = Context.add(graph, tag(name), value)
     const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
-    const doc = (await f.calendar.read("schedule"))!
-    const prefix = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
-    const key = `${prefix}${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${doc.projectID}\0${doc.projectCanonical}`, 24)}/${doc.id}`
-    db.prepare("INSERT INTO kv VALUES(?,?)").run(key, JSON.stringify(doc))
-    native.assertScheduleCurrent(doc, true)
-    db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify({ ...doc, state: "paused" }), key)
-    assert.throws(() => native.assertScheduleCurrent(doc, true), /schedule changed/)
-    native.assertScheduleCurrent(doc, false)
     asyncSQL = true
-    const observe = async () => observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
-      native, directory: f.root, current: () => true, signal: new AbortController().signal })
-    const settled = (await observe())!
-    assert.equal(settled.result.outcome, "completed")
+    const observe = () => f.observe(native)
+    assert.equal((await observe())?.outcome, "completed")
     running.add(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "a natively running coordinator blocks settlement")
     running.clear()
@@ -308,26 +271,16 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     assert.equal(await observe(), undefined)
     content[4].state.status = "completed"
     db.prepare("UPDATE session_message SET data=? WHERE id='msg_tools'").run(JSON.stringify({ content }))
-    assert.equal((await observe())?.result.outcome, "completed")
+    assert.equal((await observe())?.outcome, "completed")
     // Split parts override even a stale inline completed copy.
     content[4].state.status = "running"
     db.prepare("INSERT INTO session_part VALUES('msg_tools',?,0,'tool',?)").run(f.passage.coordinatorSessionID, JSON.stringify(content[4]))
     assert.equal(await observe(), undefined, "split running tool blocks settlement")
     content[4].state.status = "completed"
     db.prepare("UPDATE session_part SET data=?").run(JSON.stringify(content[4]))
-    assert.equal((await observe())?.result.outcome, "completed")
+    assert.equal((await observe())?.outcome, "completed")
     db.prepare("INSERT INTO session_inbox VALUES('msg_pending',?)").run(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "an inbox item blocks quiescence")
     db.prepare("DELETE FROM session_inbox").run()
-    // A control committed after the observation is a revision CAS conflict, never a lost archive.
-    const stale = (await observe())!
-    const current = (await f.calendar.read("schedule"))!
-    await f.calendar.setState("schedule", current.revision, "paused", () => true)
-    await assert.rejects(f.calendar.finish("schedule", stale.result, 30, () => true, stale.expectedRevision), /revision conflict/)
-    assert.ok((await f.calendar.read("schedule"))!.pending, "conflict leaves the exact passage pending")
-    const fresh = (await observe())!
-    const archived = await f.calendar.finish("schedule", fresh.result, 30, () => true, fresh.expectedRevision)
-    assert.equal(archived.pending, null)
-    assert.equal(archived.history.at(-1)?.result.outcome, "completed")
-  } finally { db.close(); await f.dispose() }
+  } finally { db.close() }
 })

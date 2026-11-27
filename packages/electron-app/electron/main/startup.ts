@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { readFileSync, statSync } from "node:fs"
+import { readFile, stat } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { isAbsolute, join, normalize, resolve } from "node:path"
 import { parse as parseYaml } from "yaml"
@@ -212,8 +214,12 @@ export function createLaunchIntentQueue(
   const ready = new Promise<void>((resolve) => { start = resolve })
   let tail = Promise.resolve()
   return {
-    enqueue(intent: LaunchIntent): Promise<void> {
-      const operation = tail.then(() => ready).then(() => handle(intent))
+    /** A function prepares its launch in queue order; one that yields nothing is skipped. */
+    enqueue(intent: LaunchIntent | (() => Promise<LaunchIntent | undefined>)): Promise<void> {
+      const operation = tail.then(() => ready).then(async () => {
+        const prepared = typeof intent === "function" ? await intent() : intent
+        if (prepared) await handle(prepared)
+      })
       tail = operation.catch(reportError)
       return operation
     },
@@ -222,16 +228,22 @@ export function createLaunchIntentQueue(
   }
 }
 
-function existingDirectory(value: string, cwd: string): string | undefined {
-  const candidate = resolve(cwd, value)
+type DirectoryCheck = (path: string) => boolean
+
+const isDirectorySync: DirectoryCheck = (path) => {
   try {
-    return statSync(candidate).isDirectory() ? candidate : undefined
+    return statSync(path).isDirectory()
   } catch {
-    return undefined
+    return false
   }
 }
 
-export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
+function existingDirectory(value: string, cwd: string, isDirectory: DirectoryCheck): string | undefined {
+  const candidate = resolve(cwd, value)
+  return isDirectory(candidate) ? candidate : undefined
+}
+
+export function parseLaunchIntent(argv: string[], cwd: string, isDirectory = isDirectorySync): LaunchIntent {
   const folders: string[] = []
   let newWindow = false
   let connectServer: string | undefined
@@ -259,18 +271,18 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
       const folder = argv[index + 1]
       if (folder && !folder.startsWith("-")) {
         index++
-        const resolved = existingDirectory(folder, cwd)
+        const resolved = existingDirectory(folder, cwd, isDirectory)
         if (resolved) folders.push(resolved)
       }
       continue
     }
     if (value.startsWith("--folder=")) {
-      const resolved = existingDirectory(value.slice("--folder=".length), cwd)
+      const resolved = existingDirectory(value.slice("--folder=".length), cwd, isDirectory)
       if (resolved) folders.push(resolved)
       continue
     }
     if (value.startsWith("-")) continue
-    const resolved = existingDirectory(value, cwd)
+    const resolved = existingDirectory(value, cwd, isDirectory)
     if (resolved) folders.push(resolved)
   }
   return { newWindow, folders: [...new Set(folders)], ...(connectServer !== undefined ? { connectServer } : {}) }
@@ -311,23 +323,65 @@ export function forwardedLaunchData(intent: LaunchIntent): { codenomadLaunchInte
 }
 
 /** Validates a second launch's singleton payload; anything malformed falls back to parsing the forwarded argv. */
-export function readForwardedLaunchIntent(data: unknown): LaunchIntent | undefined {
+export function readForwardedLaunchIntent(data: unknown, isDirectory = isDirectorySync): LaunchIntent | undefined {
   const intent = (data as { codenomadLaunchIntent?: unknown } | null | undefined)?.codenomadLaunchIntent as Partial<LaunchIntent> | undefined
   if (!intent || typeof intent !== "object" || typeof intent.newWindow !== "boolean" || !Array.isArray(intent.folders)
     || intent.folders.length > MAX_FORWARDED_FOLDERS || !intent.folders.every((folder) => typeof folder === "string")
     || (intent.connectServer !== undefined && (typeof intent.connectServer !== "string" || intent.connectServer.length > MAX_CONNECT_SERVER_LENGTH))) {
     return undefined
   }
-  const folders = intent.folders.filter((folder) => isAbsolute(folder) && existingDirectory(folder, folder) === resolve(folder))
+  const folders = intent.folders.filter((folder) => isAbsolute(folder) && existingDirectory(folder, folder, isDirectory) === resolve(folder))
   return { newWindow: intent.newWindow, folders: [...new Set(folders)], ...(intent.connectServer !== undefined ? { connectServer: intent.connectServer.trim() } : {}) }
 }
 
 export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: string): LaunchIntent {
   // A connection runs in an existing window; a new window would be left empty beside the remote one.
   if (isConnectOnlyLaunch(intent)) return intent
+  let config: string | undefined
   try {
-    const config = parseYaml(readFileSync(configPath, "utf8")) as any
-    if (config?.ui?.settings?.focusExistingWindowOnSecondLaunch === true) return intent
+    config = readFileSync(configPath, "utf8")
+  } catch {}
+  return secondLaunchIntent(intent, config)
+}
+
+function secondLaunchIntent(intent: LaunchIntent, config: string | undefined): LaunchIntent {
+  try {
+    if ((parseYaml(config ?? "") as any)?.ui?.settings?.focusExistingWindowOnSecondLaunch === true) return intent
   } catch {}
   return intent.newWindow ? intent : { ...intent, newWindow: true }
+}
+
+type FileReads = { stat: (path: string) => Promise<{ isDirectory(): boolean }>; readFile: (path: string, encoding: "utf8") => Promise<string> }
+
+/** Electron's patched fs probes `.asar` path components synchronously on the calling thread; `original-fs` reads the disk directly. */
+function physicalFileReads(): FileReads {
+  try {
+    return createRequire(import.meta.url)("original-fs").promises as FileReads
+  } catch {
+    return { stat, readFile }
+  }
+}
+
+/**
+ * A launch forwarded to the running app, prepared off the native event loop: `parse` runs once to
+ * list the folders to check, the checks and the second-launch config read run asynchronously, then
+ * `parse` runs again on their results. Without `configPath` the launch keeps its window choice.
+ */
+export async function prepareForwardedLaunch(
+  parse: (isDirectory: DirectoryCheck) => LaunchIntent | undefined,
+  configPath?: string,
+  files = physicalFileReads(),
+): Promise<LaunchIntent | undefined> {
+  const candidates = new Set<string>()
+  parse((path) => {
+    candidates.add(path)
+    return true
+  })
+  const directories = new Set<string>()
+  await Promise.all([...candidates].map(async (path) => {
+    if ((await files.stat(path).catch(() => undefined))?.isDirectory()) directories.add(path)
+  }))
+  const intent = parse((path) => directories.has(path))
+  if (!intent || configPath === undefined || isConnectOnlyLaunch(intent)) return intent
+  return secondLaunchIntent(intent, await files.readFile(configPath, "utf8").catch(() => undefined))
 }

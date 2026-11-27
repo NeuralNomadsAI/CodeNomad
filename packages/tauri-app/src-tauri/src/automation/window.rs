@@ -449,6 +449,7 @@ fn cdp(
 ) -> Result<Value, String> {
     crate::browser_controller::cdp_guarded_inner(
         webview,
+        None,
         method,
         params,
         deadline,

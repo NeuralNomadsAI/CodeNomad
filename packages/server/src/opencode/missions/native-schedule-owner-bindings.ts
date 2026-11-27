@@ -19,8 +19,7 @@ export interface NativeScheduleOwnerBindings {
 }
 
 /** Read-only own-process RPC preflight for a current auxiliary, including a
- * dispatched create whose ACK was lost. The parent separately verifies the exact
- * durable user message before claiming; runCount here qualifies its native ACK. */
+ * dispatched create whose ACK was lost. The row and live program qualify its run. */
 export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context, wake: NativeScheduleWake, native: NativeScheduleCalendarService,
   run: <A>(effect: Effect.Effect<A, unknown>) => Promise<A>, current: () => true): Promise<NativeScheduleCarrierBinding | undefined> {
   assertNativeScheduleWake(wake)
@@ -34,13 +33,16 @@ export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context
   if (!slot || slot.scheduleID !== null && slot.scheduleID !== wake.scheduleID) return undefined
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
-  const rows = await native.list({ missionID: doc.id, descriptor: slot }, current)
-  // A code run is counted only after its program returns: an uncounted run must be live in this process.
-  if (rows.length !== 1 || rows[0].id !== wake.scheduleID || !nativeScheduleCalendarMatches(rows[0], slot) || rows[0].runCount < wake.run
-    && !(rows[0].code && rows[0].runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))) return undefined
-  const fresh = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID))
+  // Final read: ownership and the row together, then synchronous checks only.
+  const [fresh, list] = await Promise.all([run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID)),
+    native.list({ missionID: doc.id, descriptor: slot }, current)])
   guard()
-  if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)) return undefined
+  const row = list.length === 1 && list[0].id === wake.scheduleID && nativeScheduleCalendarMatches(list[0], slot) ? list[0] : undefined
+  if (!row || !fresh?.verified || fresh.document?.revision !== doc.revision
+    || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)) return undefined
+  if (!row.code) throw new Error("schedule-calendar-requires-code")
+  // An uncounted run must be live in this process.
+  if (row.runCount < wake.run && !(row.runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))) return undefined
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   const calendar = doc.calendars.find(item => item.sessionID === slot.sessionID)
   if (calendar && (calendar.scheduleID !== wake.scheduleID || calendar.role !== "reconciliation" || calendar.timeGeneration !== doc.timeGeneration)) return undefined

@@ -165,6 +165,14 @@ enum Action {
     SessionNext,
     CloseSession,
     CleanupBlankSessions,
+    OpenHelp,
+    OpenSponsor,
+}
+
+#[derive(Clone, Copy)]
+enum HelpPage {
+    Home,
+    Sponsor,
 }
 
 fn reserved_shell_key(event: &KeyEvent) -> bool {
@@ -267,6 +275,12 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if project_open && can_cleanup_blank && matches("cleanup-blank-sessions") {
             return Some(Action::CleanupBlankSessions);
         }
+        if matches("open-help") {
+            return Some(Action::OpenHelp);
+        }
+        if matches("open-sponsor") {
+            return Some(Action::OpenSponsor);
+        }
         None
     }) else {
         return false;
@@ -320,8 +334,51 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         Action::CleanupBlankSessions => {
             super::blank_cleanup::open_confirm(s, None, tx);
         }
+        Action::OpenHelp => open_help_page(s, tx, HelpPage::Home),
+        Action::OpenSponsor => open_help_page(s, tx, HelpPage::Sponsor),
     }
     true
+}
+
+fn open_help_page(s: &mut State, tx: &mut Tx, page: HelpPage) {
+    let locale = settings::app_locale(s);
+    let url = match page {
+        HelpPage::Home => format!("https://neuralnomadsai.github.io/CodeNomad/{locale}/"),
+        HelpPage::Sponsor => {
+            format!("https://neuralnomadsai.github.io/CodeNomad/{locale}/sponsor.html")
+        }
+    };
+    let report_failure = move |s: &mut State, url: &str| {
+        let locale = settings::app_locale(s);
+        crate::strings::with_locale(locale, || {
+            let (title, body) = match page {
+                HelpPage::Sponsor => (
+                    crate::strings::t("commands.openSponsor.label").into(),
+                    crate::strings::t("commands.openSponsor.failed").replace("{url}", url),
+                ),
+                HelpPage::Home => (
+                    crate::strings::t("commands.openHelp.label").into(),
+                    crate::strings::t("commands.openHelp.failed").into(),
+                ),
+            };
+            notifications::emit_outcome(
+                s,
+                notifications::Category::Settings,
+                Some(title),
+                body,
+                true,
+            );
+        });
+    };
+    let failed_url = url.clone();
+    let launch = tx.open_url_then(&url, move |s: &mut State, result, _| {
+        if result.is_err() {
+            report_failure(s, &failed_url);
+        }
+    });
+    if launch.is_err() {
+        report_failure(s, &url);
+    }
 }
 
 pub(super) fn select_session_index(s: &mut State, index: usize, tx: &mut Tx) {

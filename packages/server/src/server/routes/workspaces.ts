@@ -10,6 +10,7 @@ import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
+import { FileChangedError, FileTooLargeError } from "../../filesystem/browser"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitProbeUnavailableError, GitRequiredError } from "../../workspaces/git-requirement"
 import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
@@ -50,7 +51,21 @@ const WorkspaceFileContentQuerySchema = z.object({
 
 const WorkspaceFileContentBodySchema = z.object({
   contents: z.string(),
+  expectedVersion: z.string().min(1).optional(),
 })
+
+function resolveExpectedVersion(ifMatch: string | string[] | undefined, expectedVersion: string | undefined): string | undefined {
+  if (ifMatch !== undefined && expectedVersion !== undefined) {
+    throw new Error("Conflicting version selectors")
+  }
+  if (ifMatch !== undefined) {
+    if (Array.isArray(ifMatch) || ifMatch.trim().length === 0) {
+      throw new Error("Invalid file version")
+    }
+    return ifMatch
+  }
+  return expectedVersion
+}
 
 const WorktreeGitDiffQuerySchema = z.object({
   path: z.string().trim().min(1, "Path is required"),
@@ -100,7 +115,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/files/preview", async (request, reply) => {
     try {
       const query = z.object({ path: z.string().min(1), directory: z.string().min(1).optional() }).parse(request.query)
-      return await deps.workspaceManager.previewFile(request.params.id, query.path, query.directory)
+      const result = await deps.workspaceManager.previewFile(request.params.id, query.path, query.directory)
+      if (result.version) reply.header("ETag", result.version)
+      return result
     } catch (error) { return handleWorkspaceError(error, reply) }
   })
   app.get<{ Params: { id: string; slug: string } }>("/api/workspaces/:id/worktrees/:slug/git-history", async (request, reply) => {
@@ -245,16 +262,19 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.put<{
     Params: { id: string }
     Querystring: { path?: string; worktree?: string }
-  }>("/api/workspaces/:id/files/content", async (request, reply) => {
+  }>("/api/workspaces/:id/files/content", { bodyLimit: 32 * 1024 * 1024 }, async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      const expectedVersion = resolveExpectedVersion(request.headers["if-match"], body.expectedVersion)
+      const options = expectedVersion !== undefined ? { expectedVersion } : undefined
       if (query.directory) {
         const directory = query.directory
         const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
-          await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+          return await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents, options)
         })
         if (!mutation) return
+        if (mutation.value) reply.header("ETag", mutation.value)
         reply.code(204)
         return
       }
@@ -262,18 +282,20 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
         if (!directory) return
         const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
-          await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+          return await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents, options)
         })
         if (!mutation) return
+        if (mutation.value) reply.header("ETag", mutation.value)
         reply.code(204)
         return
       }
       const workspace = deps.workspaceManager.get(request.params.id)
       if (!workspace) throw new Error("Workspace not found")
       const mutation = await runWorktreeMutation(deps, workspace.id, workspace.path, reply, async () => {
-        await deps.workspaceManager.writeFile(workspace.id, query.path, body.contents)
+        return await deps.workspaceManager.writeFile(workspace.id, query.path, body.contents, options)
       })
       if (!mutation) return
+      if (mutation.value) reply.header("ETag", mutation.value)
       reply.code(204)
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -471,6 +493,8 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (error instanceof FileChangedError) return reply.code(error.statusCode).send({ error: error.message })
+  if (error instanceof FileTooLargeError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (error instanceof GitRequiredError || error instanceof GitProbeUnavailableError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)

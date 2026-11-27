@@ -8,15 +8,14 @@ import { test } from "node:test"
 import { installDesktopPluginArtifact, readDesktopPluginFile } from "./desktop-plugin-artifact"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 
-test("native filesystem identities allow intact runtime and provider payloads to install and reopen", async t => {
+test("native filesystem identities allow intact runtime payloads to install and reopen", async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-artifact-native-"))
   t.after(() => fs.rm(root, { recursive: true, force: true }))
   const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
   for (const feature of ["session-pruning", "automation", "missions"] as const) {
     const bundle = Buffer.from(`trusted ${feature}`)
     for (let attempt = 0; attempt < 2; attempt++) {
-      const stop = await installDesktopPluginPresence(feature, bundle, paths, undefined, undefined,
-        feature === "missions" ? Buffer.from("trusted provider") : undefined)
+      const stop = await installDesktopPluginPresence(feature, bundle, paths, undefined, undefined)
       await stop()
     }
     const hash = createHash("sha256").update(bundle).digest("hex")

@@ -115,5 +115,4 @@ export async function verifyRecurrenceRequest(input: unknown, deps: {
   assertRecurrenceProofFresh(body.issuedAt, now())
   return { admitted: true }
 }
-export const verifyHumanRecurrenceRequest = verifyRecurrenceRequest
 import { z } from "zod"

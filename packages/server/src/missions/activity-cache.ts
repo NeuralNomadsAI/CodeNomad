@@ -5,18 +5,22 @@ import { sameLocation } from "../opencode/compatibility/location"
 import type { NativeMissionFamilyTree } from "./native-session-family"
 
 /** A kept family tree is read again after this long, whatever the events say. */
-export const MISSION_FAMILY_TREE_TTL_MS = 20_000
+export const MISSION_FAMILY_TREE_TTL_MS = 60_000
 const MAX_TREES = 512
 const MAX_MISSING = 4096
 
-/** Native events that can change a family's membership, parents, locations or titles. */
+/** Native events that can change a family's membership, parents, locations or titles.
+ * Ordinary `session.updated` ticks do not alter parent/child topology and must not
+ * flush every mission's cached tree on every model turn. */
 const STRUCTURE_EVENTS = new Set(["session.created", "session.forked", "session.moved", "session.deleted",
-  "session.updated", "session.archived", "session.renamed"])
+  "session.archived", "session.renamed"])
 
 interface ClientCache {
   trees: Map<string, { root: SessionInfo; tree: NativeMissionFamilyTree; at: number; epoch: number }>
   /** Sessions the daemon answered 404 for: deletion is final and IDs are never reused. */
   missing: Set<string>
+  /** A session's parent, as read while walking a pending request's ancestry. */
+  parents: Map<string, { parentID: string | undefined; epoch: number }>
 }
 
 /**
@@ -53,8 +57,22 @@ export class MissionActivityCache {
 
   private of(client: OpenCodeClient): ClientCache {
     let cache = this.clients.get(client)
-    if (!cache) this.clients.set(client, cache = { trees: new Map(), missing: new Set() })
+    if (!cache) this.clients.set(client, cache = { trees: new Map(), missing: new Set(), parents: new Map() })
     return cache
+  }
+
+  /** The kept parent of a session, while nothing structural happened since it was read. */
+  parent(client: OpenCodeClient, sessionID: string): { parentID: string | undefined } | undefined {
+    const kept = this.clients.get(client)?.parents.get(sessionID)
+    return kept && kept.epoch === this.epoch && this.disconnected.size === 0 ? kept : undefined
+  }
+
+  keepParent(client: OpenCodeClient, sessionID: string, parentID: string | undefined, epoch: number): void {
+    if (epoch !== this.epoch || this.disconnected.size > 0) return
+    const parents = this.of(client).parents
+    parents.delete(sessionID)
+    if (parents.size >= MAX_MISSING) parents.delete(parents.keys().next().value!)
+    parents.set(sessionID, { parentID, epoch })
   }
 
   isMissing(client: OpenCodeClient, sessionID: string): boolean {

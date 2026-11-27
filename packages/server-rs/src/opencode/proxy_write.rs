@@ -1,6 +1,7 @@
 //! A dispatched session mutation owns its worktree admission through the native response.
 use std::{
     future::Future,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering::SeqCst},
@@ -13,7 +14,26 @@ use futures_util::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::{Error, opencode::upstream_error, worktrees::fence::Entered};
+use crate::{Error, not_found, opencode::upstream_error, worktrees::fence::Entered};
+
+pub(super) struct ObserverGuards {
+    pub principal: CancellationToken,
+    pub retired: Pin<Box<dyn Future<Output = ()> + Send>>,
+    pub closed: Pin<Box<dyn Future<Output = ()> + Send>>,
+    pub send_input: bool,
+}
+
+#[cfg(test)]
+impl ObserverGuards {
+    fn principal_only(principal: CancellationToken) -> Self {
+        Self {
+            principal,
+            retired: Box::pin(std::future::pending()),
+            closed: Box::pin(std::future::pending()),
+            send_input: false,
+        }
+    }
+}
 
 const PENDING: u8 = 0;
 const ABORTED_BEFORE_SEND: u8 = 1;
@@ -40,7 +60,7 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
     permit: Entered,
     rules: Option<tokio::sync::OwnedMutexGuard<()>>,
     cleanup: Option<crate::sessions::cleanup::MutationGuard>,
-    principal: CancellationToken,
+    mut guards: ObserverGuards,
     request: impl FnOnce(CancellationToken, DispatchGate) -> F + Send + 'static,
 ) -> Result<Response, Error> {
     let detached = CancellationToken::new();
@@ -79,19 +99,54 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
         }
     });
     let (parts, mut stream) = tokio::select! {
-        _ = principal.cancelled() => {
+        biased;
+        _ = guards.principal.cancelled() => {
             if gate.abort_before_send() {
                 return Ok(crate::auth::unauthorized_before_dispatch());
             }
             return Err(crate::auth::unauthorized());
         }
+        _ = &mut guards.retired => {
+            if gate.abort_before_send() && guards.send_input {
+                return Ok(crate::opencode::proxy::before_dispatch_error(crate::opencode::pre_dispatch_unavailable()));
+            }
+            return Err(upstream_error());
+        }
+        _ = &mut guards.closed => {
+            if gate.abort_before_send() && guards.send_input {
+                return Ok(crate::opencode::proxy::before_dispatch_error(not_found()));
+            }
+            return Err(not_found());
+        }
         response = response => response.map_err(|_| upstream_error())??,
     };
     let body = Body::from_stream(async_stream::stream! {
         let _observer = observer;
+        let mut guards = guards;
         loop {
             tokio::select! {
-                _ = principal.cancelled() => return,
+                biased;
+                _ = guards.principal.cancelled() => {
+                    yield Err(axum::Error::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "upstream stream aborted",
+                    )));
+                    return;
+                }
+                _ = &mut guards.retired => {
+                    yield Err(axum::Error::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "upstream stream aborted",
+                    )));
+                    return;
+                }
+                _ = &mut guards.closed => {
+                    yield Err(axum::Error::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "workspace closed",
+                    )));
+                    return;
+                }
                 chunk = stream.recv() => match chunk {
                     Some(chunk) => yield chunk,
                     None => return,
@@ -118,7 +173,7 @@ mod tests {
             fence::enter(&dirs).unwrap(),
             None,
             Some(cleanup_guard),
-            CancellationToken::new(),
+            ObserverGuards::principal_only(CancellationToken::new()),
             |_, gate| async move {
                 assert!(gate.try_dispatch());
                 started.send(()).unwrap();
@@ -146,8 +201,12 @@ mod tests {
         let dirs = ["/proxy-write-test/partial-body".to_string()];
         let (finish, held) = oneshot::channel();
         let (eof, drained) = oneshot::channel();
-        let response =
-            forward(fence::enter(&dirs).unwrap(), None, None, CancellationToken::new(), |_, gate| async move {
+        let response = forward(
+            fence::enter(&dirs).unwrap(),
+            None,
+            None,
+            ObserverGuards::principal_only(CancellationToken::new()),
+            |_, gate| async move {
                 assert!(gate.try_dispatch());
                 Ok(Response::new(Body::from_stream(async_stream::stream! {
                     yield Ok::<_, std::io::Error>(Bytes::from_static(b"first"));
@@ -155,9 +214,10 @@ mod tests {
                     yield Ok(Bytes::from_static(b"last"));
                     eof.send(()).unwrap();
                 })))
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let mut body = response.into_body().into_data_stream();
         assert_eq!(body.next().await.unwrap().unwrap(), "first");
         drop(body);
@@ -173,6 +233,183 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn observer_invalidation_prefers_error_over_ready_headers_and_keeps_fence_until_native_finishes() {
+        use crate::worktrees::fence;
+        use axum::http::StatusCode as Status;
+
+        // 1. Cancelled principal beats an already-ready native response (true race on biased select).
+        let dirs = ["/proxy-write-test/biased-cancel".to_string()];
+        let cancel = CancellationToken::new();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mut fut = Box::pin(forward(
+            fence::enter(&dirs).unwrap(),
+            None,
+            None,
+            ObserverGuards::principal_only(cancel.clone()),
+            |_, gate| async move {
+                assert!(gate.try_dispatch());
+                ready_tx.send(()).unwrap();
+                Ok(Response::new(Body::from("too-late")))
+            },
+        ));
+        assert!(futures_util::poll!(&mut fut).is_pending());
+        ready_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        let err = fut.await.unwrap_err();
+        assert_eq!(err.0, Status::UNAUTHORIZED);
+
+        // 2. Workspace close stops observing with 404 while keeping the deletion fence until native completes.
+        let dirs_ws = ["/proxy-write-test/ws-closed".to_string()];
+        let (started, waiting) = oneshot::channel();
+        let (finish, held) = oneshot::channel();
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(std::future::pending()),
+            closed: Box::pin(async move {
+                let _ = close_rx.await;
+            }),
+            send_input: false,
+        };
+        let mut req =
+            tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                started.send(()).unwrap();
+                held.await.unwrap();
+                Ok(Response::new(Body::from("acknowledged")))
+            }));
+        waiting.await.unwrap();
+        close_tx.send(()).unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(2), &mut req).await.unwrap().unwrap().unwrap_err();
+        assert_eq!(err.0, Status::NOT_FOUND);
+        let deletion = fence::block(&dirs_ws);
+        tokio::pin!(deletion);
+        assert!(futures_util::poll!(&mut deletion).is_pending());
+        finish.send(()).unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
+
+        // 3. Daemon retirement stops observing with 502 while keeping the deletion fence until native completes.
+        let dirs_ret = ["/proxy-write-test/daemon-retired".to_string()];
+        let (started, waiting) = oneshot::channel();
+        let (finish, held) = oneshot::channel();
+        let (retire_tx, retire_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(async move {
+                let _ = retire_rx.await;
+            }),
+            closed: Box::pin(std::future::pending()),
+            send_input: false,
+        };
+        let mut req =
+            tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                started.send(()).unwrap();
+                held.await.unwrap();
+                Ok(Response::new(Body::from("acknowledged")))
+            }));
+        waiting.await.unwrap();
+        retire_tx.send(()).unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(2), &mut req).await.unwrap().unwrap().unwrap_err();
+        assert_eq!(err.0, Status::BAD_GATEWAY);
+        let deletion = fence::block(&dirs_ret);
+        tokio::pin!(deletion);
+        assert!(futures_util::poll!(&mut deletion).is_pending());
+        finish.send(()).unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn send_input_retired_and_closed_before_dispatch_carry_before_dispatch_header() {
+        use crate::worktrees::fence;
+        use axum::http::StatusCode as Status;
+
+        // 1. Daemon retirement before try_dispatch -> 503 with x-codenomad-before-dispatch: 1, worker blocked.
+        let dirs_ret = ["/proxy-write-test/send-input-retired-before".to_string()];
+        let (entered, waiting) = oneshot::channel();
+        let (resume, proceed) = oneshot::channel();
+        let (dispatched_tx, dispatched_rx) = oneshot::channel();
+        let (retire_tx, retire_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(async move {
+                let _ = retire_rx.await;
+            }),
+            closed: Box::pin(std::future::pending()),
+            send_input: true,
+        };
+        let handle =
+            tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, None, guards, |_, gate| async move {
+                entered.send(()).unwrap();
+                let _ = proceed.await;
+                let _ = dispatched_tx.send(gate.try_dispatch());
+                Ok(Response::new(Body::from("unused")))
+            }));
+        waiting.await.unwrap();
+        retire_tx.send(()).unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap().unwrap();
+        assert_eq!(response.status(), Status::BAD_GATEWAY);
+        assert_eq!(response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()), Some("1"));
+        let _ = resume.send(());
+        assert!(!dispatched_rx.await.unwrap(), "worker must not dispatch after pre-send retirement abort");
+
+        // 2. Workspace close before try_dispatch -> 404 with x-codenomad-before-dispatch: 1, worker blocked.
+        let dirs_ws = ["/proxy-write-test/send-input-closed-before".to_string()];
+        let (entered, waiting) = oneshot::channel();
+        let (resume, proceed) = oneshot::channel();
+        let (dispatched_tx, dispatched_rx) = oneshot::channel();
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(std::future::pending()),
+            closed: Box::pin(async move {
+                let _ = close_rx.await;
+            }),
+            send_input: true,
+        };
+        let handle = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, None, guards, |_, gate| async move {
+            entered.send(()).unwrap();
+            let _ = proceed.await;
+            let _ = dispatched_tx.send(gate.try_dispatch());
+            Ok(Response::new(Body::from("unused")))
+        }));
+        waiting.await.unwrap();
+        close_tx.send(()).unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap().unwrap();
+        assert_eq!(response.status(), Status::NOT_FOUND);
+        assert_eq!(response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()), Some("1"));
+        let _ = resume.send(());
+        assert!(!dispatched_rx.await.unwrap(), "worker must not dispatch after pre-send workspace close abort");
+
+        // 3. Daemon retirement AFTER try_dispatch -> unmarked 502 error (unconfirmed).
+        let dirs_after = ["/proxy-write-test/send-input-retired-after".to_string()];
+        let (sent_tx, sent_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (retire_tx, retire_rx) = oneshot::channel::<()>();
+        let guards = ObserverGuards {
+            principal: CancellationToken::new(),
+            retired: Box::pin(async move {
+                let _ = retire_rx.await;
+            }),
+            closed: Box::pin(std::future::pending()),
+            send_input: true,
+        };
+        let handle_after =
+            tokio::spawn(forward(fence::enter(&dirs_after).unwrap(), None, None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                sent_tx.send(()).unwrap();
+                let _ = done_rx.await;
+                Ok(Response::new(Body::from("after")))
+            }));
+        sent_rx.await.unwrap();
+        retire_tx.send(()).unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(2), handle_after).await.unwrap().unwrap().unwrap_err();
+        assert_eq!(err.0, Status::BAD_GATEWAY);
+        let _ = done_tx.send(());
+    }
+
+    #[tokio::test]
     async fn principal_cancellation_distinguishes_before_and_after_dispatch() {
         use crate::worktrees::fence;
         let dirs = ["/proxy-write-test/auth-cancel-before".to_string()];
@@ -180,13 +417,18 @@ mod tests {
         let (entered, waiting) = oneshot::channel();
         let (resume, proceed) = oneshot::channel();
         let (dispatched_tx, dispatched_rx) = oneshot::channel();
-        let handle =
-            tokio::spawn(forward(fence::enter(&dirs).unwrap(), None, None, principal.clone(), |_, gate| async move {
+        let handle = tokio::spawn(forward(
+            fence::enter(&dirs).unwrap(),
+            None,
+            None,
+            ObserverGuards::principal_only(principal.clone()),
+            |_, gate| async move {
                 entered.send(()).unwrap();
                 let _ = proceed.await;
                 let _ = dispatched_tx.send(gate.try_dispatch());
                 Ok(Response::new(Body::from("unused")))
-            }));
+            },
+        ));
         waiting.await.unwrap();
         principal.cancel();
         let response = handle.await.unwrap().unwrap();
@@ -203,7 +445,7 @@ mod tests {
             fence::enter(&dirs_after).unwrap(),
             None,
             None,
-            principal_after.clone(),
+            ObserverGuards::principal_only(principal_after.clone()),
             |_, gate| async move {
                 assert!(gate.try_dispatch());
                 sent_tx.send(()).unwrap();

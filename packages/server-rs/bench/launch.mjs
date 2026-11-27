@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { assertPrivateHost, out, repo, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateHost, out, repo, rustBinary, sanitizeBenchEnvPath, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 await useBenchTemp()
 const cookieName = `codenomad_session_${process.pid}_1700000000000`
@@ -28,6 +28,7 @@ async function observe(label, command, prefix) {
     XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_STATE_HOME: path.join(home, ".local", "state"), XDG_CACHE_HOME: path.join(home, ".cache"),
     ProgramData: path.join(home, "ProgramData"), TEMP: home, TMP: home, TMPDIR: home })
+  await sanitizeBenchEnvPath(env, { allowedRoot: home })
   await assertPrivateHost(env, home)
   const child = spawn(command, [...prefix, ...args], { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
   let buffer = "", log = ""

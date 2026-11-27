@@ -7,6 +7,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         theme::header().child(
             layout::hinted_field(&ui.filter, name)
                 .label(name)
+                .input_mode(rune::InputMode::Search)
                 .on_edit(edit(s, |ui| &mut ui.filter))
                 .build(&field_kit(dark()))
                 .key("git-filter"),

@@ -42,7 +42,7 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 En el diálogo de error de inicio, elige **Abrir Configuración de OpenCode** para comprobar el ejecutable y la versión; para los valores de entorno personalizados, ve a **Avanzado → Variables de entorno**.
 
 1. Abre **Preferencias → OpenCode** y comprueba la tarjeta **Versión de OpenCode** (versión instalada y estado del servicio en ejecución) y después el ejecutable seleccionado en **Binario de OpenCode**.
-2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.3.0**; versión recomendada/verificada: **2.3.0**.
+2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.4.0**; versión recomendada/verificada: **2.4.1**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
 
 **Reiniciar servicio OpenCode** está disponible en **Solución de problemas** y requiere confirmación. Interrumpe el trabajo activo de todos los clientes conectados, pero conserva el historial de sesiones. Recargar la configuración es una acción separada: mantiene el proceso, pero reconstruye las Locations cargadas y cancela preguntas/permisos pendientes. Ninguna es una actualización inofensiva.
@@ -85,7 +85,7 @@ Para limpieza cancelada o parcial, lee su progreso/comprobantes antes de iniciar
 ## Registros y diagnósticos seguros {#diagnostics}
 
 1. Abre **Configuración → OpenCode → Ver registros de OpenCode**. Se lee el archivo global `opencode.log` del host de ejecución seleccionado, localizado mediante `opencode debug paths log`. Muestra como máximo los últimos 128 KiB; **Actualizar** vuelve a leer el archivo.
-2. En **Preferencias → OpenCode**, elige la **Verbosidad de logs** prevista solo cuando necesites más detalle. Para registros de CodeNomad independiente, usa las [opciones de registro de la CLI del servidor](server.md).
+2. En **Preferencias → OpenCode**, elige la **Verbosidad de logs** prevista solo cuando necesites más detalle. Para registros de CodeNomad independiente, usa las [opciones de registro de la CLI del servidor](server.md). El servidor de CodeNomad también guarda su propio registro en `logs/server.log`, junto a su archivo de configuración (`~/.config/codenomad` por defecto); el archivo completo anterior es `server.previous.log`.
 3. Abre **Configuración → Info → Diagnósticos** y usa **Informar de un error**, **Copiar al portapapeles** o **Descargar .txt**.
 
 El detalle de los registros puede exponer rutas, salida y datos de la aplicación. Oculta credenciales, enlaces de emparejamiento, direcciones de red, rutas privadas y contenido de conversaciones antes de compartir registros/capturas. El informe diagnóstico completo incluye rutas/direcciones; el formulario de error rellenado las excluye deliberadamente. Consulta [Informar de un error](support.md#report-a-bug).

@@ -18,6 +18,7 @@ test("scheduleSetting details are required unless the bundle lacks the method", 
 
 test("pathless deciding sources have no openable origin", () => {
   for (const path of ["OPENCODE_CONFIG_CONTENT", "well-known"])
-    assert.equal(nativeScheduleFlagOrigin([], { enabled: false, provenance: "automations-setting", path, hiddenOff: [] }), null)
-  assert.equal(nativeScheduleFlagOrigin([], { enabled: false, provenance: "experimental-block", path: "/g.json", hiddenOff: [] }), "/g.json")
+    assert.equal(nativeScheduleFlagOrigin({ enabled: false, provenance: "automations-setting", path, hiddenOff: [] }), null)
+  assert.equal(nativeScheduleFlagOrigin({ enabled: false, provenance: "experimental-block", path: "/g.json", hiddenOff: [] }), "/g.json")
+  assert.equal(nativeScheduleFlagOrigin({ enabled: true, provenance: "channel-default", hiddenOff: [] }), null)
 })

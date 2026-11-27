@@ -24,7 +24,7 @@ export type NativeScheduledPassageContext = {
   lifecycle?: MissionInputTransport["lifecycle"]
   qualifyBusiness?(): Promise<void>
   adoptCoordinator?(metadata: Record<string, unknown>, current: () => true): Promise<void>
-  settlementFence?(): Pick<NativeSourceFence, "family" | "current">
+  settlementFence?(): Pick<NativeSourceFence, "family" | "absentSession" | "current">
 }
 const marker = (metadata: unknown): Record<string, unknown> => {
   if (!metadata || typeof metadata !== "object" || !("codenomad.mission" in metadata)) throw new Error("Document passage metadata unavailable")

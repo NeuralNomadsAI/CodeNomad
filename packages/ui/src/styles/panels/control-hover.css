@@ -4,7 +4,8 @@
 .file-viewer-toolbar-icon-button:hover,
 .file-viewer-toolbar-button:hover,
 .git-change-commit-button:hover:not(:disabled),
-.git-change-commit-button-overlay:hover {
+.git-change-commit-button-overlay:hover,
+.session-automation-row .window-icon-button:hover:not([aria-disabled="true"]) {
   background-color: var(--surface-canvas);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }

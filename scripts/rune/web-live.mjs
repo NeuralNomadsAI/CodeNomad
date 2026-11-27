@@ -37,10 +37,25 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
       'Opening session search must not open New Session')
     stage='focus'
     started=await page.evaluate(()=>performance.now())
-    const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
+    const editor=page.locator('input[type="search"]:focus').and(page.getByRole('searchbox',{name,exact:true}))
     assert.equal(await editor.count(),0,'Opening search must not focus the field')
     await touch(field,'group')
     await editor.waitFor({state:'attached'})
+    const semantics=await editor.evaluate(el=>({
+      type:el.type,
+      inputMode:el.inputMode,
+      enterKeyHint:el.getAttribute('enterkeyhint'),
+      autocapitalize:el.getAttribute('autocapitalize'),
+      name:el.getAttribute('name'),
+    }))
+    assert.deepEqual(semantics,{
+      type:'search',
+      inputMode:'search',
+      enterKeyHint:'search',
+      autocapitalize:'none',
+      name:'search',
+    },`Session search input must expose Rune #2572 search semantics: ${JSON.stringify(semantics)}`)
+    return editor
   } catch (error) {
     const [expanded, elapsed]=await Promise.all([
       trigger.getAttribute('aria-expanded').catch(()=>null),
@@ -92,8 +107,8 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       await tap(box.x+box.width/2,box.y+box.height/2)
     }
     await hit(left)
-    await openSessionSearch(page, sidebar, messages, tap)
-    await page.locator('textarea:focus').fill('Another session')
+    const searchEditor=await openSessionSearch(page, sidebar, messages, tap)
+    await searchEditor.fill('Another session')
     await sidebar.getByRole('listitem',{name:'Another session',exact:true}).waitFor()
     const afterTransport=eventSources()
     const previous=[...workspaces]
@@ -349,10 +364,12 @@ export async function revokedLauncher({context,url,messages}){
       assert.equal(await page.getByText(password,{exact:true}).count(),0)
       assert.equal(await page.getByLabel(password,{exact:true}).count(),0)
       const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
-        const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
-        return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
+        const rect=field.getBoundingClientRect(),style=getComputedStyle(field),parent=field.parentElement
+        const hostForm=parent instanceof HTMLFormElement&&parent.parentElement===document.body&&parent.noValidate&&getComputedStyle(parent).pointerEvents==='none'
+        return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.autocomplete==='current-password'&&
+          field.getAttribute('autocomplete')==='current-password'&&hostForm&&
           field.inert&&field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
-          tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
+          tag:field.tagName,type:field.type,autocomplete:field.getAttribute('autocomplete'),tabIndex:field.tabIndex,focused:field===document.activeElement,
           opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
       }))
       assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
@@ -360,6 +377,31 @@ export async function revokedLauncher({context,url,messages}){
       const {nodes}=await accessibility.send('Accessibility.getFullAXTree')
       assert(!nodes.some(node=>!node.ignored&&node.name?.value==='Password input'),'The inactive password proxy must stay out of the accessibility tree')
     }
+    const serverAddress=page.locator('[data-rune-a11y]').getByRole('textbox',{name:messages['rune.server'],exact:true})
+    await serverAddress.waitFor()
+    const addressBox=await serverAddress.boundingBox()
+    assert(addressBox&&addressBox.width>0&&addressBox.height>0,`Launcher server address missing bounds: ${JSON.stringify(addressBox)}`)
+    await page.touchscreen.tap(addressBox.x+addressBox.width/2,addressBox.y+addressBox.height/2)
+    const urlInput=page.locator('input[type="url"]:focus').and(page.getByRole('textbox',{name:messages['rune.server'],exact:true}))
+    await urlInput.waitFor({state:'attached'})
+    const urlSemantics=await urlInput.evaluate(el=>({
+      type:el.type,
+      inputMode:el.inputMode,
+      autocapitalize:el.getAttribute('autocapitalize'),
+      autocorrect:el.getAttribute('autocorrect'),
+      spellcheck:el.spellcheck,
+      name:el.getAttribute('name'),
+      inForm:el.parentElement instanceof HTMLFormElement&&el.parentElement.noValidate,
+    }))
+    assert.deepEqual(urlSemantics,{
+      type:'url',
+      inputMode:'url',
+      autocapitalize:'none',
+      autocorrect:'off',
+      spellcheck:false,
+      name:'url',
+      inForm:true,
+    },`Launcher server address must expose Rune #2572 URL semantics: ${JSON.stringify(urlSemantics)}`)
     for(let i=0;i<4;i++){
       await page.keyboard.press('Tab')
       assert.equal(await page.locator('input[type=password]:focus').count(),0,'No launcher gesture may activate a password field')
@@ -371,7 +413,7 @@ export async function revokedLauncher({context,url,messages}){
     await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
     await observePassword()
     assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
-    return {launcherRevokedNoPassword:true}
+    return {launcherRevokedNoPassword:true,launcherUrlInputMode:'url',hiddenPasswordAutocomplete:'current-password'}
   } finally {
     await page.evaluate(()=>globalThis.__fixtureFlushTouches?.()).catch(()=>{})
     await page.close()

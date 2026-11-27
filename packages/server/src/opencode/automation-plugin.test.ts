@@ -1,34 +1,26 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
-import fs from "node:fs/promises"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
-import { PassThrough } from "node:stream"
-import test, { type TestContext } from "node:test"
+import test from "node:test"
 import childProcess from "node:child_process"
 import { syncBuiltinESMExports } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import type { Plugin } from "@opencode/plugin"
-import { desktopPlugin } from "./automation/desktop-plugin"
 import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectory,
   automationBridgeDirectories,
   discoverAutomationBridgeDirectories,
   createAutomationBridgeRegistration,
-  parseBrowserAction,
   parseDeveloperAction,
   formatInspection,
-  formatBrowserSnapshot,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
   sendMissionInput,
-  createBrowserToolExecutor,
-  executeBrowserTool,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -63,26 +55,6 @@ async function collectTools(): Promise<ToolDefinition[]> {
     tool: { transform: async (callback) => callback({ add: (value) => definitions.push(value as ToolDefinition) }) },
   })
   return definitions
-}
-
-async function browserTool(t: TestContext, leaseDirectory: string) {
-  await writeFile(path.join(leaseDirectory, "01.lease"), "")
-  const tools: Array<ToolDefinition & { options: { namespace: string } }> = []
-  type Transform = Plugin.Context["tool"]["transform"]
-  const editor: Pick<Parameters<Parameters<Transform>[0]>[0], "add"> = {
-    add: value => { tools.push(value as typeof tools[number]) },
-  }
-  const stop = await desktopPlugin(leaseDirectory).setup({
-    tool: { transform: async (callback: Parameters<Transform>[0]) => {
-      callback(editor as never)
-      return { dispose: async () => undefined }
-    } },
-    skill: { transform: async () => ({ dispose: async () => undefined }) },
-  } as unknown as Plugin.Context)
-  t.after(async () => { await stop?.() })
-  const browser = tools.find(tool => tool.name === "browser" && tool.options.namespace === "codenomad")
-  assert.ok(browser)
-  return (input: unknown) => browser.execute(input, { sessionID: "fixture" })
 }
 
 function closeServer(server: http.Server | undefined): Promise<void> {
@@ -209,166 +181,30 @@ test("mission discovery waits for cold ownership validation and still rejects co
   }
 })
 
-const fixtureSnapshot = { url: "https://example.test/", snapshot: "WebKit native result", collapsed: 0 }
-
-test("browser discovery executes native WebKit open, snapshot and screenshot actions", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-browser-"))
+test("a mission input runs the caller's own effect only when no backend can own the session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-mission-unowned-"))
   const restore = isolateAutomationBridgeRegistry(root)
-  const calls: unknown[] = []
-  let remove: (() => Promise<void>) | undefined
-  const { server, url } = await listen(async (body, response) => {
-    calls.push([body.mode, body.target])
-    return { result: body.mode !== "browser-execute" ? { available: true, target: "webkit-document" }
-      : (body.command as { action: string }).action === "snapshot" ? fixtureSnapshot : { text: "WebKit native result" } }
-  })
+  const removals: Array<() => Promise<void>> = []
+  const servers: http.Server[] = []
   try {
-    remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
-    for (const command of [{ action: "open", url: "https://example.com" }, { action: "snapshot" }, { action: "screenshot" }]) {
-      assert.match((await executeBrowserTool("ses_webkit", command)).content as string, /WebKit native result/)
-    }
-    assert.deepEqual(calls, [["browser-claim", undefined], ["browser-execute", undefined],
-      ["browser-probe", undefined], ["browser-execute", "webkit-document"],
-      ["browser-probe", undefined], ["browser-execute", "webkit-document"]])
+    assert.equal(await sendMissionInput("ses_free", "prompt", {}, async () => "own"), "own", "no backend runs")
+    let status = 404
+    const other = await listen(async (_body, response) => { response.statusCode = status; return { error: "Not this backend" } })
+    servers.push(other.server)
+    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(other.url)))
+    assert.equal(await sendMissionInput("ses_free", "prompt", {}, async () => "own"), "own", "every backend disowns the session")
+    await assert.rejects(sendMissionInput("ses_free", "prompt", {}), /exactly one owning/)
+    status = 500
+    await assert.rejects(sendMissionInput("ses_free", "prompt", {}, async () => assert.fail("ownership is unknown")), /exactly one owning/)
   } finally {
-    await remove?.()
-    await closeServer(server)
+    await Promise.all(removals.map(remove => remove()))
+    await Promise.all(servers.map(closeServer))
     restore()
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test("multiple visible previews at one backend are reported as ambiguous without sending input", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-ambiguity-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let executions = 0
-  const registration = await listen(async (body, reply) => {
-    if (body.mode !== "browser-probe") executions++
-    reply.statusCode = 409
-    return { code: "ambiguous-target", error: "Several visible previews match this session" }
-  })
-  const remove = await publishAutomationBridge(createAutomationBridgeRegistration(registration.url))
-  t.after(async () => { await closeServer(registration.server); await remove() })
-  await assert.rejects(executeBrowserTool("session", { action: "press", key: "Enter" }), /ambiguous-target/)
-  assert.equal(executions, 0)
-})
-
-test("preview discovery cannot dispatch past unverified profiles", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-inventory-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let executions = 0
-  let refusal: readonly [number, string?] | "closed response" = [404, "browser-not-owner"]
-  const bridge = await listen(async (body, reply, request) => {
-    if (body.mode === "browser-execute") {
-      executions++
-      return { result: (body.command as { action: string }).action === "snapshot" ? fixtureSnapshot : { ok: true } }
-    }
-    if (request.headers["x-codenomad-automation-token"] === owner.token) return { result: { available: true, target: "document" } }
-    if (refusal === "closed response") { reply.destroy(); return {} }
-    reply.statusCode = refusal[0]
-    return { code: refusal[1] }
-  })
-  t.after(() => closeServer(bridge.server))
-  const owner = createAutomationBridgeRegistration(bridge.url)
-  const other = createAutomationBridgeRegistration(bridge.url)
-  await publishAutomationBridge(owner)
-  const browser = createBrowserToolExecutor()
-  await browser("session", { action: "snapshot" })
-  await publishAutomationBridge(other)
-  const press = () => browser("session", { action: "press", key: "Enter" })
-  const opener = createBrowserToolExecutor()
-  const open = () => opener("session", { action: "open", url: "https://example.test" })
-  for (refusal of [[404, "browser-not-owner"], [404, "no-preview-host"]] as const) {
-    await press()
-    await open()
-  }
-  const refused = await listen(async () => ({}))
-  await closeServer(refused.server)
-  const removeRefused = await publishAutomationBridge(createAutomationBridgeRegistration(refused.url))
-  await press()
-  await open()
-  await removeRefused()
-  refusal = [404, "hidden-preview"]
-  await press()
-  const before = executions
-  for (const response of [[401], [404], [503, "inventory-unavailable"], "closed response"] as const) {
-    refusal = response
-    for (const [kind, run] of [["probe", press], ["claim", open]] as const) {
-      await t.test(`${kind} ${typeof response === "string" ? response : `HTTP ${response[0]}`}`, async () => {
-        const count = executions
-        await assert.rejects(run(), /inventory could not be verified/)
-        assert.equal(executions, count)
-      })
-    }
-  }
-  assert.equal(executions, before)
-})
-
-test("preview discovery refuses a redirect to a different, refused HTTP endpoint", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-redirect-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let executions = 0
-  const owner = await listen(async body => {
-    if (body.mode === "browser-execute") executions++
-    return { result: { available: true, target: "document" } }
-  })
-  t.after(() => closeServer(owner.server))
-  const blockedDestination = await listen(async () => ({}))
-  await closeServer(blockedDestination.server)
-  const redirector = await listen(async (_body, reply) => {
-    reply.statusCode = 307
-    reply.setHeader("location", new URL(AUTOMATION_BRIDGE_PATH, blockedDestination.url).href)
-    return {}
-  })
-  t.after(() => closeServer(redirector.server))
-  const browser = await browserTool(t, root)
-  await publishAutomationBridge(createAutomationBridgeRegistration(owner.url))
-  await publishAutomationBridge(createAutomationBridgeRegistration(redirector.url))
-  for (const command of [{ action: "snapshot" }, { action: "open", url: "https://example.test" }]) {
-    await t.test(command.action, async () => {
-      await assert.rejects(browser(command), /inventory could not be verified/)
-      assert.equal(executions, 0)
-    })
-  }
-})
-
-test("browser execution keeps its exact loopback destination and never replays a redirected action", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-execute-redirect-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  const received: unknown[] = []
-  const other = await listen(async (body, reply, request) => {
-    if (body.mode === "browser-probe") {
-      reply.statusCode = 404
-      return { code: "browser-not-owner" }
-    }
-    received.push(["other", request.headers["x-codenomad-automation-token"], body])
-    return { result: { text: "unexpected replay" } }
-  })
-  t.after(() => closeServer(other.server))
-  const command = { action: "press", key: "Enter" }
-  const owner = await listen(async (body, reply, request) => {
-    if (body.mode === "browser-probe") return { result: { available: true, target: "exact-document" } }
-    if ((body.command as { action: string }).action === "snapshot") return { result: fixtureSnapshot }
-    received.push(["owner", request.headers["x-codenomad-automation-token"], body.mode, body.sessionID, body.target, body.command])
-    reply.statusCode = 307
-    reply.setHeader("location", new URL(AUTOMATION_BRIDGE_PATH, other.url).href)
-    return {}
-  })
-  t.after(() => closeServer(owner.server))
-  const registration = createAutomationBridgeRegistration(owner.url)
-  await publishAutomationBridge(registration)
-  await publishAutomationBridge(createAutomationBridgeRegistration(other.url))
-  const browser = createBrowserToolExecutor()
-  await browser("exact-session", { action: "snapshot" })
-  const result = await browser("exact-session", command).then(() => "accepted", () => "refused")
-  assert.deepEqual({ result, received }, {
-    result: "refused",
-    received: [["owner", registration.token, "browser-execute", "exact-session", "exact-document", command]],
-  })
-})
+const fixtureSnapshot = { url: "https://example.test/", snapshot: "WebKit native result", collapsed: 0 }
 
 test("WSL translates the exact Unicode LOCALAPPDATA reported by cmd.exe", { skip: process.platform !== "win32" }, async t => {
   const windowsPath = "C:\\Utilisateurs\\Élodie & 李 🧪\\AppData\\Local"
@@ -385,470 +221,10 @@ test("WSL translates the exact Unicode LOCALAPPDATA reported by cmd.exe", { skip
   syncBuiltinESMExports()
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
   assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, {
-    platform: "linux", strict: "browser", env: { SystemRoot: process.env.SystemRoot,
+    platform: "linux", strict: true, env: { SystemRoot: process.env.SystemRoot,
       WSL_DISTRO_NAME: "fixture-unicode", LOCALAPPDATA: windowsPath, LOCALAPPDATA_OTHER: "not the profile",
       XDG_RUNTIME_DIR: "/fixture-linux" },
   }), ["/fixture-linux/codenomad/automation-bridges", `${translated}/CodeNomad/automation-bridges`])
-})
-
-test("WSL preview discovery keeps malformed and redirecting Windows advertisements indeterminate", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-wsl-inventory-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
-  t.after(async () => {
-    restore()
-    Object.defineProperty(process, "platform", platform)
-    t.mock.restoreAll()
-    syncBuiltinESMExports()
-    await rm(root, { recursive: true, force: true })
-  })
-  const browser = await browserTool(t, root)
-  Object.defineProperty(process, "platform", { value: "linux" })
-  process.env.WSL_DISTRO_NAME = "fixture-preview-inventory"
-  process.env.XDG_RUNTIME_DIR = "/fixture-linux"
-  let foreignContents = "{unparseable", vanished = false, redirects = true, windowsOwner = false, mounted = true
-  let executions = 0, curlCalls = 0
-  const bridge = await listen(async (body, reply) => {
-    if (body.mode === "browser-execute") executions++
-    if (windowsOwner) { reply.statusCode = 404; return { code: "browser-not-owner" } }
-    if ((body.command as { action: string } | undefined)?.action === "snapshot") return { result: fixtureSnapshot }
-    return { result: { available: true, target: "document" } }
-  })
-  t.after(() => closeServer(bridge.server))
-  const local = createAutomationBridgeRegistration(bridge.url)
-  const foreign = { ...createAutomationBridgeRegistration("http://127.0.0.1:2"), pid: 0x80000000 }
-  const registrationName = ({ startedAt, pid }: typeof local, suffix: string) => `${startedAt}-${pid}-${suffix}.json`
-  const localName = registrationName(local, "local"), foreignName = registrationName(foreign, "windows")
-  let missing: { file: string; code: string } | undefined
-  t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout?: string) => void) => {
-    if (missing?.file === file) callback(Object.assign(new Error("Fixture command unavailable"), { code: missing.code }))
-    else callback(null, file === "cmd.exe" ? "LOCALAPPDATA=C:/fixture-windows\r\n" : "/fixture-windows\n")
-  })
-  t.mock.method(fs, "opendir", async (directory: string) => {
-    const localDirectory = directory.startsWith("/fixture-linux/")
-    if (!localDirectory && !mounted) throw Object.assign(new Error("Mount missing"), { code: "ENOENT" })
-    return (async function* () {
-      yield { name: localDirectory ? localName : foreignName, isFile: () => true }
-    })()
-  })
-  t.mock.method(fs, "stat", async (directory: string) => {
-    assert.equal(directory, "/fixture-windows")
-    if (!mounted) throw Object.assign(new Error("Mount missing"), { code: "ENOENT" })
-    return { isDirectory: () => true }
-  })
-  t.mock.method(fs, "open", async (file: string) => {
-    const windows = file.endsWith(foreignName)
-    if (windows && vanished) throw Object.assign(new Error("File vanished"), { code: "ENOENT" })
-    const bytes = Buffer.from(windows ? foreignContents : JSON.stringify(local))
-    return { read: async (buffer: Buffer) => ({ bytesRead: bytes.copy(buffer) }), close: async () => undefined }
-  })
-  t.mock.method(fs, "rm", async () => assert.fail("Windows advertisements are left to their publishers"))
-  const windowsActions: unknown[] = [], forwarded: unknown[] = []
-  t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
-    curlCalls++
-    assert.equal(command, "curl.exe")
-    assert.ok(args.includes("--globoff"), "curl cannot expand one bridge address into several requests")
-    const child = Object.assign(new EventEmitter(), {
-      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
-    })
-    let input = ""
-    child.stdin.on("data", chunk => { input += chunk.toString() })
-    child.stdin.on("finish", () => {
-      if (windowsOwner) {
-        const body = JSON.parse(input)
-        if (body.mode === "browser-probe") child.stdout.write('{"result":{"available":true,"target":"windows-document"}}\n200')
-        else if (body.command.action === "snapshot") child.stdout.write(`${JSON.stringify({ result: fixtureSnapshot })}\n200`)
-        else {
-          const request = [args.at(-1), args.find(arg => arg.startsWith("x-codenomad-automation-token: ")),
-            body.mode, body.sessionID, body.target, body.command]
-          windowsActions.push(request)
-          // Model a curlrc with --location: the redirected POST carries the same payload and custom header.
-          if (args[0] === "--disable") child.stdout.write('{"result":{"text":"redirect response"}}\n307')
-          else {
-            forwarded.push(request)
-            child.stdout.write('{"result":{"text":"redirect destination"}}\n200')
-          }
-        }
-        child.emit("close", 0)
-        return
-      }
-      // A user's curl config can enable --location unless the first argument disables it.
-      if (redirects && args[0] === "--disable") {
-        child.stdout.write('{"code":"browser-not-owner"}\n307')
-        child.emit("close", 0)
-      } else {
-        child.stderr.write(`* connect to 127.0.0.1 port ${redirects ? 3 : 2} failed: Connection refused`)
-        child.stdout.write("\n000")
-        child.emit("close", 7)
-      }
-    })
-    return child
-  })
-  syncBuiltinESMExports()
-  await t.test("missing cmd.exe leaves Windows browser discovery unverified", async () => {
-    missing = { file: "cmd.exe", code: "ENOENT" }
-    const before = executions
-    await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
-    assert.equal(executions, before)
-  })
-  for (const code of ["ENOENT", "ENOEXEC"]) {
-    await t.test(`${code} from wslpath after cmd.exe succeeds prevents any browser dispatch`, async () => {
-      missing = { file: "wslpath", code }
-      assert.deepEqual(await automationBridgeDirectories({ strict: true }), ["/fixture-linux/codenomad/automation-bridges"],
-        "the Missions rule still permits local discovery")
-      const before = executions
-      const result = await browser({ action: "snapshot" }).then(() => "accepted", error => error.message)
-      assert.deepEqual({ result, executions }, {
-        result: "browser-unavailable: The preview inventory could not be verified; take a new snapshot", executions: before,
-      })
-    })
-  }
-  missing = undefined
-  await t.test("missing Windows mount cannot be treated as an empty registry", async () => {
-    mounted = false
-    try {
-      const before = executions
-      await assert.rejects(browser({ action: "open", url: "https://example.test" }), /inventory could not be verified/)
-      assert.equal(executions, before)
-    } finally { mounted = true }
-  })
-  await t.test("unreadable JSON", async () => {
-    const before = executions
-    await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
-    assert.equal(curlCalls, 0)
-    assert.equal(executions, before)
-  })
-  await t.test("redirect", async () => {
-    foreignContents = JSON.stringify(foreign)
-    const before = executions
-    await assert.rejects(browser({ action: "open", url: "https://example.test" }), /inventory could not be verified/)
-    assert.equal(curlCalls, 1)
-    assert.equal(executions, before)
-  })
-  redirects = false
-  await browser({ action: "snapshot" })
-  assert.equal(curlCalls, 2, "a direct connection refusal proves absence")
-  vanished = true
-  const before = executions
-  await browser({ action: "snapshot" })
-  assert.equal(executions, before + 1, "a file that vanished before the read is absent")
-  await t.test("redirected execution cannot leak its token or replay on another destination", async () => {
-    vanished = false
-    windowsOwner = true
-    const before = executions
-    await browser({ action: "snapshot" })
-    const command = { action: "press", key: "Enter" }
-    const result = await browser(command).then(() => "accepted", () => "refused")
-    assert.deepEqual({ result, executions, windowsActions, forwarded }, {
-      result: "refused", executions: before, forwarded: [],
-      windowsActions: [[foreign.url, `x-codenomad-automation-token: ${foreign.token}`,
-        "browser-execute", "fixture", "windows-document", command]],
-    })
-  })
-})
-
-test("preview discovery refuses a 65-profile inventory rather than dropping the oldest owner", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-inventory-cap-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let executions = 0
-  const bridge = await listen(async (body, reply, request) => {
-    const token = request.headers["x-codenomad-automation-token"]
-    if (body.mode === "browser-execute") {
-      executions++
-      return { result: (body.command as { action: string }).action === "snapshot" ? fixtureSnapshot : { ok: true } }
-    }
-    if (token === owner.token || token === "oldest") return { result: { available: true, target: token } }
-    reply.statusCode = 404
-    return { code: "no-preview-host" }
-  })
-  t.after(() => closeServer(bridge.server))
-  const owner = createAutomationBridgeRegistration(bridge.url)
-  await publishAutomationBridge(owner)
-  const browser = createBrowserToolExecutor()
-  await browser("session", { action: "snapshot" })
-  const directory = automationBridgeDirectory()
-  const add = (token: string, startedAt: number) => writeFile(path.join(directory, `${startedAt}-${process.pid}-${token}.json`),
-    JSON.stringify({ ...owner, token, startedAt }))
-  await Promise.all(Array.from({ length: 63 }, (_, i) => add(`other${i}`, owner.startedAt + i + 10)))
-  const press = () => browser("session", { action: "press", key: "Enter" })
-  await press()
-  await add("oldest", owner.startedAt - 10)
-  await assert.rejects(press(), /inventory could not be verified/)
-  assert.equal(executions, 2)
-})
-
-test("preview probes carry the smaller of their HTTP budget and the command deadline", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-probe-budget-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  const now = Date.now()
-  const probes: unknown[] = []
-  const bridge = await listen(async body => {
-    if (body.mode === "browser-execute") return { result: fixtureSnapshot }
-    probes.push(body.deadline)
-    return { result: { available: true, target: "document" } }
-  })
-  t.after(() => closeServer(bridge.server))
-  await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
-  t.mock.method(Date, "now", () => now)
-  await executeBrowserTool("session", { action: "snapshot" })
-  await executeBrowserTool("session", { action: "snapshot" }, undefined, now + 1_000)
-  assert.deepEqual(probes, [now + 5_000, now + 1_000])
-})
-
-test("late HTTP responses cannot establish or execute a preview selection", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-http-deadline-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let now = Date.now(), delayProbe = true, executions = 0
-  const bridge = await listen(async body => {
-    if (body.mode === "browser-probe") {
-      if (delayProbe) now = Number(body.deadline) + 1
-      return { result: { available: true, target: "document" } }
-    }
-    executions++
-    now = Number(body.deadline) + 1
-    return { result: fixtureSnapshot }
-  })
-  t.after(() => closeServer(bridge.server))
-  await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
-  t.mock.method(Date, "now", () => now)
-  const snapshot = { action: "snapshot" }
-  await assert.rejects(executeBrowserTool("session", snapshot, undefined, now + 30_000), /inventory could not be verified/)
-  assert.equal(executions, 0)
-  delayProbe = false
-  const browser = createBrowserToolExecutor()
-  await assert.rejects(browser("session", snapshot), /preview-expired/)
-  await assert.rejects(browser("session", { action: "screenshot" }), /snapshot-required/)
-  assert.equal(executions, 1)
-})
-
-test("a blocked registry syscall expires without holding the next browser command", { timeout: 10_000 }, async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-registry-deadline-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  const received: unknown[] = []
-  const bridge = await listen(async body => {
-    received.push(body.mode)
-    return { result: body.mode === "browser-probe" ? { available: true, target: "document" } : fixtureSnapshot }
-  })
-  t.after(() => closeServer(bridge.server))
-  await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
-  for (const syscall of ["opendir", "open"] as const) await t.test(syscall, async t => {
-    let entered!: () => void, release!: () => void, closed!: () => void, resumed = 0
-    const started = new Promise<void>(resolve => { entered = resolve })
-    const blocker = new Promise<void>(resolve => { release = resolve })
-    const handleClosed = new Promise<void>(resolve => { closed = resolve })
-    const real = fs[syscall]
-    let first = true
-    t.mock.method(fs, syscall, async (file: string, flag: "r") => {
-      if (!first) return syscall === "open" ? (real as typeof fs.open)(file, flag) : (real as typeof fs.opendir)(file)
-      first = false
-      entered()
-      await blocker
-      return {
-        close: async () => closed(),
-        read: async () => { resumed++; return { bytesRead: 0 } },
-        async *[Symbol.asyncIterator]() { resumed++; closed() },
-      }
-    })
-    syncBuiltinESMExports()
-    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
-    const browser = createBrowserToolExecutor()
-    const realNow = Date.now
-    t.mock.method(Date, "now", () => realNow() - 95_000 + 250, { times: 1 })
-    const snapshot = () => browser("fixture", { action: "snapshot" })
-    const expired = snapshot().then(() => "unexpected success", (error: Error) => error.message)
-    await started
-    const next = snapshot()
-    const pair = Promise.all([expired, next])
-    try {
-      const result = await Promise.race([pair, delay(1_500, "held the queue", { ref: false })])
-      assert.ok(Array.isArray(result), "expired filesystem work must release the queue")
-      assert.match(result[0], /preview-expired/)
-      assert.deepEqual(received.splice(0), ["browser-probe", "browser-execute"])
-    } finally {
-      release()
-      await pair
-    }
-    await handleClosed
-    assert.equal(resumed, 0, "a late handle is closed without opening or reading another entry")
-    assert.deepEqual(received, [], "an expired discovery cannot dispatch")
-  })
-})
-
-test("strict browser requests reach loopback even with Node's environment proxy enabled", {
-  skip: !process.allowedNodeEnvironmentFlags.has("--use-env-proxy"),
-}, async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-direct-loopback-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  const requests: unknown[] = []
-  const bridge = await listen(async (body, _reply, request) => {
-    requests.push([body.mode, request.headers["x-codenomad-automation-token"]])
-    return { result: body.mode === "browser-execute" ? fixtureSnapshot : { available: true, target: "document" } }
-  })
-  t.after(() => closeServer(bridge.server))
-  const registration = createAutomationBridgeRegistration(bridge.url)
-  await publishAutomationBridge(registration)
-  let proxyRequests = 0
-  const proxy = http.createServer((_request, response) => { proxyRequests++; response.writeHead(502).end() })
-  proxy.on("connect", (_request, socket) => { proxyRequests++; socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n") })
-  await new Promise<void>(resolve => proxy.listen(0, "127.0.0.1", resolve))
-  t.after(() => closeServer(proxy))
-  const proxyUrl = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`
-  await promisify(childProcess.execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
-    import assert from "node:assert/strict"
-    import { executeBrowserTool } from ${JSON.stringify(new URL("./automation-plugin.ts", import.meta.url).href)}
-    await assert.rejects(fetch(${JSON.stringify(registration.url)}, { method: "POST", body: "{}" }))
-    await executeBrowserTool("fixture", { action: "open", url: "https://example.test" })
-    await executeBrowserTool("fixture", { action: "snapshot" })
-  `], { windowsHide: true, timeout: 10_000, env: {
-    ...process.env, NODE_USE_ENV_PROXY: "1", HTTP_PROXY: proxyUrl, http_proxy: proxyUrl, NO_PROXY: "", no_proxy: "",
-  } })
-  assert.equal(proxyRequests, 1, "only the ordinary fetch reaches the proxy")
-  assert.deepEqual(requests, ["browser-claim", "browser-execute", "browser-probe", "browser-execute"].map(mode => [mode, registration.token]))
-})
-
-test("a preview pin requires a snapshot result and retains its bridge address", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-pinned-bridge-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let valid = false
-  const executed: string[] = []
-  const endpoints = await Promise.all(["original", "replacement"].map(name => listen(async body => {
-    if (body.mode === "browser-probe") return { result: { available: true, target: "document" } }
-    executed.push(name)
-    return valid ? { result: fixtureSnapshot } : {}
-  })))
-  t.after(() => Promise.all(endpoints.map(({ server }) => closeServer(server))))
-  const original = createAutomationBridgeRegistration(endpoints[0].url)
-  const remove = await publishAutomationBridge(original)
-  const browser = createBrowserToolExecutor()
-  const snapshot = { action: "snapshot" }, capture = { action: "screenshot" }
-  await assert.rejects(browser("session", snapshot), /snapshot result/)
-  await assert.rejects(browser("session", capture), /snapshot-required/)
-  valid = true
-  await browser("session", snapshot)
-  await remove()
-  await publishAutomationBridge({ ...original, url: new URL(AUTOMATION_BRIDGE_PATH, endpoints[1].url).href })
-  await assert.rejects(browser("session", capture), /stale-preview/)
-  assert.deepEqual(executed, ["original", "original"])
-})
-
-test("an invalid replacement snapshot does not change the preview pin", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-invalid-snapshot-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let reply: unknown = fixtureSnapshot
-  const captures: unknown[] = []
-  const bridge = await listen(async (body, response, request) => {
-    const token = request.headers["x-codenomad-automation-token"]
-    if (body.mode === "browser-probe") {
-      if (token === active.token) return { result: { available: true, target: active.token } }
-      response.statusCode = 404
-      return { code: "hidden-preview" }
-    }
-    if ((body.command as { action: string }).action === "screenshot") captures.push(token)
-    return { result: reply }
-  })
-  t.after(() => closeServer(bridge.server))
-  const original = createAutomationBridgeRegistration(bridge.url)
-  const replacement = createAutomationBridgeRegistration(bridge.url)
-  let active = original
-  await publishAutomationBridge(original)
-  await publishAutomationBridge(replacement)
-  const browser = createBrowserToolExecutor()
-  const takeSnapshot = () => browser("session", { action: "snapshot" })
-  await takeSnapshot()
-  active = replacement
-  for (reply of [{ url: "", snapshot: "" }, { ...fixtureSnapshot, collapsed: "unknown" }]) {
-    await assert.rejects(takeSnapshot(), /snapshot result/)
-  }
-  await assert.rejects(browser("session", { action: "screenshot" }), /stale-preview/)
-  active = original
-  await browser("session", { action: "screenshot" })
-  assert.deepEqual(captures, [original.token])
-})
-
-test("unscoped snapshots change the preview pin; ref-free actions stay on that pin", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-pin-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
-  let current = "one", probes = 0
-  const messages: unknown[] = []
-  let seeingNewSnapshot!: () => void, releaseSnapshot!: () => void
-  const entered = new Promise<void>(resolve => { seeingNewSnapshot = resolve })
-  const hold = new Promise<void>(resolve => { releaseSnapshot = resolve })
-  t.after(releaseSnapshot)
-  const registration = await listen(async (body, reply) => {
-    if (body.mode === "browser-probe") {
-      probes++
-      return { result: { target: current, available: true } }
-    }
-    messages.push(body.target)
-    if (current === "two" && (body.command as { action: string }).action === "snapshot") {
-      seeingNewSnapshot()
-      await hold
-    }
-    if (body.target !== current) {
-      reply.statusCode = 409
-      return { code: "stale-preview", error: "The preview changed" }
-    }
-    return { result: { url: "https://example.test", snapshot: "Page" } }
-  })
-  const remove = await publishAutomationBridge(createAutomationBridgeRegistration(registration.url))
-  t.after(async () => { await closeServer(registration.server); await remove() })
-  const browser = createBrowserToolExecutor()
-  await assert.rejects(browser("session", { action: "press", key: "Enter" }), /snapshot-required/)
-  await browser("session", { action: "snapshot" })
-  current = "two"
-  await assert.rejects(browser("session", { action: "press", key: "Enter" }), /stale-preview/)
-  assert.equal(probes, 2)
-  const newer = browser("session", { action: "snapshot" })
-  await entered
-  const queued = assert.rejects(browser("session", { action: "press", key: "Enter" }), /selection changed/)
-  releaseSnapshot()
-  await newer
-  await queued
-  await browser("session", { action: "press", key: "Enter" })
-  await Promise.all([
-    browser("session", { action: "snapshot" }),
-    browser("session", { action: "snapshot", ref: "e1" }),
-  ])
-  assert.equal(probes, 6)
-  assert.deepEqual(messages, ["one", "two", "two", "two", "two"])
-})
-
-test("validates browser actions", () => {
-  assert.deepEqual(parseBrowserAction({ action: "open", url: "https://example.com" }), {
-    action: "open",
-    url: "https://example.com",
-  })
-  assert.deepEqual(parseBrowserAction({ action: "type", ref: "e2", text: "hello", clear: false }), {
-    action: "type",
-    ref: "e2",
-    text: "hello",
-    clear: false,
-  })
-  assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
-  for (const input of [
-    { action: "select", ref: "e1", values: ["Exploration"] },
-    { action: "hover", ref: "e1" },
-    { action: "press", key: "Shift+Tab" },
-    { action: "scroll", ref: "e1", direction: "down", amount: 120 },
-    { action: "drag", ref: "e1", to: "e2" },
-    { action: "wait", text: "Ready", timeout: 1000, gone: false },
-  ]) {
-    assert.deepEqual(parseBrowserAction(input), parseDeveloperAction(input), "both surfaces use the same page action contract")
-  }
-  assert.deepEqual(parseBrowserAction({ action: "snapshot", query: "dialog", ref: "e1" }), { action: "snapshot", query: "dialog", ref: "e1" })
-  assert.throws(() => parseBrowserAction({ action: "type", ref: "e1", text: "x", clear: "no" }), /clear must be/)
-  assert.throws(() => parseBrowserAction({ action: "snapshot", query: "x".repeat(201) }), /at most 200/)
-  assert.throws(() => parseBrowserAction({ action: "evaluate", expression: "document.cookie" }), /Unsupported browser action/)
-  assert.equal(formatBrowserSnapshot({ url: "https://example.test", snapshot: '- button "Go" [e1]', collapsed: 0 }),
-    'https://example.test\n\n- button "Go" [e1]', "browser outlines are plain text too, not escaped JSON")
 })
 
 test("registers developer tools while execution remains session-gated", async () => {

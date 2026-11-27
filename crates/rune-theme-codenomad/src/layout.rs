@@ -282,6 +282,21 @@ pub fn suggestion_list<S: 'static>(
 pub fn with_overlays(base: El, layers: Vec<El>) -> El {
     rune_kit::root(base, layers)
 }
+/// Keeps `body` clear of a phone's status bar, cutout, navigation bar and keyboard, over a
+/// surface that still reaches the screen's edges. A desktop window has no insets.
+pub fn safe_area<S>(cx: &rune::Cx<S>, body: El) -> El {
+    let [top, right, bottom, left] = cx.safe_area();
+    rune::col()
+        .key("safe-area")
+        .w_full()
+        .h_full()
+        .pt(top)
+        .pr(right)
+        .pb(bottom)
+        .pl(left)
+        .fill(tokens(dark()).color("surface-secondary"))
+        .child(body)
+}
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
     rune::row()
@@ -409,6 +424,29 @@ mod tests {
                 fallback
             );
         }
+    }
+    #[test]
+    fn the_safe_area_keeps_the_application_inside_a_phones_insets() {
+        fn view(_: &(), cx: &mut rune::Cx<()>) -> El {
+            render(cx, |cx| {
+                safe_area(cx, rune::el().key("body").w_full().h_full())
+            })
+        }
+        let mut rt = rune::Runtime::new((), view, (200.0, 400.0), rune::Env::default());
+        rt.frame(0.0);
+        assert_eq!(
+            rt.find("body"),
+            Some((100.0, 200.0)),
+            "no insets: the whole window"
+        );
+        // A keyboard opening or a rotation changes them while the application runs.
+        rt.set_safe_area([10.0, 4.0, 30.0, 6.0]);
+        rt.frame(16.0);
+        assert_eq!(
+            rt.find("body"),
+            Some((101.0, 190.0)),
+            "inside top, right, bottom and left"
+        );
     }
     #[test]
     fn shared_button_preserves_kit_geometry_and_disabled_semantics() {

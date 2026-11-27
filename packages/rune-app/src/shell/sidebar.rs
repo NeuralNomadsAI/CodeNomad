@@ -162,6 +162,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         col().full_width().role("group").label(name).child(
             hinted_field(&l.search, t("sessionList.filter.placeholder"))
                 .label(name)
+                .input_mode(rune::InputMode::Search)
                 .on_edit(screen::edit(scope, Editor::Search))
                 .on_key(editor_keys.clone())
                 .build(&field_kit(layout::dark()))

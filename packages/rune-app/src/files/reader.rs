@@ -3,7 +3,11 @@ use crate::platform::{
     reads::{Reads, cancellable},
 };
 use codenomad_client::{
-    Receiver, Sender, Wake, backend::Backend, bounded, files::Preview, history::Result,
+    Receiver, Sender, Wake,
+    backend::Backend,
+    bounded,
+    files::Preview,
+    history::{Error, Result},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +28,7 @@ pub struct Reader {
     out: Sender<(u64, Target, Result<Preview>)>,
     target: Option<Target>,
     preview: Option<Preview>,
-    error: Option<String>,
+    error: Option<Error>,
     pending: Option<Pending>,
     sequence: u64,
     settled: (u64, bool),
@@ -102,8 +106,8 @@ impl Reader {
         });
         self.dirty = false;
     }
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+    pub fn error(&self) -> Option<&Error> {
+        self.error.as_ref()
     }
     pub fn busy(&self) -> bool {
         self.pending.is_some()
@@ -186,7 +190,7 @@ impl Reader {
                     self.preview = Some(preview);
                     self.error = None;
                 }
-                Err(error) => self.error = Some(error.to_string()),
+                Err(error) => self.error = Some(error),
             }
             changed = true;
         }
@@ -246,7 +250,7 @@ impl Reader {
             }
             Err(error) => {
                 self.preview = None;
-                self.error = Some(error.to_string());
+                self.error = Some(error);
             }
         }
     }

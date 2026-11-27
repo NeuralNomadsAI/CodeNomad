@@ -34,7 +34,7 @@ La instalación vuelca el estado de todas las ventanas de la aplicación y detie
 
 ## Actualizar un servidor independiente {#standalone-update}
 
-La interfaz 1.1 necesita un servidor CodeNomad **1.1.0 o posterior** para sus API de Misiones. Los servidores 1.0.x conservan su interfaz en caché o incluida en lugar de descargar la interfaz incompatible.
+La interfaz 1.2 necesita un servidor CodeNomad **1.2.0 o posterior** para los permisos por conversación. Los servidores anteriores conservan su interfaz en caché o incluida.
 
 1. Identifica cómo iniciaste CodeNomad y guarda el trabajo que dependa de ese backend.
 2. Detén ese proceso de servidor CodeNomad con su control habitual de proceso/servicio.

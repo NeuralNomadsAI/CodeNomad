@@ -143,7 +143,7 @@ test("dependencies, dependents and replacements navigate reader identity without
     await f.page.locator("#draft").fill("Preserved draft")
     await f.page.locator("#transcript").evaluate(e => { e.scrollTop = 100 })
     await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("task-reader", {
-      selected: "another-mission", selectedRecurrence: "another-daily", selectedScheduled: "another-schedule",
+      selected: "another-mission", selectedScheduled: "another-schedule",
       selectedTask: { missionId: "another-mission", taskId: "another-task" },
     }))
     await show(f.page)
@@ -155,7 +155,6 @@ test("dependencies, dependents and replacements navigate reader identity without
     const dependencyView = (await f.page.evaluate(() => (window as any).taskReader.snapshot())).view
     assert.deepEqual(dependencyView.selectedTask, { missionId: "mission", taskId: "before" })
     assert.equal(dependencyView.selected, "mission")
-    assert.equal(dependencyView.selectedRecurrence, undefined)
     assert.equal(dependencyView.selectedScheduled, undefined)
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
     await expand(f.page, "Technical details")
