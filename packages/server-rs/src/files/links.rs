@@ -226,10 +226,13 @@ mod tests {
         std::fs::write(&file, "ok").unwrap();
         let leaf = base.join(r"leaf\");
         std::fs::write(&leaf, "leaf").unwrap();
+        std::fs::create_dir(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git").join("config"), "[core]\n").unwrap();
         symlink(r"dir\/note.txt", base.join("via-dir")).unwrap();
         symlink(r"leaf\", base.join("via-leaf")).unwrap();
         symlink(r"dangling\", base.join("via-dangling")).unwrap();
         symlink(r"dir\/.git/config", base.join("via-git")).unwrap();
+        symlink(r"dir\/.git/new-hook", base.join("via-git-missing")).unwrap();
         assert_eq!(write_target(base.join("via-dir"), true, false).unwrap(), file);
         assert_eq!(write_target(base.join("via-leaf"), true, false).unwrap(), leaf);
         assert_eq!(write_target(base.join("via-dangling"), true, false).unwrap(), base.join(r"dangling\"));
@@ -237,6 +240,10 @@ mod tests {
         guard(&base, "via-leaf").unwrap();
         guard(&base, "via-dangling").unwrap();
         assert!(guard(&base, "via-git").is_err(), ".git under a backslash-named dir stays refused");
+        assert!(
+            guard(&base, "via-git-missing").is_err(),
+            "missing file inside .git under a backslash-named dir stays refused"
+        );
         let _ = std::fs::remove_dir_all(top);
     }
 }

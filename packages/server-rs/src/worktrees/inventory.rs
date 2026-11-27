@@ -1094,9 +1094,16 @@ mod layout_tests {
                 "initial",
                 "--allow-empty",
             ],
-            &["worktree", "add", "--detach", tree.to_str().unwrap(), "HEAD"],
+            &["worktree", "add", "--quiet", "--detach", tree.to_str().unwrap(), "HEAD"],
         ] {
-            assert!(crate::git::command(&root, args).status().await.unwrap().success());
+            let output = crate::git::command(&root, args).output().await.unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} failed ({:?}): {}",
+                args,
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         let main_layout = checkout(&root).await.unwrap();
         assert!(main_layout.live());
