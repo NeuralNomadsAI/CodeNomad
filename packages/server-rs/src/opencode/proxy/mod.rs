@@ -75,6 +75,15 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let (id, suffix) = tail.split_once('/').ok_or_else(invalid)?;
     let suffix = suffix.strip_prefix("instance").ok_or_else(invalid)?;
     let workspace = app.workspace(id)?;
+    let workspace_closed = || async {
+        loop {
+            let notified = app.workspace_closed.notified();
+            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+                return;
+            }
+            notified.await;
+        }
+    };
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
     if (route.starts_with("/api/credential/")
@@ -99,14 +108,29 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE))
         && declared.is_some_and(|length| length > body_limit)
     {
-        let _ = super::proxy_body::read(body, body_limit, declared).await;
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = workspace_closed() => return Err(not_found()),
+            _ = super::proxy_body::read(body, body_limit, declared) => {}
+        }
+        principal.live()?;
+        if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+            return Err(not_found());
+        }
         return Err(super::proxy_body::too_large());
     }
     let mut pending_body = Some(body);
     let mut prompt_directories = Vec::new();
     let mut prompt_input = if send_input {
-        let bytes =
-            super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared).await?;
+        let bytes = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = workspace_closed() => return Err(not_found()),
+            res = super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared) => {
+                res?
+            }
+        };
         let data = super::prompt::parse(&head.headers, &bytes)?;
         if data.as_object().is_some_and(schedule_input) {
             return Err(carrier_denied());
@@ -127,15 +151,6 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
     let account_route = is_account_no_store_route(route, &head.method);
-    let workspace_closed = || async {
-        loop {
-            let notified = app.workspace_closed.notified();
-            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
-                return;
-            }
-            notified.await;
-        }
-    };
     let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
     let deadline = if message_list {
         list_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30))

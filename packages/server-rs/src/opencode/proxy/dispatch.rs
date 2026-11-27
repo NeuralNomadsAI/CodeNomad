@@ -71,9 +71,21 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     let observer_workspace = workspace.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| {
         Box::pin(async move {
-            for loc in &account_verified_locs {
-                if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
-                    return Err(foreign());
+            if !account_verified_locs.is_empty() {
+                let pre_dispatch = async {
+                    for loc in &account_verified_locs {
+                        if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
+                            return Err(foreign());
+                        }
+                    }
+                    Ok(())
+                };
+                tokio::select! {
+                    biased;
+                    _ = detached.cancelled() => return Err(upstream_error()),
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    res = pre_dispatch => res?,
                 }
             }
             principal.live()?;

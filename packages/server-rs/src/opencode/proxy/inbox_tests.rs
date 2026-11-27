@@ -785,6 +785,34 @@ async fn inbox_enforces_allowlist_ownership_carriers_validation_fences_and_revoc
     let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
     assert_eq!(err.0, Status::UNAUTHORIZED, "revocation during incomplete PATCH body read must abort with 401");
 
+    // 7c. Principal revocation during early oversized Content-Length drain aborts immediately with 401 (not 413).
+    let (over_started, over_waiting) = tokio::sync::oneshot::channel::<()>();
+    let stalled_oversized = Body::from_stream(async_stream::stream! {
+        let _ = over_started.send(());
+        std::future::pending::<()>().await;
+        yield Ok::<axum::body::Bytes, std::io::Error>(axum::body::Bytes::new());
+    });
+    let cancel = CancellationToken::new();
+    let mut over_req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/workspaces/{}/instance/api/session/ses_inb_owned/inbox/inb_1", h.ws_id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, "2097152")
+        .body(stalled_oversized)
+        .unwrap();
+    over_req.extensions_mut().insert(Principal(cancel.clone()));
+    let app = h.app.clone();
+    let mut task = tokio::spawn(async move { proxy::relay(State(app), over_req).await });
+    tokio::select! {
+        res = &mut task => panic!("relay exited before oversized PATCH body drain: {res:?}"),
+        waited = tokio::time::timeout(Duration::from_secs(15), over_waiting) => {
+            waited.expect("timed out waiting for oversized PATCH body drain").unwrap();
+        }
+    }
+    cancel.cancel();
+    let err = tokio::time::timeout(Duration::from_secs(10), task).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(err.0, Status::UNAUTHORIZED, "revocation during oversized body drain must abort with 401");
+
     // 8. Replacing the session checkout at the same path before under-fence recheck fails closed with 403.
     let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     *h.native.stall_carrier_read.lock().unwrap() = Some((entered.clone(), release.clone()));
