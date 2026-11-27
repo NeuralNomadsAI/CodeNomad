@@ -56,7 +56,13 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
         drop(prefs);
         if renewing {
             s.phase = crate::Phase::Reconnecting;
+            s.command_palette.dismiss();
+            s.tab_rename.dismiss();
+            s.temporary.cancel_for_auth();
+            s.workspace_open.cancel();
         } else {
+            s.temporary.cancel_for_auth();
+            s.workspace_open.cancel();
             s.show_launcher();
         }
         crate::workspace::suspend_missions(s);
@@ -176,7 +182,7 @@ pub(crate) fn connection_event(
             workspace_id,
             session_id,
         }) => provider_session_moved(s, workspace_id, session_id),
-        Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
+        Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. }) => {
             provider_stopped(s, workspace_id)
         }
         Event::AgentHint(true) => {

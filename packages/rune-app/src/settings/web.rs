@@ -366,7 +366,7 @@ pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
         .key("open-preferences")
 }
 
-fn open(s: &mut State) {
+pub(super) fn open(s: &mut State) {
     s.shell.leave_project();
     let target = Target::capture(s);
     let mut prefs = s.settings.shared.borrow_mut();

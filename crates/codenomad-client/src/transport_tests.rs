@@ -1677,7 +1677,7 @@ fn workspace_stopped_rejects_queued_prompt_without_http_post() {
             let mut saw_rejected = false;
             while let Ok(event) = events.recv().await {
                 match event {
-                    Event::Workspace(WorkspaceEvent::Stopped { workspace_id })
+                    Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. })
                         if workspace_id == "workspace" =>
                     {
                         saw_stopped = true;

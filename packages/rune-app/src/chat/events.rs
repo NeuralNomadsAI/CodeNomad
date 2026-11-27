@@ -290,7 +290,21 @@ fn drain_chat(
             ) => {
                 s.status_usage.refresh(directory.as_deref());
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::TemporaryChanged {
+                folders,
+            }) => {
+                s.temporary.queue_temporary_folders(folders);
+            }
             Event::Workspace(event) => {
+                if let codenomad_client::transport::WorkspaceEvent::Stopped {
+                    workspace_id,
+                    deleted,
+                    temporary_retained,
+                } = &event
+                {
+                    s.temporary
+                        .queue_stopped(workspace_id.clone(), *deleted, *temporary_retained);
+                }
                 if matches!(
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
@@ -326,7 +340,7 @@ fn drain_chat(
                         agent.attention.disconnected();
                     }
                 }
-                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id, .. } =
                     &event
                     && let Some(agent) = &mut s.agent
                 {

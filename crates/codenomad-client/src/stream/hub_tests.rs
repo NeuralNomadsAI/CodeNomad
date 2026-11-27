@@ -179,13 +179,13 @@ fn tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero() {
                     .await
                     .unwrap()
                     .unwrap(),
-                Input::Workspace(1, WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "ws-b"
+                Input::Workspace(1, WorkspaceEvent::Stopped { workspace_id, .. }) if workspace_id == "ws-b"
             ));
             tokio::time::timeout(Duration::from_secs(2), async {
                 loop {
                     let (_, _, events) = catalogue.take_workspace_events();
                     if events.iter().any(|ev| {
-                        matches!(ev, WorkspaceEvent::Stopped { workspace_id } if workspace_id == "ws-b")
+                        matches!(ev, WorkspaceEvent::Stopped { workspace_id, .. } if workspace_id == "ws-b")
                     }) {
                         break;
                     }

@@ -62,6 +62,38 @@ impl LiveDraft {
 }
 
 impl LiveDraft {
+    pub(super) fn has_content(&self) -> bool {
+        self.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+            || self
+                .parts
+                .as_ref()
+                .is_some_and(|(draft, _)| !draft.attachments.is_empty())
+            || self.unconfirmed.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_oversized(text: String) -> Self {
+        Self {
+            text: Some(text),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_device_attachment(name: &str, bytes: &[u8]) -> Self {
+        let mut draft = Draft::default();
+        let _ = draft.attach(crate::composer::draft::Attachment::Device {
+            name: name.into(),
+            mime: "application/octet-stream".into(),
+            bytes: std::sync::Arc::from(bytes),
+            token: None,
+        });
+        Self {
+            parts: Some((draft, false)),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn retained_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
         self.text.as_ref().map_or(0, String::len).saturating_add(
             self.parts
@@ -82,6 +114,17 @@ impl Ui {
 impl super::Entry {
     pub(super) fn has_unsaved_large_drafts(&self) -> bool {
         self.live_drafts.values().any(|draft| draft.text.is_some())
+    }
+
+    pub(super) fn has_in_memory_only_drafts(&self) -> bool {
+        self.live_drafts.values().any(|draft| {
+            draft.text.is_some()
+                || draft
+                    .parts
+                    .as_ref()
+                    .is_some_and(|(d, _)| d.inline_usage().0 != 0)
+                || draft.unconfirmed.is_some()
+        })
     }
 }
 
@@ -443,7 +486,7 @@ pub fn capture(s: &mut State) {
     {
         ui.changed();
     }
-    ui.stage();
+    ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
 }
 
@@ -666,6 +709,8 @@ mod tests {
             backend_id: None,
             server_id: None,
             folder: "/repo".into(),
+            project_name: None,
+            temporary: false,
             occurrence: 0,
             workspace_id: Some("ws".into()),
             active_session_id: None,
@@ -731,6 +776,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
+            temporary: false,
         };
         let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         backend.workspace = "ws".into();

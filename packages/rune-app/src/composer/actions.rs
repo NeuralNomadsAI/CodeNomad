@@ -1152,6 +1152,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1277,6 +1278,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1471,6 +1473,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
@@ -1548,6 +1551,7 @@ mod tests {
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/tmp/ws".into(),
+            temporary: false,
         };
         s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);

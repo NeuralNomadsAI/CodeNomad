@@ -559,6 +559,8 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
     out.try_send(Event::Workspace(
         codenomad_client::transport::WorkspaceEvent::Stopped {
             workspace_id: "workspace".into(),
+            deleted: false,
+            temporary_retained: false,
         },
     ))
     .unwrap();
