@@ -178,7 +178,12 @@ fn verify_exclude_handle(
         let Ok(link_meta) = info.symlink_metadata(file_comp) else {
             return false;
         };
-        !link_meta.is_symlink() && link_meta.is_file() && link_meta.dev() == meta.dev() && link_meta.ino() == meta.ino()
+        !link_meta.is_symlink()
+            && link_meta.is_file()
+            && meta.nlink() == 1
+            && link_meta.nlink() == 1
+            && link_meta.dev() == meta.dev()
+            && link_meta.ino() == meta.ino()
     }
     #[cfg(windows)]
     {
@@ -195,6 +200,7 @@ fn verify_exclude_handle(
         }
         if (info_rec.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
             || (info_rec.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            || info_rec.nNumberOfLinks != 1
         {
             return false;
         }
@@ -348,7 +354,10 @@ fn append_verified(
     let Some(addition) = format_append(&existing, rule) else {
         return GitExclusion::Excluded;
     };
-    if !writable || aborted() || !verify_exclude_handle(&info, &expected_info_path, file_comp, &file) {
+    if !writable || aborted() {
+        return GitExclusion::Unavailable;
+    }
+    if !verify_exclude_handle(&info, &expected_info_path, file_comp, &file) || aborted() {
         return GitExclusion::Unavailable;
     }
     if file.write_all(addition.as_bytes()).is_err() {

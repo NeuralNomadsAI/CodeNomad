@@ -714,6 +714,18 @@ async fn design_git_exclude_formats_rules_and_updates_real_git_repos_safely() {
         GitExclusion::Unavailable
     );
     assert_eq!(fs::read_to_string(&exclude_file).unwrap(), before_cancel);
+
+    // Hard-linked info/exclude is refused without modifying the linked victim file.
+    let hl_repo = tmp.0.join("hardlink-repo");
+    fs::create_dir_all(&hl_repo).unwrap();
+    init_git_repo(&hl_repo);
+    let hl_exclude = hl_repo.join(".git").join("info").join("exclude");
+    let victim = tmp.0.join("victim.txt");
+    fs::write(&victim, "untouched\n").unwrap();
+    let _ = fs::remove_file(&hl_exclude);
+    fs::hard_link(&victim, &hl_exclude).unwrap();
+    assert_eq!(exclude_design_folder(&hl_repo, Duration::from_secs(10)).await, GitExclusion::Unavailable);
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched\n");
 }
 
 #[tokio::test]
@@ -754,12 +766,16 @@ async fn images_conversation_enforces_ownership_fence_permissions_git_exclude_an
         Status::PAYLOAD_TOO_LARGE
     );
 
-    // 2. Unowned existing/missing directory, .git admin dir, or unknown workspace returns 403 with 0 OpenCode requests.
+    // 2. Unowned existing/missing directory, .git admin dir (outer or nested), or unknown workspace returns 403 with 0 OpenCode requests.
     let foreign = TempDir::new("images-foreign");
+    let nested_repo = h.workspace_dir.join("nested-repo");
+    fs::create_dir_all(&nested_repo).unwrap();
+    init_git_repo(&nested_repo);
     for (target_url, target_dir) in [
         (url.clone(), foreign.0.to_string_lossy().into_owned()),
         (url.clone(), foreign.0.join("does-not-exist").to_string_lossy().into_owned()),
         (url.clone(), h.workspace_dir.join(".git").to_string_lossy().into_owned()),
+        (url.clone(), nested_repo.join(".git").to_string_lossy().into_owned()),
         (format!("{}/api/workspaces/{}/images-conversation", h.base, Uuid::new_v4()), dir_str.clone()),
     ] {
         assert_eq!(

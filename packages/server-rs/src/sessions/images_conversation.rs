@@ -337,11 +337,24 @@ async fn local_repo_root(dir: &Path, timeout: Duration) -> PathBuf {
     local_worktree_toplevel(dir, timeout).await.ok().flatten().unwrap_or_else(|| dir.to_path_buf())
 }
 
-async fn local_worktree_listed(repo_root: &Path, toplevel: &Path, timeout: Duration) -> Result<bool, ()> {
+fn has_git_component(path: &Path) -> bool {
+    path.components().any(|comp| match comp {
+        std::path::Component::Normal(name) => {
+            if cfg!(windows) {
+                name.to_string_lossy().eq_ignore_ascii_case(".git")
+            } else {
+                name == std::ffi::OsStr::new(".git")
+            }
+        }
+        _ => false,
+    })
+}
+
+async fn local_listed_worktrees(repo_root: &Path, scope: &Path, timeout: Duration) -> Result<Vec<PathBuf>, ()> {
     if timeout.is_zero() {
         return Err(());
     }
-    let out = tokio::time::timeout(timeout, git::run(repo_root, &["worktree", "list", "--porcelain"], 512 * 1024))
+    let out = tokio::time::timeout(timeout, git::run(repo_root, &["worktree", "list", "--porcelain", "-z"], 4 << 20))
         .await
         .map_err(|_| ())?
         .map_err(|_| ())?;
@@ -349,14 +362,24 @@ async fn local_worktree_listed(repo_root: &Path, toplevel: &Path, timeout: Durat
         return Err(());
     }
     let text = out.text();
-    let target = toplevel.to_path_buf();
-    let paths: Vec<String> = text
-        .lines()
-        .filter_map(|line| line.strip_suffix('\r').unwrap_or(line).strip_prefix("worktree "))
-        .map(str::to_owned)
+    let raw_paths: Vec<String> = text
+        .split("\0\0")
+        .filter_map(|record| {
+            let mut fields = record.split('\0').filter(|f| !f.is_empty());
+            let path = fields.next()?.strip_prefix("worktree ")?;
+            if fields.any(|f| f == "bare" || f == "prunable" || f.starts_with("prunable ")) {
+                return None;
+            }
+            Some(path.to_owned())
+        })
         .collect();
+    let scope = scope.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        paths.into_iter().any(|entry| dunce::canonicalize(&entry).ok().as_deref() == Some(target.as_path()))
+        raw_paths
+            .into_iter()
+            .filter_map(|entry| dunce::canonicalize(entry).ok())
+            .filter(|root| root.starts_with(&scope))
+            .collect()
     })
     .await
     .map_err(|_| ())
@@ -379,6 +402,9 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
             Ok(Ok(None)) => return Precheck::Denied,
             _ => return Precheck::Unavailable,
         };
+    if has_git_component(&path) {
+        return Precheck::Denied;
+    }
     let rem = || deadline.saturating_duration_since(Instant::now());
     if path == workspace.path {
         return Precheck::Owned(local_repo_root(&workspace.path, rem()).await);
@@ -405,14 +431,55 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
             Ok(_) => return Precheck::Denied,
             Err(()) => return Precheck::Unavailable,
         };
-        let root_toplevel = local_repo_root(&workspace.path, rem()).await;
-        if toplevel == root_toplevel {
+        let Some(root_toplevel) = (match local_worktree_toplevel(&workspace.path, rem()).await {
+            Ok(tl) => tl,
+            Err(()) => return Precheck::Unavailable,
+        }) else {
+            return Precheck::Denied;
+        };
+        let Ok(tail) = workspace.path.strip_prefix(&root_toplevel) else {
+            return Precheck::Denied;
+        };
+        let listed = match local_listed_worktrees(&workspace.path, &app.scope, rem()).await {
+            Ok(roots) => roots,
+            Err(()) => return Precheck::Unavailable,
+        };
+        if !listed.iter().any(|r| r == &toplevel) {
             return Precheck::Denied;
         }
-        return match local_worktree_listed(&workspace.path, &toplevel, rem()).await {
-            Ok(true) => Precheck::Owned(toplevel),
-            Ok(false) => Precheck::Denied,
-            Err(()) => Precheck::Unavailable,
+        if tail.as_os_str().is_empty() {
+            return if toplevel != root_toplevel && ownership::within(&toplevel, &path) {
+                Precheck::Owned(toplevel)
+            } else {
+                Precheck::Denied
+            };
+        }
+        let tail_owned = tail.to_path_buf();
+        let scope_owned = app.scope.clone();
+        let path_owned = path.clone();
+        let root_top_owned = root_toplevel.clone();
+        let matched = tokio::task::spawn_blocking(move || {
+            listed
+                .iter()
+                .filter(|wt| **wt != root_top_owned)
+                .filter_map(|wt| {
+                    let projected = wt.join(&tail_owned);
+                    let real = dunce::canonicalize(&projected).ok()?;
+                    if !real.is_dir() || !real.starts_with(&scope_owned) {
+                        return None;
+                    }
+                    let within_repo = real == projected || listed.iter().any(|r| real.starts_with(r));
+                    (within_repo && ownership::within(&real, &path_owned)).then(|| (real.as_os_str().len(), wt.clone()))
+                })
+                .max_by_key(|(len, _)| *len)
+                .map(|(_, wt)| wt)
+        })
+        .await
+        .ok()
+        .flatten();
+        return match matched {
+            Some(wt) => Precheck::Owned(wt),
+            None => Precheck::Denied,
         };
     }
     match root_repo {
@@ -425,14 +492,20 @@ async fn local_precheck(app: &App, workspace: &Workspace, directory: &str, deadl
             if live { Precheck::Owned(workspace.path.clone()) } else { Precheck::Unavailable }
         }
         LocalRepo::Git(root_common) => match local_common_dir(&anchor, rem()).await {
-            Ok(LocalRepo::Git(target_common)) if target_common == root_common => {
-                match local_worktree_toplevel(&anchor, rem()).await {
-                    Ok(Some(tl)) if tl.starts_with(&app.scope) => Precheck::Owned(tl),
-                    Ok(_) => Precheck::Denied,
-                    Err(()) => Precheck::Unavailable,
+            Ok(LocalRepo::Git(target_common)) => match local_worktree_toplevel(&anchor, rem()).await {
+                Ok(Some(tl)) if target_common == root_common => {
+                    if tl.starts_with(&app.scope) {
+                        Precheck::Owned(tl)
+                    } else {
+                        Precheck::Denied
+                    }
                 }
-            }
-            Ok(_) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+                Ok(Some(_)) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+                Ok(None) => Precheck::Denied,
+                Err(()) => Precheck::Unavailable,
+            },
+            Ok(LocalRepo::NonGit) => Precheck::Owned(local_repo_root(&workspace.path, rem()).await),
+            Ok(LocalRepo::MissingGit) => Precheck::Denied,
             Err(()) => Precheck::Unavailable,
         },
     }
