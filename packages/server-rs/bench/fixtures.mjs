@@ -14,9 +14,14 @@ export const dist = pathToFileURL(path.join(repo, "packages/server/dist/"))
 const output = fileURLToPath(new URL("./out/", import.meta.url))
 export const out = await ownedOutput(repo, output)
 await mkdir(out, { recursive: true })
-export const fromDist = file => import(new URL(file, dist))
-assert(existsSync(new URL("index.js", dist)), "Build the TS server first: npm run build --workspace @neuralnomads/codenomad")
-register(new URL("loader.js", dist), import.meta.url)
+let distRegistered = false
+export function ensureDist() {
+  if (distRegistered) return
+  assert(existsSync(new URL("index.js", dist)), "Build the TS server first: npm run build --workspace @neuralnomads/codenomad")
+  register(new URL("loader.js", dist), import.meta.url)
+  distRegistered = true
+}
+export const fromDist = file => { ensureDist(); return import(new URL(file, dist)) }
 
 /** Private temp tree of every fixture (the bench lies inside the CodeNomad checkout: see the Git ceiling in compare.mjs). */
 export async function useBenchTemp() {
@@ -88,7 +93,7 @@ export const provisionEnv = (root, plugins = "1") => ({ CNRS_PROVISION_PLUGINS: 
 /** A Git repository with its own identity and a fake origin URL (never fetched). */
 export async function privateGit(folder, slug) {
   await mkdir(folder, { recursive: true })
-  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/.test(key))),
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key))),
     GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(path.dirname(folder), "fixture.gitconfig") }
   const git = (...args) => promisify(execFile)("git", args, { windowsHide: true, env })
   await git("init", "--quiet", folder)
@@ -115,19 +120,42 @@ export async function measurePair(ts, rs) {
 
 export const writeJson = (name, value) => writeFile(path.join(out, name), JSON.stringify(value, null, 2))
 
+const RELATIVE_IMPORT_RE = /(\bfrom\s*|(?<![\w$.])import\s*\(\s*|(?:^|[;\n])[ \t]*import[ \t]+)(["'])(\.\.?\/[^"'`\r\n]+)\2/g
+
+/** Rewrites every relative ESM specifier in `code` to an absolute `file://` URL rooted at `sourceFile`. */
+export function rewriteFixtureImports(code, sourceFile) {
+  const baseDir = path.dirname(path.resolve(sourceFile))
+  let rewritten = 0
+  const output = code.replace(RELATIVE_IMPORT_RE, (_match, prefix, _quote, specifier) => {
+    const target = path.resolve(baseDir, specifier)
+    assert(existsSync(target), `Missing relative import target in ${sourceFile}: ${specifier}`)
+    rewritten += 1
+    return `${prefix}${JSON.stringify(pathToFileURL(target).href)}`
+  })
+  assert(rewritten > 0, `Expected at least one relative import in ${sourceFile}`)
+  return output
+}
+
+let runtimeCounter = 0
+
 /** The fixture daemon module with a short provider delay and a Git ceiling: the bench lies inside the
  * CodeNomad checkout, whose repository must stay invisible to it. Returns its runner and a cleanup. */
 export async function productRuntime({ holdProvider, gitCeiling = true } = {}) {
   const source = path.join(repo, "scripts/native-product-fixture.mjs")
-  const file = path.join(out, `native-product-fixture-${process.pid}.mjs`)
+  const file = path.join(out, `native-product-fixture-${process.pid}-${++runtimeCounter}.mjs`)
   const edits = [['      res.end("data: [DONE]\\n\\n")', "      await delay(60)\n"]]
   if (gitCeiling) edits.push(["  await mkdir(env.OPENCODE_CONFIG_DIR)", "  env.GIT_CEILING_DIRECTORIES = root\n"])
   if (holdProvider) edits.push(['      res.setHeader("Content-Type", "text/event-stream")',
     `      if (JSON.stringify(requests.at(-1).messages).includes(${JSON.stringify(holdProvider)})) {\n        await new Promise(resolve => res.once("close", resolve))\n        return\n      }\n`])
   let code = await readFile(source, "utf8")
   for (const [marker, before] of edits) { assert.equal(code.split(marker).length, 2, marker); code = code.replace(marker, before + marker) }
-  code = code.replace('"./native-fixture-guards.mjs"', JSON.stringify(pathToFileURL(path.join(repo, "scripts/native-fixture-guards.mjs")).href))
+  code = rewriteFixtureImports(code, source)
   await writeFile(file, code)
-  const { withProductRuntime } = await import(pathToFileURL(file))
-  return { withProductRuntime, remove: () => rm(file, { force: true }) }
+  try {
+    const { withProductRuntime } = await import(pathToFileURL(file))
+    return { withProductRuntime, file, remove: () => rm(file, { force: true }) }
+  } catch (error) {
+    await rm(file, { force: true }).catch(() => {})
+    throw error
+  }
 }

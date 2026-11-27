@@ -11,12 +11,14 @@ import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import { spawnFixtureChild, stopFixtureChild, stopFixtureHandle } from "../../../scripts/native-fixture-guards.mjs"
-import { assertOutsideAccount } from "./private-profile.mjs"
-import { out, privateGit, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertOutsideAccount, assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
 
-const exe = process.argv[2]
-assert(path.isAbsolute(exe ?? "") && process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
+const rawExe = process.argv[2]
+assert(path.isAbsolute(rawExe ?? ""), "usage: node service.mjs <absolute opencode executable> (Windows)")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+assert(process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
+const { spawnFixtureChild, stopFixtureChild, stopFixtureHandle } = await import("../../../scripts/native-fixture-guards.mjs")
+const { out, privateGit, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 // This bench deliberately restarts the backend while keeping its daemon alive.
 // One job owns the whole bench; per-backend jobs would invalidate that experiment.
 if (!process.argv.includes("--owned-service-worker")) {

@@ -4,21 +4,13 @@
 // worktree and every Settings section. Output: out/host-survey.json (method, route, statuses, step).
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { chromium } from "playwright"
-import { spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { assertPrivateHost, out, privateGit, productRuntime, repo, useBenchTemp, writeJson } from "./fixtures.mjs"
-import { populate } from "./files.mjs"
-
-const [exe] = process.argv.slice(2)
-assert(path.isAbsolute(exe ?? ""), "usage: node host-survey.mjs <absolute opencode executable>")
-await useBenchTemp()
-const shots = path.join(out, "screenshots", "host-survey")
-await mkdir(shots, { recursive: true })
-const { withProductRuntime, remove } = await productRuntime()
+import { fileURLToPath } from "node:url"
+import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
 
 /** Route shape: identifiers, hashes and worktree slugs replaced, query keys kept without values. */
 export function shape(url) {
@@ -32,6 +24,27 @@ export function shape(url) {
   const keys = [...new Set(url.searchParams.keys())].sort()
   return keys.length ? `${route}?${keys.join("&")}` : route
 }
+
+const isMain = (() => {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+
+if (isMain) {
+const [rawExe] = process.argv.slice(2)
+assert(path.isAbsolute(rawExe ?? ""), "usage: node host-survey.mjs <absolute opencode executable>")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+const { chromium } = await import("playwright")
+const { spawnFixtureChild: spawn, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { assertPrivateHost, out, privateGit, productRuntime, repo, useBenchTemp, writeJson } = await import("./fixtures.mjs")
+const { populate } = await import("./files.mjs")
+await useBenchTemp()
+const shots = path.join(out, "screenshots", "host-survey")
+await mkdir(shots, { recursive: true })
+const { withProductRuntime, remove } = await productRuntime()
 
 const observed = new Map()
 let step = "startup"
@@ -185,4 +198,5 @@ try {
   result.requests = [...observed.values()].sort((a, b) => a.route.localeCompare(b.route) || a.method.localeCompare(b.method))
   await writeJson("host-survey.json", result)
   console.log(`host-survey: ${result.error ? "FAILED" : `${result.requests.length} routes`} → ${path.join(out, "host-survey.json")}`)
+}
 }

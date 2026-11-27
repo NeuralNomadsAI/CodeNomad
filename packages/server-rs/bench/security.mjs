@@ -8,13 +8,15 @@ import { brotliCompressSync } from "node:zlib"
 import http from "node:http"
 import https from "node:https"
 import path from "node:path"
-import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
-import { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateOpenCodeExecutable } from "./private-profile.mjs"
 
-const exe=process.argv[2]
-assert(path.isAbsolute(exe??""),"usage: node security.mjs <absolute opencode executable>")
+const rawExe = process.argv[2]
+assert(path.isAbsolute(rawExe ?? ""), "usage: node security.mjs <absolute opencode executable>")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+const { withProductRuntime } = await import("../../../scripts/native-product-fixture.mjs")
+const { fixtureChildPid, spawnFixtureChild: spawn, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 const bin=rustBinary()
 await useBenchTemp()
 const { isHtmlBundlePath } = await fromDist("remote-control/gate.js")

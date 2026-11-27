@@ -7,13 +7,15 @@ import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
-import { fixtureParent, withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { assertPrivateHost, outsideUserHome } from "./private-profile.mjs"
+import { assertPrivateHost, assertPrivateOpenCodeExecutable, outsideUserHome } from "./private-profile.mjs"
 
-const [source, binary, plugins] = process.argv.slice(2)
-assert(process.platform === "win32" && [source, binary, plugins].every(p => p && path.isAbsolute(p)),
+const [rawSource, binary, plugins] = process.argv.slice(2)
+assert([rawSource, binary, plugins].every(p => p && path.isAbsolute(p)),
   "Usage: node missions-human.mjs <OpenCode exe> <Rust exe> <bundled plugins dir>")
+const source = await assertPrivateOpenCodeExecutable(rawSource)
+assert(process.platform === "win32", "Usage: node missions-human.mjs <OpenCode exe> <Rust exe> <bundled plugins dir> (Windows)")
+const { fixtureParent, withProductRuntime } = await import("../../../scripts/native-product-fixture.mjs")
+const { spawnFixtureChild: spawn, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
 const parent = await outsideUserHome(await fixtureParent({ projectConfig: true }))
 assert.equal(parent, await realpath(path.join(os.tmpdir(), "opencode")), "The native fixture temp must also be private")
 const owned = await mkdtemp(path.join(parent, "missions-cli-"))
