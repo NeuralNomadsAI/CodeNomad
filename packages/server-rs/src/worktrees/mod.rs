@@ -47,6 +47,7 @@ pub(super) fn probe_error() -> Error {
     error(Status::SERVICE_UNAVAILABLE, "Git ownership could not be verified")
 }
 
+#[cfg(test)]
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
     root_only_with_slot(std::path::Path::new(""), workspace, None).await
 }

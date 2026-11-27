@@ -72,24 +72,56 @@ pub fn within(root: &Path, candidate: &Path) -> bool {
 }
 /// `readGitCommonDirectory`: the canonical Git common directory, `None` when unreadable.
 pub async fn common_directory(dir: &Path) -> Option<PathBuf> {
-    read_common_directory(dir).await.ok().flatten()
+    read_common_directory_in_scope(Path::new(""), dir).await.ok().flatten()
 }
 
-pub(super) async fn read_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
-    let out = crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
-        .await
-        .map_err(|_| ())?;
+pub(super) async fn read_common_directory_in_scope(scope: &Path, dir: &Path) -> Result<Option<PathBuf>, ()> {
+    let pre_ok = tokio::task::spawn_blocking({
+        let scope = scope.to_path_buf();
+        let dir = dir.to_path_buf();
+        move || crate::worktrees::precheck_git_layout_in_scope(&scope, &dir)
+    })
+    .await
+    .map_err(|_| ())?;
+    if !pre_ok {
+        return Err(());
+    }
+    let out =
+        crate::git::run_in_scope(dir, scope, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
+            .await
+            .map_err(|_| ())?;
     if out.not_a_repository() {
         return Ok(None);
     }
     let out = out.ok().map_err(|_| ())?;
     let trimmed = out.text().trim().to_owned();
-    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok()).await.map_err(|_| ())?.map(Some).ok_or(())
+    let scope_owned = scope.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        if !scope_owned.as_os_str().is_empty() {
+            match super::resolve_media_path_checked(&scope_owned, &trimmed).ok().flatten() {
+                Some((p, a)) if p == a && p.is_dir() => Some(p),
+                _ => None,
+            }
+        } else {
+            dunce::canonicalize(trimmed).ok()
+        }
+    })
+    .await
+    .map_err(|_| ())?
+    .map(Some)
+    .ok_or(())
 }
-pub(super) async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
-    let (a, b) = tokio::join!(read_common_directory(left), read_common_directory(right));
+
+pub(super) async fn shares_common_directory_in_scope(scope: &Path, left: &Path, right: &Path) -> Result<bool, ()> {
+    let (a, b) =
+        tokio::join!(read_common_directory_in_scope(scope, left), read_common_directory_in_scope(scope, right));
     let (a, b) = (a?, b?);
     Ok(a.is_some() && a == b)
+}
+
+#[cfg(test)]
+pub(super) async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
+    shares_common_directory_in_scope(Path::new(""), left, right).await
 }
 
 fn read_small_text(path: &Path) -> Result<String, ()> {
@@ -276,14 +308,38 @@ pub(super) async fn shares_common_directory_strict(left: &Path, right: &Path) ->
     .await
     .map_err(|_| ())?
 }
-pub(super) async fn repository_root(root: &Path) -> PathBuf {
-    match crate::git::run(root, &["rev-parse", "--show-toplevel"], 16 * 1024).await.ok().and_then(|o| o.ok().ok()) {
+pub(super) async fn repository_root_in_scope(scope: &Path, root: &Path) -> PathBuf {
+    let pre_ok = tokio::task::spawn_blocking({
+        let scope = scope.to_path_buf();
+        let root = root.to_path_buf();
+        move || crate::worktrees::precheck_git_layout_in_scope(&scope, &root)
+    })
+    .await
+    .unwrap_or(false);
+    if !pre_ok {
+        return root.to_path_buf();
+    }
+    match crate::git::run_in_scope(root, scope, &["rev-parse", "--show-toplevel"], 16 * 1024)
+        .await
+        .ok()
+        .and_then(|o| o.ok().ok())
+    {
         Some(o) => {
             let trimmed = o.text().trim().to_owned();
             let fallback = root.to_path_buf();
-            tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).unwrap_or(fallback))
-                .await
-                .unwrap_or_else(|_| root.to_path_buf())
+            let scope_owned = scope.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                if !scope_owned.as_os_str().is_empty() {
+                    match super::resolve_media_path_checked(&scope_owned, &trimmed).ok().flatten() {
+                        Some((p, a)) if p == a && p.is_dir() => p,
+                        _ => fallback,
+                    }
+                } else {
+                    dunce::canonicalize(trimmed).unwrap_or(fallback)
+                }
+            })
+            .await
+            .unwrap_or_else(|_| root.to_path_buf())
         }
         None => root.to_path_buf(),
     }

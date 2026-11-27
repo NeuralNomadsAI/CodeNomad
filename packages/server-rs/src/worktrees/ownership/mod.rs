@@ -16,8 +16,8 @@ mod tests;
 pub(in crate::worktrees) use git_discovery::valid_git_admin_in;
 pub use git_discovery::{common_directory, resolve_directory, within};
 use git_discovery::{
-    head_cannot_name_repository, repository_root, shares_common_directory, shares_common_directory_strict,
-    strict_common_directory,
+    head_cannot_name_repository, repository_root_in_scope, shares_common_directory_in_scope,
+    shares_common_directory_strict, strict_common_directory,
 };
 pub(crate) use media_path::{
     catalogue_owns_event, directory_anchor, media_directory, media_directory_with_slot, resolve_media_path,
@@ -234,7 +234,7 @@ pub(crate) async fn capture_event_directory(
     {
         return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
-    if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
+    if external && !shares_common_directory_in_scope(&app.scope, &workspace.path, physical).await.ok()? {
         return None;
     }
     let catalogue = super::inventory::receipt_catalogue(app, workspace, endpoint).await?;
@@ -273,7 +273,7 @@ pub(crate) async fn capture_directory_with_refresh(
     {
         return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
-    if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
+    if external && !shares_common_directory_in_scope(&app.scope, &workspace.path, physical).await.ok()? {
         return None;
     }
     let Ok(hit) = super::linked::http_read(app, workspace, super::linked::ReadMode::Validated).await else {
@@ -521,7 +521,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
     if target.as_deref() == Some(root.as_path()) {
         return Ok(Some(Owned {
             directory: root.to_string_lossy().into_owned(),
-            checkout: repository_root(root).await,
+            checkout: repository_root_in_scope(&app.scope, root).await,
         }));
     }
     if let Some(t) = &target
@@ -530,7 +530,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         let shared = if strict {
             shares_common_directory_strict(root, t).await?
         } else {
-            shares_common_directory(root, t).await?
+            shares_common_directory_in_scope(&app.scope, root, t).await?
         };
         if !shared {
             return Ok(None);

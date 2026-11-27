@@ -1,5 +1,5 @@
 //! Media-path resolution, anchor discovery, and directory ownership checks for session media/events.
-use super::git_discovery::{shares_common_directory, shares_common_directory_strict};
+use super::git_discovery::{shares_common_directory_in_scope, shares_common_directory_strict};
 use super::{DirectoryProof, ProofMode, catalogue_proof, reject_network_path};
 use crate::{App, Workspace};
 use std::path::{Path, PathBuf};
@@ -432,7 +432,7 @@ pub(crate) async fn media_directory_with_slot(
         let shared = if strict_media {
             shares_common_directory_strict(&workspace.path, anchor).await
         } else {
-            shares_common_directory(&workspace.path, anchor).await
+            shares_common_directory_in_scope(&app.scope, &workspace.path, anchor).await
         }
         .map_err(|_| native_error())?;
         if !shared {
