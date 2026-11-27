@@ -222,6 +222,7 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
             as="button"
             type="button"
             class="session-automation-summary"
+            aria-haspopup="dialog"
             onClick={(event: MouseEvent) => {
               detailReturnTarget = event.currentTarget as HTMLElement
               setDetailId(id)

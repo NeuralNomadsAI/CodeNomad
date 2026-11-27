@@ -126,10 +126,12 @@ export function createSessionAutomationsStore(
     const futureDelay = nextFutureDue !== null
       ? Math.min(nextFutureDue - nowMs + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
       : null
-    const hasActiveEventTrigger = automations.some(item => item.status === "active" && item.trigger.type === "event")
+    // Prompt/shell event triggers refresh on execution terminal / shell.exited events; only code-action event triggers need bounded polling.
+    const hasActiveCodeEventTrigger = automations.some(item =>
+      item.status === "active" && item.trigger.type === "event" && item.action.type === "code")
     const hasPendingShellResult = automations.some(item =>
       item.action.type === "shell" && item.status === "done" && item.lastOutput === undefined && item.lastOutcome === undefined)
-    if (!retryFailure && futureDelay === null && !hasOverdue && !hasActiveEventTrigger && !hasPendingShellResult) {
+    if (!retryFailure && futureDelay === null && !hasOverdue && !hasActiveCodeEventTrigger && !hasPendingShellResult) {
       entry.overdueChecks = 0
       return
     }
@@ -145,7 +147,7 @@ export function createSessionAutomationsStore(
       } else {
         return
       }
-    } else if (hasActiveEventTrigger) {
+    } else if (hasActiveCodeEventTrigger) {
       entry.overdueChecks = 0
       delayMs = futureDelay !== null ? Math.min(EVENT_TRIGGER_POLL_MS, futureDelay) : EVENT_TRIGGER_POLL_MS
     } else if (hasOverdue || hasPendingShellResult) {
@@ -263,6 +265,7 @@ export function createSessionAutomationsStore(
           cancel(tracked)
           tracked.releaseAuthority?.()
           if (entries.get(stateKey) === tracked) entries.delete(stateKey)
+          // Drop snapshots on last release so prompt/code/state payloads are not retained when hidden or detached.
           dropSnapshot(stateKey)
         }
       }

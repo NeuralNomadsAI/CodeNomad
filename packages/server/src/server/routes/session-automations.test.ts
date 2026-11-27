@@ -32,6 +32,7 @@ function fixture() {
     owned: true,
     ownedDirectories: new Set(["/repo/root", "/repo/worktree"]),
     missing: false,
+    sessionGetError: undefined as unknown,
     carrierOwned: false,
     carrierError: undefined as unknown,
     session: { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } } as any,
@@ -70,7 +71,13 @@ function fixture() {
   const workspace = { id: "w" }
   const location = { directory: "/repo/worktree" }
   const client = {
-    session: { get: async () => { if (state.missing) throw new Error("not found"); return structuredClone(state.session) } },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => {
+        if (state.sessionGetError !== undefined) throw state.sessionGetError
+        if (state.missing) throw Object.assign(new Error("not found"), { _tag: "SessionNotFoundError", sessionID })
+        return structuredClone(state.session)
+      },
+    },
     rpc: () => ({
       scheduleCarrierRead: async () => {
         if (state.carrierError !== undefined) throw state.carrierError
@@ -137,7 +144,7 @@ test("maps 404/405/501 to unsupported and invalid or failed responses to unavail
     }
     for (const responder of [
       async () => new Response(null, { status: 500 }),
-      async () => Response.json({ data: [{ id: "bad" }] }),
+      async () => Response.json({ data: "not-an-array" }),
       async () => { throw new Error("socket hang up") },
     ]) {
       f.state.fetch = responder
@@ -145,10 +152,15 @@ test("maps 404/405/501 to unsupported and invalid or failed responses to unavail
       assert.equal(response.statusCode, 200)
       assert.deepEqual(response.json(), { status: "unavailable" })
     }
+    // Unreadable or future-schema rows are skipped instead of hiding valid automations.
+    f.state.fetch = async () => Response.json({ data: [{ id: "bad" }, rawAutomation()] })
+    const partial = await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })
+    assert.equal(partial.statusCode, 200)
+    assert.deepEqual(partial.json().automations.map((a: { id: string }) => a.id), ["aut_1"])
   } finally { await f.app.close() }
 })
 
-test("rejects invalid, missing, or foreign sessions before calling OpenCode", async () => {
+test("rejects invalid, missing, or foreign sessions and maps session lookup transport failures to unavailable/503", async () => {
   const f = fixture()
   try {
     for (const id of ["abc", "ses", "ses a"]) {
@@ -156,7 +168,12 @@ test("rejects invalid, missing, or foreign sessions before calling OpenCode", as
     }
     f.state.missing = true
     assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 404)
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })).statusCode, 404)
     f.state.missing = false
+    f.state.sessionGetError = new Error("ECONNRESET")
+    assert.deepEqual((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).json(), { status: "unavailable" })
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })).statusCode, 503)
+    f.state.sessionGetError = undefined
     f.state.owned = false
     assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 403)
     assert.equal(f.calls.length, 0)

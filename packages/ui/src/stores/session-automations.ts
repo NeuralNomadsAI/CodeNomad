@@ -2,15 +2,10 @@ import type { SessionAutomationAction } from "../../../server/src/opencode/autom
 import { backendOf } from "../lib/backend-client"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { tGlobal } from "../lib/i18n"
+import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { showToastNotification } from "../lib/notifications"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { createSessionAutomationsStore, formatAutomationMutationError } from "./session-automations-store"
-
-const EXECUTION_SETTLED_EVENTS = new Set([
-  "session.execution.succeeded",
-  "session.execution.failed",
-  "session.execution.interrupted",
-])
 
 // The signal leaves the shared background budget's queue or aborts the request once the Session is hidden.
 export const sessionAutomations = createSessionAutomationsStore(
@@ -27,7 +22,7 @@ serverEvents.on("instance.event", (event) => {
   const native = event.event as { type: string; data?: { sessionID?: unknown; shell?: { metadata?: { sessionID?: unknown } } } }
   if (native.type === "session.deleted" && typeof native.data?.sessionID === "string") {
     sessionAutomations.forget(event.instanceId, native.data.sessionID)
-  } else if (EXECUTION_SETTLED_EVENTS.has(native.type) && typeof native.data?.sessionID === "string") {
+  } else if (isExecutionTerminalEvent(native) && typeof native.data?.sessionID === "string") {
     void sessionAutomations.refresh(event.instanceId, native.data.sessionID)
   } else if (native.type === "shell.exited") {
     void sessionAutomations.noteShellExited(event.instanceId)

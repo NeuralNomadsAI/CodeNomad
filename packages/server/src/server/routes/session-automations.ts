@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { isSessionNotFoundError } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -89,9 +90,15 @@ async function resolveOwnedSession(
     }
   }
   current()
-  const session = await client.session.get({ sessionID }, { signal }).catch(() => undefined)
+  let session: Awaited<ReturnType<typeof client.session.get>>
+  try {
+    session = await client.session.get({ sessionID }, { signal })
+  } catch (error) {
+    current()
+    if (isSessionNotFoundError(error)) return { kind: "not-found" as const }
+    return { kind: "unavailable" as const }
+  }
   current()
-  if (!session) return { kind: "not-found" as const }
   const location = readLocationRef(session.location)
   if (!await manager.ownsLocation(workspaceId, location, client, { signal })) return { kind: "forbidden" as const }
   const verifyOrdinary = async (target: typeof session, targetLocation: ReturnType<typeof readLocationRef>) => {
@@ -163,6 +170,7 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
       if (owned.kind === "not-found") return reply.code(404).send({ error: "Session not found" })
       if (owned.kind === "unavailable") return { status: "unavailable" } satisfies SessionAutomationsResponse
 
+      // Uses raw connection.fetch to enforce MAX_RESPONSE_BYTES and distinguish 404/405/501 unsupported endpoints.
       const url = automationUrl(owned.connection, "/api/experimental/automation", owned.location.directory, { sessionID })
       const response = await owned.connection.fetch(url, {
         method: "GET",
@@ -185,7 +193,8 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
       const automations: SessionAutomation[] = []
       for (const raw of payload.data) {
         const projected = projectSessionAutomation(raw)
-        if (!projected) return { status: "unavailable" } satisfies SessionAutomationsResponse
+        // Skip unreadable or future trigger/action rows instead of hiding valid automations.
+        if (!projected) continue
         if (!await isOwnedAutomation(projected, owned, sessionID, request.params.id, deps.workspaceManager, signal)) continue
         automations.push(projected.automation)
       }

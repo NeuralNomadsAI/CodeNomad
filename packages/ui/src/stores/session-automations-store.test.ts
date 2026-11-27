@@ -235,7 +235,7 @@ describe("session automations store", () => {
     release()
   })
 
-  it("refreshes active event-triggered automations while demanded and stops when paused or released", async t => {
+  it("polls only active code-action event triggers while demanded and stops when paused or for prompt/shell events", async t => {
     t.mock.timers.enable({ apis: ["setTimeout"] })
     const f = fixture()
     const release = f.store.demand("i", "ses_a")
@@ -244,7 +244,7 @@ describe("session automations store", () => {
       automations: [automation("aut_evt", {
         status: "active",
         trigger: { type: "event", server: "github", event: "push" },
-        action: { type: "shell", command: "npm test" },
+        action: { type: "code", code: "return {}" },
         nextDueAt: undefined,
         runCount: 0,
       })],
@@ -253,11 +253,11 @@ describe("session automations store", () => {
     await Promise.resolve()
 
     t.mock.timers.tick(15_000)
-    assert.equal(f.reads.length, 2, "polls active event-triggered automation while Status is shown")
+    assert.equal(f.reads.length, 2, "polls active code-action event trigger while Status is shown")
     f.reads[1]!.resolve({
       status: "ok",
-      automations: [automation("aut_evt", {
-        status: "paused",
+      automations: [automation("aut_evt_shell", {
+        status: "active",
         trigger: { type: "event", server: "github", event: "push" },
         action: { type: "shell", command: "npm test" },
         nextDueAt: undefined,
@@ -268,7 +268,7 @@ describe("session automations store", () => {
     await Promise.resolve()
 
     t.mock.timers.tick(60_000)
-    assert.equal(f.reads.length, 2, "stops polling once event-triggered automation is paused")
+    assert.equal(f.reads.length, 2, "does not poll shell or prompt event triggers that refresh on native events")
     release()
   })
 
