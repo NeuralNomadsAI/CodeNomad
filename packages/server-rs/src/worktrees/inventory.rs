@@ -445,6 +445,22 @@ fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 
     linked_markers_in(Path::new(""), root, admin, common)
 }
 
+fn strip_git_eol(text: &str) -> &str {
+    text.trim_end_matches(['\r', '\n'])
+}
+
+fn is_reparse_entry(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_type().is_symlink() || (meta.file_attributes() & 0x0400) != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
+}
+
 fn linked_markers_in(scope: &Path, root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
     if admin.parent() != Some(common.join("worktrees").as_path()) {
         return Err(conflict("Foreign worktree administration"));
@@ -452,19 +468,19 @@ fn linked_markers_in(scope: &Path, root: &Path, admin: &Path, common: &Path) -> 
     let marker = small(&root.join(".git"))?;
     let gitdir = std::str::from_utf8(&marker)
         .ok()
-        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .and_then(|text| strip_git_eol(text).strip_prefix("gitdir: "))
         .filter(|path| !path.is_empty())
         .ok_or_else(native_error)?;
     if !canonical_dir_in(scope, &root.join(gitdir), admin) {
         return Err(conflict("Git worktree marker changed"));
     }
     let backlink = small(&admin.join("gitdir"))?;
-    let text = std::str::from_utf8(&backlink).map_err(|_| native_error())?.trim_end();
+    let text = strip_git_eol(std::str::from_utf8(&backlink).map_err(|_| native_error())?);
     if !canonical_file_in(scope, &admin.join(text), &root.join(".git")) {
         return Err(conflict("Foreign Git backlink"));
     }
     let common_marker = small(&admin.join("commondir"))?;
-    let text = std::str::from_utf8(&common_marker).map_err(|_| native_error())?.trim_end();
+    let text = strip_git_eol(std::str::from_utf8(&common_marker).map_err(|_| native_error())?);
     if !canonical_dir_in(scope, &admin.join(text), common) {
         return Err(conflict("Foreign Git common directory"));
     }
@@ -485,7 +501,7 @@ fn separate_marker_live_in(scope: &Path, root: &Path, common: &Path, expected: &
     }
     std::str::from_utf8(&marker)
         .ok()
-        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .and_then(|text| strip_git_eol(text).strip_prefix("gitdir: "))
         .filter(|path| !path.is_empty())
         .is_some_and(|gitdir| canonical_dir_in(scope, &root.join(gitdir), common))
 }
@@ -500,7 +516,7 @@ fn separate_marker_in(scope: &Path, root: &Path, common: &Path) -> Result<Vec<u8
     let marker = small(&dot_git)?;
     let gitdir = std::str::from_utf8(&marker)
         .ok()
-        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .and_then(|text| strip_git_eol(text).strip_prefix("gitdir: "))
         .filter(|path| !path.is_empty())
         .ok_or_else(native_error)?;
     if !canonical_dir_in(scope, &root.join(gitdir), common) {
@@ -865,6 +881,28 @@ pub(crate) fn precheck_git_layout_in_scope(scope: &Path, dir: &Path) -> bool {
     pre_config_stamps_in(scope, dir) != PreConfig::Refused
 }
 
+fn check_admin_entry_in_scope(scope: &Path, path: &Path) -> bool {
+    let meta = match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+        Ok(meta) => meta,
+    };
+    if !is_reparse_entry(&meta) {
+        return true;
+    }
+    if scope.as_os_str().is_empty() {
+        let Ok(target) = std::fs::read_link(path) else {
+            return false;
+        };
+        let simplified = dunce::simplified(&target);
+        return super::ownership::reject_network_path(&simplified.to_string_lossy(), simplified).is_ok();
+    }
+    if resolve_git_path_in(scope, path).is_ok() {
+        return true;
+    }
+    matches!(resolve_symlink_file_in(scope, path), Ok(Some(_)) | Err(std::io::ErrorKind::NotFound))
+}
+
 fn validate_admin_dir_in(scope: &Path, admin: &Path) -> Result<(PathBuf, [Option<ConfigStamp>; 2]), PreConfig> {
     let common = match std::fs::symlink_metadata(admin.join("commondir")) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => admin.to_path_buf(),
@@ -872,7 +910,7 @@ fn validate_admin_dir_in(scope: &Path, admin: &Path) -> Result<(PathBuf, [Option
             let Ok(cb) = small(&admin.join("commondir")) else {
                 return Err(PreConfig::Refused);
             };
-            let Some(ct) = std::str::from_utf8(&cb).ok().map(str::trim_end).filter(|s| !s.is_empty()) else {
+            let Some(ct) = std::str::from_utf8(&cb).ok().map(strip_git_eol).filter(|s| !s.is_empty()) else {
                 return Err(PreConfig::None);
             };
             let common_path = if Path::new(ct).is_absolute() {
@@ -891,13 +929,20 @@ fn validate_admin_dir_in(scope: &Path, admin: &Path) -> Result<(PathBuf, [Option
         }
         _ => return Err(PreConfig::Refused),
     };
+    if !check_admin_entry_in_scope(scope, &admin.join("HEAD"))
+        || !check_admin_entry_in_scope(scope, &common.join("objects"))
+        || !check_admin_entry_in_scope(scope, &common.join("refs"))
+        || !check_admin_entry_in_scope(scope, &common.join("reftable"))
+    {
+        return Err(PreConfig::Refused);
+    }
     let Some(s0) = config_stamp_in(scope, &common.join("config")) else {
         return Err(PreConfig::Refused);
     };
     let Some(s1) = config_stamp_in(scope, &admin.join("config.worktree")) else {
         return Err(PreConfig::Refused);
     };
-    if !validate_local_config_includes_in(scope, &common, &admin) {
+    if !validate_local_config_includes_in(scope, &common, admin) {
         return Err(PreConfig::Refused);
     }
     Ok((common, [s0, s1]))
@@ -907,8 +952,10 @@ fn validate_gitfile_in(scope: &Path, cur: &Path, marker: &Path) -> PreConfig {
     let Ok(bytes) = small(marker) else {
         return PreConfig::Refused;
     };
-    let Some(gitdir) =
-        std::str::from_utf8(&bytes).ok().and_then(|t| t.trim_end().strip_prefix("gitdir: ")).filter(|s| !s.is_empty())
+    let Some(gitdir) = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|t| strip_git_eol(t).strip_prefix("gitdir: "))
+        .filter(|s| !s.is_empty())
     else {
         return PreConfig::None;
     };
@@ -943,7 +990,7 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
         match std::fs::symlink_metadata(&marker) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return PreConfig::Refused,
-            Ok(meta) if meta.is_dir() || meta.file_type().is_symlink() => match resolve_git_path_in(scope, &marker) {
+            Ok(meta) if is_reparse_entry(&meta) => match resolve_git_path_in(scope, &marker) {
                 Ok(Some(resolved)) => match std::fs::metadata(&resolved) {
                     Ok(m) if m.is_dir() => match validate_admin_dir_in(scope, &resolved) {
                         Ok((common, stamps)) => {
@@ -959,7 +1006,22 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
                     _ => return PreConfig::Refused,
                 },
                 Ok(None) => {}
+                Err(()) if !scope.as_os_str().is_empty() => match resolve_symlink_file_in(scope, &marker) {
+                    Ok(Some((resolved_file, _))) => return validate_gitfile_in(scope, &cur, &resolved_file),
+                    Err(std::io::ErrorKind::NotFound) => {}
+                    Ok(None) | Err(_) => return PreConfig::Refused,
+                },
                 Err(()) => return PreConfig::Refused,
+            },
+            Ok(meta) if meta.is_dir() => match validate_admin_dir_in(scope, &marker) {
+                Ok((common, stamps)) => {
+                    if super::ownership::valid_git_admin_in(scope, &marker, &common) {
+                        return PreConfig::Found(Box::new((common, marker, stamps)));
+                    }
+                    first_found.get_or_insert((common, marker, stamps));
+                }
+                Err(PreConfig::Refused) => return PreConfig::Refused,
+                Err(PreConfig::None | PreConfig::Found(_)) => {}
             },
             Ok(meta) if meta.is_file() => return validate_gitfile_in(scope, &cur, &marker),
             Ok(_) => return PreConfig::Refused,
@@ -969,8 +1031,8 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
         match std::fs::symlink_metadata(cur.join("HEAD")) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return PreConfig::Refused,
-            Ok(hm) if hm.is_dir() => {}
-            Ok(hm) => {
+            Ok(hm) if hm.is_dir() && !is_reparse_entry(&hm) => {}
+            Ok(_) => {
                 let has_objects = match std::fs::symlink_metadata(cur.join("objects")) {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
                     Ok(_) => true,
@@ -982,12 +1044,6 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
                     Err(_) => return PreConfig::Refused,
                 };
                 if has_objects || has_commondir {
-                    if hm.file_type().is_symlink() && resolve_git_path_in(scope, &cur.join("HEAD")).is_err() {
-                        return PreConfig::Refused;
-                    }
-                    if has_objects && resolve_git_path_in(scope, &cur.join("objects")).is_err() {
-                        return PreConfig::Refused;
-                    }
                     match validate_admin_dir_in(scope, &cur) {
                         Ok((common, stamps)) => {
                             if super::ownership::valid_git_admin_in(scope, &cur, &common) {
@@ -1951,5 +2007,43 @@ mod layout_tests {
         assert!(!super::precheck_git_layout_in_scope(&base, &sub));
 
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn precheck_refuses_out_of_scope_refs_link_and_preserves_trailing_space_in_gitdir() {
+        let root = dunce::canonicalize(crate::shared::test_dir("precheck-scope-refs")).unwrap();
+        let scope = root.join("scope");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&scope).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        // Trailing space in `gitdir:` must not be stripped (only CR/LF match Git).
+        assert_eq!(super::strip_git_eol("gitdir: ./dir \r\n"), "gitdir: ./dir ");
+
+        // An out-of-scope `refs` junction/symlink inside `.git` must fail closed.
+        let repo = scope.join("repo");
+        let git_dir = repo.join(".git");
+        std::fs::create_dir_all(git_dir.join("objects")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(git_dir.join("config"), "[core]\n\tbare = false\n").unwrap();
+        #[cfg(windows)]
+        let linked = {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("cmd")
+                .creation_flags(0x0800_0000)
+                .args(["/c", "mklink", "/J", git_dir.join("refs").to_str().unwrap(), outside.to_str().unwrap()])
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, git_dir.join("refs")).is_ok();
+        if linked {
+            assert!(!super::precheck_git_layout_in_scope(&scope, &repo));
+        }
+
+        // Remove junction before cleanup.
+        let _ = std::fs::remove_dir(git_dir.join("refs"));
+        let _ = std::fs::remove_file(git_dir.join("refs"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
