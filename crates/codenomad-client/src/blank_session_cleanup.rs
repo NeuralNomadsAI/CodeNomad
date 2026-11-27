@@ -66,14 +66,16 @@ fn unwrap_data(value: &Value) -> &Value {
     value.get("data").unwrap_or(value)
 }
 
-fn map_session_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
+fn map_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         Err(BlankCleanupError::Unauthorized)
     } else if status.is_success() {
         Ok(())
     } else if matches!(
         status,
-        reqwest::StatusCode::METHOD_NOT_ALLOWED | reqwest::StatusCode::NOT_IMPLEMENTED
+        reqwest::StatusCode::NOT_FOUND
+            | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            | reqwest::StatusCode::NOT_IMPLEMENTED
     ) {
         Err(BlankCleanupError::RouteUnavailable)
     } else if status.is_server_error() {
@@ -89,12 +91,30 @@ fn map_session_preflight_status(status: reqwest::StatusCode) -> Result<(), Blank
     }
 }
 
-fn map_workspace_preflight_status(status: reqwest::StatusCode) -> Result<(), BlankCleanupError> {
+async fn check_session_preflight_status(
+    response: reqwest::Response,
+    session_id: &str,
+) -> Result<reqwest::Response, BlankCleanupError> {
+    let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
-        Err(BlankCleanupError::RouteUnavailable)
-    } else {
-        map_session_preflight_status(status)
+        let is_missing_session = crate::backend::read_json_limited(response, 4096)
+            .await
+            .ok()
+            .is_some_and(|data| {
+                (data["_tag"] == "SessionNotFoundError" && data["sessionID"] == session_id)
+                    || (data["name"] == "SessionNotFoundError"
+                        && data["sessionID"]
+                            .as_str()
+                            .is_none_or(|sid| sid == session_id))
+            });
+        return Err(if is_missing_session {
+            BlankCleanupError::Other("SessionNotFoundError".into())
+        } else {
+            BlankCleanupError::RouteUnavailable
+        });
     }
+    map_preflight_status(status)?;
+    Ok(response)
 }
 
 async fn read_bounded(
@@ -126,7 +146,7 @@ impl Backend {
             .send()
             .await
             .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-        map_session_preflight_status(response.status())?;
+        let response = check_session_preflight_status(response, session_id).await?;
         let page = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(is_empty_page(&page))
     }
@@ -145,7 +165,7 @@ impl Backend {
             .send()
             .await
             .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-        map_session_preflight_status(response.status())?;
+        let response = check_session_preflight_status(response, session_id).await?;
         let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
         Ok(unwrap_data(&body).clone())
     }
@@ -197,7 +217,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_session_preflight_status(response.status())?;
+            let response = check_session_preflight_status(response, session_id).await?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(unwrap_data(&body).as_array().is_some_and(Vec::is_empty))
         };
@@ -225,7 +245,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_workspace_preflight_status(response.status())?;
+            map_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(is_empty_page(&body))
         };
@@ -239,7 +259,7 @@ impl Backend {
                 .send()
                 .await
                 .map_err(|err| BlankCleanupError::Unavailable(err.to_string()))?;
-            map_workspace_preflight_status(response.status())?;
+            map_preflight_status(response.status())?;
             let body = read_bounded(response, MAX_PREFLIGHT_BYTES).await?;
             Ok::<bool, BlankCleanupError>(
                 unwrap_data(&body)
@@ -593,24 +613,29 @@ mod tests {
             let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
             let project = test_project();
 
-            // A 404 on a session-scoped preflight route (e.g. concurrently deleted session)
-            // skips only that candidate instead of aborting the whole sweep.
+            // A 404 carrying SessionNotFoundError for the candidate skips only that candidate.
             let task = tokio::spawn({
                 let backend = backend.clone();
                 let project = project.clone();
                 async move { backend.verify_blank_session(&project, "ses_gone").await }
             });
-            let _ = serve_once(&listener, 404, json!({})).await;
+            let _ = serve_once(
+                &listener,
+                404,
+                json!({"_tag": "SessionNotFoundError", "sessionID": "ses_gone"}),
+            )
+            .await;
             let err = task.await.unwrap().unwrap_err();
             assert!(!err.is_route_unavailable() && !err.is_unavailable());
 
-            for status in [405u16, 501] {
+            // A 404 indicating workspace/route absence (not SessionNotFoundError) classifies as RouteUnavailable.
+            for status in [404u16, 405, 501] {
                 let task = tokio::spawn({
                     let backend = backend.clone();
                     let project = project.clone();
                     async move { backend.verify_blank_session(&project, "ses_old").await }
                 });
-                let _ = serve_once(&listener, status, json!({})).await;
+                let _ = serve_once(&listener, status, json!({"error": "Not Found"})).await;
                 let err = task.await.unwrap().unwrap_err();
                 assert!(err.is_route_unavailable() && err.is_unavailable());
             }

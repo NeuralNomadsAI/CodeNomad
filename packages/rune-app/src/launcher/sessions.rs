@@ -363,7 +363,7 @@ fn choose_from(
 }
 fn choose_from_inner(
     s: &mut State,
-    candidates: Vec<(String, Option<usize>)>,
+    mut candidates: Vec<(String, Option<usize>)>,
     dismiss: Option<u64>,
     ticket: Option<u64>,
     allow_streaming: bool,
@@ -387,6 +387,10 @@ fn choose_from_inner(
         return;
     };
     if l.pending {
+        return;
+    }
+    candidates.retain(|(id, _)| !crate::shell::blank_cleanup::is_deleting_session(s, &p.id, id));
+    if candidates.is_empty() {
         return;
     }
     for (id, _) in &candidates {

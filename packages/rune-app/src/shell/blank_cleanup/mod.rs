@@ -27,7 +27,6 @@ struct ConfirmDialog {
     backend: Backend,
     project: Project,
     connection_generation: u64,
-    stream_generation: (u64, u64),
     candidates: VecDeque<String>,
     return_focus: Option<String>,
 }
@@ -45,6 +44,7 @@ enum StepOutcome {
 
 struct InFlight {
     session_id: String,
+    deleting: bool,
     aborted: bool,
     cancel: Option<Sender<()>>,
     rx: Receiver<StepOutcome>,
@@ -55,7 +55,6 @@ struct Sweep {
     backend: Backend,
     project: Project,
     connection_generation: u64,
-    stream_generation: (u64, u64),
     candidates: VecDeque<String>,
     in_flight: Option<InFlight>,
     deleted_count: usize,
@@ -86,17 +85,31 @@ impl Host {
     }
 }
 
-/// Synchronously aborts any in-flight blank-cleanup request targeting `session_id`
+/// Returns `true` while a `POST /session-cleanup/:sessionId` deletion is already in flight
+/// on the server for `(project_id, session_id)`, so callers do not open a session mid-delete.
+pub(crate) fn is_deleting_session(s: &State, project_id: &str, session_id: &str) -> bool {
+    s.blank_cleanup.sweep.as_ref().is_some_and(|sweep| {
+        sweep.project.id == project_id
+            && sweep
+                .in_flight
+                .as_ref()
+                .is_some_and(|active| active.deleting && active.session_id == session_id)
+    })
+}
+
+/// Synchronously aborts any in-flight blank-cleanup preflight targeting `session_id`
 /// (and removes it from pending candidates) the moment the user selects or edits it.
+/// Once the server `POST` deletion has already been dispatched, keep waiting for its outcome.
 pub(crate) fn abort_for_session(s: &mut State, session_id: &str) {
     let Some(sweep) = s.blank_cleanup.sweep.as_mut() else {
         return;
     };
     sweep.candidates.retain(|id| id != session_id);
     if let Some(active) = sweep.in_flight.as_mut()
+        && !active.deleting
         && active.session_id == session_id
     {
-        // Drop `cancel` to abort any in-flight HTTP request and atomically close `rx`
+        // Drop `cancel` to abort any in-flight HTTP preflight and atomically close `rx`
         // before checking emptiness so no producer can race a 401 in after the check.
         active.cancel = None;
         active.rx.close();
@@ -196,11 +209,10 @@ pub(crate) fn open_confirm(s: &mut State, explicit_return: Option<String>, tx: &
     }
     // Snapshot candidates before displaying the confirmation dialog (matching Solid
     // `runSessionCleanup`) so sessions created while the dialog is open are never swept.
-    let Some((backend, project, connection_generation, stream_generation, candidates)) =
+    let Some((backend, project, connection_generation, candidates)) =
         s.screen.launcher().and_then(|l| {
             let project = l.project.clone()?;
             let backend = l.connection.clone()?;
-            let stream_generation = (l.catalogue_generation, l.workspace_stream_generation);
             let mut seen = HashSet::new();
             let mut ids = VecDeque::new();
             for row in l.sessions.iter().chain(l.linked.rows.iter()) {
@@ -211,13 +223,7 @@ pub(crate) fn open_confirm(s: &mut State, explicit_return: Option<String>, tx: &
                     ids.push_back(row.id.clone());
                 }
             }
-            Some((
-                backend,
-                project,
-                l.connection_generation(),
-                stream_generation,
-                ids,
-            ))
+            Some((backend, project, l.connection_generation(), ids))
         })
     else {
         return false;
@@ -230,7 +236,6 @@ pub(crate) fn open_confirm(s: &mut State, explicit_return: Option<String>, tx: &
         backend,
         project,
         connection_generation,
-        stream_generation,
         candidates,
         return_focus,
     }));
@@ -277,7 +282,6 @@ fn confirm(s: &mut State, tx: &mut Tx) {
             .as_ref()
             .is_some_and(|p| p.id == dialog.project.id)
             && l.connection_generation() == dialog.connection_generation
-            && (l.catalogue_generation, l.workspace_stream_generation) == dialog.stream_generation
             && l.connection
                 .as_ref()
                 .is_some_and(|conn| conn.client.same_connection(&dialog.backend.client))
@@ -302,7 +306,6 @@ fn confirm(s: &mut State, tx: &mut Tx) {
         backend: dialog.backend,
         project: dialog.project,
         connection_generation: dialog.connection_generation,
-        stream_generation: dialog.stream_generation,
         candidates,
         in_flight: None,
         deleted_count: 0,
@@ -317,10 +320,7 @@ fn sweep_current(s: &State, sweep: &Sweep) -> bool {
     let Some(l) = s.screen.launcher() else {
         return false;
     };
-    if l.authentication_required
-        || l.connection_generation() != sweep.connection_generation
-        || (l.catalogue_generation, l.workspace_stream_generation) != sweep.stream_generation
-    {
+    if l.authentication_required || l.connection_generation() != sweep.connection_generation {
         return false;
     }
     if !l
@@ -364,6 +364,7 @@ fn spawn_verify(s: &State, backend: Backend, project: Project, session_id: Strin
     });
     InFlight {
         session_id,
+        deleting: false,
         aborted: false,
         cancel: Some(cancel),
         rx,
@@ -392,6 +393,7 @@ fn spawn_delete(s: &State, backend: Backend, project: Project, session_id: Strin
     });
     InFlight {
         session_id,
+        deleting: true,
         aborted: false,
         cancel: Some(cancel),
         rx,
@@ -484,8 +486,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.blank_cleanup.sweep = Some(sweep);
         return advance(s, tx);
     };
-    if workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id) {
-        // Cancel HTTP and close `rx` atomically before reading any queued outcome so
+    if !active.deleting
+        && workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id)
+    {
+        // Cancel HTTP preflight and close `rx` atomically before reading any queued outcome so
         // no producer can race a 401 in and a completed preflight never triggers POST.
         active.cancel = None;
         active.rx.close();
