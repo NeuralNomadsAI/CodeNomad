@@ -350,6 +350,7 @@ fn render_entries(s: &State, key: &str, flat: &[(&str, &Value, &str)], limit: us
         col().full_width().separate(Space::Sm).children(rendered),
         false,
     )
+    .data(crate::chat::reading::InnerScrollRegion)
 }
 
 fn severity(entry: &Value) -> u8 {

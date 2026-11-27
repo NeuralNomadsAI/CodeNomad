@@ -77,6 +77,16 @@ struct ResizeAnchor {
     settle_seq: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ReplayDelta {
+    Vertical(f32),
+    Diagonal {
+        dy: f32,
+        confirmed: bool,
+        token: u64,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum FrameRestoreTarget {
     Offset,
@@ -84,7 +94,7 @@ enum FrameRestoreTarget {
     FromBottom,
     ReplayDeltas {
         anchor: Bookmark,
-        deltas: Vec<f32>,
+        deltas: Vec<ReplayDelta>,
         restored_anchor: bool,
         anchor_retargeted: bool,
         content_clamped_retried: bool,
@@ -111,7 +121,7 @@ fn replay_deltas_checked(start: f32, max: f32, deltas: &[f32]) -> (f32, bool) {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct HorizontalScrollRegion;
+pub(crate) struct InnerScrollRegion;
 
 #[derive(Clone, Debug, PartialEq)]
 struct FrameRestore {
@@ -129,7 +139,6 @@ struct FrameRestore {
     defer_for_input_clock: Option<f64>,
     superseded_by_key: bool,
     had_press_defer: bool,
-    diagonal_fallback_deltas: Vec<(f32, bool)>,
     diagonal_fallback_base_offset: Option<f32>,
     handled: bool,
     post_probe: Option<PostProbe>,
@@ -149,6 +158,7 @@ pub(crate) struct Reading {
     content_layout_seq: u64,
     resize_anchor: Option<ResizeAnchor>,
     frame_restore_epoch: u64,
+    diagonal_token: u64,
     frame_restore: Option<FrameRestore>,
     phased_wheel_active: bool,
     phased_vertical_claimed_clock: Option<f64>,
@@ -190,6 +200,7 @@ impl Default for Reading {
             content_layout_seq: 0,
             resize_anchor: None,
             frame_restore_epoch: 0,
+            diagonal_token: 0,
             frame_restore: None,
             phased_wheel_active: false,
             phased_vertical_claimed_clock: None,
@@ -521,7 +532,6 @@ impl Reading {
                     defer_for_input_clock: None,
                     superseded_by_key: false,
                     had_press_defer: false,
-                    diagonal_fallback_deltas: Vec::new(),
                     diagonal_fallback_base_offset: None,
                     handled: true,
                     post_probe: None,
@@ -559,7 +569,6 @@ impl Reading {
                 defer_for_input_clock: None,
                 superseded_by_key: false,
                 had_press_defer: false,
-                diagonal_fallback_deltas: Vec::new(),
                 diagonal_fallback_base_offset: None,
                 handled: false,
                 post_probe: None,
@@ -1360,13 +1369,19 @@ pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx:
         return;
     }
     let focused_in_history = history_focused || tx.focus_within("history");
-    let composer_pageable =
-        tx.focus_within("composer") && s.tool_diff_preferences.composer_scroll.get().1 > 0.5;
-    let focused_blocks_history = tx.focused().is_some()
-        && !focused_in_history
-        && (!tx.focus_within("composer") || composer_pageable);
+    let focused_in_other_scroller = !focused_in_history
+        && (tx.focus_within("session-list")
+            || tx.focus_within("right-panel")
+            || tx.focus_within("history-search-body")
+            || tx.focus_within("model-list")
+            || tx.focus_within("pending-fields")
+            || tx.focus_within(rune_theme_codenomad::timeline::VIEWPORT)
+            || (tx.focus_within("composer")
+                && s.tool_diff_preferences.composer_scroll.get().1 > 0.5)
+            || (tx.focus_within("session-stack")
+                && s.tool_diff_preferences.stack_scroll.get().1 > 0.5));
     let targets_history = focused_in_history
-        || (!focused_blocks_history && s.transcript_display.reading().history_hovered);
+        || (!focused_in_other_scroller && s.transcript_display.reading().history_hovered);
     let clock = tx.clock();
     let reading = s.transcript_display.reading_mut();
     if targets_history {
@@ -1474,24 +1489,29 @@ fn handle_reading_wheel(
         if active_frame_restore {
             let cur_offset = s.transcript_display.reading().scroll_state.get().offset;
             let history_bounds = s.tool_diff_preferences.history_bounds.get();
-            let pick_info = if let Some(fr) =
-                s.transcript_display.reading_mut().frame_restore.as_mut()
+            let reading = s.transcript_display.reading_mut();
+            let pick_token = if let Some(fr) = reading.frame_restore.as_mut()
                 && !fr.handled
                 && fr.probe_live
-                && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+                && let FrameRestoreTarget::ReplayDeltas { deltas, .. } = &mut fr.target
             {
                 if fr.diagonal_fallback_base_offset.is_none() {
                     fr.diagonal_fallback_base_offset = Some(cur_offset);
                 }
-                let idx = fr.diagonal_fallback_deltas.len();
-                fr.diagonal_fallback_deltas.push((dy, false));
+                reading.diagonal_token = reading.diagonal_token.wrapping_add(1);
+                let token = reading.diagonal_token;
+                deltas.push(ReplayDelta::Diagonal {
+                    dy,
+                    confirmed: false,
+                    token,
+                });
                 fr.defer_for_input_clock = Some(clock);
                 tx.wake_after(std::time::Duration::ZERO);
-                Some((fr.epoch, idx))
+                Some(token)
             } else {
                 None
             };
-            if let Some((epoch, idx)) = pick_info
+            if let Some(token) = pick_token
                 && history_bounds[2] > 0.0
                 && history_bounds[3] > 0.0
             {
@@ -1502,7 +1522,7 @@ fn handle_reading_wheel(
                     history_bounds[1] + ev.y,
                     move |s: &mut State, picked, tx| {
                         let over_inner_scroller = picked.as_ref().is_some_and(|p| {
-                            p.data::<HorizontalScrollRegion>().is_some()
+                            p.data::<InnerScrollRegion>().is_some()
                                 || p.path().split('/').any(|seg| seg == "scroll")
                         });
                         if !over_inner_scroller
@@ -1510,12 +1530,15 @@ fn handle_reading_wheel(
                             && s.transcript_display.reading().same_scope(&scope)
                             && let Some(fr) =
                                 s.transcript_display.reading_mut().frame_restore.as_mut()
-                            && fr.epoch == epoch
                             && !fr.handled
                             && fr.probe_live
-                            && let Some(slot) = fr.diagonal_fallback_deltas.get_mut(idx)
+                            && let FrameRestoreTarget::ReplayDeltas { deltas, .. } = &mut fr.target
+                            && let Some(ReplayDelta::Diagonal { confirmed, .. }) =
+                                deltas.iter_mut().find(|d| {
+                                    matches!(d, ReplayDelta::Diagonal { token: t, .. } if *t == token)
+                                })
                         {
-                            slot.1 = true;
+                            *confirmed = true;
                         }
                         tx.live_only();
                     },
@@ -1607,7 +1630,7 @@ fn handle_reading_wheel(
                 *content_clamped_retried = false;
             }
             if post_probe && !undid {
-                deltas.push(ev.dy);
+                deltas.push(ReplayDelta::Vertical(ev.dy));
                 let next_dest = (obs_offset - ev.dy).clamp(0.0, obs_max);
                 let moved_history = (obs_offset - next_dest).abs() > 0.5;
                 let pin_bottom = matches!(anchor, Bookmark::Latest)
@@ -1652,7 +1675,7 @@ fn handle_reading_wheel(
                 }
                 return true;
             }
-            deltas.push(ev.dy);
+            deltas.push(ReplayDelta::Vertical(ev.dy));
             let restore_now = if !*restored_anchor {
                 *restored_anchor = true;
                 *anchor_retargeted = false;
@@ -1673,7 +1696,6 @@ fn handle_reading_wheel(
                 fr.defer_for_input_clock = None;
                 fr.superseded_by_key = false;
                 fr.had_press_defer = false;
-                fr.diagonal_fallback_deltas.clear();
                 fr.diagonal_fallback_base_offset = None;
                 *content_clamped_retried = false;
             }
@@ -1875,7 +1897,6 @@ fn handle_reading_wheel(
                 defer_for_input_clock: None,
                 superseded_by_key: false,
                 had_press_defer: false,
-                diagonal_fallback_deltas: Vec::new(),
                 diagonal_fallback_base_offset: None,
                 handled: !from_bottom,
                 post_probe: None,
@@ -1967,7 +1988,6 @@ fn handle_reading_wheel(
                 defer_for_input_clock: None,
                 superseded_by_key: false,
                 had_press_defer: false,
-                diagonal_fallback_deltas: Vec::new(),
                 diagonal_fallback_base_offset: None,
                 handled: true,
                 post_probe: None,
@@ -1989,7 +2009,7 @@ fn handle_reading_wheel(
             content_layout_seq: reading.content_layout_seq,
             target: FrameRestoreTarget::ReplayDeltas {
                 anchor: anchor.clone(),
-                deltas: vec![ev.dy],
+                deltas: vec![ReplayDelta::Vertical(ev.dy)],
                 restored_anchor: true,
                 anchor_retargeted: false,
                 content_clamped_retried: false,
@@ -2000,7 +2020,6 @@ fn handle_reading_wheel(
             defer_for_input_clock: None,
             superseded_by_key: false,
             had_press_defer: false,
-            diagonal_fallback_deltas: Vec::new(),
             diagonal_fallback_base_offset: None,
             handled: false,
             post_probe: None,
@@ -2208,7 +2227,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
     if s.screen.is_launcher() {
         return false;
     }
-    let (target, superseded, fallback_base, confirmed_diagonal) = {
+    let (target, superseded, fallback_base, include_unconfirmed) = {
         let reading = s.transcript_display.reading_mut();
         let cur = reading.scroll_state.get();
         let Some(fr) = reading.frame_restore.as_mut() else {
@@ -2230,10 +2249,18 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 fr.defer_for_input_clock = None;
                 if cur.last_direct_seq == fr.direct_seq {
                     fr.had_press_defer = false;
-                    fr.diagonal_fallback_deltas.retain(|&(_, ok)| ok);
-                    if fr.diagonal_fallback_deltas.is_empty() {
-                        fr.diagonal_fallback_base_offset = None;
+                    if let FrameRestoreTarget::ReplayDeltas { deltas, .. } = &mut fr.target {
+                        deltas.retain(|d| {
+                            !matches!(
+                                d,
+                                ReplayDelta::Diagonal {
+                                    confirmed: false,
+                                    ..
+                                }
+                            )
+                        });
                     }
+                    fr.diagonal_fallback_base_offset = None;
                 }
             }
             if cur.last_direct_seq == fr.direct_seq
@@ -2247,18 +2274,16 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         let direct_moved = is_replay && cur.last_direct_seq != fr.direct_seq;
-        let fallback_base = if direct_moved
+        let (fallback_base, include_unconfirmed) = if direct_moved
             && !fr.superseded_by_key
             && !fr.had_press_defer
-            && !fr.diagonal_fallback_deltas.is_empty()
+            && let FrameRestoreTarget::ReplayDeltas { deltas, .. } = &fr.target
         {
-            fr.diagonal_fallback_base_offset.filter(|&base| {
-                let raw_deltas: Vec<f32> = fr
-                    .diagonal_fallback_deltas
-                    .iter()
-                    .map(|&(dy, _)| dy)
-                    .collect();
-                let expected = replay_deltas_checked(base, cur.max, &raw_deltas).0;
+            let matches_deltas = |base: f32, list: &[f32]| -> bool {
+                if list.is_empty() {
+                    return false;
+                }
+                let expected = replay_deltas_checked(base, cur.max, list).0;
                 let moved = cur.offset - base;
                 let want = expected - base;
                 (cur.offset - expected).abs() <= 1.0
@@ -2266,18 +2291,45 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         && moved.abs() > 0.5
                         && moved.signum() == want.signum()
                         && moved.abs() <= want.abs() + 1.0)
-            })
+            };
+            let confirmed_diags: Vec<f32> = deltas
+                .iter()
+                .filter_map(|d| match *d {
+                    ReplayDelta::Diagonal {
+                        dy,
+                        confirmed: true,
+                        ..
+                    } => Some(dy),
+                    _ => None,
+                })
+                .collect();
+            let all_diags: Vec<f32> = deltas
+                .iter()
+                .filter_map(|d| match *d {
+                    ReplayDelta::Diagonal { dy, .. } => Some(dy),
+                    ReplayDelta::Vertical(_) => None,
+                })
+                .collect();
+            if let Some(base) = fr.diagonal_fallback_base_offset {
+                if !confirmed_diags.is_empty()
+                    && (cur.offset - replay_deltas_checked(base, cur.max, &confirmed_diags).0).abs()
+                        <= 1.0
+                {
+                    (Some(base), false)
+                } else if matches_deltas(base, &all_diags) {
+                    (Some(base), true)
+                } else {
+                    (None, false)
+                }
+            } else {
+                (None, false)
+            }
         } else {
-            None
+            (None, false)
         };
-        let confirmed_diagonal = is_replay
-            && !direct_moved
-            && !fr.superseded_by_key
-            && !fr.had_press_defer
-            && fr.diagonal_fallback_deltas.iter().any(|&(_, ok)| ok);
         let superseded =
             is_replay && (fr.superseded_by_key || (direct_moved && fallback_base.is_none()));
-        (target, superseded, fallback_base, confirmed_diagonal)
+        (target, superseded, fallback_base, include_unconfirmed)
     };
     let reading = s.transcript_display.reading_mut();
     let fr = reading.frame_restore.take().unwrap();
@@ -2337,20 +2389,25 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         }
         FrameRestoreTarget::ReplayDeltas {
             anchor,
-            mut deltas,
+            deltas,
             anchor_retargeted,
             content_clamped_retried,
             ..
         } => {
-            if fallback_base.is_some() {
-                deltas.extend(fr.diagonal_fallback_deltas.into_iter().map(|(dy, _)| dy));
-            } else if confirmed_diagonal {
-                deltas.extend(
-                    fr.diagonal_fallback_deltas
-                        .into_iter()
-                        .filter_map(|(dy, ok)| ok.then_some(dy)),
-                );
-            }
+            let resolved_raw: Vec<f32> = deltas
+                .into_iter()
+                .filter_map(|d| match d {
+                    ReplayDelta::Vertical(dy) => Some(dy),
+                    ReplayDelta::Diagonal { dy, confirmed, .. } => {
+                        (confirmed || include_unconfirmed).then_some(dy)
+                    }
+                })
+                .collect();
+            let deltas: Vec<ReplayDelta> = resolved_raw
+                .iter()
+                .copied()
+                .map(ReplayDelta::Vertical)
+                .collect();
             let queue_layout_seq = s.transcript_display.reading().queue_layout_seq;
             let content_layout_seq = s.transcript_display.reading().content_layout_seq;
             let anchor_present = replay_anchor_present(s, &anchor);
@@ -2360,7 +2417,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 Bookmark::Latest => cur.max,
                 Bookmark::Message { .. } => fallback_base.unwrap_or(cur.offset),
             };
-            let (dest, clamped) = replay_deltas_checked(start, cur.max, &deltas);
+            let (dest, clamped) = replay_deltas_checked(start, cur.max, &resolved_raw);
             let needs_rearm = anchor_retargeted || !anchor_present || queue_changed;
             let retry_for_content_clamp =
                 !needs_rearm && clamped && content_changed && !content_clamped_retried;
@@ -2394,7 +2451,6 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         defer_for_input_clock: None,
                         superseded_by_key: false,
                         had_press_defer: false,
-                        diagonal_fallback_deltas: Vec::new(),
                         diagonal_fallback_base_offset: None,
                         handled: false,
                         post_probe: None,
@@ -2457,7 +2513,6 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     defer_for_input_clock: None,
                     superseded_by_key: false,
                     had_press_defer: false,
-                    diagonal_fallback_deltas: Vec::new(),
                     diagonal_fallback_base_offset: None,
                     handled: true,
                     post_probe: Some(probe),
@@ -2503,7 +2558,6 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 defer_for_input_clock: None,
                 superseded_by_key: false,
                 had_press_defer: false,
-                diagonal_fallback_deltas: Vec::new(),
                 diagonal_fallback_base_offset: None,
                 handled: true,
                 post_probe: Some(probe),
@@ -2630,7 +2684,6 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
         fr.defer_for_input_clock = None;
         fr.superseded_by_key = false;
         fr.had_press_defer = false;
-        fr.diagonal_fallback_deltas.clear();
         fr.diagonal_fallback_base_offset = None;
         fr.handled = false;
         fr.post_probe = None;

@@ -416,12 +416,15 @@ pub(super) fn view(
                         .key(format!("{card_key}-copy-patch")),
                     ),
                 )
-                .child(markdown::tool_pane(
-                    window(s, card_key.clone(), &[patch], remaining, |shown, units| {
-                        markdown::search_code(shown, "diff", units <= TOOL_LIMIT, true, query)
-                    }),
-                    true,
-                ))
+                .child(
+                    markdown::tool_pane(
+                        window(s, card_key.clone(), &[patch], remaining, |shown, units| {
+                            markdown::search_code(shown, "diff", units <= TOOL_LIMIT, true, query)
+                        }),
+                        true,
+                    )
+                    .data(crate::chat::reading::InnerScrollRegion),
+                )
         };
         let body = if !search_active
             && complete

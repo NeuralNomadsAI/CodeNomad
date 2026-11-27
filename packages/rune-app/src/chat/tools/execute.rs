@@ -84,29 +84,27 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
     let mut body = col().full_width().separate(Space::Sm);
     let wrap = !s.transcript_display.toggled(&format!("{key}-wrap"));
     if let Some(code) = code {
-        let pane = markdown::tool_pane(
-            window(
-                s,
-                format!("{key}-execute-script"),
-                &[code],
-                limit,
-                |shown, units| {
-                    markdown::search_code(
-                        shown,
-                        "javascript",
-                        tool.status != "running" && units <= HIGHLIGHT_LIMIT,
-                        wrap,
-                        query,
-                    )
-                },
-            ),
-            false,
+        body = body.child(
+            markdown::tool_pane(
+                window(
+                    s,
+                    format!("{key}-execute-script"),
+                    &[code],
+                    limit,
+                    |shown, units| {
+                        markdown::search_code(
+                            shown,
+                            "javascript",
+                            tool.status != "running" && units <= HIGHLIGHT_LIMIT,
+                            wrap,
+                            query,
+                        )
+                    },
+                ),
+                false,
+            )
+            .data(crate::chat::reading::InnerScrollRegion),
         );
-        body = body.child(if wrap {
-            pane
-        } else {
-            pane.data(crate::chat::reading::HorizontalScrollRegion)
-        });
     }
     if count == 0 {
         return Some(body);
@@ -167,7 +165,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
         );
         if expanded && input.is_object() {
             row = row.child(if let Some(input) = rendered_input {
-                let pane = markdown::tool_pane(
+                markdown::tool_pane(
                     window(
                         s,
                         format!("{call}-input"),
@@ -184,12 +182,8 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
                         },
                     ),
                     false,
-                );
-                if wrap {
-                    pane
-                } else {
-                    pane.data(crate::chat::reading::HorizontalScrollRegion)
-                }
+                )
+                .data(crate::chat::reading::InnerScrollRegion)
             } else {
                 text(t("toolCall.output.tooLarge"))
             });

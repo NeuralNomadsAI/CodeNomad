@@ -156,19 +156,22 @@ pub(super) fn body(
             let pane_limit = PANE_LIMIT;
             result = result.child(text(t(label)).text_role(TextRole::Label));
             if !shown_value.trim().is_empty() {
-                result = result.child(markdown::tool_pane(
-                    super::super::document::prose_pane_search(
-                        s,
-                        message,
-                        key,
-                        format!("{key}-task-{section}"),
-                        shown_value,
-                        tool.status == "running" && section == "output",
-                        pane_limit,
-                        section_query,
-                    ),
-                    true,
-                ));
+                result = result.child(
+                    markdown::tool_pane(
+                        super::super::document::prose_pane_search(
+                            s,
+                            message,
+                            key,
+                            format!("{key}-task-{section}"),
+                            shown_value,
+                            tool.status == "running" && section == "output",
+                            pane_limit,
+                            section_query,
+                        ),
+                        true,
+                    )
+                    .data(crate::chat::reading::InnerScrollRegion),
+                );
             }
             if truncated && expanded_full.is_none() {
                 let mut status_row =

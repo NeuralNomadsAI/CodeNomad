@@ -475,6 +475,7 @@ pub(super) fn append_steps(
                             tx.live_only();
                         },
                     )
+                    .data(crate::chat::reading::InnerScrollRegion)
                     .drawn_rect_into(&pane_clip),
                 )),
         );

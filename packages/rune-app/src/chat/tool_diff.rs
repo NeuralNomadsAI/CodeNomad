@@ -1115,16 +1115,19 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                     .checked(wrapped || split),
                 ),
         )
-        .child(markdown::diff_pane(
-            diff::view(
-                s,
-                format!("{key}-diff"),
-                move |s| s.transcript_display.diffs.read(&read),
-                move |s| s.transcript_display.diffs.edit(&write),
-                None,
-            ),
-            entry.lines,
-        ))
+        .child(
+            markdown::diff_pane(
+                diff::view(
+                    s,
+                    format!("{key}-diff"),
+                    move |s| s.transcript_display.diffs.read(&read),
+                    move |s| s.transcript_display.diffs.edit(&write),
+                    None,
+                ),
+                entry.lines,
+            )
+            .data(crate::chat::reading::InnerScrollRegion),
+        )
 }
 
 #[cfg(test)]

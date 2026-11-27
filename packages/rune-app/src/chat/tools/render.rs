@@ -537,12 +537,21 @@ fn render_body(
                 } else {
                     TOOL_LIMIT
                 };
-                block = block.child(markdown::tool_pane(
-                    window(s, input_key, &[&input], limit, |shown, units| {
-                        markdown::search_code(shown, "json", units <= HIGHLIGHT_LIMIT, true, query)
-                    }),
-                    false,
-                ));
+                block = block.child(
+                    markdown::tool_pane(
+                        window(s, input_key, &[&input], limit, |shown, units| {
+                            markdown::search_code(
+                                shown,
+                                "json",
+                                units <= HIGHLIGHT_LIMIT,
+                                true,
+                                query,
+                            )
+                        }),
+                        false,
+                    )
+                    .data(crate::chat::reading::InnerScrollRegion),
+                );
             } else {
                 block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
             }
@@ -608,10 +617,13 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(markdown::tool_pane(
-                        document::prose_search(s, message, key, output_key, parts[0], query),
-                        false,
-                    ));
+                    block = block.child(
+                        markdown::tool_pane(
+                            document::prose_search(s, message, key, output_key, parts[0], query),
+                            false,
+                        )
+                        .data(crate::chat::reading::InnerScrollRegion),
+                    );
                 }
             } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
@@ -631,19 +643,22 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(markdown::tool_pane(
-                        document::prose_pane_search(
-                            s,
-                            message,
-                            key,
-                            output_key,
-                            parts[0],
-                            tool.status == "running",
-                            TOOL_LIMIT,
-                            query,
-                        ),
-                        false,
-                    ));
+                    block = block.child(
+                        markdown::tool_pane(
+                            document::prose_pane_search(
+                                s,
+                                message,
+                                key,
+                                output_key,
+                                parts[0],
+                                tool.status == "running",
+                                TOOL_LIMIT,
+                                query,
+                            ),
+                            false,
+                        )
+                        .data(crate::chat::reading::InnerScrollRegion),
+                    );
                 }
             } else if (has_output || is_tool_truncated) && !specialized_task {
                 let structured_out = if expanded_tool_output.is_some() {
@@ -701,8 +716,8 @@ fn render_body(
                                         .child(wrap_control(s, &wrap_key, wrap))
                                         .child(text(lang).text_role(TextRole::Label))
                                 }))
-                                .child({
-                                    let pane = markdown::tool_pane(
+                                .child(
+                                    markdown::tool_pane(
                                         window(
                                             s,
                                             output_key.clone(),
@@ -729,13 +744,9 @@ fn render_body(
                                             },
                                         ),
                                         matches!(tool.name.as_str(), "edit" | "write"),
-                                    );
-                                    if wrap {
-                                        pane
-                                    } else {
-                                        pane.data(crate::chat::reading::HorizontalScrollRegion)
-                                    }
-                                })
+                                    )
+                                    .data(crate::chat::reading::InnerScrollRegion),
+                                )
                         };
                         block = block.child(if let Some(results) = result_list {
                             results
@@ -841,22 +852,25 @@ fn render_error(
                     .child(text(t("toolCall.error.label")))
                     .child(copy(s, message, key, &tool.id, Section::Error, ancestors)),
             )
-            .child(markdown::tool_pane(
-                window(
-                    s,
-                    format!("{key}-error"),
-                    &[error],
-                    document::search_limit_for(s, key, query),
-                    |shown, _| {
-                        rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
-                            .full_width()
-                            .wrap()
-                            .content_direction()
-                            .selectable(true)
-                    },
-                ),
-                false,
-            ))
+            .child(
+                markdown::tool_pane(
+                    window(
+                        s,
+                        format!("{key}-error"),
+                        &[error],
+                        document::search_limit_for(s, key, query),
+                        |shown, _| {
+                            rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
+                                .full_width()
+                                .wrap()
+                                .content_direction()
+                                .selectable(true)
+                        },
+                    ),
+                    false,
+                )
+                .data(crate::chat::reading::InnerScrollRegion),
+            )
     })
 }
 

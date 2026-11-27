@@ -474,4 +474,5 @@ fn body(
         ),
         false,
     )
+    .data(crate::chat::reading::InnerScrollRegion)
 }

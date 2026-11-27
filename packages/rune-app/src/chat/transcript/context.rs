@@ -70,6 +70,7 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
                             ),
                             true,
                         )
+                        .data(crate::chat::reading::InnerScrollRegion)
                     },
                 )
             } else {
