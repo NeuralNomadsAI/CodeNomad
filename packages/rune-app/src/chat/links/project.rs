@@ -43,19 +43,31 @@ fn path_in_scope(native: &str, directory: &str, href: &str) -> Option<String> {
 }
 
 fn resolve(href: &str, base: &str) -> Option<String> {
-    let href = href.trim().split('#').next()?;
-    if href.len() > 32768 || href.is_empty() {
+    let trimmed = href.trim();
+    if trimmed.len() > 32768 || trimmed.is_empty() {
         return None;
     }
-    let raw = href.replace('\\', "/");
-    if non_file(&raw) {
-        return None;
-    }
-    let decoded = decode(&raw);
-    let path = decoded.replace('\\', "/");
-    if path.is_empty() || non_file(&path) {
-        return None;
-    }
+    let path = if trimmed
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+    {
+        local_file_url_path(trimmed)?
+    } else {
+        let href = trimmed.split('#').next()?;
+        if href.is_empty() {
+            return None;
+        }
+        let raw = href.replace('\\', "/");
+        if non_file(&raw) {
+            return None;
+        }
+        let decoded = decode(&raw);
+        let path = decoded.replace('\\', "/");
+        if path.is_empty() || non_file(&path) {
+            return None;
+        }
+        path
+    };
 
     let base = base.replace('\\', "/");
     let (root, base) = prefix(&base);
@@ -82,6 +94,74 @@ fn resolve(href: &str, base: &str) -> Option<String> {
             }
         });
     inside.then(|| resolved[base.len()..].join("/"))
+}
+
+fn is_windows_drive(path: &str) -> bool {
+    matches!(
+        path.as_bytes(),
+        [letter, b':', b'/' | b'\\', ..] if letter.is_ascii_alphabetic()
+    )
+}
+
+fn local_file_url_path(href: &str) -> Option<String> {
+    let rest = href
+        .get(..5)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        .map(|_| &href[5..])?;
+    let after_authority = if let Some(after_slashes) = rest.strip_prefix("//") {
+        if let Some(after_localhost) = after_slashes
+            .get(..9)
+            .filter(|host| host.eq_ignore_ascii_case("localhost"))
+            .map(|_| &after_slashes[9..])
+            .filter(|tail| tail.starts_with('/') || is_windows_drive(tail))
+        {
+            after_localhost
+        } else if after_slashes.starts_with('/') || is_windows_drive(after_slashes) {
+            after_slashes
+        } else {
+            return None;
+        }
+    } else if rest.starts_with('/') || is_windows_drive(rest) {
+        rest
+    } else {
+        return None;
+    };
+    let head = after_authority.split(['?', '#']).next()?;
+    let encoded = head.replace('\\', "/");
+    if encoded.chars().any(char::is_control) {
+        return None;
+    }
+    let bytes = encoded.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let (Some(&a), Some(&b)) = (bytes.get(i + 1), bytes.get(i + 2)) else {
+                return None;
+            };
+            if !a.is_ascii_hexdigit() || !b.is_ascii_hexdigit() {
+                return None;
+            }
+            let pair = [a.to_ascii_lowercase(), b.to_ascii_lowercase()];
+            if matches!(pair, [b'0', b'0'] | [b'2', b'f'] | [b'5', b'c']) {
+                return None;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let decoded = percent_encoding::percent_decode_str(&encoded)
+        .decode_utf8()
+        .ok()?;
+    if decoded.chars().any(char::is_control) {
+        return None;
+    }
+    let path = decoded
+        .strip_prefix('/')
+        .filter(|tail| is_windows_drive(tail))
+        .unwrap_or(&decoded);
+    let valid_root = (path.starts_with('/') && !path.starts_with("//")) || is_windows_drive(path);
+    valid_root.then(|| path.to_owned())
 }
 
 fn prefix(path: &str) -> (&str, &str) {

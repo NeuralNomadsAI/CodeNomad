@@ -9,6 +9,7 @@ mod content_tests;
 mod document;
 pub(crate) mod events;
 mod links;
+pub(crate) use links::open_external;
 mod media;
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) use media::browser_fixture as images_fixture;
