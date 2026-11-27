@@ -665,6 +665,7 @@ impl Document {
         current_rev: Option<u64>,
         retry_failed: bool,
         atomic: bool,
+        external_unconfirmed: bool,
     ) {
         let reading_rev = self.flight.as_ref().and_then(|flight| {
             (matches!(flight.operation, Operation::Read { .. })
@@ -680,11 +681,15 @@ impl Document {
             self.invalidate();
         }
         if let Some(rev) = current_rev
-            && self.has_unconfirmed()
+            && (self.has_unconfirmed() || external_unconfirmed)
             && rev != self.snapshot_rev
             && reading_rev != Some(rev)
         {
-            self.invalidate();
+            if external_unconfirmed {
+                self.invalidate_authoritative();
+            } else {
+                self.invalidate();
+            }
         }
     }
 

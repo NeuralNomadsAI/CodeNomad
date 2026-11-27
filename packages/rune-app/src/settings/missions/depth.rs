@@ -1,13 +1,14 @@
 //! Location-scoped Subagent depth state machine matching `mission-subagent-depth.tsx`.
 use super::SendAuthority;
 use crate::{
+    backend::Backend,
     platform,
     settings::{ServerOwner, providers::Target},
 };
 use codenomad_client::{
     Receiver, Sender, bounded, same_server_path,
     settings::missions::{
-        SubagentDepthError, SubagentDepthSnapshot, read_subagent_depth, set_subagent_depth,
+        SubagentDepthError, SubagentDepthSnapshot, read_subagent_depth, set_subagent_depth_checked,
     },
 };
 use std::sync::{Arc, atomic::AtomicU64};
@@ -17,6 +18,16 @@ struct QueuedChoice {
     base: String,
     directory: String,
     authority: u64,
+}
+
+#[derive(Clone)]
+struct QueuedTarget {
+    backend: Backend,
+    workspace: String,
+    session: Option<String>,
+    directory: String,
+    authority: u64,
+    location_revision: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +90,8 @@ pub(super) struct State {
     pub(super) error: bool,
     pub(super) saved: bool,
     queued: Option<QueuedChoice>,
+    save_target: Option<QueuedTarget>,
+    background_read: bool,
     read_flight: Option<ReadFlight>,
     save_flight: Option<SaveFlight>,
     pending_save: bool,
@@ -98,6 +111,8 @@ impl State {
             | self.read_location_revision.take().is_some()
             | self.read_started_location_revision.take().is_some()
             | self.queued.take().is_some()
+            | self.save_target.take().is_some()
+            | std::mem::take(&mut self.background_read)
             | std::mem::take(&mut self.pending_save)
             | std::mem::take(&mut self.dirty)
             | self.read_flight.take().is_some()
@@ -122,6 +137,9 @@ impl State {
     }
 
     pub(super) fn suspend(&mut self) {
+        if self.background_read {
+            return;
+        }
         if self.phase == Phase::Reading {
             self.phase = if self.snapshot.is_some() {
                 Phase::Ready
@@ -146,6 +164,8 @@ impl State {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn saving(&self) -> bool {
         self.save_flight.is_some()
+            || (self.background_read && self.read_flight.is_some())
+            || (self.queued.is_some() && self.save_target.is_some())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -161,6 +181,8 @@ impl State {
         self.error = false;
         self.saved = false;
         self.queued = None;
+        self.save_target = None;
+        self.background_read = false;
         self.pending_save = false;
         if self.phase == Phase::Uncertain || self.phase == Phase::Unsupported {
             self.phase = Phase::Idle;
@@ -257,6 +279,74 @@ impl State {
         self.pending_save = true;
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_save(
+        &mut self,
+        backend: &Backend,
+        workspace: &str,
+        session: Option<&str>,
+        directory: &str,
+        depth: Option<u64>,
+        expectation: &str,
+        authority: u64,
+        prefs_authority: &Arc<AtomicU64>,
+        location_token: &Arc<AtomicU64>,
+        #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) {
+        let expected_location = self
+            .read_location_revision
+            .map(|rev| (workspace.to_owned(), session.map(str::to_owned), rev));
+        let send_authority = SendAuthority::capture(
+            prefs_authority.clone(),
+            None,
+            Some(location_token),
+            expected_location,
+            backend,
+            #[cfg(test)]
+            pre_put_gate.take(),
+            #[cfg(test)]
+            post_attest_gate.take(),
+        );
+        self.save_target = Some(QueuedTarget {
+            backend: backend.clone(),
+            workspace: workspace.to_owned(),
+            session: session.map(str::to_owned),
+            directory: directory.to_owned(),
+            authority,
+            location_revision: self.read_location_revision,
+        });
+        let (out, inbox) = bounded(1);
+        let backend = backend.clone();
+        let workspace = workspace.to_owned();
+        let directory = directory.to_owned();
+        let expectation = expectation.to_owned();
+        let wake = wake.clone();
+        self.phase = Phase::Saving;
+        self.error = false;
+        self.saved = false;
+        self.save_flight = Some(inbox);
+        platform::spawn(async move {
+            let result = if !send_authority.authorize_send(&backend).await {
+                Err(SubagentDepthError::Failed)
+            } else {
+                set_subagent_depth_checked(
+                    &backend,
+                    &workspace,
+                    &directory,
+                    depth,
+                    &expectation,
+                    || send_authority.still_ok(&backend),
+                )
+                .await
+            };
+            if out.send(result).await.is_ok() {
+                wake();
+            }
+        });
+    }
+
     pub(super) fn poll_save_only(&mut self, transport_lost: bool) -> (bool, bool) {
         let mut changed = false;
         let mut settled = false;
@@ -264,6 +354,8 @@ impl State {
             self.save_flight = None;
             self.pending_save = false;
             self.queued = None;
+            self.save_target = None;
+            self.background_read = false;
             self.phase = Phase::Uncertain;
             return (true, true);
         }
@@ -281,20 +373,195 @@ impl State {
                     self.saved = true;
                     self.phase = Phase::Ready;
                     self.seen_revision = None;
+                    if self.queued.is_none() {
+                        self.save_target = None;
+                    }
                 }
                 Err(SubagentDepthError::Unsupported) => {
                     self.draft = confirmed_depth_value(self.snapshot.as_ref());
                     self.dirty = false;
                     self.queued = None;
+                    self.save_target = None;
                     self.phase = Phase::Unsupported;
                 }
                 Err(SubagentDepthError::Conflict | SubagentDepthError::Failed) => {
                     self.queued = None;
+                    self.save_target = None;
                     self.phase = Phase::Uncertain;
                 }
             }
             changed = true;
             settled = true;
+        }
+        (changed, settled)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn poll_background_writes(
+        &mut self,
+        transport_lost: bool,
+        prefs_authority: &Arc<AtomicU64>,
+        location_token: &Arc<AtomicU64>,
+        #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) -> (bool, bool) {
+        let (mut changed, mut settled) = self.poll_save_only(transport_lost);
+        if transport_lost {
+            if self.background_read {
+                self.background_read = false;
+                self.read_flight = None;
+                self.read_started_location_revision = None;
+                self.queued = None;
+                self.save_target = None;
+                self.phase = Phase::Uncertain;
+                changed = true;
+                settled = true;
+            }
+            return (changed, settled);
+        }
+        if self.background_read
+            && let Some(result) = self
+                .read_flight
+                .as_ref()
+                .and_then(|(_, inbox)| inbox.try_recv().ok())
+        {
+            self.read_flight = None;
+            self.background_read = false;
+            let started_loc_rev = self.read_started_location_revision.take();
+            let Some(target) = self.save_target.clone() else {
+                self.queued = None;
+                self.phase = Phase::Uncertain;
+                return (true, true);
+            };
+            let current_loc_rev = target
+                .backend
+                .client
+                .location_revision(&target.workspace, target.session.as_deref());
+            match result {
+                Ok(snapshot)
+                    if started_loc_rev == Some(current_loc_rev)
+                        && ServerOwner::backend_verified(&target.backend) =>
+                {
+                    let fresh = confirmed_depth_value(Some(&snapshot));
+                    let queued = self.queued.take().filter(|queued| {
+                        queued.authority == target.authority
+                            && same_server_path(&queued.directory, &snapshot.directory)
+                            && queued.base == fresh
+                            && valid_depth_choice(&snapshot, &queued.value)
+                    });
+                    self.opener_directory = Some(target.directory.clone());
+                    self.resolved_authority = Some(target.authority);
+                    self.read_location_revision = Some(current_loc_rev);
+                    let next_save = queued.and_then(|q| {
+                        if q.value == fresh {
+                            return None;
+                        }
+                        let (Some(capability), Some(project)) =
+                            (&snapshot.capability, &snapshot.project)
+                        else {
+                            return None;
+                        };
+                        let parsed = if q.value.is_empty() {
+                            Some(None)
+                        } else {
+                            q.value
+                                .parse::<u64>()
+                                .ok()
+                                .filter(|&d| {
+                                    d >= capability.minimum
+                                        && capability.maximum.is_none_or(|max| d <= max)
+                                })
+                                .map(Some)
+                        }?;
+                        Some((
+                            q.value,
+                            parsed,
+                            snapshot.directory.clone(),
+                            project.expectation.clone(),
+                        ))
+                    });
+                    self.snapshot = Some(snapshot);
+                    self.draft = fresh;
+                    self.dirty = false;
+                    self.error = false;
+                    if let Some((draft, parsed, directory, expectation)) = next_save {
+                        self.draft = draft;
+                        self.dirty = true;
+                        self.spawn_save(
+                            &target.backend,
+                            &target.workspace,
+                            target.session.as_deref(),
+                            &directory,
+                            parsed,
+                            &expectation,
+                            target.authority,
+                            prefs_authority,
+                            location_token,
+                            #[cfg(test)]
+                            pre_put_gate,
+                            #[cfg(test)]
+                            post_attest_gate,
+                            wake,
+                        );
+                    } else {
+                        self.save_target = None;
+                        self.phase = Phase::Ready;
+                        self.saved = true;
+                    }
+                }
+                _ => {
+                    self.queued = None;
+                    self.save_target = None;
+                    self.phase = Phase::Uncertain;
+                }
+            }
+            changed = true;
+            settled = true;
+        }
+        if self.save_flight.is_none()
+            && self.read_flight.is_none()
+            && self.phase == Phase::Ready
+            && self.queued.is_some()
+            && let Some(target) = self.save_target.clone()
+        {
+            let loc_rev = target
+                .backend
+                .client
+                .location_revision(&target.workspace, target.session.as_deref());
+            if !ServerOwner::backend_verified(&target.backend)
+                || target.location_revision != Some(loc_rev)
+            {
+                self.queued = None;
+                self.save_target = None;
+                self.phase = Phase::Uncertain;
+                changed = true;
+                settled = true;
+            } else {
+                let (cancel, cancelled) = bounded(1);
+                let (out, inbox) = bounded(1);
+                let backend = target.backend.clone();
+                let workspace = target.workspace.clone();
+                let pinned = target.directory.clone();
+                let wake = wake.clone();
+                self.background_read = true;
+                self.read_started_location_revision = Some(loc_rev);
+                self.phase = Phase::Reading;
+                self.error = false;
+                self.read_flight = Some((cancel, inbox));
+                platform::spawn(async move {
+                    let task = read_subagent_depth(&backend, &workspace, &pinned);
+                    if let Some(result) = platform::reads::cancellable(&cancelled, task).await
+                        && out.send(result).await.is_ok()
+                    {
+                        wake();
+                    }
+                });
+                changed = true;
+            }
+        }
+        if self.save_flight.is_none() && !self.background_read && self.queued.is_none() {
+            self.save_target = None;
         }
         (changed, settled)
     }
@@ -311,6 +578,7 @@ impl State {
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
         wake: &rune::Waker,
     ) -> bool {
         let mut changed = false;
@@ -326,6 +594,7 @@ impl State {
         };
 
         let (backend, workspace, authority, _) = target.stats_source();
+        let (_, session) = target.location();
         let scope = (workspace.to_owned(), open_epoch);
         let Some(directory) = pinned_directory else {
             if self.scope.as_ref().is_some_and(|(w, _)| w == workspace)
@@ -424,11 +693,12 @@ impl State {
         changed |= save_changed;
 
         let revision = target.revision().wrapping_add(self.manual_epoch);
-        let current_location_revision = backend.client.location_revision();
-        if let Some(result) = self
-            .read_flight
-            .as_ref()
-            .and_then(|(_, inbox)| inbox.try_recv().ok())
+        let current_location_revision = backend.client.location_revision(workspace, session);
+        if !self.background_read
+            && let Some(result) = self
+                .read_flight
+                .as_ref()
+                .and_then(|(_, inbox)| inbox.try_recv().ok())
         {
             self.read_flight = None;
             let started = self.read_started_revision.take();
@@ -492,9 +762,13 @@ impl State {
                     .is_none_or(|od| !same_server_path(od, directory))
                 || !ServerOwner::backend_verified(backend)
             {
+                let stale_location = self.read_location_revision != Some(current_location_revision);
                 self.dirty = false;
                 self.queued = None;
                 self.draft = confirmed_depth_value(self.snapshot.as_ref());
+                if stale_location {
+                    let _ = self.invalidate_location();
+                }
                 changed = true;
             } else if let Some(snapshot) = &self.snapshot
                 && let (Some(capability), Some(project)) = (&snapshot.capability, &snapshot.project)
@@ -511,42 +785,24 @@ impl State {
                         .map(Some)
                 };
                 if let Some(depth) = parsed {
-                    let send_authority = SendAuthority::capture(
-                        prefs_authority.clone(),
-                        None,
-                        Some(location_token),
-                        self.read_location_revision,
-                        backend,
-                        #[cfg(test)]
-                        pre_put_gate.take(),
-                    );
-                    let (out, inbox) = bounded(1);
-                    let backend = backend.clone();
-                    let workspace = workspace.to_owned();
-                    let directory = snapshot.directory.clone();
+                    let snap_dir = snapshot.directory.clone();
                     let expectation = project.expectation.clone();
-                    let wake = wake.clone();
-                    self.phase = Phase::Saving;
-                    self.error = false;
-                    self.saved = false;
-                    self.save_flight = Some(inbox);
-                    platform::spawn(async move {
-                        let result = if !send_authority.authorize_send(&backend).await {
-                            Err(SubagentDepthError::Failed)
-                        } else {
-                            set_subagent_depth(
-                                &backend,
-                                &workspace,
-                                &directory,
-                                depth,
-                                &expectation,
-                            )
-                            .await
-                        };
-                        if out.send(result).await.is_ok() {
-                            wake();
-                        }
-                    });
+                    self.spawn_save(
+                        backend,
+                        workspace,
+                        session,
+                        &snap_dir,
+                        depth,
+                        &expectation,
+                        authority,
+                        prefs_authority,
+                        location_token,
+                        #[cfg(test)]
+                        pre_put_gate,
+                        #[cfg(test)]
+                        post_attest_gate,
+                        wake,
+                    );
                     changed = true;
                 }
             }

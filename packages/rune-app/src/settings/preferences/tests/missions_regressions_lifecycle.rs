@@ -1,6 +1,6 @@
 use super::{
     missions::{click, click_option, make_window, next_request, settle_meta, tick},
-    missions_regressions::drain_location_catalog_and_depth,
+    missions_regressions::{depth_snapshot_json, drain_location_catalog_and_depth},
     *,
 };
 use crate::settings::{providers::Target, view};
@@ -8,7 +8,7 @@ use std::{cell::Cell, rc::Rc, sync::Arc};
 
 #[test]
 fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
-    let (listener, shared, _rt, mut sse_stream, attest_meta, backend_client) =
+    let (listener, shared, _rt, mut sse_stream, attest_meta, backend_client, release_post_attest) =
         platform::block_on(async {
             let (listener, mut prefs) = fixture().await;
             let backend = prefs.backend.as_mut().unwrap();
@@ -111,6 +111,14 @@ fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
             })
             .await;
 
+            // Pause the depth PUT worker right after GET /api/meta attestation completes and
+            // immediately before set_subagent_depth_checked sends the PUT.
+            let (release_post_attest, post_attest_gate) = bounded(1);
+            shared
+                .borrow_mut()
+                .missions
+                .set_post_attest_depth_gate(post_attest_gate);
+
             // Choose depth 4 and hold GET /api/meta open while closing Preferences into flush().
             click(&mut rt, "mission-subagent-depth-trigger");
             click_option(&mut rt, "mission-subagent-depth", "4");
@@ -126,15 +134,24 @@ fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
                 sse_stream,
                 attest_meta,
                 backend_client,
+                release_post_attest,
             )
         });
 
-    // While native flush() blocks the UI thread (no main-window poll running), deliver
-    // session.moved on the open SSE stream, wait for the background Hub to bump location_revision,
-    // and then release GET /api/meta.
-    let loc_before = backend_client.location_revision();
+    // While native flush() blocks the UI thread (no main-window poll running):
+    // 1. Reply 200 OK to GET /api/meta so attestation finishes cleanly.
+    // 2. While the worker is paused after attestation and before req.send(), deliver
+    //    session.moved on the open SSE stream and wait for Hub::location_revision to bump.
+    // 3. Resume the worker: set_subagent_depth_checked's synchronous pre-send guard must abort.
+    let loc_before = backend_client.location_revision("captured", Some("session"));
     let driver = std::thread::spawn(move || {
         platform::block_on(async move {
+            attest_meta
+                .reply(
+                    200,
+                    json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
+                )
+                .await;
             sse_stream
                 .socket
                 .write_all(
@@ -142,13 +159,11 @@ fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
                 )
                 .await
                 .unwrap();
-            wait_until(|| backend_client.location_revision() > loc_before).await;
-            attest_meta
-                .reply(
-                    200,
-                    json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
-                )
-                .await;
+            wait_until(|| {
+                backend_client.location_revision("captured", Some("session")) > loc_before
+            })
+            .await;
+            release_post_attest.send(()).await.unwrap();
             sse_stream
         })
     });
@@ -385,6 +400,366 @@ fn closing_web_settings_preserves_inflight_depth_put_acknowledgement() {
 
         // Server now acknowledges the PUT with 204 No Content: must settle confirmed, not Uncertain.
         put.reply_no_content().await;
+        wait_until(|| {
+            closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+            !shared.borrow().missions.has_unconfirmed()
+        })
+        .await;
+    });
+}
+
+#[test]
+fn unrelated_workspace_session_move_does_not_block_depth_writes() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_client = backend.client.clone();
+
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = request(&listener).await;
+        assert!(sse_stream.first.starts_with("GET /api/events?"));
+        sse_stream
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
+
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_a = "1".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_a,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Deliver session.moved for an unrelated workspace and an unrelated session on the same server.
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.event\",\"instanceId\":\"other-ws\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"other-ses\"}}}\n\n\
+data: {\"type\":\"instance.event\",\"instanceId\":\"captured\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"other-ses\"}}}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| {
+            backend_client.location_revision("other-ws", Some("other-ses")) > 0
+                && backend_client.location_revision("captured", Some("other-ses")) > 0
+        })
+        .await;
+        assert_eq!(
+            backend_client.location_revision("captured", Some("session")),
+            0
+        );
+
+        // Choosing depth 4 on the unaffected workspace/session must still send PUT cleanly.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+        let put = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put.body["depth"], json!(4));
+        put.reply_no_content().await;
+    });
+}
+
+#[test]
+fn native_flush_revalidates_sse_invalidated_config_before_queued_missions_edit() {
+    let (listener, shared, _rt, _sse_stream, _other_watch) = platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.clone().unwrap();
+        let backend_client = backend.client.clone();
+
+        // Open a live SSE stream on the same Http client WITHOUT attaching PreferencesWatch to
+        // `prefs.stream` (simulating a conversation SSE stream bumping preferences_revision while
+        // PreferencesWatch is inactive).
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let (other_watch, task) = PreferencesWatch::task(backend.clone(), None, watch_wake);
+        platform::spawn(task);
+        let mut sse_stream = request(&listener).await;
+        assert!(sse_stream.first.starts_with("GET /api/events?"));
+        sse_stream
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        prefs.apply_mission_config(json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": []
+            }
+        }));
+        let (shared, mut rt) = make_window(prefs);
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // Hold a config GET open so the Missions edit stays queued without any Document write.
+        shared.borrow_mut().invalidate(Owner::Config);
+        tick(&mut rt);
+        let held_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            held_get.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        click(&mut rt, "mission-task-mode-trigger");
+        click_option(&mut rt, "mission-task-mode", "Independent sessions");
+        tick(&mut rt);
+        assert!(shared.borrow().missions.defaults_writing());
+
+        // Complete the held GET with the old snapshot, then bump preferences_revision via SSE
+        // BEFORE flush() runs (and without calling tick() first).
+        held_get
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","missionProfileDefaults":[]}}),
+            )
+            .await;
+        let rev_before = backend_client.preferences_revision(Owner::Config);
+        sse_stream
+            .socket
+            .write_all(b"data: {\"type\":\"storage.configChanged\",\"owner\":\"ui\"}\n\n")
+            .await
+            .unwrap();
+        wait_until(|| backend_client.preferences_revision(Owner::Config) > rev_before).await;
+
+        (listener, shared, rt, sse_stream, other_watch)
+    });
+
+    // Server driver for flush(): expects an authoritative GET BEFORE Missions PATCH, returning
+    // a concurrent profile change that Missions must preserve instead of hitting a stale 409.
+    let server = std::thread::spawn(move || {
+        platform::block_on(async move {
+            let fresh_profile = json!([{
+                "template": "all",
+                "profiles": { "coordinator": { "agent": "lead" } }
+            }]);
+            let auth_get = request(&listener).await;
+            assert_eq!(
+                auth_get.first, "GET /api/storage/config/ui?authoritative=1 HTTP/1.1",
+                "flush() must fetch fresh config/ui before launching queued Missions PATCH"
+            );
+            auth_get
+                .reply(
+                    200,
+                    json!({"settings":{"locale":"en","missionProfileDefaults":fresh_profile}}),
+                )
+                .await;
+
+            let patch = request(&listener).await;
+            assert_eq!(
+                patch.first,
+                "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
+            );
+            assert_eq!(
+                patch.body["patch"]["settings"]["missionProfileDefaults"][0]["taskMode"],
+                json!("independent")
+            );
+            assert_eq!(
+                patch.body["patch"]["settings"]["missionProfileDefaults"][0]["profiles"]["coordinator"]
+                    ["agent"],
+                json!("lead")
+            );
+            let updated_doc = json!({
+                "settings": {
+                    "locale": "en",
+                    "missionProfileDefaults": patch.body["patch"]["settings"]["missionProfileDefaults"]
+                }
+            });
+            patch.reply(200, updated_doc.clone()).await;
+
+            let confirm_get = request(&listener).await;
+            assert_eq!(
+                confirm_get.first,
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+            );
+            confirm_get.reply(200, updated_doc).await;
+        })
+    });
+
+    assert!(
+        shared.borrow_mut().flush(),
+        "flush() must cleanly revalidate, merge, and confirm the queued Missions edit"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn closing_web_settings_drains_queued_depth_choice_after_first_put_acknowledgement() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "2".repeat(64);
+        let exp_2 = "3".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_1,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Start PUT(4), then queue 5 while PUT(4) is in flight, then close Web Settings.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(put_4.body["depth"], json!(4));
+
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "5");
+        tick(&mut rt);
+
+        let wake: rune::Waker = Arc::new(|| {});
+        let mut closed_missions = crate::settings::missions::Missions::default();
+        shared.borrow_mut().provider_target = None;
+        closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+
+        // Acknowledge PUT(4): the closed background loop must fetch the fresh expectation and send PUT(5).
+        put_4.reply_no_content().await;
+        let followup_get = timeout(Duration::from_secs(5), async {
+            loop {
+                closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+                if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
+                    let (socket, _) = accepted.unwrap();
+                    if let Some(req) = try_read_request(socket, Duration::from_secs(3)).await {
+                        return req;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            followup_get.first,
+            "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
+        );
+        followup_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_2))
+            .await;
+
+        let put_5 = timeout(Duration::from_secs(5), async {
+            loop {
+                closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+                if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
+                    let (socket, _) = accepted.unwrap();
+                    if let Some(req) = try_read_request(socket, Duration::from_secs(3)).await {
+                        return req;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            put_5.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(
+            put_5.body,
+            json!({
+                "location": { "directory": "/repo/wt-a" },
+                "depth": 5,
+                "expectation": exp_2
+            })
+        );
+        put_5.reply_no_content().await;
+
         wait_until(|| {
             closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
             !shared.borrow().missions.has_unconfirmed()

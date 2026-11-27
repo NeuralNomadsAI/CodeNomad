@@ -22,12 +22,14 @@ pub(in crate::settings) struct SendAuthority {
     expected_prefs_authority: u64,
     doc_epoch: Option<(Arc<AtomicU64>, u64)>,
     location_token: Option<(Arc<AtomicU64>, u64)>,
-    expected_location_revision: Option<u64>,
+    expected_location: Option<(String, Option<String>, u64)>,
     drop_generation: u64,
     stream_drop_epoch: u64,
     expected_server: Option<String>,
     #[cfg(test)]
     pre_send_gate: Option<Receiver<()>>,
+    #[cfg(test)]
+    post_attest_gate: Option<Receiver<()>>,
 }
 
 impl SendAuthority {
@@ -35,9 +37,10 @@ impl SendAuthority {
         prefs_authority: Arc<AtomicU64>,
         doc_epoch: Option<(Arc<AtomicU64>, u64)>,
         location_token: Option<&Arc<AtomicU64>>,
-        expected_location_revision: Option<u64>,
+        expected_location: Option<(String, Option<String>, u64)>,
         backend: &Backend,
         #[cfg(test)] pre_send_gate: Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: Option<Receiver<()>>,
     ) -> Self {
         let expected_prefs_authority = prefs_authority.load(Ordering::SeqCst);
         let location_token =
@@ -47,12 +50,14 @@ impl SendAuthority {
             expected_prefs_authority,
             doc_epoch,
             location_token,
-            expected_location_revision,
+            expected_location,
             drop_generation: backend.client.drop_generation(),
             stream_drop_epoch: backend.client.stream_drop_epoch(),
             expected_server: backend.client.server_identity().map(str::to_owned),
             #[cfg(test)]
             pre_send_gate,
+            #[cfg(test)]
+            post_attest_gate,
         }
     }
 
@@ -62,13 +67,6 @@ impl SendAuthority {
                 .doc_epoch
                 .as_ref()
                 .is_none_or(|(guard, expected)| guard.load(Ordering::Acquire) == *expected)
-            && self
-                .location_token
-                .as_ref()
-                .is_none_or(|(guard, expected)| guard.load(Ordering::SeqCst) == *expected)
-            && self
-                .expected_location_revision
-                .is_none_or(|rev| backend.client.location_revision() == rev)
             && backend.client.drop_generation() == self.drop_generation
             && backend.client.stream_drop_epoch() == self.stream_drop_epoch
             && ServerOwner::backend_verified(backend)
@@ -76,6 +74,16 @@ impl SendAuthority {
                 .expected_server
                 .as_deref()
                 .is_none_or(|id| backend.client.server_identity() == Some(id))
+            && self
+                .location_token
+                .as_ref()
+                .is_none_or(|(guard, expected)| guard.load(Ordering::SeqCst) == *expected)
+            && self
+                .expected_location
+                .as_ref()
+                .is_none_or(|(ws, ses, rev)| {
+                    backend.client.location_revision(ws, ses.as_deref()) == *rev
+                })
     }
 
     pub(super) async fn authorize_send(&self, backend: &Backend) -> bool {
@@ -90,9 +98,15 @@ impl SendAuthority {
             if backend.attest_server().await.is_err() {
                 return false;
             }
-            return self.still_ok(backend);
+            if !self.still_ok(backend) {
+                return false;
+            }
         }
-        true
+        #[cfg(test)]
+        if let Some(gate) = &self.post_attest_gate {
+            let _ = gate.recv().await;
+        }
+        self.still_ok(backend)
     }
 }
 
@@ -130,6 +144,8 @@ impl ConfigContext<'_> {
             backend,
             #[cfg(test)]
             pre_send_gate,
+            #[cfg(test)]
+            None,
         )
     }
 }
@@ -171,6 +187,8 @@ pub(in crate::settings) struct Shared {
     pre_patch_gate: Option<Receiver<()>>,
     #[cfg(test)]
     pre_depth_put_gate: Option<Receiver<()>>,
+    #[cfg(test)]
+    post_attest_depth_gate: Option<Receiver<()>>,
 }
 
 impl Shared {
@@ -182,6 +200,11 @@ impl Shared {
     #[cfg(test)]
     pub(in crate::settings) fn set_pre_depth_put_gate(&mut self, gate: Receiver<()>) {
         self.pre_depth_put_gate = Some(gate);
+    }
+
+    #[cfg(test)]
+    pub(in crate::settings) fn set_post_attest_depth_gate(&mut self, gate: Receiver<()>) {
+        self.post_attest_depth_gate = Some(gate);
     }
 
     #[cfg(test)]
@@ -407,7 +430,16 @@ impl Shared {
     ) -> ConfigEffects {
         let mut effects = self.defaults.poll_replies(ctx);
         effects.merge(self.library.poll_replies(ctx));
-        let (depth_changed, depth_settled) = self.depth.poll_save_only(ctx.transport_lost);
+        let (depth_changed, depth_settled) = self.depth.poll_background_writes(
+            ctx.transport_lost,
+            &ctx.prefs_authority,
+            &self.location_token,
+            #[cfg(test)]
+            &mut self.pre_depth_put_gate,
+            #[cfg(test)]
+            &mut self.post_attest_depth_gate,
+            wake,
+        );
         effects.changed |= depth_changed;
         effects.settled |= depth_settled;
 
@@ -456,6 +488,8 @@ impl Shared {
             &self.location_token,
             #[cfg(test)]
             &mut self.pre_depth_put_gate,
+            #[cfg(test)]
+            &mut self.post_attest_depth_gate,
             wake,
         )
     }

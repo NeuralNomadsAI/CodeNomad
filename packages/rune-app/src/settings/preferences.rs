@@ -569,9 +569,16 @@ impl Preferences {
         let server_rev =
             check_revisions.then(|| backend.client.preferences_revision(Owner::Server));
         let atomic = backend.client.supports_atomic_settings_patches();
-        self.config.prepare_drain(config_rev, retry_failed, atomic);
-        self.state.prepare_drain(state_rev, retry_failed, atomic);
-        self.server.prepare_drain(server_rev, retry_failed, atomic);
+        self.config.prepare_drain(
+            config_rev,
+            retry_failed,
+            atomic,
+            self.missions.needs_config_revalidation(),
+        );
+        self.state
+            .prepare_drain(state_rev, retry_failed, atomic, false);
+        self.server
+            .prepare_drain(server_rev, retry_failed, atomic, false);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -470,10 +470,10 @@ impl SharedStream {
                 }
                 FrameClass::ReplayStopped(id) => {
                     inner.replays.remove(id);
-                    hub.note_location_change();
+                    hub.note_workspace_location_change(id);
                 }
-                FrameClass::SessionMoved { .. } => {
-                    hub.note_location_change();
+                FrameClass::SessionMoved { workspace, session } => {
+                    hub.note_session_location_change(workspace, session);
                 }
                 FrameClass::None => {}
             }
@@ -691,21 +691,62 @@ struct StreamEntry {
     active: bool,
 }
 
+const MAX_TRACKED_LOCATIONS: usize = 256;
+
+#[derive(Default)]
+struct LocationRevisions {
+    workspace: HashMap<String, u64>,
+    session: HashMap<(String, String), u64>,
+    overflow: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct Hub {
     streams: Mutex<HashMap<String, StreamEntry>>,
     next_id: AtomicU64,
     next_connection: AtomicU64,
-    location_revision: AtomicU64,
+    location_revisions: Mutex<LocationRevisions>,
 }
 
 impl Hub {
-    pub(crate) fn note_location_change(&self) {
-        self.location_revision.fetch_add(1, SeqCst);
+    pub(crate) fn note_workspace_location_change(&self, workspace: &str) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        if let Some(entry) = rev.workspace.get_mut(workspace) {
+            *entry = entry.wrapping_add(1);
+        } else if rev.workspace.len() < MAX_TRACKED_LOCATIONS {
+            rev.workspace.insert(workspace.to_owned(), 1);
+        } else {
+            rev.overflow = rev.overflow.wrapping_add(1);
+        }
     }
 
-    pub(crate) fn location_revision(&self) -> u64 {
-        self.location_revision.load(SeqCst)
+    pub(crate) fn note_session_location_change(&self, workspace: &str, session: &str) {
+        if session.is_empty() {
+            self.note_workspace_location_change(workspace);
+            return;
+        }
+        let mut rev = self.location_revisions.lock().unwrap();
+        let key = (workspace.to_owned(), session.to_owned());
+        if let Some(entry) = rev.session.get_mut(&key) {
+            *entry = entry.wrapping_add(1);
+        } else if rev.session.len() < MAX_TRACKED_LOCATIONS {
+            rev.session.insert(key, 1);
+        } else {
+            rev.overflow = rev.overflow.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn location_revision(&self, workspace: &str, session: Option<&str>) -> u64 {
+        let rev = self.location_revisions.lock().unwrap();
+        let ws = rev.workspace.get(workspace).copied().unwrap_or(0);
+        let ses = session
+            .and_then(|s| {
+                rev.session
+                    .get(&(workspace.to_owned(), s.to_owned()))
+                    .copied()
+            })
+            .unwrap_or(0);
+        rev.overflow.wrapping_add(ws).wrapping_add(ses)
     }
     async fn subscribe(
         self: &Arc<Self>,
