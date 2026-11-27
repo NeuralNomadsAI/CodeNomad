@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {existsSync,readFileSync,writeFileSync} from 'node:fs'
 import {mkdir,mkdtemp,realpath,rm,symlink} from 'node:fs/promises'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -109,8 +110,31 @@ test('validateOwnedWorkerProfile rejects links and loopback start ack authentica
     assert.equal(ack.hasStarted(), false)
     await assert.rejects(() => sendWorkerStartAck(ack.port, 'tok-wrong'))
     assert.equal(ack.hasStarted(), false)
-    await sendWorkerStartAck(ack.port, 'tok-run-1')
+    const conn1 = net.createConnection({ host: '127.0.0.1', port: ack.port })
+    const conn2 = net.createConnection({ host: '127.0.0.1', port: ack.port })
+    await Promise.all([
+      new Promise((resolve, reject) => { conn1.once('connect', resolve); conn1.once('error', reject) }),
+      new Promise((resolve, reject) => { conn2.once('connect', resolve); conn2.once('error', reject) }),
+    ])
+    const conn1Reply = new Promise((resolve, reject) => {
+      let buf = ''
+      conn1.on('data', d => { buf += d.toString('utf8') })
+      conn1.once('end', () => resolve(buf))
+      conn1.once('error', reject)
+    })
+    const conn2Result = new Promise(resolve => {
+      let buf = ''
+      conn2.on('data', d => { buf += d.toString('utf8') })
+      conn2.once('close', () => resolve(buf))
+      conn2.on('error', () => {})
+    })
+    conn1.write('tok-run-1\n')
+    assert.equal(await conn1Reply, 'OK\n')
     assert.equal(ack.hasStarted(), true)
+    try { conn2.write('tok-run-1\n') } catch {}
+    assert.equal(await conn2Result, '')
+    conn1.destroy()
+    conn2.destroy()
   } finally {
     ack.close()
   }

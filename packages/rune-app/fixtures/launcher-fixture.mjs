@@ -53,85 +53,85 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
   const workerToken=randomUUID()
   await mkdir(workerProfile)
-  const startAck=await createWorkerStartAck(workerToken)
-  const workerEnv={
-    ...process.env,
-    CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile,
-    CODENOMAD_LAUNCHER_WORKER_TOKEN:workerToken,
-    CODENOMAD_LAUNCHER_WORKER_ACK_PORT:String(startAck.port),
-  }
   const graceMs=webAndroid?150000:25000
-  const spawnPosixBridge=()=>{
-    const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
-    const bridgeCode=`
-      import {spawnFixtureChild,stopFixtureChild} from ${JSON.stringify(guardsUrl)}
-      const workerArgs=JSON.parse(process.env.CODENOMAD_POSIX_WORKER_ARGS)
-      const graceMs=Number(process.env.CODENOMAD_POSIX_WORKER_GRACE_MS)
-      delete process.env.CODENOMAD_POSIX_WORKER_ARGS
-      delete process.env.CODENOMAD_POSIX_WORKER_GRACE_MS
-      const child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
-      child.stdin?.on('error',()=>{})
-      const closed=new Promise(resolve=>{
-        child.once('close',(code,signal)=>resolve({code,signal}))
-        child.once('error',error=>resolve({code:null,signal:null,error}))
-      })
-      let stopping,stopError,stopSettled
-      const stopDone=new Promise(resolve=>{stopSettled=resolve})
-      const stop=line=>{
-        stopping??=(async()=>{
-          try{
-            try{child.stdin?.end(line)}catch{}
-            let t
-            try{await Promise.race([closed,new Promise(r=>{t=setTimeout(r,graceMs)})])}
-            finally{clearTimeout(t)}
-            await stopFixtureChild(child,closed,5500,2000)
-          }catch(error){
-            stopError=error
-            console.error(error.message)
-          }finally{
-            stopSettled({exited:false})
-          }
-        })()
-      }
-      process.on('SIGTERM',()=>stop('shutdown:SIGTERM\\n'))
-      process.stdin.resume()
-      process.stdin.on('data',chunk=>{
-        const text=String(chunk)
-        if(text.includes('shutdown:SIGINT'))stop('shutdown:SIGINT\\n')
-        else if(text.includes('shutdown'))stop('shutdown:SIGTERM\\n')
-      })
-      process.stdin.once('end',()=>stop('shutdown:SIGTERM\\n'))
-      const outcome=await Promise.race([closed.then(exit=>({exited:true,exit})),stopDone])
-      let exit=outcome.exited?outcome.exit:null
-      if(outcome.exited){await stopping}
-      else{
-        let timer
-        try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
-        finally{clearTimeout(timer)}
-      }
-      if(exit?.error){console.error(exit.error?.message??exit.error);process.exit(1)}
-      if(!exit||stopError||exit.code===86||exit.signal)process.exit(86)
-      process.exit(exit.code??1)
-    `
-    return spawn(process.execPath,['--input-type=module','-e',bridgeCode],{
-      cwd:root,
-      detached:true,
-      windowsHide:true,
-      stdio:['pipe','inherit','inherit'],
-      env:{
-        ...workerEnv,
-        CODENOMAD_POSIX_WORKER_ARGS:JSON.stringify([...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker']),
-        CODENOMAD_POSIX_WORKER_GRACE_MS:String(graceMs),
-      },
-    })
-  }
-  let worker
+  let startAck,worker
   try{
+    startAck=await createWorkerStartAck(workerToken)
+    const workerEnv={
+      ...process.env,
+      CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile,
+      CODENOMAD_LAUNCHER_WORKER_TOKEN:workerToken,
+      CODENOMAD_LAUNCHER_WORKER_ACK_PORT:String(startAck.port),
+    }
+    const spawnPosixBridge=()=>{
+      const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
+      const bridgeCode=`
+        import {spawnFixtureChild,stopFixtureChild} from ${JSON.stringify(guardsUrl)}
+        const workerArgs=JSON.parse(process.env.CODENOMAD_POSIX_WORKER_ARGS)
+        const graceMs=Number(process.env.CODENOMAD_POSIX_WORKER_GRACE_MS)
+        delete process.env.CODENOMAD_POSIX_WORKER_ARGS
+        delete process.env.CODENOMAD_POSIX_WORKER_GRACE_MS
+        const child=spawnFixtureChild(process.execPath,workerArgs,{windowsHide:true,stdio:['pipe','inherit','inherit'],env:process.env})
+        child.stdin?.on('error',()=>{})
+        const closed=new Promise(resolve=>{
+          child.once('close',(code,signal)=>resolve({code,signal}))
+          child.once('error',error=>resolve({code:null,signal:null,error}))
+        })
+        let stopping,stopError,stopSettled
+        const stopDone=new Promise(resolve=>{stopSettled=resolve})
+        const stop=line=>{
+          stopping??=(async()=>{
+            try{
+              try{child.stdin?.end(line)}catch{}
+              let t
+              try{await Promise.race([closed,new Promise(r=>{t=setTimeout(r,graceMs)})])}
+              finally{clearTimeout(t)}
+              await stopFixtureChild(child,closed,5500,2000)
+            }catch(error){
+              stopError=error
+              console.error(error.message)
+            }finally{
+              stopSettled({exited:false})
+            }
+          })()
+        }
+        process.on('SIGTERM',()=>stop('shutdown:SIGTERM\\n'))
+        process.stdin.resume()
+        process.stdin.on('data',chunk=>{
+          const text=String(chunk)
+          if(text.includes('shutdown:SIGINT'))stop('shutdown:SIGINT\\n')
+          else if(text.includes('shutdown'))stop('shutdown:SIGTERM\\n')
+        })
+        process.stdin.once('end',()=>stop('shutdown:SIGTERM\\n'))
+        const outcome=await Promise.race([closed.then(exit=>({exited:true,exit})),stopDone])
+        let exit=outcome.exited?outcome.exit:null
+        if(outcome.exited){await stopping}
+        else{
+          let timer
+          try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
+          finally{clearTimeout(timer)}
+        }
+        if(exit?.error){console.error(exit.error?.message??exit.error);process.exit(1)}
+        if(!exit||stopError||exit.code===86||exit.signal)process.exit(86)
+        process.exit(exit.code??1)
+      `
+      return spawn(process.execPath,['--input-type=module','-e',bridgeCode],{
+        cwd:root,
+        detached:true,
+        windowsHide:true,
+        stdio:['pipe','inherit','inherit'],
+        env:{
+          ...workerEnv,
+          CODENOMAD_POSIX_WORKER_ARGS:JSON.stringify([...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker']),
+          CODENOMAD_POSIX_WORKER_GRACE_MS:String(graceMs),
+        },
+      })
+    }
     worker=process.platform==='win32'
       ?spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:['pipe','inherit','inherit'],env:workerEnv})
       :spawnPosixBridge()
   }catch(spawnError){
-    startAck.close()
+    startAck?.close()
     console.error(spawnError?.message??spawnError)
     const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false})
     process.exit(finalResult)
@@ -948,7 +948,7 @@ try{
     client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     webState.clientStartedBy=new Date()
     const clientClosedOnly=trackClientClose(client)
-    webState.clientClosed=clientClosedOnly
+    client.once('error',error=>{webState.clientError??=error})
     clientRelay.allowClientPid(fixtureChildPid(client),clientClosedOnly)
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
@@ -957,8 +957,17 @@ try{
     const maxBudget=webMobile?480000:300000
     const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):webMobile?480000:web||filesState||gitPanel?300000:120000
     assert(Number.isInteger(budget)&&budget>0&&budget<=maxBudget,'Invalid client deadline')
-    const exited=webState.clientClosed??new Promise((resolve,reject)=>{client.once('close',code=>resolve(code??1));client.once('error',reject)})
-    webState.clientClosed=exited
+    const closedOnly=clientClosedPromises.get(client)??webState.clientClosed??trackClientClose(client)
+    const exited=new Promise((resolve,reject)=>{
+      if(webState.clientError){reject(webState.clientError);return}
+      const onError=error=>reject(error)
+      client.once('error',onError)
+      closedOnly.then(code=>{
+        client.off('error',onError)
+        if(webState.clientError)reject(webState.clientError)
+        else resolve(code)
+      })
+    })
     let timer
     try{
       const outcome=interruptedSignal

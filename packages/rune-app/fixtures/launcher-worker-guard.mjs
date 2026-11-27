@@ -29,16 +29,26 @@ export async function validateOwnedWorkerProfile(workerProfilePath, testsReal) {
 export async function createWorkerStartAck(token) {
   assert(typeof token === 'string' && token.length > 0, 'Worker start token is required')
   let started = false
+  const sockets = new Set()
   const server = net.createServer(socket => {
+    if (started) {
+      socket.destroy()
+      return
+    }
+    sockets.add(socket)
+    socket.once('close', () => { sockets.delete(socket) })
     let data = ''
     let settled = false
     const finish = ok => {
       if (settled) return
       settled = true
-      if (ok) {
+      if (ok && !started) {
         started = true
         socket.end('OK\n')
         server.close()
+        for (const other of sockets) {
+          if (other !== socket) other.destroy()
+        }
       } else {
         socket.destroy()
       }
@@ -67,7 +77,11 @@ export async function createWorkerStartAck(token) {
   return {
     port: server.address().port,
     hasStarted: () => started,
-    close: () => { try { server.close() } catch {} },
+    close: () => {
+      for (const socket of sockets) socket.destroy()
+      sockets.clear()
+      try { server.close() } catch {}
+    },
   }
 }
 
