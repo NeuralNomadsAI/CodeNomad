@@ -1369,7 +1369,8 @@ async function runPendingRequestLiveness(instanceId: string, operation = capture
   if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
   const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some(
-    (session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending",
+    (session) => session.status === "working" || session.status === "compacting"
+      || (session.generationRecovery === "pending" && session.generationAdmissionEpoch !== undefined),
   )
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
@@ -2689,8 +2690,21 @@ const publishSynchronousPage = (
   options: { preserveOmitted?: boolean; confirmPending: boolean; updateUsage: boolean },
 ) => {
   const dropped = takeTranscriptProjection(instanceId, sessionId)
-  projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
-  if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  try {
+    projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
+    if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  } catch (error) {
+    log.error("Failed to project synchronous transcript page", { instanceId, sessionId, error })
+    const watched = activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId)
+    if (watched && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) {
+      const signal = serverEvents.signalForInstance(instanceId)
+      void loadMessages(instanceId, sessionId, { force: true, signal }).catch((reloadError) => {
+        log.warn("Failed to reload transcript after synchronous projection error", { instanceId, sessionId, error: reloadError })
+      })
+    } else if (messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+  }
 }
 
 // One stable, explicitly chunk-safe publication identity for ordinary replay.

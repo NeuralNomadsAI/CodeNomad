@@ -539,3 +539,40 @@ test("exhausting failed frame retries reloads a watched latest-window session au
     f.cleanup()
   }
 })
+
+test("a failed final projection at reducer retirement triggers an authoritative reload instead of dropping the page", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retire-failure-reload")
+  const client = (sdkManager as any).clients.get(`${f.instanceId}:/workspaces/${f.instanceId}/instance`)
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let reloads = 0
+  let failNextHydrate = false
+  try {
+    await settleWithRunningTool(f)
+    client.message.list = async () => {
+      reloads += 1
+      return { data: [{
+        id: "msg_tool", type: "assistant", agent: "build", model, time: { created: 500, completed: 600 },
+        content: [{ type: "tool", id: "tool", name: "read", time: { created: 501, ran: 502, completed: 600 },
+          state: { status: "completed", input: {}, metadata: {}, content: [{ type: "text", text: "reloaded" }] } }],
+      }], cursor: {} }
+    }
+    f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+      if (failNextHydrate) {
+        failNextHydrate = false
+        throw new Error("retirement flush failed")
+      }
+      return originalHydrate(...args)
+    }) as typeof f.store.hydrateMessages
+    failNextHydrate = true
+    finishTool(f)
+    for (let wait = 0; wait < 20 && reloads === 0; wait += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(reloads, 1, "failed retirement flush reloads the watched session immediately before teardown cancels timers")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})

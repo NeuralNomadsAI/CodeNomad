@@ -1383,7 +1383,7 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the
   // entry; resets, eviction and destructive teardown cancel instead.
-  flushTranscriptProjections(instanceId, sessionId)
+  flushTranscriptProjections(instanceId, sessionId, { final: true })
   destroyOpenCodeData(instanceId, sessionId)
 }
 

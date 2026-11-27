@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads"
 
 interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64"; env?: NodeJS.ProcessEnv }
 interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
-interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null; killed?: boolean } }
+interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
 // Even asynchronous execFile spends synchronous time creating a Windows process.
 // Keep that work off the HTTP/SSE thread. The worker is self-contained so the same
@@ -28,7 +28,7 @@ function workerMain(load: NodeJS.Require) {
         env: request.env, timeout: request.timeout,
       }, (error, stdout, stderr) => {
         parentPort!.postMessage({ id: request.id, stdout: stdout.toString(request.encoding ?? "utf8"), stderr: stderr.toString("utf8"),
-          ...(error ? { error: { message: error.message, code: error.code, killed: Boolean(error.killed) } } : {}),
+          ...(error ? { error: { message: error.message, code: error.code } } : {}),
         } satisfies GitResponse)
         running -= 1
         scheduler.pump()
@@ -63,7 +63,7 @@ function getWorker(): Worker {
     if (!task) return
     pending.delete(response.id)
     if (response.error) task.reject(Object.assign(new Error(response.error.message), {
-      code: response.error.code, killed: response.error.killed, stdout: response.stdout, stderr: response.stderr,
+      code: response.error.code, stdout: response.stdout, stderr: response.stderr,
     }))
     else task.resolve(response.stdout)
     if (pending.size === 0) created.unref()

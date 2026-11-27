@@ -25,23 +25,10 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
   return git(folder, ["--version"]).then(() => true, error => error.code !== "ENOENT")
 }
 
-const TRANSIENT_OWNERSHIP_ERROR_CODES = new Set(["EAGAIN", "EBUSY", "EIO", "EMFILE", "ENFILE", "ETIMEDOUT"])
-
-export function isTransientOwnershipError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false
-  const record = error as { code?: unknown; killed?: unknown }
-  if (record.killed === true) return true
-  return typeof record.code === "string" && TRANSIENT_OWNERSHIP_ERROR_CODES.has(record.code)
-}
-
 // A different physical common directory cannot belong to this local repository,
 // even when independent clones share OpenCode's project ID. This is only a
 // negative preflight; a match still requires the native worktree inventory.
-export async function sharesGitCommonDirectory(
-  left: string,
-  right: string,
-  { strict = false, propagateTransient = false } = {},
-): Promise<boolean> {
+export async function sharesGitCommonDirectory(left: string, right: string, { strict = false } = {}): Promise<boolean> {
   try {
     // Strict discovery preserves verified absence separately from ambiguous/read failures.
     const read = strict ? discoverCheckoutCommonDirectory : readGitCommonDirectory
@@ -50,7 +37,7 @@ export async function sharesGitCommonDirectory(
     if (b.status === "rejected") throw b.reason
     return a.value !== undefined && a.value === b.value
   } catch (error) {
-    if (strict || (propagateTransient && isTransientOwnershipError(error))) throw error
+    if (strict) throw error
     return false
   }
 }

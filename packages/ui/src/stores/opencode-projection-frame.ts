@@ -71,18 +71,23 @@ function clearRetryTimer(key: string): void {
   }
 }
 
-function scheduleFailedProjectionRetry(entry: PendingProjection): void {
+function recoverFailedProjection(entry: PendingProjection): void {
+  if (!gates || !entry.operation.current()) return
+  if (gates.isActiveSession(entry.instanceId, entry.sessionId)
+    && gates.isLatestMessageWindow(entry.instanceId, entry.sessionId)
+    && gates.reloadFailedProjection) {
+    gates.reloadFailedProjection(entry.instanceId, entry.sessionId)
+  } else {
+    gates.invalidateInactiveLoadedSession(entry.instanceId, entry.sessionId)
+  }
+}
+
+function scheduleFailedProjectionRetry(entry: PendingProjection, immediateReload = false): void {
   const key = projectionKey(entry.instanceId, entry.sessionId)
   if (!gates || !entry.operation.current() || pending.has(key)) return
   const attempt = entry.retries ?? 0
-  if (attempt >= PROJECTION_RETRY_DELAYS_MS.length) {
-    if (gates.isActiveSession(entry.instanceId, entry.sessionId)
-      && gates.isLatestMessageWindow(entry.instanceId, entry.sessionId)
-      && gates.reloadFailedProjection) {
-      gates.reloadFailedProjection(entry.instanceId, entry.sessionId)
-    } else {
-      gates.invalidateInactiveLoadedSession(entry.instanceId, entry.sessionId)
-    }
+  if (immediateReload || attempt >= PROJECTION_RETRY_DELAYS_MS.length) {
+    recoverFailedProjection(entry)
     return
   }
   clearRetryTimer(key)
@@ -172,16 +177,21 @@ export function scheduleTranscriptProjection(
  * the active-session gate, so a retirement landing on an inactive session
  * invalidates its loaded page for the next activation read instead of
  * rewriting its display. */
-export function flushTranscriptProjections(instanceId?: string, sessionId?: string): void {
+export function flushTranscriptProjections(
+  instanceId?: string,
+  sessionId?: string,
+  options?: { final?: boolean },
+): void {
+  const immediateReload = Boolean(options?.final)
   if (instanceId === undefined) {
-    drain(true)
+    drain(true, undefined, immediateReload)
     return
   }
   const prefix = `${instanceId}\u0000`
   const matches = sessionId === undefined
     ? (key: string) => key.startsWith(prefix)
     : (key: string) => key === projectionKey(instanceId, sessionId)
-  drain(false, matches)
+  drain(false, matches, immediateReload)
 }
 
 /** Removes and returns a session's pending projection. A synchronous
@@ -225,7 +235,7 @@ function disarm(): void {
   }
 }
 
-function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): void {
+function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean, immediateReload = false): void {
   if (!pending.size || !gates) {
     disarm()
     return
@@ -246,7 +256,7 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
         log.error("Failed to project coalesced transcript page", {
           instanceId: entry.instanceId, sessionId: entry.sessionId, error,
         })
-        scheduleFailedProjectionRetry(entry)
+        scheduleFailedProjectionRetry(entry, immediateReload)
       }
     }
   })
