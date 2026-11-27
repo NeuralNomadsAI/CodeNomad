@@ -84,19 +84,20 @@ function trackFulfill(pending, promise, onError){
   return run
 }
 
+async function abortRouteOrClose(route, label='route abort', ms=2_000){
+  const abortErr=await drainWithin([route.abort()],label,ms)
+  if(!abortErr)return null
+  const target=route.request().frame()?.page()
+  if(target&&!target.isClosed()){
+    await drainWithin([target.close()],`closing page after failed ${label}`,ms)
+  }
+  return abortErr
+}
+
 async function fulfillOrAbort(pending, route, payload, onError){
   let failed=false
   await trackFulfill(pending,route.fulfill(payload),err=>{ failed=true; onError(err) })
-  if(failed){
-    try {
-      await route.abort()
-    } catch {
-      const target=route.request().frame()?.page()
-      if(target&&!target.isClosed()){
-        await drainWithin([target.close()],'closing page after failed route fulfill',2_000)
-      }
-    }
-  }
+  if(failed)await abortRouteOrClose(route,'route fulfill recovery')
   return !failed
 }
 
@@ -179,8 +180,8 @@ async function runWithPairTab(context, again, options, fn){
 }
 
 const SSE_RETRY1_MIN_MS=750
-const SSE_RETRY1_MAX_MS=1950
-const SSE_RETRY2_MIN_MS=1600
+const SSE_RETRY1_MAX_MS=1850
+const SSE_RETRY2_MIN_MS=1900
 const SSE_RETRY2_MAX_MS=3500
 
 function probeDelayMs(probes, index){
@@ -271,8 +272,12 @@ async function verifySseAuthenticated503Recovery({
       let heldRouteError=null
       const holdRoute=async route=>{
         const run=releaseHeldSse.promise
-          .then(pass=>pass?route.fallback():route.abort().catch(()=>{}))
-          .catch(err=>{ if(recovered)heldRouteError??=err })
+          .then(async pass=>{
+            if(pass)return route.fallback()
+            const err=await abortRouteOrClose(route,'held SSE route abort')
+            if(err)throw err
+          })
+          .catch(err=>{ heldRouteError??=err })
           .finally(()=>pendingHeldRoutes.delete(run))
         pendingHeldRoutes.add(run)
         await run
@@ -760,11 +765,11 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
             assert.equal(authStatusRequests,1,'No follow-up /api/auth/status may start before the held probe is delivered')
             assert.equal(eventSources(),beforeRevoke,'SSE must remain blocked so focus/visibility alone drives recovery')
           } finally {
-            staleReleased=true
-            releaseStale.resolve()
             await settleWithin(page.evaluate(()=>globalThis.__runeCleanupReturnSignal?.()).catch(()=>{}),focusStop)
-            if(!focusForbiddenError&&!focusRouteError&&heldStale)await settleWithin(staleSettled.promise,focusStop)
           }
+          staleReleased=true
+          releaseStale.resolve()
+          if(!focusForbiddenError&&!focusRouteError&&heldStale)await settleWithin(staleSettled.promise,focusStop)
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
           if(staleError)throw staleError
@@ -776,16 +781,13 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           assert.equal((await focusStep(staleBrowserResponse.json())).pairingRequired,true,'Browser must receive pairingRequired=true from the first probe')
           // Returning focus while the first status probe was in flight must queue a follow-up check
           // immediately once pairingRequired=true opens #pairing-recovery, without any click or SSE help.
-          try {
-            await focusStep(withBudget(now()+10_000,'follow-up auth status after first stale probe',
-              ()=>focusStep(followUpCaptured.promise)))
-            await focusStep(dialog.waitFor())
-            await focusStep(text(messages['rune.pairing_guide']).waitFor())
-            assert.equal(await focusStep(dialog.getByRole('textbox').count()),0,'Browser pairing never shows a password form')
-          } finally {
-            releaseFollowUp.resolve()
-            await settleFollowUp()
-          }
+          await focusStep(withBudget(now()+10_000,'follow-up auth status after first stale probe',
+            ()=>focusStep(followUpCaptured.promise)))
+          await focusStep(dialog.waitFor())
+          await focusStep(text(messages['rune.pairing_guide']).waitFor())
+          assert.equal(await focusStep(dialog.getByRole('textbox').count()),0,'Browser pairing never shows a password form')
+          releaseFollowUp.resolve()
+          await settleFollowUp()
           if(focusForbiddenError)throw focusForbiddenError
           if(focusRouteError)throw focusRouteError
           await focusStep(dialog.waitFor({state:'detached',timeout:10_000}))
