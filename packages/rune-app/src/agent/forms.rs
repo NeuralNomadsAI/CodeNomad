@@ -1141,8 +1141,10 @@ fn fresh_draft(field: &Value) -> Draft {
                                 d.preserved_custom_selected.insert(raw.to_string());
                             }
                         } else {
-                            editable_utf16 =
-                                editable_utf16.saturating_add(raw.encode_utf16().count() + 1);
+                            let sep_units = usize::from(!editable_custom.is_empty());
+                            editable_utf16 = editable_utf16
+                                .saturating_add(sep_units)
+                                .saturating_add(raw.encode_utf16().count());
                             if editable_custom.len() >= 64 || editable_utf16 > 20_000 {
                                 overflow = true;
                                 break;

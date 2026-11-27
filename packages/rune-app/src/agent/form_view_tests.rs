@@ -8556,3 +8556,123 @@ fn round30_crlf_paste_cap_ime_preedit_cap_rejected_empty_clear_and_ampm_datetime
         }
     });
 }
+
+#[test]
+fn round31_short_offset_datetime_and_exact_20k_multiselect_default() {
+    crate::strings::with_locale("en", || {
+        // 1. Required hidden `date-time` field with short offset `"2026-11-27 14:30:00+00"` and
+        // unrecognized V8-accepted spellings like `"2026-11-27 14:30:00+99"` and
+        // `"11/27/2026 14:30:00+00"` must keep Answer enabled and submit verbatim.
+        let dt_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r31-dt".into(),
+            title: "Short offset date-time".into(),
+            fields: vec![
+                json!({
+                    "key": "pg_utc",
+                    "title": "PG UTC",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "2026-11-27 14:30:00+00"
+                }),
+                json!({
+                    "key": "numeric_short",
+                    "title": "Numeric short",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "11/27/2026 14:30:00+00"
+                }),
+                json!({
+                    "key": "exotic_offset",
+                    "title": "Exotic offset",
+                    "type": "string",
+                    "format": "date-time",
+                    "required": true,
+                    "hidden": true,
+                    "default": "2026-11-27 14:30:00+99"
+                }),
+            ],
+        };
+        let (dt_state, _drx) = state_with_form(dt_form.clone());
+        assert_eq!(
+            agent_forms::answer(&dt_form, &dt_state.agent.as_ref().unwrap().drafts)
+                .expect("short-offset and deferred OpenCode date-time defaults must pass"),
+            json!({
+                "pg_utc": "2026-11-27 14:30:00+00",
+                "numeric_short": "11/27/2026 14:30:00+00",
+                "exotic_offset": "2026-11-27 14:30:00+99"
+            })
+        );
+        let mut dt_rt = Runtime::new(dt_state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        dt_rt.frame(0.0);
+        assert!(
+            !has_state(
+                find_node(&dt_rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must be enabled for valid short-offset hidden date-time defaults"
+        );
+
+        // 2. Required custom multiselect with `options: []` and one default item of exactly
+        // 20,000 ASCII chars must NOT count a trailing newline, must keep the editor enabled,
+        // and must submit the untouched default verbatim.
+        let exact_20k = "a".repeat(20_000);
+        let multi_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r31-20k".into(),
+            title: "Exact 20k multiselect".into(),
+            fields: vec![json!({
+                "key": "items",
+                "title": "Items",
+                "type": "multiselect",
+                "required": true,
+                "custom": true,
+                "options": [],
+                "default": [exact_20k.clone()]
+            })],
+        };
+        let (multi_state, _mrx) = state_with_form(multi_form.clone());
+        let draft = multi_state
+            .agent
+            .as_ref()
+            .unwrap()
+            .drafts
+            .get(&("form-r31-20k".into(), "items".into()))
+            .unwrap();
+        assert!(
+            !draft.oversized_multiselect_default,
+            "single 20,000-unit default must not trip oversized_multiselect_default"
+        );
+        assert_eq!(draft.custom.text.len(), 20_000);
+        assert_eq!(
+            agent_forms::answer(&multi_form, &multi_state.agent.as_ref().unwrap().drafts)
+                .expect("exact 20,000-unit multiselect default must validate and submit"),
+            json!({ "items": [exact_20k] })
+        );
+        let mut multi_rt = Runtime::new(
+            multi_state,
+            render_form,
+            (420.0, 620.0),
+            Env::new(false, 1.0),
+        );
+        multi_rt.frame(0.0);
+        let multi_tree = multi_rt.accessibility_json();
+        assert!(
+            !has_state(
+                find_node(&multi_tree, "answer-question").unwrap(),
+                "disabled"
+            ),
+            "Answer must be enabled for exact 20,000-unit multiselect default"
+        );
+        assert!(
+            !has_state(find_input(&multi_tree, "custom-items"), "disabled"),
+            "custom multiselect editor must remain enabled at exact 20,000-unit boundary"
+        );
+    });
+}

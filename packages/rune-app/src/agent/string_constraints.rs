@@ -699,7 +699,7 @@ struct ParsedDateTime {
     has_time: bool,
 }
 
-fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
+fn parse_tz_offset_ms(raw: &str, allow_short_offset: bool) -> Option<Option<i64>> {
     let tz_raw = raw.trim();
     if tz_raw.is_empty() {
         return Some(None);
@@ -764,7 +764,7 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
             )
         } else if (rb.len() == 2 || rb.len() == 3)
             && matches!(rb[0], b'+' | b'-')
-            && tz_offset_part.len() < tz.len()
+            && (allow_short_offset || tz_offset_part.len() < tz.len())
         {
             (
                 if rb[0] == b'-' { -1i64 } else { 1i64 },
@@ -784,7 +784,7 @@ fn parse_tz_offset_ms(raw: &str) -> Option<Option<i64>> {
     ))
 }
 
-fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32, Option<i64>)> {
+fn parse_time_and_tz(rest: &str, allow_legacy: bool) -> Option<(u32, u32, u32, u32, Option<i64>)> {
     let (mut hour, after_hour) = take_1_or_2_digits(rest)?;
     let after_h_colon = after_hour.strip_prefix(':')?;
     let (minute, mut tail) = take_1_or_2_digits(after_h_colon)?;
@@ -813,7 +813,7 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
         }
     }
     let mut has_ampm = false;
-    if allow_ampm && tail.as_bytes().first().is_some_and(u8::is_ascii_whitespace) {
+    if allow_legacy && tail.as_bytes().first().is_some_and(u8::is_ascii_whitespace) {
         let trimmed = tail.trim_start();
         let after_meridiem = if trimmed
             .as_bytes()
@@ -864,7 +864,7 @@ fn parse_time_and_tz(rest: &str, allow_ampm: bool) -> Option<(u32, u32, u32, u32
     if !has_ampm && (hour > 24 || (hour == 24 && (minute != 0 || second != 0 || millis != 0))) {
         return None;
     }
-    let tz_offset_ms = parse_tz_offset_ms(tail)?;
+    let tz_offset_ms = parse_tz_offset_ms(tail, allow_legacy)?;
     Some((hour, minute, second, millis, tz_offset_ms))
 }
 
@@ -1202,6 +1202,13 @@ fn is_valid_date_time(value: &str) -> bool {
 
 fn has_date_time_defer_cue(s: &str) -> bool {
     let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
+    let bytes = prefix.as_bytes();
+    let has_signed_offset = bytes
+        .windows(2)
+        .any(|w| matches!(w[0], b'+' | b'-') && w[1].is_ascii_digit());
+    let has_clock_colon = bytes
+        .windows(3)
+        .any(|w| w[0].is_ascii_digit() && w[1] == b':' && w[2].is_ascii_digit());
     prefix
         .split(|c: char| !c.is_ascii_alphanumeric())
         .any(|tok| {
@@ -1216,6 +1223,8 @@ fn has_date_time_defer_cue(s: &str) -> bool {
                     "EST" | "EDT" | "CST" | "CDT" | "MST" | "MDT" | "PST" | "PDT"
                 )
         })
+        || has_signed_offset
+        || has_clock_colon
         || (s.contains('(') && s.ends_with(')'))
 }
 
@@ -1282,25 +1291,57 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
                         return false;
                     }
                     let trimmed = after_d.strip_prefix(',').unwrap_or(after_d).trim_start();
-                    parse_tz_offset_ms(trimmed).is_some()
+                    parse_tz_offset_ms(trimmed, true).is_some()
                         || (!has_invalid_clock_time(trimmed) && has_date_time_defer_cue(trimmed))
                 });
             return !deferrable_iso_tail;
         }
     }
-    // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/30/2026`, `13-01-2026`).
-    let first_sep = s.bytes().position(|b| matches!(b, b'/' | b'-'));
+    // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/30/2026`, `13-01-2026`),
+    // while deferring valid numeric dates with unrecognized non-ISO time/offset tails.
+    let (date_part, after_date) = split_first_date_token(s);
+    let first_sep = date_part.bytes().position(|b| matches!(b, b'/' | b'-'));
     if let Some(sep_idx) = first_sep
         && sep_idx > 0
-        && s.as_bytes()[..sep_idx].iter().all(u8::is_ascii_digit)
+        && date_part.as_bytes()[..sep_idx]
+            .iter()
+            .all(u8::is_ascii_digit)
     {
-        let sep = s.as_bytes()[sep_idx];
-        let rest = &s[sep_idx + 1..];
+        let sep = date_part.as_bytes()[sep_idx];
+        let rest = &date_part[sep_idx + 1..];
         if let Some(second_sep) = rest.bytes().position(|b| b == sep)
             && second_sep > 0
             && rest.as_bytes()[..second_sep].iter().all(u8::is_ascii_digit)
         {
-            return true;
+            let p1 = &date_part[..sep_idx];
+            let p2 = &rest[..second_sep];
+            let p3 = &rest[second_sep + 1..];
+            let valid_triple = if p1.len() == 4 && sep != b'-' {
+                parse_ascii_digits(p1)
+                    .zip(parse_ascii_digits(p2))
+                    .zip(parse_ascii_digits(p3))
+                    .filter(|&((_, m), _)| p2.len() <= 2 && p3.len() <= 2 && (1..=12).contains(&m))
+                    .is_some_and(|((y, m), d)| {
+                        (1..=days_in_month_i64(i64::from(y), m)).contains(&d)
+                    })
+            } else if p1.len() <= 2 && p2.len() <= 2 {
+                parse_ascii_digits(p1)
+                    .zip(parse_ascii_digits(p2))
+                    .zip(parse_year_2_or_4(p3))
+                    .filter(|&((m, _), _)| (1..=12).contains(&m))
+                    .is_some_and(|((m, d), y)| (1..=days_in_month_i64(y, m)).contains(&d))
+            } else {
+                false
+            };
+            let trimmed_tail = after_date
+                .strip_prefix(',')
+                .unwrap_or(after_date)
+                .trim_start();
+            let deferrable_tail = valid_triple
+                && !trimmed_tail.is_empty()
+                && !has_invalid_clock_time(trimmed_tail)
+                && has_date_time_defer_cue(trimmed_tail);
+            return !deferrable_tail;
         }
     }
     // Reject 3-token named-month dates with impossible days (`Jan 99, 2026`, `Feb 30, 2026`).
@@ -1343,7 +1384,8 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
 
 fn classify_date_time(value: &str) -> MatchOutcome {
     let s = trim_es(value);
-    if s.is_empty() || !s.bytes().any(|b| b.is_ascii_digit()) {
+    let prefix = s.find('(').map_or(s, |idx| &s[..idx]);
+    if s.is_empty() || !prefix.is_ascii() || !prefix.bytes().any(|b| b.is_ascii_digit()) {
         return MatchOutcome::NoMatch;
     }
     if is_valid_date_time(s) {
