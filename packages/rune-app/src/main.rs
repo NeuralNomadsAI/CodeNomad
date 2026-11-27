@@ -94,6 +94,7 @@ struct State {
     paging: bool,
     history_error: bool,
     history_detached: bool,
+    stream_offline: bool,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
@@ -102,10 +103,25 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    StreamDisconnected {
+        running: bool,
+    },
     #[cfg(target_arch = "wasm32")]
     WorkspaceMissing,
     #[cfg(target_arch = "wasm32")]
     RestoreFailed,
+}
+impl Phase {
+    fn reconnecting(&self) -> bool {
+        matches!(self, Self::Reconnecting | Self::StreamDisconnected { .. })
+    }
+
+    fn running(&self) -> bool {
+        matches!(
+            self,
+            Self::Streaming | Self::StreamDisconnected { running: true }
+        )
+    }
 }
 fn init() -> State {
     State {
@@ -162,6 +178,7 @@ fn init() -> State {
         paging: false,
         history_error: false,
         history_detached: false,
+        stream_offline: false,
     }
 }
 #[cfg(feature = "test-support")]
@@ -227,6 +244,7 @@ fn local_stress() -> bool {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
@@ -259,6 +277,15 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
         && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
+    if std::mem::take(&mut s.composer.announce_send_error) {
+        rune_theme_codenomad::layout::announce_alert(tx, strings::t("promptInput.send.errorTitle"));
+    }
+    if std::mem::take(&mut s.composer.announce_unconfirmed) {
+        rune_theme_codenomad::layout::announce_alert(
+            tx,
+            strings::t("missionsPanel.action.requestUpdateUncertain"),
+        );
+    }
     shell::notifications::collect(s, workspace::notification_target);
     if s.reader
         .as_ref()
@@ -292,6 +319,10 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= platform::pairing::poll(s, tx);
+    }
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= composer::recall::poll(s);
@@ -300,10 +331,6 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
     changed |= chat::queue::poll(s, tx);
-    #[cfg(target_arch = "wasm32")]
-    {
-        changed |= platform::pairing::poll(s, tx);
-    }
     changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);

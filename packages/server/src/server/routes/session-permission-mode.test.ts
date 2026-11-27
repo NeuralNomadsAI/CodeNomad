@@ -13,6 +13,7 @@ import { SessionPermissionModes } from "../../permissions/session-mode"
 import { supervisedRules } from "../../permissions/session-mode-rules"
 import { SESSION_PERMISSION_BLOCKS_OWNER, SettingsService } from "../../settings/service"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { markDispatchHookAwareFetch, type RuntimeFetchDispatchHooks } from "../../opencode/compatibility/transport"
 import { nativeEventConnections, type ServiceConnection } from "../../workspaces/opencode-service"
 import { SessionCleanupFence } from "../session-cleanup-fence"
 import { registerInstanceProxyRoutes } from "../http-server"
@@ -88,7 +89,14 @@ async function fixture(t: TestContext) {
   } as unknown as ServiceConnection["client"]
   const endpoint = { url: "http://127.0.0.1:1" }
   const connection = { client, endpoint, assertCurrent() {}, invalidate() {}, profile: async () => "modern",
-    fetch: async (input: string, init?: RequestInit) => {
+    fetch: markDispatchHookAwareFetch(async (
+      input: string,
+      init?: RequestInit,
+      _media?: unknown,
+      dispatchHooks?: RuntimeFetchDispatchHooks,
+    ) => {
+      await dispatchHooks?.beforeFetch?.()
+      dispatchHooks?.onDispatch?.()
       if (init?.method === "PATCH" && input.endsWith(`/session/${sessionID}`)) {
         actions.push("proxy write")
         session.permissions = JSON.parse(String(init.body)).permissions
@@ -97,7 +105,7 @@ async function fixture(t: TestContext) {
       if (!input.endsWith("/prompt")) return new Response(null, { status: 404 })
       dispatched?.()
       return new Response(null, { status: 204 })
-    },
+    }),
   } as ServiceConnection
   const workspaces = { one: {}, two: {}, foreign: {} } as Record<string, {} | undefined>
   const manager = {

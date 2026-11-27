@@ -1,4 +1,7 @@
-use super::{Cache, State, Tab, TextEdit, Tx, busy, capture, capture_files_mode, entry};
+use super::{
+    Cache, State, Tab, TextEdit, Tx, Ui, Workspace, busy, capture, capture_files_mode, entry,
+    same_project,
+};
 use crate::platform;
 
 fn stash(s: &mut State) {
@@ -81,8 +84,22 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             .take()
             .unwrap_or_else(|| (TextEdit::new(""), false, TextEdit::new(""), false));
     }
+    let cached_lock = match &ui.entries[ui.active].saved {
+        Tab::Workspace(saved) => saved.active_session_id.as_deref().and_then(|session_id| {
+            ui.closed_unconfirmed_id(saved, session_id)
+                .map(str::to_owned)
+        }),
+        Tab::Blank => None,
+    };
+    let item = &mut ui.entries[ui.active];
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
+        if let Some(attempt_id) = cached_lock
+            && s.composer.unconfirmed_state().is_none()
+        {
+            s.composer
+                .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
+        }
         if s.screen.is_launcher() {
             s.tool_diff_preferences.reset_history_size();
         }
@@ -258,12 +275,51 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         capture(s);
     }
+    crate::composer::recall::forget_tab(s, id);
     let Some(ui) = &mut s.workspace else {
         return;
     };
     let removed = ui.entries.remove(index);
+    let next_active = if index < ui.active {
+        ui.active - 1
+    } else {
+        ui.active.min(ui.entries.len().saturating_sub(1))
+    };
     s.notifications.forget_tab(id);
+    let mut propagate_to_active: Option<String> = None;
+    let mut propagate_locks: Vec<(Workspace, String, String)> = Vec::new();
+    let active_matches = |ui: &Ui, saved: &Workspace, session_id: &str| {
+        !active
+            && ui.entries.get(next_active).is_some_and(|entry| {
+                matches!(&entry.saved, Tab::Workspace(current) if same_project(current, saved)
+                    && current.active_session_id.as_deref() == Some(session_id))
+            })
+    };
     if let Tab::Workspace(mut saved) = removed.saved {
+        // Preserve unconfirmed attempt locks across tab closure without retaining inline attachment bytes.
+        for (session_id, live) in &removed.live_drafts {
+            if !removed.pending_drafts.contains(session_id)
+                && let Some(unconfirmed) = live.unconfirmed_state()
+            {
+                let attempt_id = unconfirmed.id().to_owned();
+                ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
+                propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
+                if active_matches(ui, &saved, session_id) {
+                    propagate_to_active = Some(attempt_id);
+                }
+            }
+        }
+        if let Some(session_id) = &saved.active_session_id
+            && !removed.pending_drafts.contains(session_id)
+            && let Some(unconfirmed) = removed.cache.as_ref().and_then(Cache::unconfirmed_state)
+        {
+            let attempt_id = unconfirmed.id().to_owned();
+            ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
+            propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
+            if active_matches(ui, &saved, session_id) {
+                propagate_to_active = Some(attempt_id);
+            }
+        }
         // Undelivered copies still belong to their closed source.
         saved
             .drafts
@@ -292,6 +348,18 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             let _ = backend.release_project(&project.id).await;
         });
     }
+    for (saved, session_id, attempt_id) in propagate_locks {
+        for entry in &mut ui.entries {
+            if matches!(&entry.saved, Tab::Workspace(current) if same_project(current, &saved)
+                && current.active_session_id.as_deref() == Some(session_id.as_str()))
+                && let Some(cache) = &mut entry.cache
+            {
+                cache.restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
+                    attempt_id.clone(),
+                ));
+            }
+        }
+    }
     if ui.entries.is_empty() {
         ui.entries
             .push(entry(format!("tab-{}", ui.next_key), Tab::Blank));
@@ -303,6 +371,12 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         ui.active.min(ui.entries.len() - 1)
     };
     ui.changed();
+    if let Some(attempt_id) = propagate_to_active
+        && s.composer.unconfirmed_state().is_none()
+    {
+        s.composer
+            .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
+    }
     if active {
         activate(s, tx);
     } else {
@@ -320,6 +394,39 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     }
     if ui.entries[index].has_unsaved_large_drafts() {
         return true;
+    }
+    if let Tab::Workspace(saved) = &ui.entries[index].saved {
+        let mut added = std::collections::BTreeSet::new();
+        for (session_id, live) in &ui.entries[index].live_drafts {
+            if !ui.entries[index].pending_drafts.contains(session_id)
+                && live.unconfirmed_id().is_some()
+                && !ui.has_closed_unconfirmed_for(saved, session_id)
+            {
+                added.insert(session_id.as_str());
+            }
+        }
+        if let Some(session_id) = saved.active_session_id.as_deref()
+            && !ui.entries[index].pending_drafts.contains(session_id)
+            && !ui.has_closed_unconfirmed_for(saved, session_id)
+        {
+            let active_unconfirmed = if ui.active == index {
+                s.composer.unconfirmed_id().is_some()
+            } else {
+                ui.entries[index]
+                    .cache
+                    .as_ref()
+                    .and_then(Cache::unconfirmed_id)
+                    .is_some()
+            };
+            if active_unconfirmed {
+                added.insert(session_id);
+            }
+        }
+        if !added.is_empty()
+            && ui.closed_unconfirmed_count() + added.len() > super::MAX_UNCONFIRMED_LOCKS
+        {
+            return true;
+        }
     }
     if ui.active == index {
         s.composer.blocks_navigation() || crate::agent::navigation_blocked(s)

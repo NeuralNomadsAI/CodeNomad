@@ -135,30 +135,45 @@ impl Drop for Entered {
 }
 /// `enter`: `None` while any of `directories` overlaps a deletion in progress.
 pub fn enter(directories: &[String]) -> Option<Entered> {
+    enter_checked(directories).ok()
+}
+
+fn enter_checked(directories: &[String]) -> Result<Entered, bool> {
     let normalized = normalized(directories);
     let mut s = STATE.lock().unwrap();
-    if normalized.iter().any(|d| s.blocked.keys().any(|b| overlap(b, d))) {
-        return None;
+    let mut directory_blocked = false;
+    let mut any_blocked = false;
+    for d in &normalized {
+        if s.blocked.keys().any(|b| overlap(b, d)) {
+            any_blocked = true;
+            if !d.starts_with("session:") {
+                directory_blocked = true;
+            }
+        }
+    }
+    if any_blocked {
+        return Err(directory_blocked);
     }
     for d in &normalized {
         *s.active.entry(d.clone()).or_default() += 1;
     }
-    Some(Entered(normalized))
+    Ok(Entered(normalized))
 }
 
 pub(crate) fn admit(directories: &[String]) -> Result<Entered, crate::Error> {
-    let permit = enter(directories);
+    let permit = enter_checked(directories);
     #[cfg(test)]
     {
-        super::fence_test_trace::record("checkout fence", if permit.is_some() { "admitted" } else { "refused" });
+        super::fence_test_trace::record("checkout fence", if permit.is_ok() { "admitted" } else { "refused" });
         if directories.iter().any(|key| key.starts_with("session:")) {
-            super::fence_test_trace::record(
-                "session reservation",
-                if permit.is_some() { "admitted" } else { "refused" },
-            );
+            super::fence_test_trace::record("session reservation", if permit.is_ok() { "admitted" } else { "refused" });
         }
     }
-    permit.ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
+    permit.map_err(|directory_blocked| {
+        let message =
+            if directory_blocked { "Worktree deletion is in progress" } else { "Session move is in progress" };
+        crate::error(axum::http::StatusCode::CONFLICT, message)
+    })
 }
 
 /// A deletion in progress; dropping it unblocks its directories.

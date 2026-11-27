@@ -217,6 +217,7 @@ fn next_input_wakes_on_demand_and_guards_all_spin_windows() {
         demand: observer,
         events,
         connection: Default::default(),
+        revoked: Default::default(),
     };
 
     // Idle wait notifies the waker synchronously when demand changes.
@@ -323,6 +324,7 @@ fn dropping_demand_during_active_sync_stops_sync_without_spinning() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    revoked: Default::default(),
                 },
             ));
 
@@ -398,6 +400,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
                     demand: observer,
                     events: content,
                     connection: Default::default(),
+                    revoked: Default::default(),
                 },
             ));
 
@@ -486,7 +489,7 @@ fn recovery_transport_wakes_immediately_on_demand_and_retry_after_drop() {
             // 3. Drop SSE twice so automatic backoff is 1000 ms; Command::Retry must wake
             // reconnect well before that automatic backoff.
             drop(sse1);
-            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
             let (socket, _) = listener.accept().await.unwrap();
             drop(socket);
             while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}

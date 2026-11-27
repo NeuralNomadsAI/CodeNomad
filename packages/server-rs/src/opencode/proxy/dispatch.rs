@@ -1,5 +1,5 @@
 //! Upstream HTTP dispatch, streaming response forwarding, and response-side workspace filtering.
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     Json,
@@ -10,7 +10,8 @@ use axum::{
 use serde_json::{Value, json};
 
 use super::guards::{foreign, is_transport_json_content_type, relayed};
-use crate::opencode::{Endpoint, NativeBody, read_json, session_directory, upstream_error};
+use super::mutation::InputRecheck;
+use crate::opencode::{Endpoint, NativeBody, pre_dispatch_unavailable, read_json, session_directory, upstream_error};
 use crate::{Error, Shared, Workspace, error, not_found};
 
 pub(super) struct DispatchContext {
@@ -24,6 +25,11 @@ pub(super) struct DispatchContext {
     pub opened: String,
     pub directory: String,
     pub id: String,
+    pub send_input: bool,
+    pub session: Option<String>,
+    pub bound_directory: Option<String>,
+    pub initial_identity: Option<(PathBuf, PathBuf, String)>,
+    pub input_checkout: Option<crate::worktrees::ownership::DirectoryProof>,
     pub message_list: bool,
     pub account_route: bool,
     pub fork: bool,
@@ -49,6 +55,11 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         opened,
         directory,
         id,
+        send_input,
+        session,
+        bound_directory,
+        initial_identity,
+        input_checkout,
         message_list,
         account_route,
         fork,
@@ -63,19 +74,59 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     } = ctx;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
-    let dispatch = move |detached: tokio_util::sync::CancellationToken| {
+    let dispatch = move |detached: tokio_util::sync::CancellationToken,
+                         gate: crate::opencode::proxy_write::DispatchGate| {
         Box::pin(async move {
+            if principal.0.is_cancelled() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
+            }
             for loc in &account_verified_locs {
                 if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
                     return Err(foreign());
                 }
             }
-            principal.live()?;
+            if principal.0.is_cancelled() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
+            }
             if detached.is_cancelled()
                 || !app.native.current(&endpoint)
                 || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
             {
-                return Err(upstream_error());
+                return if send_input {
+                    Ok(super::before_dispatch_error(pre_dispatch_unavailable()))
+                } else {
+                    Err(upstream_error())
+                };
+            }
+            if send_input {
+                let recheck = InputRecheck {
+                    app: &app,
+                    workspace: &workspace,
+                    endpoint: &endpoint,
+                    principal: &principal,
+                    session: session.as_deref(),
+                    directory: &directory,
+                    native_directory: actual.as_ref().and_then(|r| r["location"]["directory"].as_str()),
+                    bound_directory: bound_directory.as_deref(),
+                    message_list: false,
+                    actual: &actual,
+                    initial_identity: &initial_identity,
+                    input_checkout: &input_checkout,
+                };
+                match Box::pin(recheck.verify()).await {
+                    Ok(_) => {}
+                    Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+                    Err(e) => return Ok(super::before_dispatch_error(e)),
+                }
+                if principal.0.is_cancelled() {
+                    return Ok(crate::auth::unauthorized_before_dispatch());
+                }
+                if detached.is_cancelled() || !app.native.current(&endpoint) {
+                    return Ok(super::before_dispatch_error(pre_dispatch_unavailable()));
+                }
+            }
+            if !gate.try_dispatch() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
             }
             let ws_closed_headers = async {
                 loop {
@@ -98,9 +149,13 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                 _ = ws_closed_headers, if !dispatched_mutation && !message_list => return Err(not_found()),
                 response = tokio::time::timeout(crate::opencode::PROXY_IDLE, upstream.send()) => match response {
                     Ok(Ok(response)) => response,
-                    Ok(Err(_)) => {
+                    Ok(Err(err)) => {
                         app.native.invalidate(&endpoint);
-                        return Err(upstream_error());
+                        return if send_input && err.is_connect() {
+                            Ok(super::before_dispatch_error(pre_dispatch_unavailable()))
+                        } else {
+                            Err(upstream_error())
+                        };
                     }
                     Err(_) => return Err(upstream_error()),
                 },
@@ -476,6 +531,6 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     if let Some(permit) = mutation {
         crate::opencode::proxy_write::forward(permit, rules_lock, observer, dispatch).await
     } else {
-        dispatch(tokio_util::sync::CancellationToken::new()).await
+        dispatch(tokio_util::sync::CancellationToken::new(), crate::opencode::proxy_write::DispatchGate::new()).await
     }
 }

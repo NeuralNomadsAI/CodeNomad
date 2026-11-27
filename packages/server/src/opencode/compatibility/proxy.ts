@@ -1,5 +1,12 @@
 import { PassThrough, Readable } from "node:stream"
 import type { FastifyReply, FastifyRequest } from "fastify"
+import { supportsDispatchHooks, type RuntimeFetchDispatchHooks } from "./transport"
+
+export class PreDispatchHttpError extends Error {
+  constructor(readonly statusCode: number, readonly payload: Record<string, unknown>) {
+    super(typeof payload.error === "string" ? payload.error : `Pre-dispatch HTTP ${statusCode}`)
+  }
+}
 
 export async function forwardRuntimeRequest(args: {
   request: FastifyRequest
@@ -7,7 +14,13 @@ export async function forwardRuntimeRequest(args: {
   url: string
   body: unknown
   headers: Record<string, unknown>
-  fetch: typeof fetch
+  fetch: (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+    mediaResponseProcessor?: undefined,
+    dispatchHooks?: RuntimeFetchDispatchHooks,
+  ) => Promise<Response>
+  beforeDispatch?: () => Promise<void>
   release?: () => void
   /** Once dispatched, the native response owns settlement even if downstream closes. */
   retainMutation?: (confirmed: boolean) => void
@@ -57,8 +70,30 @@ export async function forwardRuntimeRequest(args: {
     const body = args.body === undefined || args.body === null ? undefined
       : typeof args.body === "string" ? args.body : Buffer.isBuffer(args.body) ? Uint8Array.from(args.body).buffer : JSON.stringify(args.body)
     if (body === undefined) headers.delete("content-type")
-    dispatched = true
-    const response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal })
+    let response: Response
+    if (args.beforeDispatch) {
+      if (!supportsDispatchHooks(args.fetch)) {
+        throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
+      }
+      let beforeRan = false
+      const dispatchHooks: RuntimeFetchDispatchHooks = {
+        beforeFetch: async () => {
+          beforeRan = true
+          await args.beforeDispatch!()
+        },
+        onDispatch: () => { dispatched = true },
+      }
+      response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal }, undefined, dispatchHooks)
+      if (!beforeRan) {
+        await response.body?.cancel().catch(() => {})
+        release()
+        if (detached) return
+        return args.reply.code(502).send({ error: "OpenCode dispatch hook did not run" })
+      }
+    } else {
+      dispatched = true
+      response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal })
+    }
     const definitive = response.status < 500
     unauthorized = response.status === 401
     if (detached) {
@@ -115,6 +150,15 @@ export async function forwardRuntimeRequest(args: {
     return args.reply.send(stream)
   } catch (error) {
     release()
+    if (error instanceof PreDispatchHttpError) {
+      if (detached) return
+      args.reply.header("x-codenomad-before-dispatch", "1")
+      return args.reply.code(error.statusCode).send(error.payload)
+    }
+    if (!dispatched && args.beforeDispatch && !controller.signal.aborted) {
+      if (detached) return
+      return args.reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+    }
     if (!controller.signal.aborted) args.invalidate()
     if (detached) return
     throw error
