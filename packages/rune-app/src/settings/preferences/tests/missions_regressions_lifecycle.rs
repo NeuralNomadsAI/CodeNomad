@@ -8,140 +8,150 @@ use std::{cell::Cell, rc::Rc, sync::Arc};
 
 #[test]
 fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
-    let (listener, shared, _rt, mut sse_stream, attest_meta, backend_client, release_post_attest) =
-        platform::block_on(async {
-            let (listener, mut prefs) = fixture().await;
-            let backend = prefs.backend.as_mut().unwrap();
-            backend.workspace = "captured".into();
-            backend.session = "session".into();
-            let backend_client = backend.client.clone();
+    let (
+        listener,
+        shared,
+        _rt,
+        mut sse_stream,
+        attest_meta,
+        backend_client,
+        post_attest_entered,
+        release_post_attest,
+    ) = platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_client = backend.client.clone();
 
-            // Establish initial server attestation so depth PUT runs GET /api/meta before PUT.
-            let attest_client = backend.clone();
-            let (attest_tx, attest_rx) = bounded(1);
-            platform::spawn(async move {
-                let _ = attest_tx.send(attest_client.attest_server().await).await;
-            });
-            let init_meta = request(&listener).await;
-            assert_eq!(init_meta.first, "GET /api/meta HTTP/1.1");
-            init_meta
-                .reply(
+        // Establish initial server attestation so depth PUT runs GET /api/meta before PUT.
+        let attest_client = backend.clone();
+        let (attest_tx, attest_rx) = bounded(1);
+        platform::spawn(async move {
+            let _ = attest_tx.send(attest_client.attest_server().await).await;
+        });
+        let init_meta = request(&listener).await;
+        assert_eq!(init_meta.first, "GET /api/meta HTTP/1.1");
+        init_meta
+            .reply(
+                200,
+                json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
+            )
+            .await;
+        attest_rx.recv().await.unwrap().unwrap();
+
+        // Open a live multiplexed SSE stream on the same Http client (shared by CatalogueWatch
+        // and PreferencesWatch) so session.moved is observed on the background SSE task.
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = loop {
+            let req = request(&listener).await;
+            if req.first == "GET /api/meta HTTP/1.1" {
+                req.reply(
                     200,
                     json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
                 )
                 .await;
-            attest_rx.recv().await.unwrap().unwrap();
-
-            // Open a live multiplexed SSE stream on the same Http client (shared by CatalogueWatch
-            // and PreferencesWatch) so session.moved is observed on the background SSE task.
-            let (wake_tx, wake_rx) = bounded(16);
-            let watch_wake: rune::Waker = Arc::new(move || {
-                let _ = wake_tx.try_send(());
-            });
-            prefs.watch(&watch_wake);
-            let mut sse_stream = loop {
-                let req = request(&listener).await;
-                if req.first == "GET /api/meta HTTP/1.1" {
-                    req.reply(
-                        200,
-                        json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
-                    )
-                    .await;
-                    continue;
-                }
-                assert!(
-                    req.first.starts_with("GET /api/events?"),
-                    "expected SSE stream open, got {}",
-                    req.first
-                );
-                break req;
-            };
-            sse_stream
-                .socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-                .await
-                .unwrap();
-            timeout(Duration::from_secs(3), wake_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
-            let _ = prefs.stream.as_ref().unwrap().take();
-
-            let root = crate::init();
-            let shared = root.settings.shared.clone();
-            prefs.window_wake = Some(Arc::new(|| {}));
-            *shared.borrow_mut() = prefs;
-            let target = Target::capture(&root).unwrap();
-            {
-                let mut prefs = shared.borrow_mut();
-                prefs
-                    .missions
-                    .capture_opener(Some("/repo/wt-a".into()), Some(&target));
-                prefs.provider_target = Some(target);
+                continue;
             }
-            let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
-            let mut rt = rune::Runtime::new(
-                window,
-                view::view,
-                (1100.0, 760.0),
-                rune::Env::new(false, 1.0),
+            assert!(
+                req.first.starts_with("GET /api/events?"),
+                "expected SSE stream open, got {}",
+                req.first
             );
-            rt.frame(0.0);
-            settle_meta(&listener, &mut rt).await;
-            click(&mut rt, "settings-missions");
-            tick(&mut rt);
+            break req;
+        };
+        sse_stream
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
 
-            let exp_a = "f".repeat(64);
-            drain_location_catalog_and_depth(
-                &listener,
-                &mut rt,
-                "/repo/wt-a",
-                "%2Frepo%2Fwt-a",
-                Some(2),
-                &exp_a,
-                false,
-            )
-            .await;
-            wait_until(|| {
-                tick(&mut rt);
-                !shared
-                    .borrow()
-                    .missions
-                    .depth_disabled(true, true, Some("/repo/wt-a"))
-            })
-            .await;
-
-            // Pause the depth PUT worker right after GET /api/meta attestation completes and
-            // immediately before set_subagent_depth_checked sends the PUT.
-            let (release_post_attest, post_attest_gate) = bounded(1);
-            shared
-                .borrow_mut()
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
                 .missions
-                .set_post_attest_depth_gate(post_attest_gate);
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
 
-            // Choose depth 4 and hold GET /api/meta open while closing Preferences into flush().
-            click(&mut rt, "mission-subagent-depth-trigger");
-            click_option(&mut rt, "mission-subagent-depth", "4");
+        let exp_a = "f".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_a,
+            false,
+        )
+        .await;
+        wait_until(|| {
             tick(&mut rt);
-            let attest_meta = next_request(&listener, &mut rt).await;
-            assert_eq!(attest_meta.first, "GET /api/meta HTTP/1.1");
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
 
-            shared.borrow_mut().provider_target = None;
-            (
-                listener,
-                shared,
-                rt,
-                sse_stream,
-                attest_meta,
-                backend_client,
-                release_post_attest,
-            )
-        });
+        // Pause the depth PUT worker right after authorize_send finishes and
+        // immediately before set_subagent_depth_checked sends the PUT.
+        let (entered_post_attest, post_attest_entered) = bounded(1);
+        let (release_post_attest, post_attest_gate) = bounded(1);
+        shared
+            .borrow_mut()
+            .missions
+            .set_post_attest_depth_gate(entered_post_attest, post_attest_gate);
+
+        // Choose depth 4 and hold GET /api/meta open while closing Preferences into flush().
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+        let attest_meta = next_request(&listener, &mut rt).await;
+        assert_eq!(attest_meta.first, "GET /api/meta HTTP/1.1");
+
+        shared.borrow_mut().provider_target = None;
+        (
+            listener,
+            shared,
+            rt,
+            sse_stream,
+            attest_meta,
+            backend_client,
+            post_attest_entered,
+            release_post_attest,
+        )
+    });
 
     // While native flush() blocks the UI thread (no main-window poll running):
-    // 1. Reply 200 OK to GET /api/meta so attestation finishes cleanly.
-    // 2. While the worker is paused after attestation and before req.send(), deliver
-    //    session.moved on the open SSE stream and wait for Hub::location_revision to bump.
+    // 1. Reply 200 OK to GET /api/meta so authorize_send() finishes and returns true.
+    // 2. Wait until the worker signals it is paused immediately before set_subagent_depth_checked,
+    //    then deliver session.moved on the open SSE stream and wait for Hub::location_revision.
     // 3. Resume the worker: set_subagent_depth_checked's synchronous pre-send guard must abort.
     let loc_before = backend_client.location_revision("captured", Some("session"));
     let driver = std::thread::spawn(move || {
@@ -152,6 +162,7 @@ fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
                     json!({"apiContract":1,"serverId":"srv-flush-depth","capabilities":[]}),
                 )
                 .await;
+            post_attest_entered.recv().await.unwrap();
             sse_stream
                 .socket
                 .write_all(
@@ -730,6 +741,308 @@ fn closing_web_settings_drains_queued_depth_choice_after_first_put_acknowledgeme
             "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
         );
         followup_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_2))
+            .await;
+
+        let put_5 = timeout(Duration::from_secs(5), async {
+            loop {
+                closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+                if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
+                    let (socket, _) = accepted.unwrap();
+                    if let Some(req) = try_read_request(socket, Duration::from_secs(3)).await {
+                        return req;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            put_5.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(
+            put_5.body,
+            json!({
+                "location": { "directory": "/repo/wt-a" },
+                "depth": 5,
+                "expectation": exp_2
+            })
+        );
+        put_5.reply_no_content().await;
+
+        wait_until(|| {
+            closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+            !shared.borrow().missions.has_unconfirmed()
+        })
+        .await;
+    });
+}
+
+#[test]
+fn stale_location_resolution_after_sse_session_moved_is_discarded_and_reresolved() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_client = backend.client.clone();
+
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = request(&listener).await;
+        assert!(sse_stream.first.starts_with("GET /api/events?"));
+        sse_stream
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
+
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            // Open Missions WITHOUT a pre-pinned directory so poll_location resolves the session.
+            prefs.missions.capture_opener(None, Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let first_lookup = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            first_lookup.first,
+            "GET /workspaces/captured/instance/api/session/session HTTP/1.1"
+        );
+
+        // Session moves on SSE while first_lookup is still in flight (catalogue poll delayed).
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.event\",\"instanceId\":\"captured\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| backend_client.location_revision("captured", Some("session")) > 0).await;
+
+        // Returning stale /repo/wt-a must be discarded, triggering a fresh session lookup for /repo/wt-b.
+        first_lookup
+            .reply(
+                200,
+                json!({"data":{"id":"session","location":{"directory":"/repo/wt-a"}}}),
+            )
+            .await;
+
+        let second_lookup = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            second_lookup.first, "GET /workspaces/captured/instance/api/session/session HTTP/1.1",
+            "stale /repo/wt-a resolution must be discarded without fetching wt-a depth/catalog"
+        );
+        second_lookup
+            .reply(
+                200,
+                json!({"data":{"id":"session","location":{"directory":"/repo/wt-b"}}}),
+            )
+            .await;
+        let exp_b = "4".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-b",
+            "%2Frepo%2Fwt-b",
+            Some(3),
+            &exp_b,
+            false,
+        )
+        .await;
+        assert_eq!(
+            shared.borrow().missions.pinned_directory(),
+            Some("/repo/wt-b")
+        );
+    });
+}
+
+#[test]
+fn revoked_location_token_blocks_queued_depth_background_followup_put() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_a = "5".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_a,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(put_4.body["depth"], json!(4));
+
+        // Queue 5 while PUT(4) is in flight, then explicitly revoke location (as on tab close).
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "5");
+        tick(&mut rt);
+
+        let wake: rune::Waker = Arc::new(|| {});
+        let mut closed_missions = crate::settings::missions::Missions::default();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.provider_target = None;
+            prefs.missions.revoke_location();
+        }
+        closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+
+        // Even after PUT(4) returns 204, the revoked location_token must block any follow-up GET/PUT(5).
+        put_4.reply_no_content().await;
+        closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+        assert!(
+            timeout(Duration::from_millis(150), listener.accept())
+                .await
+                .is_err(),
+            "revoked location_token must prevent background follow-up GET/PUT(5)"
+        );
+        assert!(shared.borrow().missions.has_unconfirmed());
+    });
+}
+
+#[test]
+fn depth_choice_queued_during_post_save_get_drains_after_web_settings_close() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "6".repeat(64);
+        let exp_2 = "7".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_1,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Finish PUT(4) with no queued choice yet, then hold its post-save GET open.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(put_4.body["depth"], json!(4));
+        put_4.reply_no_content().await;
+
+        let post_save_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            post_save_get.first,
+            "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
+        );
+
+        // Queue 5 during the held post-save GET, then close Web Settings before the GET replies.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "5");
+        tick(&mut rt);
+
+        let wake: rune::Waker = Arc::new(|| {});
+        let mut closed_missions = crate::settings::missions::Missions::default();
+        shared.borrow_mut().provider_target = None;
+        closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+
+        post_save_get
             .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_2))
             .await;
 

@@ -691,7 +691,7 @@ struct StreamEntry {
     active: bool,
 }
 
-const MAX_TRACKED_LOCATIONS: usize = 256;
+const MAX_TRACKED_LOCATIONS: usize = 1024;
 
 #[derive(Default)]
 struct LocationRevisions {

@@ -6,7 +6,7 @@ use codenomad_client::{
     settings::missions::{
         MissionDefaultScope, MissionExecution, MissionPatchOutcome, MissionPreferenceExpectation,
         MissionProfileDefault, MissionProfiles, MissionTaskMode, change_mission_profile,
-        encode_mission_defaults, normalize_mission_defaults, patch_mission_preferences,
+        encode_mission_defaults, normalize_mission_defaults, patch_mission_preferences_checked,
         set_mission_profile_role, valid_mission_defaults,
     },
 };
@@ -497,15 +497,17 @@ impl State {
             let (outcome, pre_send_aborted) = if !send_authority.authorize_send(&backend).await {
                 (MissionPatchOutcome::Failed, true)
             } else {
-                (
-                    patch_mission_preferences(
-                        &backend,
-                        json!({ "missionDeleteSessions": next }),
-                        &[expected],
-                    )
-                    .await,
-                    false,
+                match patch_mission_preferences_checked(
+                    &backend,
+                    json!({ "missionDeleteSessions": next }),
+                    &[expected],
+                    || send_authority.still_ok(&backend),
                 )
+                .await
+                {
+                    Some(outcome) => (outcome, false),
+                    None => (MissionPatchOutcome::Failed, true),
+                }
             };
             if out
                 .send(Reply::DeleteSessions {
@@ -584,15 +586,17 @@ impl State {
             let (outcome, pre_send_aborted) = if !send_authority.authorize_send(&backend).await {
                 (MissionPatchOutcome::Failed, true)
             } else {
-                (
-                    patch_mission_preferences(
-                        &backend,
-                        json!({ "missionProfileDefaults": encoded }),
-                        &[current_expected],
-                    )
-                    .await,
-                    false,
+                match patch_mission_preferences_checked(
+                    &backend,
+                    json!({ "missionProfileDefaults": encoded }),
+                    &[current_expected],
+                    || send_authority.still_ok(&backend),
                 )
+                .await
+                {
+                    Some(outcome) => (outcome, false),
+                    None => (MissionPatchOutcome::Failed, true),
+                }
             };
             if out
                 .send(Reply::Patch {

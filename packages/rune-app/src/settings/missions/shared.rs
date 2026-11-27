@@ -16,6 +16,9 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(test)]
+pub(super) type PostAttestGate = (Sender<()>, Receiver<()>);
+
 #[derive(Clone)]
 pub(in crate::settings) struct SendAuthority {
     prefs_authority: Arc<AtomicU64>,
@@ -29,7 +32,7 @@ pub(in crate::settings) struct SendAuthority {
     #[cfg(test)]
     pre_send_gate: Option<Receiver<()>>,
     #[cfg(test)]
-    post_attest_gate: Option<Receiver<()>>,
+    post_attest_gate: Option<PostAttestGate>,
 }
 
 impl SendAuthority {
@@ -40,7 +43,7 @@ impl SendAuthority {
         expected_location: Option<(String, Option<String>, u64)>,
         backend: &Backend,
         #[cfg(test)] pre_send_gate: Option<Receiver<()>>,
-        #[cfg(test)] post_attest_gate: Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: Option<PostAttestGate>,
     ) -> Self {
         let expected_prefs_authority = prefs_authority.load(Ordering::SeqCst);
         let location_token =
@@ -102,11 +105,15 @@ impl SendAuthority {
                 return false;
             }
         }
-        #[cfg(test)]
-        if let Some(gate) = &self.post_attest_gate {
+        self.still_ok(backend)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_post_attest(&self) {
+        if let Some((entered, gate)) = &self.post_attest_gate {
+            let _ = entered.send(()).await;
             let _ = gate.recv().await;
         }
-        self.still_ok(backend)
     }
 }
 
@@ -167,7 +174,7 @@ impl ConfigEffects {
     }
 }
 
-type LocationFlight = (u64, String, u64, Sender<()>, Receiver<Option<String>>);
+type LocationFlight = (u64, String, u64, u64, Sender<()>, Receiver<Option<String>>);
 
 /// Persistent Missions write queues and depth state stored on `Preferences` so closing/reopening
 /// Preferences or reattaching to the same server preserves in-flight writes and Uncertain state.
@@ -178,6 +185,7 @@ pub(in crate::settings) struct Shared {
     pub(super) depth: depth::State,
     open_epoch: u64,
     pinned_directory: Option<String>,
+    pinned_location_revision: Option<u64>,
     location_authority: Option<(String, u64)>,
     location_token: Arc<AtomicU64>,
     location_flight: Option<LocationFlight>,
@@ -188,7 +196,7 @@ pub(in crate::settings) struct Shared {
     #[cfg(test)]
     pre_depth_put_gate: Option<Receiver<()>>,
     #[cfg(test)]
-    post_attest_depth_gate: Option<Receiver<()>>,
+    post_attest_depth_gate: Option<PostAttestGate>,
 }
 
 impl Shared {
@@ -203,8 +211,12 @@ impl Shared {
     }
 
     #[cfg(test)]
-    pub(in crate::settings) fn set_post_attest_depth_gate(&mut self, gate: Receiver<()>) {
-        self.post_attest_depth_gate = Some(gate);
+    pub(in crate::settings) fn set_post_attest_depth_gate(
+        &mut self,
+        entered: Sender<()>,
+        gate: Receiver<()>,
+    ) {
+        self.post_attest_depth_gate = Some((entered, gate));
     }
 
     #[cfg(test)]
@@ -246,6 +258,14 @@ impl Shared {
         self.open_epoch = self.open_epoch.wrapping_add(1);
         self.revoke_location();
         self.pinned_directory = directory.filter(|path| absolute_server_path(path));
+        self.pinned_location_revision =
+            self.pinned_directory
+                .as_ref()
+                .and_then(|_| target)
+                .map(|t| {
+                    let (ws, ses) = t.location();
+                    t.backend().client.location_revision(ws, ses)
+                });
         self.location_authority = target.map(|t| (t.location().0.to_owned(), t.authority()));
         self.location_flight = None;
         self.location_failed = None;
@@ -267,6 +287,7 @@ impl Shared {
     pub(in crate::settings) fn on_transport_lost(&mut self) {
         self.revoke_location();
         self.pinned_directory = None;
+        self.pinned_location_revision = None;
         self.location_authority = None;
         self.location_flight = None;
         self.location_failed = None;
@@ -282,14 +303,20 @@ impl Shared {
     ) -> (bool, bool) {
         let mut changed = false;
         if let Some(target) = target {
-            let (_, workspace, authority, _) = target.stats_source();
+            let (backend, workspace, authority, _) = target.stats_source();
+            let (_, session) = target.location();
+            let current_loc_rev = backend.client.location_revision(workspace, session);
             let same_authority = self
                 .location_authority
                 .as_ref()
                 .is_some_and(|(w, a)| w == workspace && *a == authority);
-            if !same_authority {
+            let rev_stale = self
+                .pinned_location_revision
+                .is_some_and(|rev| rev != current_loc_rev);
+            if !same_authority || rev_stale {
                 self.revoke_location();
                 let invalidated = self.pinned_directory.take().is_some()
+                    | self.pinned_location_revision.take().is_some()
                     | self.location_flight.take().is_some()
                     | self.location_failed.take().is_some();
                 self.location_authority = Some((workspace.to_owned(), authority));
@@ -298,6 +325,7 @@ impl Shared {
         } else if active
             && (self.location_authority.take().is_some()
                 | self.pinned_directory.take().is_some()
+                | self.pinned_location_revision.take().is_some()
                 | self.location_flight.take().is_some()
                 | self.location_failed.take().is_some())
         {
@@ -320,31 +348,38 @@ impl Shared {
         }
         let (backend, workspace, authority, _) = target.stats_source();
         let (_, session) = target.location();
+        let current_loc_rev = backend.client.location_revision(workspace, session);
         let revision = target.revision().wrapping_add(self.location_retry_epoch);
         if self
             .location_flight
             .as_ref()
-            .is_some_and(|(e, w, a, _, _)| {
-                *e != self.open_epoch || w != workspace || *a != authority
+            .is_some_and(|(e, w, a, loc_rev, _, _)| {
+                *e != self.open_epoch
+                    || w != workspace
+                    || *a != authority
+                    || *loc_rev != current_loc_rev
             })
         {
             self.location_flight = None;
             changed = true;
         }
-        if let Some(result) = self
+        if let Some((started_loc_rev, result)) = self
             .location_flight
             .as_ref()
-            .and_then(|(_, _, _, _, inbox)| inbox.try_recv().ok())
+            .and_then(|(_, _, _, loc_rev, _, inbox)| inbox.try_recv().ok().map(|r| (*loc_rev, r)))
         {
             self.location_flight = None;
-            match result.filter(|dir| absolute_server_path(dir)) {
-                Some(dir) => {
-                    self.pinned_directory = Some(dir);
-                    self.location_failed = None;
-                }
-                None => {
-                    self.location_failed =
-                        Some((self.open_epoch, workspace.to_owned(), authority, revision));
+            if started_loc_rev == current_loc_rev {
+                match result.filter(|dir| absolute_server_path(dir)) {
+                    Some(dir) => {
+                        self.pinned_directory = Some(dir);
+                        self.pinned_location_revision = Some(current_loc_rev);
+                        self.location_failed = None;
+                    }
+                    None => {
+                        self.location_failed =
+                            Some((self.open_epoch, workspace.to_owned(), authority, revision));
+                    }
                 }
             }
             changed = true;
@@ -363,6 +398,7 @@ impl Shared {
                 self.open_epoch,
                 workspace_owned.clone(),
                 authority,
+                current_loc_rev,
                 cancel,
                 inbox,
             ));
@@ -386,6 +422,7 @@ impl Shared {
         self.library.rebind(same_address);
         self.depth.rebind(same_address);
         self.pinned_directory = None;
+        self.pinned_location_revision = None;
         self.location_authority = None;
         self.location_flight = None;
         self.location_failed = None;

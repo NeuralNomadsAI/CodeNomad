@@ -1,5 +1,7 @@
 //! Location-scoped Subagent depth state machine matching `mission-subagent-depth.tsx`.
 use super::SendAuthority;
+#[cfg(test)]
+use super::shared::PostAttestGate;
 use crate::{
     backend::Backend,
     platform,
@@ -11,7 +13,10 @@ use codenomad_client::{
         SubagentDepthError, SubagentDepthSnapshot, read_subagent_depth, set_subagent_depth_checked,
     },
 };
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 struct QueuedChoice {
     value: String,
@@ -28,6 +33,8 @@ struct QueuedTarget {
     directory: String,
     authority: u64,
     location_revision: Option<u64>,
+    expected_location_token: u64,
+    expected_prefs_authority: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +98,7 @@ pub(super) struct State {
     pub(super) saved: bool,
     queued: Option<QueuedChoice>,
     save_target: Option<QueuedTarget>,
+    read_target: Option<QueuedTarget>,
     background_read: bool,
     read_flight: Option<ReadFlight>,
     save_flight: Option<SaveFlight>,
@@ -112,6 +120,7 @@ impl State {
             | self.read_started_location_revision.take().is_some()
             | self.queued.take().is_some()
             | self.save_target.take().is_some()
+            | self.read_target.take().is_some()
             | std::mem::take(&mut self.background_read)
             | std::mem::take(&mut self.pending_save)
             | std::mem::take(&mut self.dirty)
@@ -148,6 +157,7 @@ impl State {
             };
         }
         self.read_flight = None;
+        self.read_target = None;
         self.read_started_revision = None;
         self.read_started_location_revision = None;
         self.seen_revision = None;
@@ -182,6 +192,7 @@ impl State {
         self.saved = false;
         self.queued = None;
         self.save_target = None;
+        self.read_target = None;
         self.background_read = false;
         self.pending_save = false;
         if self.phase == Phase::Uncertain || self.phase == Phase::Unsupported {
@@ -270,6 +281,13 @@ impl State {
                 directory,
                 authority: self.authority,
             });
+            if self.read_flight.is_some()
+                && self.save_target.is_none()
+                && let Some(target) = self.read_target.clone()
+            {
+                self.background_read = true;
+                self.save_target = Some(target);
+            }
             return;
         }
         self.draft = value;
@@ -292,7 +310,7 @@ impl State {
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
-        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<PostAttestGate>,
         wake: &rune::Waker,
     ) {
         let expected_location = self
@@ -316,6 +334,8 @@ impl State {
             directory: directory.to_owned(),
             authority,
             location_revision: self.read_location_revision,
+            expected_location_token: location_token.load(Ordering::SeqCst),
+            expected_prefs_authority: prefs_authority.load(Ordering::SeqCst),
         });
         let (out, inbox) = bounded(1);
         let backend = backend.clone();
@@ -331,6 +351,8 @@ impl State {
             let result = if !send_authority.authorize_send(&backend).await {
                 Err(SubagentDepthError::Failed)
             } else {
+                #[cfg(test)]
+                send_authority.wait_post_attest().await;
                 set_subagent_depth_checked(
                     &backend,
                     &workspace,
@@ -403,7 +425,7 @@ impl State {
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
-        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<PostAttestGate>,
         wake: &rune::Waker,
     ) -> (bool, bool) {
         let (mut changed, mut settled) = self.poll_save_only(transport_lost);
@@ -427,6 +449,7 @@ impl State {
                 .and_then(|(_, inbox)| inbox.try_recv().ok())
         {
             self.read_flight = None;
+            self.read_target = None;
             self.background_read = false;
             let started_loc_rev = self.read_started_location_revision.take();
             let Some(target) = self.save_target.clone() else {
@@ -441,6 +464,11 @@ impl State {
             match result {
                 Ok(snapshot)
                     if started_loc_rev == Some(current_loc_rev)
+                        && target.location_revision == Some(current_loc_rev)
+                        && location_token.load(Ordering::SeqCst)
+                            == target.expected_location_token
+                        && prefs_authority.load(Ordering::SeqCst)
+                            == target.expected_prefs_authority
                         && ServerOwner::backend_verified(&target.backend) =>
                 {
                     let fresh = confirmed_depth_value(Some(&snapshot));
@@ -531,6 +559,8 @@ impl State {
                 .location_revision(&target.workspace, target.session.as_deref());
             if !ServerOwner::backend_verified(&target.backend)
                 || target.location_revision != Some(loc_rev)
+                || location_token.load(Ordering::SeqCst) != target.expected_location_token
+                || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
             {
                 self.queued = None;
                 self.save_target = None;
@@ -578,7 +608,7 @@ impl State {
         prefs_authority: &Arc<AtomicU64>,
         location_token: &Arc<AtomicU64>,
         #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
-        #[cfg(test)] post_attest_gate: &mut Option<Receiver<()>>,
+        #[cfg(test)] post_attest_gate: &mut Option<PostAttestGate>,
         wake: &rune::Waker,
     ) -> bool {
         let mut changed = false;
@@ -701,6 +731,7 @@ impl State {
                 .and_then(|(_, inbox)| inbox.try_recv().ok())
         {
             self.read_flight = None;
+            self.read_target = None;
             let started = self.read_started_revision.take();
             let started_loc_rev = self.read_started_location_revision.take();
             if started != Some(revision) || started_loc_rev != Some(current_location_revision) {
@@ -831,6 +862,16 @@ impl State {
             self.seen_revision = Some(revision);
             self.read_started_revision = Some(revision);
             self.read_started_location_revision = Some(current_location_revision);
+            self.read_target = Some(QueuedTarget {
+                backend: backend.clone(),
+                workspace: workspace.clone(),
+                session: session.map(str::to_owned),
+                directory: pinned.clone(),
+                authority,
+                location_revision: Some(current_location_revision),
+                expected_location_token: location_token.load(Ordering::SeqCst),
+                expected_prefs_authority: prefs_authority.load(Ordering::SeqCst),
+            });
             self.phase = Phase::Reading;
             self.error = false;
             self.read_flight = Some((cancel, inbox));

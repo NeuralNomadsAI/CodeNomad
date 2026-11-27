@@ -9,7 +9,7 @@ use codenomad_client::{
     Receiver, bounded,
     settings::missions::{
         MissionPatchOutcome, MissionPreferenceExpectation, UserMissionModel,
-        normalize_mission_models, patch_mission_preferences, remove_mission_model_value,
+        normalize_mission_models, patch_mission_preferences_checked, remove_mission_model_value,
         valid_mission_models,
     },
 };
@@ -370,15 +370,17 @@ impl State {
                         if !send_authority.authorize_send(&backend).await {
                             (MissionPatchOutcome::Failed, true)
                         } else {
-                            (
-                                patch_mission_preferences(
-                                    &backend,
-                                    json!({ "missionModels": next }),
-                                    &[confirmed_expected],
-                                )
-                                .await,
-                                false,
+                            match patch_mission_preferences_checked(
+                                &backend,
+                                json!({ "missionModels": next }),
+                                &[confirmed_expected],
+                                || send_authority.still_ok(&backend),
                             )
+                            .await
+                            {
+                                Some(outcome) => (outcome, false),
+                                None => (MissionPatchOutcome::Failed, true),
+                            }
                         };
                     if out
                         .send(Reply::Remove {
@@ -415,15 +417,17 @@ impl State {
                         if !send_authority.authorize_send(&backend).await {
                             (MissionPatchOutcome::Failed, true)
                         } else {
-                            (
-                                patch_mission_preferences(
-                                    &backend,
-                                    json!({ "missionModels": [] }),
-                                    &[confirmed_expected],
-                                )
-                                .await,
-                                false,
+                            match patch_mission_preferences_checked(
+                                &backend,
+                                json!({ "missionModels": [] }),
+                                &[confirmed_expected],
+                                || send_authority.still_ok(&backend),
                             )
+                            .await
+                            {
+                                Some(outcome) => (outcome, false),
+                                None => (MissionPatchOutcome::Failed, true),
+                            }
                         };
                     if out
                         .send(Reply::Reset {
