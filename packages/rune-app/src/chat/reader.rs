@@ -8691,4 +8691,219 @@ mod resume_tests {
             "wheel delta queued after PageDown on replay frame must apply from PageDown landing: key_only={key_only}, key_plus_wheel={key_plus_wheel}"
         );
     }
+
+    #[test]
+    fn paging_overflowing_sidebar_preserves_pending_transcript_wheel_replay() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rsbpg-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        crate::gallery::shell::fixture(&mut s);
+        if let crate::Screen::Chat {
+            launcher: Some(launcher),
+        } = &mut s.screen
+        {
+            launcher.sessions = (0..30)
+                .map(|i| crate::catalog::Session {
+                    id: format!("sb-ses-{i:02}"),
+                    title: format!("Sidebar session {i:02}"),
+                })
+                .collect();
+        }
+        s.shell.wanted = [Some([true, false]); 2];
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        rt.on_key = Some(crate::shell::keys);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rsbpg-16", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rsbpg")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((1100.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let sb_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("session-list"))
+            .expect("left session sidebar must be visible")
+            .rect;
+        let (hx, hy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        let (sx, sy) = (sb_rect[0] + sb_rect[2] / 2.0, sb_rect[1] + sb_rect[3] / 2.0);
+
+        // Frame A: arm a 40 px downward wheel replay over history.
+        rt.pointer_move(hx, hy);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(hx, hy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // Frame B: move pointer over the overflowing sidebar and press PageDown (nothing focused).
+        rt.pointer_move(sx, sy);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::PageDown,
+            mods: rune::Mods::default(),
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            ((final_offset - offset_at_anchor) - 40.0).abs() <= 3.0,
+            "paging the overflowing sidebar must preserve the pending 40 px transcript wheel replay: anchor={offset_at_anchor}, final={final_offset}"
+        );
+    }
+
+    #[test]
+    fn diagonal_wheel_over_plain_text_on_replay_frame_preserves_vertical_fallback_delta() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rdiag-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rdiag-16", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim10_30", 10..30),
+                        older: Some(serde_json::json!("older-rdiag")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (px, py) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+
+        // Frame A: unphased (0, -40) over plain text arms ReplayDeltas.
+        rt.pointer_move(px, py);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(px, py));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+        let (_, offset_at_anchor, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        // Frame B (probe-delivery frame): diagonal unphased (60, -20) over plain text (no horizontal scroller).
+        rt.wheel_event(rune::WheelEvent::new(60.0, -20.0).at(px, py));
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            ((final_offset - offset_at_anchor) - 60.0).abs() <= 3.0,
+            "diagonal wheel fallback over plain text on replay frame must preserve both 40 px + 20 px: anchor={offset_at_anchor}, final={final_offset}"
+        );
+    }
 }

@@ -125,6 +125,9 @@ struct FrameRestore {
     input_poll_clock: Option<f64>,
     defer_for_input_clock: Option<f64>,
     superseded_by_key: bool,
+    had_press_defer: bool,
+    diagonal_fallback_deltas: Vec<f32>,
+    diagonal_fallback_base_offset: Option<f32>,
     handled: bool,
     post_probe: Option<PostProbe>,
     checked: Cell<Option<Option<f32>>>,
@@ -147,6 +150,7 @@ pub(crate) struct Reading {
     phased_wheel_active: bool,
     phased_vertical_claimed_clock: Option<f64>,
     paging_key_clock: Option<f64>,
+    history_hovered: bool,
     sync_undo_gesture_clock: Option<f64>,
     sync_undo_gesture_moved: bool,
     last_touch_probe_seq: Cell<u64>,
@@ -187,6 +191,7 @@ impl Default for Reading {
             phased_wheel_active: false,
             phased_vertical_claimed_clock: None,
             paging_key_clock: None,
+            history_hovered: false,
             sync_undo_gesture_clock: None,
             sync_undo_gesture_moved: false,
             last_touch_probe_seq: Cell::new(0),
@@ -279,7 +284,7 @@ impl Reading {
         self.content_layout_seq = self.content_layout_seq.wrapping_add(1);
     }
 
-    fn on_history_input_pending(&mut self, clock: f64, supersede: bool) -> bool {
+    fn on_history_input_pending(&mut self, clock: f64, supersede: bool, from_press: bool) -> bool {
         if let Some(fr) = self.frame_restore.as_mut()
             && !fr.handled
             && fr.probe_live
@@ -288,6 +293,9 @@ impl Reading {
             fr.defer_for_input_clock = Some(clock);
             if supersede {
                 fr.superseded_by_key = true;
+            }
+            if from_press {
+                fr.had_press_defer = true;
             }
             return true;
         }
@@ -509,6 +517,9 @@ impl Reading {
                     input_poll_clock: None,
                     defer_for_input_clock: None,
                     superseded_by_key: false,
+                    had_press_defer: false,
+                    diagonal_fallback_deltas: Vec::new(),
+                    diagonal_fallback_base_offset: None,
                     handled: true,
                     post_probe: None,
                     checked: Cell::new(Some(None)),
@@ -544,6 +555,9 @@ impl Reading {
                 input_poll_clock: None,
                 defer_for_input_clock: None,
                 superseded_by_key: false,
+                had_press_defer: false,
+                diagonal_fallback_deltas: Vec::new(),
+                diagonal_fallback_base_offset: None,
                 handled: false,
                 post_probe: None,
                 checked: Cell::new(None),
@@ -1184,6 +1198,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     let reading_scope = s.transcript_display.reading().scope();
     let wheel_scope = reading_scope.clone();
     let press_scope = reading_scope.clone();
+    let hover_scope = reading_scope.clone();
     let wheel_input_scope = s.input_scope.clone();
     let scroll_state = s.transcript_display.reading().scroll_state();
     let timeline_scroll = crate::timeline::observe_history_scroll(s);
@@ -1251,12 +1266,20 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                     && pt.window_y >= bounds[1]
                     && pt.window_y <= bounds[1] + bounds[3];
                 if inside
-                    && s.transcript_display
-                        .reading_mut()
-                        .on_history_input_pending(tx.clock(), false)
+                    && s.transcript_display.reading_mut().on_history_input_pending(
+                        tx.clock(),
+                        false,
+                        true,
+                    )
                 {
                     tx.wake_after(std::time::Duration::ZERO);
                 }
+            }
+            tx.live_only();
+        })
+        .on_hover_change(move |s: &mut State, inside, tx| {
+            if !s.screen.is_launcher() && s.transcript_display.reading().same_scope(&hover_scope) {
+                s.transcript_display.reading_mut().history_hovered = inside;
             }
             tx.live_only();
         })
@@ -1333,15 +1356,24 @@ pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx:
     if !paging {
         return;
     }
+    let focused_in_history = history_focused || tx.focus_within("history");
+    let focused_blocks_history =
+        tx.focused().is_some() && !focused_in_history && !tx.focus_within("composer");
+    let targets_history = focused_in_history
+        || (!focused_blocks_history && s.transcript_display.reading().history_hovered);
     let clock = tx.clock();
     let reading = s.transcript_display.reading_mut();
-    reading.paging_key_clock = Some(clock);
-    reading.clear_sync_undo_gesture();
-    if reading.on_history_input_pending(clock, true) {
+    if targets_history {
+        reading.paging_key_clock = Some(clock);
+        reading.clear_sync_undo_gesture();
+        if reading.on_history_input_pending(clock, true, false) {
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        if let Some(reader) = &mut s.reader {
+            reader.clear_sync_undo();
+        }
+    } else if reading.on_history_input_pending(clock, false, false) {
         tx.wake_after(std::time::Duration::ZERO);
-    }
-    if let Some(reader) = &mut s.reader {
-        reader.clear_sync_undo();
     }
 }
 
@@ -1433,6 +1465,21 @@ fn handle_reading_wheel(
         return false;
     }
     if !vertical_locked && dx.abs() > dy.abs() {
+        if active_frame_restore {
+            let cur_offset = s.transcript_display.reading().scroll_state.get().offset;
+            if let Some(fr) = s.transcript_display.reading_mut().frame_restore.as_mut()
+                && !fr.handled
+                && fr.probe_live
+                && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+            {
+                if fr.diagonal_fallback_base_offset.is_none() {
+                    fr.diagonal_fallback_base_offset = Some(cur_offset);
+                }
+                fr.diagonal_fallback_deltas.push(dy);
+                fr.defer_for_input_clock = Some(clock);
+                tx.wake_after(std::time::Duration::ZERO);
+            }
+        }
         return false;
     }
     if active_frame_restore {
@@ -1583,6 +1630,9 @@ fn handle_reading_wheel(
                 fr.input_poll_clock = None;
                 fr.defer_for_input_clock = None;
                 fr.superseded_by_key = false;
+                fr.had_press_defer = false;
+                fr.diagonal_fallback_deltas.clear();
+                fr.diagonal_fallback_base_offset = None;
                 *content_clamped_retried = false;
             }
             fr.post_probe = None;
@@ -1782,6 +1832,9 @@ fn handle_reading_wheel(
                 input_poll_clock: None,
                 defer_for_input_clock: None,
                 superseded_by_key: false,
+                had_press_defer: false,
+                diagonal_fallback_deltas: Vec::new(),
+                diagonal_fallback_base_offset: None,
                 handled: !from_bottom,
                 post_probe: None,
                 checked: Cell::new(if from_bottom {
@@ -1871,6 +1924,9 @@ fn handle_reading_wheel(
                 input_poll_clock: None,
                 defer_for_input_clock: None,
                 superseded_by_key: false,
+                had_press_defer: false,
+                diagonal_fallback_deltas: Vec::new(),
+                diagonal_fallback_base_offset: None,
                 handled: true,
                 post_probe: None,
                 checked: Cell::new(Some(None)),
@@ -1901,6 +1957,9 @@ fn handle_reading_wheel(
             input_poll_clock: None,
             defer_for_input_clock: None,
             superseded_by_key: false,
+            had_press_defer: false,
+            diagonal_fallback_deltas: Vec::new(),
+            diagonal_fallback_base_offset: None,
             handled: false,
             post_probe: None,
             checked: Cell::new(Some(Some(0.0))),
@@ -2107,7 +2166,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
     if s.screen.is_launcher() {
         return false;
     }
-    let (target, superseded) = {
+    let (target, superseded, fallback_base) = {
         let reading = s.transcript_display.reading_mut();
         let cur = reading.scroll_state.get();
         let Some(fr) = reading.frame_restore.as_mut() else {
@@ -2127,6 +2186,11 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     return false;
                 }
                 fr.defer_for_input_clock = None;
+                if cur.last_direct_seq == fr.direct_seq {
+                    fr.had_press_defer = false;
+                    fr.diagonal_fallback_deltas.clear();
+                    fr.diagonal_fallback_base_offset = None;
+                }
             }
             if cur.last_direct_seq == fr.direct_seq
                 && !fr.superseded_by_key
@@ -2138,9 +2202,28 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 return false;
             }
         }
+        let direct_moved = is_replay && cur.last_direct_seq != fr.direct_seq;
+        let fallback_base = if direct_moved
+            && !fr.superseded_by_key
+            && !fr.had_press_defer
+            && !fr.diagonal_fallback_deltas.is_empty()
+        {
+            fr.diagonal_fallback_base_offset.filter(|&base| {
+                let expected = replay_deltas_checked(base, cur.max, &fr.diagonal_fallback_deltas).0;
+                let moved = cur.offset - base;
+                let want = expected - base;
+                (cur.offset - expected).abs() <= 1.0
+                    || (want.abs() > 0.5
+                        && moved.abs() > 0.5
+                        && moved.signum() == want.signum()
+                        && moved.abs() <= want.abs() + 1.0)
+            })
+        } else {
+            None
+        };
         let superseded =
-            is_replay && (cur.last_direct_seq != fr.direct_seq || fr.superseded_by_key);
-        (target, superseded)
+            is_replay && (fr.superseded_by_key || (direct_moved && fallback_base.is_none()));
+        (target, superseded, fallback_base)
     };
     let reading = s.transcript_display.reading_mut();
     let fr = reading.frame_restore.take().unwrap();
@@ -2200,11 +2283,14 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
         }
         FrameRestoreTarget::ReplayDeltas {
             anchor,
-            deltas,
+            mut deltas,
             anchor_retargeted,
             content_clamped_retried,
             ..
         } => {
+            if fallback_base.is_some() {
+                deltas.extend(fr.diagonal_fallback_deltas);
+            }
             let queue_layout_seq = s.transcript_display.reading().queue_layout_seq;
             let content_layout_seq = s.transcript_display.reading().content_layout_seq;
             let anchor_present = replay_anchor_present(s, &anchor);
@@ -2212,7 +2298,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
             let content_changed = fr.content_layout_seq != content_layout_seq;
             let start = match &anchor {
                 Bookmark::Latest => cur.max,
-                Bookmark::Message { .. } => cur.offset,
+                Bookmark::Message { .. } => fallback_base.unwrap_or(cur.offset),
             };
             let (dest, clamped) = replay_deltas_checked(start, cur.max, &deltas);
             let needs_rearm = anchor_retargeted || !anchor_present || queue_changed;
@@ -2247,6 +2333,9 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         input_poll_clock: None,
                         defer_for_input_clock: None,
                         superseded_by_key: false,
+                        had_press_defer: false,
+                        diagonal_fallback_deltas: Vec::new(),
+                        diagonal_fallback_base_offset: None,
                         handled: false,
                         post_probe: None,
                         checked: Cell::new(Some(Some(0.0))),
@@ -2273,7 +2362,7 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                         .transcript_display
                         .reading()
                         .live_row_offset(id, history_bounds[1])
-                        .unwrap_or(*offset);
+                        .unwrap_or_else(|| *offset - (cur.offset - start));
                     Some((id.clone(), anchor_y))
                 }
                 Bookmark::Latest => None,
@@ -2307,6 +2396,9 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                     input_poll_clock: None,
                     defer_for_input_clock: None,
                     superseded_by_key: false,
+                    had_press_defer: false,
+                    diagonal_fallback_deltas: Vec::new(),
+                    diagonal_fallback_base_offset: None,
                     handled: true,
                     post_probe: Some(probe),
                     checked: Cell::new(Some(None)),
@@ -2350,6 +2442,9 @@ pub(crate) fn flush_wheel_replay(s: &mut State, tx: &mut Tx) -> bool {
                 input_poll_clock: None,
                 defer_for_input_clock: None,
                 superseded_by_key: false,
+                had_press_defer: false,
+                diagonal_fallback_deltas: Vec::new(),
+                diagonal_fallback_base_offset: None,
                 handled: true,
                 post_probe: Some(probe),
                 checked: Cell::new(Some(None)),
@@ -2474,6 +2569,9 @@ pub(crate) fn rearm_replay_on_layout_change(s: &mut State, tx: &mut Tx) -> bool 
         fr.input_poll_clock = None;
         fr.defer_for_input_clock = None;
         fr.superseded_by_key = false;
+        fr.had_press_defer = false;
+        fr.diagonal_fallback_deltas.clear();
+        fr.diagonal_fallback_base_offset = None;
         fr.handled = false;
         fr.post_probe = None;
         fr.checked.set(Some(Some(0.0)));
