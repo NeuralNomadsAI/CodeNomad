@@ -464,7 +464,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     })
                     .collect();
                 if allow_custom {
-                    for (index, raw) in d.preserved_custom.iter().take(32).enumerate() {
+                    for (index, raw) in d.preserved_custom.iter().take(64).enumerate() {
                         let checked = d.preserved_custom_selected.contains(raw);
                         let value = raw.clone();
                         let label = if raw.trim().is_empty()

@@ -220,11 +220,6 @@ fn string_value_satisfies_bounds(
 /// Whether an active field requires a non-empty answer before submission.
 pub fn field_required(field: &Value) -> bool {
     field["required"] == true
-        || (field["type"] == "multiselect"
-            && parse_u64_bound(field, "minItems")
-                .ok()
-                .flatten()
-                .is_some_and(|m| m > 0))
 }
 
 /// Whether an active field cannot be satisfied by any valid user action using the exact same
@@ -249,7 +244,7 @@ pub fn field_unanswerable_budgeted(
     if field["type"] == "multiselect"
         && field["default"]
             .as_array()
-            .is_some_and(|arr| arr.len() > 32)
+            .is_some_and(|arr| arr.len() > 64)
     {
         return true;
     }
@@ -280,16 +275,22 @@ pub fn field_unanswerable_budgeted(
             min_len > max_len
         }
         Some("multiselect") => {
-            let min_needed = parse_u64_bound(field, "minItems")
+            let raw_min = parse_u64_bound(field, "minItems")
                 .ok()
                 .flatten()
-                .unwrap_or(0)
-                .max(u64::from(field["required"] == true));
+                .unwrap_or(0);
             let max_allowed = parse_u64_bound(field, "maxItems")
                 .ok()
                 .flatten()
                 .unwrap_or(32)
                 .min(32);
+            if raw_min > max_allowed {
+                return true;
+            }
+            if field["required"] != true && field["default"].is_null() {
+                return false;
+            }
+            let min_needed = raw_min.max(u64::from(field["required"] == true));
             if field["custom"] == true {
                 min_needed > max_allowed
             } else {
@@ -597,7 +598,7 @@ fn strip_leaked_defaults(
     if field["type"] == "multiselect" {
         next.preserved_custom.retain(|item| !blocked(item));
         next.preserved_custom_selected.retain(|item| !blocked(item));
-        if let Some(items) = &mut next.untouched_multiselect_default {
+        if let Some(items) = &mut next.multiselect_order {
             items.retain(|item| !blocked(item));
         }
         if !next.custom.text.is_empty()
@@ -650,7 +651,7 @@ pub struct Draft {
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
-    pub untouched_multiselect_default: Option<Vec<String>>,
+    pub multiselect_order: Option<Vec<String>>,
     pub oversized_multiselect_default: bool,
     pub explicit_empty_default: bool,
     pub hidden_multiselect: Option<Vec<String>>,
@@ -683,14 +684,28 @@ impl Draft {
         }
     }
     pub fn toggle(&mut self, value: &str) {
-        if !self.selected.remove(value) {
+        if self.selected.remove(value) {
+            if let Some(order) = &mut self.multiselect_order {
+                order.retain(|item| item != value);
+            }
+        } else {
             self.selected.insert(value.into());
+            self.multiselect_order
+                .get_or_insert_with(Vec::new)
+                .push(value.into());
         }
         self.dirty = true;
     }
     pub fn toggle_preserved_custom(&mut self, value: &str) {
-        if !self.preserved_custom_selected.remove(value) {
+        if self.preserved_custom_selected.remove(value) {
+            if let Some(order) = &mut self.multiselect_order {
+                order.retain(|item| item != value);
+            }
+        } else {
             self.preserved_custom_selected.insert(value.into());
+            self.multiselect_order
+                .get_or_insert_with(Vec::new)
+                .push(value.into());
         }
         self.dirty = true;
     }
@@ -727,7 +742,7 @@ impl Default for Draft {
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
             preserved_custom_selected: BTreeSet::new(),
-            untouched_multiselect_default: None,
+            multiselect_order: None,
             oversized_multiselect_default: false,
             explicit_empty_default: false,
             hidden_multiselect: None,
@@ -776,7 +791,7 @@ fn fresh_draft(field: &Value) -> Draft {
         }
         if hidden {
             if let Some(values) = value.as_array() {
-                if values.len() > 32 {
+                if values.len() > 64 {
                     d.oversized_multiselect_default = true;
                 } else {
                     let allowed = normalized_options(field);
@@ -800,12 +815,12 @@ fn fresh_draft(field: &Value) -> Draft {
                 d.hidden_multiselect_invalid = true;
             }
         } else if let Some(values) = value.as_array() {
-            if values.len() > 32 {
+            if values.len() > 64 {
                 d.oversized_multiselect_default = true;
             } else {
                 let allowed = normalized_options(field);
                 let allow_custom = field["custom"] == true;
-                let mut seen = HashSet::new();
+                let mut seen_preserved = HashSet::new();
                 let mut editable_custom = Vec::new();
                 let mut raw_default = Vec::with_capacity(values.len());
                 for raw in values.iter().filter_map(Value::as_str) {
@@ -821,17 +836,17 @@ fn fresh_draft(field: &Value) -> Draft {
                         d.prior_choice_values.insert(raw.to_string());
                     } else if allow_custom {
                         raw_default.push(raw.to_string());
-                        if seen.insert(raw.to_string()) {
-                            if !is_line_editable_custom(raw) {
+                        if !is_line_editable_custom(raw) {
+                            if seen_preserved.insert(raw.to_string()) {
                                 d.preserved_custom.push(raw.to_string());
                                 d.preserved_custom_selected.insert(raw.to_string());
-                            } else {
-                                editable_custom.push(raw);
                             }
+                        } else {
+                            editable_custom.push(raw);
                         }
                     }
                 }
-                d.untouched_multiselect_default = Some(raw_default);
+                d.multiselect_order = Some(raw_default);
                 if !editable_custom.is_empty() {
                     d.custom = TextEdit::new(editable_custom.join("\n"));
                 }
@@ -957,7 +972,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
-                            draft.untouched_multiselect_default = None;
+                            draft.multiselect_order = None;
                             draft.oversized_multiselect_default = false;
                             draft.hidden_multiselect = None;
                             draft.hidden_multiselect_invalid = false;
@@ -1083,9 +1098,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                         draft.custom_baseline.clear();
                     }
                 }
-                if draft.is_dirty() {
-                    draft.untouched_multiselect_default = None;
-                } else if let Some(raw_items) = &mut draft.untouched_multiselect_default {
+                if let Some(raw_items) = &mut draft.multiselect_order {
                     let custom_entries: HashSet<String> = parse_custom_entries(&draft.custom.text)
                         .into_iter()
                         .map(|e| e.value)
@@ -1100,7 +1113,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.untouched_multiselect_default = None;
+                draft.multiselect_order = None;
                 draft.oversized_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
@@ -1150,7 +1163,7 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.untouched_multiselect_default = None;
+                draft.multiselect_order = None;
                 draft.oversized_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
@@ -1433,6 +1446,9 @@ pub fn validate_budgeted(
                 parse_u64_bound(field, "minItems").map_err(|()| ValidationError::Unsupported)?;
             let max_items =
                 parse_u64_bound(field, "maxItems").map_err(|()| ValidationError::Unsupported)?;
+            if min_items.is_some_and(|lo| lo > max_items.unwrap_or(32).min(32)) {
+                return Err(ValidationError::Unsupported);
+            }
             let options = normalized_options(field);
             let is_declared = |entry: &str| options.iter().any(|o| o.value == entry);
             let allow_custom = field["custom"] == true;
@@ -1444,11 +1460,6 @@ pub fn validate_budgeted(
                     return Err(ValidationError::Unsupported);
                 }
                 let Some(raw_items) = d.hidden_multiselect.as_ref() else {
-                    if let Some(m) = min_items
-                        && m > 0
-                    {
-                        return Err(ValidationError::TooFewItems { min: m });
-                    }
                     return if field["required"] == true {
                         Err(ValidationError::Required)
                     } else {
@@ -1485,52 +1496,8 @@ pub fn validate_budgeted(
                 }
                 return Ok(Some(json!(hidden_items)));
             }
-            if !d.is_dirty()
-                && let Some(raw_items) = d.untouched_multiselect_default.as_ref()
-            {
-                let mut ordered_items = Vec::with_capacity(raw_items.len());
-                for item in raw_items {
-                    if item.encode_utf16().count() > 20_000 {
-                        return Err(ValidationError::TooLong { max: 20_000 });
-                    }
-                    if is_declared(item) || allow_custom {
-                        ordered_items.push(item.clone());
-                    } else {
-                        return Err(ValidationError::SelectDeclaredOption);
-                    }
-                }
-                let count = ordered_items.len() as u64;
-                if count > 32 {
-                    return Err(ValidationError::TooManyItems { max: 32 });
-                }
-                if let Some(m) = max_items
-                    && count > m
-                {
-                    return Err(ValidationError::TooManyItems { max: m });
-                }
-                if let Some(m) = min_items
-                    && count < m
-                {
-                    return Err(ValidationError::TooFewItems { min: m });
-                }
-                if field["required"] == true && count == 0 {
-                    return Err(ValidationError::Required);
-                }
-                return Ok(Some(json!(ordered_items)));
-            }
-            let mut values = d.selected.clone();
+            let mut parsed_custom = Vec::new();
             if allow_custom {
-                for item in &d.preserved_custom {
-                    if !d.preserved_custom_selected.contains(item) {
-                        continue;
-                    }
-                    if item.encode_utf16().count() > 20_000 {
-                        return Err(ValidationError::TooLong { max: 20_000 });
-                    }
-                    if !is_declared(item) {
-                        values.insert(item.clone());
-                    }
-                }
                 for entry in parse_custom_entries(&d.custom.text) {
                     if entry.value.is_empty() {
                         continue;
@@ -1538,19 +1505,80 @@ pub fn validate_budgeted(
                     if is_declared(&entry.value) {
                         return Err(ValidationError::DuplicateCustomOption);
                     }
-                    values.insert(entry.value);
+                    parsed_custom.push(entry.value);
                 }
+            }
+            if field["options"].as_array().is_some()
+                && d.selected.iter().any(|value| !is_declared(value))
+            {
+                return Err(ValidationError::SelectDeclaredOption);
+            }
+            // Build ordered answer preserving untouched order and multiplicity across edits.
+            let mut custom_counts: HashMap<&str, usize> = HashMap::new();
+            for item in &parsed_custom {
+                *custom_counts.entry(item.as_str()).or_insert(0) += 1;
+            }
+            let mut values = Vec::new();
+            let mut emitted_selected: HashSet<String> = HashSet::new();
+            let mut emitted_preserved: HashSet<String> = HashSet::new();
+            if let Some(order) = &d.multiselect_order {
+                for item in order {
+                    if d.selected.contains(item) {
+                        emitted_selected.insert(item.clone());
+                        values.push(item.clone());
+                    } else if allow_custom
+                        && d.preserved_custom_selected.contains(item)
+                        && !is_declared(item)
+                    {
+                        emitted_preserved.insert(item.clone());
+                        values.push(item.clone());
+                    } else if allow_custom
+                        && let Some(rem) = custom_counts.get_mut(item.as_str())
+                        && *rem > 0
+                    {
+                        *rem -= 1;
+                        values.push(item.clone());
+                    }
+                }
+            }
+            for item in &d.selected {
+                if !emitted_selected.contains(item) {
+                    values.push(item.clone());
+                }
+            }
+            if allow_custom {
+                for item in &d.preserved_custom {
+                    if d.preserved_custom_selected.contains(item)
+                        && !is_declared(item)
+                        && !emitted_preserved.contains(item)
+                    {
+                        values.push(item.clone());
+                    }
+                }
+                let mut emitted_new_custom: HashSet<&str> = HashSet::new();
+                for item in &parsed_custom {
+                    if let Some(rem) = custom_counts.get_mut(item.as_str())
+                        && *rem > 0
+                    {
+                        *rem -= 1;
+                        if emitted_new_custom.insert(item.as_str()) {
+                            values.push(item.clone());
+                        }
+                    }
+                }
+            }
+            if values.is_empty() && !d.is_dirty() && d.multiselect_order.is_none() {
+                return if field["required"] == true {
+                    Err(ValidationError::Required)
+                } else {
+                    Ok(None)
+                };
             }
             if values
                 .iter()
                 .any(|item| item.encode_utf16().count() > 20_000)
             {
                 return Err(ValidationError::TooLong { max: 20_000 });
-            }
-            if field["options"].as_array().is_some()
-                && d.selected.iter().any(|value| !is_declared(value))
-            {
-                return Err(ValidationError::SelectDeclaredOption);
             }
             let count = values.len() as u64;
             if count > 32 {
@@ -1568,9 +1596,6 @@ pub fn validate_budgeted(
             }
             if field["required"] == true && count == 0 {
                 return Err(ValidationError::Required);
-            }
-            if count == 0 && !d.is_dirty() && d.untouched_multiselect_default.is_none() {
-                return Ok(None);
             }
             Ok(Some(json!(values)))
         }

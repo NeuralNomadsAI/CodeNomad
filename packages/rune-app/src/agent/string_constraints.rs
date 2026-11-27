@@ -357,6 +357,93 @@ fn civil_to_unix_secs(year: i64, month: i64, day: i64, hour: i64, minute: i64, s
     days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn local_offset_secs<F>(utc_secs: i64, local_clock: &F) -> Option<i64>
+where
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+{
+    let (ly, lm, ld, lh, lmin) = local_clock(utc_secs)?;
+    let local_min_secs = civil_to_unix_secs(
+        i64::from(ly),
+        i64::from(lm),
+        i64::from(ld),
+        i64::from(lh),
+        i64::from(lmin),
+        0,
+    );
+    let utc_min_secs = utc_secs - utc_secs.rem_euclid(60);
+    Some(local_min_secs - utc_min_secs)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_local_civil_to_utc_secs<F>(parsed: ParsedLocalDateTime, local_clock: F) -> Option<i64>
+where
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+{
+    let target_secs = civil_to_unix_secs(
+        parsed.year,
+        parsed.month,
+        parsed.day,
+        parsed.hour,
+        parsed.minute,
+        parsed.second,
+    );
+    let target_days = target_secs.div_euclid(86_400);
+    let target_sod = target_secs.rem_euclid(86_400);
+    let (ty, tm, td) = civil_from_days(target_days);
+    let target_civil = (
+        ty as i32,
+        tm as i32,
+        td as i32,
+        (target_sod / 3600) as i32,
+        ((target_sod % 3600) / 60) as i32,
+    );
+    // Sample 36 hours on either side so every timezone (UTC-12..UTC+14) brackets any DST transition.
+    let off_before = local_offset_secs(target_secs - 129_600, &local_clock)?;
+    let off_mid = local_offset_secs(target_secs, &local_clock)?;
+    let off_after = local_offset_secs(target_secs + 129_600, &local_clock)?;
+    let mut candidates = [
+        target_secs - off_before,
+        target_secs - off_mid,
+        target_secs - off_after,
+    ];
+    candidates.sort_unstable();
+    // Exact wall-clock match (normal time, or earlier instant for fall-back overlaps).
+    for cand in candidates {
+        if local_clock(cand)? == target_civil {
+            return Some(cand);
+        }
+    }
+    // Spring-forward DST gap: shift forward using the pre-transition offset, matching ECMAScript Date.
+    Some(target_secs - off_before)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn format_utc_iso(utc_secs: i64, millis: u32) -> Option<String> {
+    let days = utc_secs.div_euclid(86_400);
+    let sod = utc_secs.rem_euclid(86_400);
+    let (uy, um, ud) = civil_from_days(days);
+    let uh = sod / 3600;
+    let umin = (sod % 3600) / 60;
+    let usec = sod % 60;
+    if !(0..=9999).contains(&uy) {
+        return None;
+    }
+    Some(format!(
+        "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{millis:03}Z"
+    ))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn normalize_local_date_time_with_clock<F>(value: &str, local_clock: F) -> Option<String>
+where
+    F: Fn(i64) -> Option<(i32, i32, i32, i32, i32)>,
+{
+    let parsed = parse_local_date_time_without_zone(trim_es(value))?;
+    let utc_secs = resolve_local_civil_to_utc_secs(parsed, local_clock)?;
+    format_utc_iso(utc_secs, parsed.millis)
+}
+
 /// Convert an edited timezone-less local date-time (e.g. `2026-11-26T14:30`) to UTC RFC 3339
 /// (`...Z`), matching CodeNomad UI's `normalizeFormStringValue`. Returns `None` when `value` is
 /// not a local timezone-less date-time (explicit offsets, date-only values, or invalid strings).
@@ -382,43 +469,38 @@ pub fn normalize_edited_local_date_time(value: &str) -> Option<String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let target_secs = civil_to_unix_secs(
-            parsed.year,
-            parsed.month,
-            parsed.day,
-            parsed.hour,
-            parsed.minute,
-            parsed.second,
-        );
-        let mut guess = target_secs;
-        for _ in 0..2 {
-            let (ly, lm, ld, lh, lmin) = codenomad_host_process::local_clock(guess)?;
-            let local_min_secs = civil_to_unix_secs(
-                i64::from(ly),
-                i64::from(lm),
-                i64::from(ld),
-                i64::from(lh),
-                i64::from(lmin),
-                0,
-            );
-            let guess_min_secs = guess - guess.rem_euclid(60);
-            let offset = local_min_secs - guess_min_secs;
-            guess = target_secs - offset;
-        }
-        let days = guess.div_euclid(86_400);
-        let sod = guess.rem_euclid(86_400);
-        let (uy, um, ud) = civil_from_days(days);
-        let uh = sod / 3600;
-        let umin = (sod % 3600) / 60;
-        let usec = sod % 60;
-        if !(0..=9999).contains(&uy) {
-            return None;
-        }
-        Some(format!(
-            "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{:03}Z",
-            parsed.millis
-        ))
+        let utc_secs =
+            resolve_local_civil_to_utc_secs(parsed, codenomad_host_process::local_clock)?;
+        format_utc_iso(utc_secs, parsed.millis)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn contains_js_month_name(s: &str) -> bool {
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    s.split(|c: char| !c.is_ascii_alphabetic()).any(|tok| {
+        tok.len() >= 3 && {
+            let prefix = tok[..3].to_ascii_lowercase();
+            MONTHS.contains(&prefix.as_str())
+        }
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn looks_like_slash_date(s: &str) -> bool {
+    let mut parts = s.split('/');
+    let Some(a) = parts.next() else {
+        return false;
+    };
+    let Some(b) = parts.next() else {
+        return false;
+    };
+    !a.is_empty()
+        && !b.is_empty()
+        && a.bytes().all(|x| x.is_ascii_digit())
+        && b.bytes().next().is_some_and(|x| x.is_ascii_digit())
 }
 
 fn is_valid_date_time(value: &str) -> bool {
@@ -449,8 +531,19 @@ fn is_valid_date_time(value: &str) -> bool {
         {
             return true;
         }
-        if s.len() == 10 {
+        if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
             return is_valid_date(s);
+        }
+        let iso_prefix = s.len() >= 10
+            && s.as_bytes()[4] == b'-'
+            && s.as_bytes()[7] == b'-'
+            && parse_ascii_digits(&s[0..4]).is_some();
+        if !iso_prefix {
+            // Defer non-ISO JavaScript `Date.parse` formats (e.g. RFC 2822
+            // `"Thu, 26 Nov 2026 14:30:00 GMT"`, `"Nov 26, 2026"`, `"2026/11/26"`) to OpenCode
+            // instead of falsely blocking valid protocol defaults on desktop.
+            let has_digit = s.bytes().any(|b| b.is_ascii_digit());
+            return has_digit && (contains_js_month_name(s) || looks_like_slash_date(s));
         }
         if s.len() < 16 || !is_valid_date(&s[0..10]) {
             return false;

@@ -1211,7 +1211,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
         );
         assert_eq!(
             mans["multiline"],
-            json!(["new", "team\nlocal"]),
+            json!(["team\nlocal", "new"]),
             "editing a visible multiline custom default must preserve the structured entry intact"
         );
     });
@@ -3574,7 +3574,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
                     &lrt.state.agent.as_ref().unwrap().drafts,
                 )
                 .expect("comma-separated custom multiselect entries must submit");
-                assert_eq!(ans["tags"], json!(["alpha", "beta", "with, comma"]));
+                assert_eq!(ans["tags"], json!(["with, comma", "alpha", "beta"]));
             });
         }
 
@@ -3946,7 +3946,7 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             .expect("unquoted quotes and quoted commas must both submit cleanly");
         assert_eq!(
             qans["orgs"],
-            json!(["Acme \"West\"", "Doe, \"Jr.\"", "Doe, Jane"])
+            json!(["Acme \"West\"", "Doe, Jane", "Doe, \"Jr.\""])
         );
     });
 }
@@ -4155,7 +4155,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
             .text = "red,\u{00A0}\"Doe, Jane\"".into();
         let nans = agent_forms::answer(&nbsp_form, &ndrafts)
             .expect("quoted entry preceded by NBSP must stay one item under maxItems=2");
-        assert_eq!(nans["names"], json!(["Doe, Jane", "red"]));
+        assert_eq!(nans["names"], json!(["red", "Doe, Jane"]));
 
         // Round 16 regressions:
         // 1. Form-level regex work budget prevents 32 required 64-option radio fields with heavy
@@ -4380,7 +4380,7 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
             .text = "red,\u{FEFF}\"Doe, Jane\"".into();
         let bom_ans = agent_forms::answer(&nbsp_form, &bom_drafts)
             .expect("quoted entry preceded by U+FEFF must stay one item under maxItems=2");
-        assert_eq!(bom_ans["names"], json!(["Doe, Jane", "red"]));
+        assert_eq!(bom_ans["names"], json!(["red", "Doe, Jane"]));
 
         // 8. Disjoint key namespaces: choice field `x` and free-text field `body:1:x` never
         // collide on sibling keys, and focus lookup returns the exact editor key.
@@ -4435,5 +4435,207 @@ fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint
                 .as_deref(),
             Some(editor_key.as_str())
         );
+    });
+}
+
+#[test]
+fn reducible_overlimit_multiselect_ordered_edits_optional_hidden_min_items_dst_and_rfc2822_dates() {
+    crate::strings::with_locale("en", || {
+        // 1. 33 declared options all selected by default with `maxItems: 32` is NOT permanently
+        // unanswerable: unchecking one option brings the count to 32 and enables Answer.
+        let thirty_three_opts: Vec<serde_json::Value> = (0..33)
+            .map(|i| json!({"value": format!("opt_{i:02}"), "label": format!("Option {i:02}")}))
+            .collect();
+        let thirty_three_defaults: Vec<serde_json::Value> =
+            (0..33).map(|i| json!(format!("opt_{i:02}"))).collect();
+        let over_limit_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r17-overlimit".into(),
+            title: "Over limit".into(),
+            fields: vec![json!({
+                "key": "picks",
+                "title": "Picks",
+                "type": "multiselect",
+                "maxItems": 32,
+                "options": thirty_three_opts,
+                "default": thirty_three_defaults
+            })],
+        };
+        let (state, _rx) = state_with_form(over_limit_form);
+        let mut olrt = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        olrt.frame(0.0);
+        let oltree = olrt.accessibility_json();
+        assert!(
+            find_node(&oltree, "form-unsupported").is_none(),
+            "33 selected declared options must be reducible rather than marked unsupported"
+        );
+        assert!(has_state(
+            find_node(&oltree, "answer-question").unwrap(),
+            "disabled"
+        ));
+        olrt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r17-overlimit".into(), "picks".into()))
+                .unwrap()
+                .toggle("opt_00");
+        });
+        olrt.frame(1.0 / 60.0);
+        let ol_after = olrt.accessibility_json();
+        assert!(
+            !has_state(find_node(&ol_after, "answer-question").unwrap(), "disabled"),
+            "unchecking one option from 33 must enable Answer at 32 items"
+        );
+        let ol_ans = agent_forms::answer(
+            &olrt.state.agent.as_ref().unwrap().forms[0],
+            &olrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("32 remaining picks must submit cleanly");
+        assert_eq!(ol_ans["picks"].as_array().unwrap().len(), 32);
+
+        // 2. Editing a multiselect preserves order and duplicate multiplicity of untouched entries:
+        // starting from `["b", "b"]` and checking `a` submits `["b", "b", "a"]`.
+        let edit_order_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r17-order-edit".into(),
+            title: "Order edit".into(),
+            fields: vec![json!({
+                "key": "items",
+                "title": "Items",
+                "type": "multiselect",
+                "options": [
+                    {"value": "a", "label": "A"},
+                    {"value": "b", "label": "B"}
+                ],
+                "default": ["b", "b"]
+            })],
+        };
+        let mut odrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&edit_order_form), &mut odrafts);
+        odrafts
+            .get_mut(&("form-r17-order-edit".into(), "items".into()))
+            .unwrap()
+            .toggle("a");
+        let oans = agent_forms::answer(&edit_order_form, &odrafts)
+            .expect("checking 'a' on default ['b', 'b'] must submit cleanly");
+        assert_eq!(oans["items"], json!(["b", "b", "a"]));
+
+        // 3. Optional hidden multiselect with `minItems: 1` and no default omits key and keeps
+        // Answer enabled.
+        let opt_hidden_min_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r17-hidden-min".into(),
+            title: "Hidden minItems".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "type": "multiselect",
+                "hidden": true,
+                "minItems": 1,
+                "options": [{"value": "prod", "label": "Prod"}]
+            })],
+        };
+        let (state, _rx) = state_with_form(opt_hidden_min_form);
+        let mut hmrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        hmrt.frame(0.0);
+        let hmtree = hmrt.accessibility_json();
+        assert!(
+            find_node(&hmtree, "form-unsupported").is_none(),
+            "optional absent hidden multiselect with minItems=1 must not block the form"
+        );
+        assert!(
+            !has_state(find_node(&hmtree, "answer-question").unwrap(), "disabled"),
+            "optional absent hidden multiselect with minItems=1 must keep Answer enabled"
+        );
+        let hmans = agent_forms::answer(
+            &hmrt.state.agent.as_ref().unwrap().forms[0],
+            &hmrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("optional absent hidden multiselect with minItems=1 must submit empty object");
+        assert_eq!(hmans, json!({}));
+
+        // 4. Desktop DST disambiguation matches ECMAScript Date (`America/New_York`):
+        // spring-forward gap `2026-03-08T02:30` -> `2026-03-08T07:30:00.000Z` (03:30 EDT),
+        // fall-back overlap `2026-11-01T01:30` -> `2026-11-01T05:30:00.000Z` (earlier EDT instant).
+        let ny_clock = |utc_secs: i64| -> Option<(i32, i32, i32, i32, i32)> {
+            // 2026 America/New_York DST:
+            // starts 2026-03-08 07:00:00Z (1772953200), ends 2026-11-01 06:00:00Z (1793512800)
+            let offset = if (1_772_953_200..1_793_512_800).contains(&utc_secs) {
+                -4 * 3600
+            } else {
+                -5 * 3600
+            };
+            let local = utc_secs + offset;
+            let days = local.div_euclid(86_400);
+            let sod = local.rem_euclid(86_400);
+            let z = days + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = mp + if mp < 10 { 3 } else { -9 };
+            let y = y + i64::from(m <= 2);
+            Some((
+                y as i32,
+                m as i32,
+                d as i32,
+                (sod / 3600) as i32,
+                ((sod % 3600) / 60) as i32,
+            ))
+        };
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "2026-03-08T02:30",
+                ny_clock
+            )
+            .as_deref(),
+            Some("2026-03-08T07:30:00.000Z")
+        );
+        assert_eq!(
+            crate::agent::string_constraints::normalize_local_date_time_with_clock(
+                "2026-11-01T01:30",
+                ny_clock
+            )
+            .as_deref(),
+            Some("2026-11-01T05:30:00.000Z")
+        );
+
+        // 5. Required hidden `date-time` field with RFC 2822 default `"Thu, 26 Nov 2026 14:30:00 GMT"`
+        // passes on desktop and submits verbatim.
+        let rfc2822_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r17-rfc2822".into(),
+            title: "RFC 2822 date".into(),
+            fields: vec![json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "Thu, 26 Nov 2026 14:30:00 GMT"
+            })],
+        };
+        let (state, _rx) = state_with_form(rfc2822_form);
+        let mut r28rt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        r28rt.frame(0.0);
+        let r28tree = r28rt.accessibility_json();
+        assert!(
+            !has_state(find_node(&r28tree, "answer-question").unwrap(), "disabled"),
+            "RFC 2822 hidden date-time default must keep Answer enabled on desktop"
+        );
+        let r28ans = agent_forms::answer(
+            &r28rt.state.agent.as_ref().unwrap().forms[0],
+            &r28rt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("RFC 2822 hidden date-time default must submit verbatim");
+        assert_eq!(r28ans["when"], json!("Thu, 26 Nov 2026 14:30:00 GMT"));
     });
 }
