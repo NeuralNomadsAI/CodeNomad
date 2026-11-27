@@ -60,6 +60,8 @@ test('assertSse503Backoff enforces exactly 3 probes with bounded 1 s and 2 s ret
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1020, 1025)]), /Expected exactly 3/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(15, 20), probe(1030, 1035), probe(3050, 3055)]), /Expected exactly 3/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(500, 505), probe(2600, 2605)]), /first bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(5005, 5010), probe(15010, 15015)]), /first bounded retry delay/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(2020, 2025)]), /second bounded retry delay/)
+  assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1015, 1020), probe(7020, 7025)]), /second bounded retry delay/)
   assert.throws(() => assertSse503Backoff([probe(0, 5), probe(1900, 1905), probe(3700, 3705)]), /second bounded retry delay/)
 })

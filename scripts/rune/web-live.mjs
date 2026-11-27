@@ -78,6 +78,19 @@ function trackFulfill(pending, promise, onError){
   return run
 }
 
+async function drainWithin(promises, label, ms=2_000){
+  if(!promises.length)return null
+  const TIMED_OUT=Symbol('timedOut')
+  let timer
+  const result=await Promise.race([
+    Promise.allSettled(promises),
+    new Promise(resolve=>{ timer=setTimeout(()=>resolve(TIMED_OUT),ms); timer.unref?.() }),
+  ]).finally(()=>clearTimeout(timer))
+  if(result===TIMED_OUT)return new Error(`Timed out draining ${label} after ${ms} ms`)
+  const rejected=result.find(entry=>entry.status==='rejected')
+  return rejected?rejected.reason:null
+}
+
 async function fetchOwnedStatus(route, origin, context, attestedGet){
   assert(typeof attestedGet==='function','Attested status fetcher required')
   const requested=new URL(route.request().url())
@@ -95,7 +108,9 @@ async function fetchOwnedStatus(route, origin, context, attestedGet){
 }
 
 const SSE_RETRY1_MIN_MS=750
+const SSE_RETRY1_MAX_MS=2500
 const SSE_RETRY2_MIN_MS=1600
+const SSE_RETRY2_MAX_MS=4500
 
 function probeDelayMs(probes, index){
   return probes[index].receivedAt-probes[index-1].fulfilledAt
@@ -106,10 +121,10 @@ export function assertSse503Backoff(probes){
     `Expected exactly 3 /api/auth/status probes for one SSE-authenticated episode, observed ${probes.length}`)
   const retryDelay1Ms=probeDelayMs(probes,1)
   const retryDelay2Ms=probeDelayMs(probes,2)
-  assert(retryDelay1Ms>=SSE_RETRY1_MIN_MS,
-    `Expected first bounded retry delay (~1 s, >=${SSE_RETRY1_MIN_MS} ms), observed ${Math.round(retryDelay1Ms)} ms`)
-  assert(retryDelay2Ms>=SSE_RETRY2_MIN_MS&&retryDelay2Ms>retryDelay1Ms,
-    `Expected second bounded retry delay (~2 s, >=${SSE_RETRY2_MIN_MS} ms and > ${Math.round(retryDelay1Ms)} ms), observed ${Math.round(retryDelay2Ms)} ms`)
+  assert(retryDelay1Ms>=SSE_RETRY1_MIN_MS&&retryDelay1Ms<=SSE_RETRY1_MAX_MS,
+    `Expected first bounded retry delay (~1 s, ${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(retryDelay1Ms)} ms`)
+  assert(retryDelay2Ms>=SSE_RETRY2_MIN_MS&&retryDelay2Ms<=SSE_RETRY2_MAX_MS&&retryDelay2Ms>retryDelay1Ms,
+    `Expected second bounded retry delay (~2 s, ${SSE_RETRY2_MIN_MS}-${SSE_RETRY2_MAX_MS} ms and > ${Math.round(retryDelay1Ms)} ms), observed ${Math.round(retryDelay2Ms)} ms`)
   return {retryDelay1Ms,retryDelay2Ms}
 }
 
@@ -181,9 +196,11 @@ async function verifySseAuthenticated503Recovery({
           return false
         }
       }
+      let heldRouteError=null
       const holdRoute=async route=>{
         const run=releaseHeldSse.promise
-          .then(pass=>(pass?route.fallback():route.abort()).catch(()=>{}))
+          .then(pass=>pass?route.fallback():route.abort().catch(()=>{}))
+          .catch(err=>{ if(recovered)heldRouteError??=err })
           .finally(()=>pendingHeldRoutes.delete(run))
         pendingHeldRoutes.add(run)
         await run
@@ -281,6 +298,7 @@ async function verifySseAuthenticated503Recovery({
           await route.abort().catch(()=>{})
         }
       }
+      let cleanupError=null
       try {
         page.on('response',onSseResponse)
         await page.route(metaUrl,routeMeta)
@@ -357,12 +375,14 @@ async function verifySseAuthenticated503Recovery({
         releaseRecovered.resolve(false)
         releaseHeldSse.resolve(recovered)
         page.off('response',onSseResponse)
-        await settleWithin(Promise.allSettled([...pendingSseFulfills,...pendingHeldRoutes]),null,2_000)
-        await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
-        await page.unroute(eventsUrl,routeEvents).catch(()=>{})
-        await page.unroute(metaUrl,routeMeta).catch(()=>{})
+        const drainErr=await drainWithin([...pendingSseFulfills,...pendingHeldRoutes],'SSE+503 routes',2_000)
+        cleanupError??=heldRouteError??drainErr
+        for(const [targetUrl,handler] of [[authStatusUrl,routeStatus],[eventsUrl,routeEvents],[metaUrl,routeMeta]]){
+          try { await page.unroute(targetUrl,handler) } catch (err) { cleanupError??=err }
+        }
         await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
       }
+      if(cleanupError)throw cleanupError
     } finally { await pairFlow.dispose() }
   } finally { await tab.close().catch(()=>{}) }
   await connecting.waitFor({state:'hidden',timeout:15_000})
@@ -624,6 +644,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
         }
         // Intercept the VERY FIRST /api/auth/status triggered by device revocation (before #pairing-recovery opens),
         // then block SSE reconnects until the pairing overlay dismisses so focus/visibility alone drives recovery.
+        let focusCleanupError=null
         try {
           page.on('requestfailed',onAuthFailed)
           page.on('response',onAuthResponse)
@@ -717,10 +738,13 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
           page.off('requestfailed',onAuthFailed)
           page.off('response',onAuthResponse)
           await settleFollowUp()
-          await settleWithin(Promise.allSettled([...pendingFocusFulfills]),null,2_000)
-          await page.unroute(eventsUrl,holdEvents).catch(()=>{})
-          await page.unroute(authStatusUrl,holdStaleStatus).catch(()=>{})
+          const drainErr=await drainWithin([...pendingFocusFulfills],'focus recovery routes',2_000)
+          focusCleanupError??=drainErr
+          for(const [targetUrl,handler] of [[eventsUrl,holdEvents],[authStatusUrl,holdStaleStatus]]){
+            try { await page.unroute(targetUrl,handler) } catch (err) { focusCleanupError??=err }
+          }
         }
+        if(focusCleanupError)throw focusCleanupError
       } finally { await pairFlow.dispose() }
     } finally { await tab.close().catch(()=>{}) }
     await connecting.waitFor({state:'hidden'})
