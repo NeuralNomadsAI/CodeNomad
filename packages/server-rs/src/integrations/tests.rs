@@ -1771,30 +1771,33 @@ async fn round2_pinning_body_cancel_content_type_param_limit_trailing_slash_and_
         assert_eq!(resp.status(), Status::FORBIDDEN, "{kind} must refuse swap during initial snapshot read");
     }
 
-    // 2. Principal cancellation aborts `status` RPC during stalled body read (after headers arrived).
+    // 2. Principal cancellation aborts `status` RPC during stalled body read (strictly after headers arrived).
     let h_body = Harness::new().await;
     h_body.seed_loaded_fixture().await;
     let dir_body = h_body.dir();
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
+    let headers_received = Arc::new(Notify::new());
     h_body.mock.lock().unwrap().stall_rpc_body = Some(("status".into(), entered.clone(), release.clone()));
     let principal = tokio_util::sync::CancellationToken::new();
     let principal_cb = principal.clone();
+    let headers_cb = headers_received.clone();
     let app_body = h_body.app.clone();
     let ws_body = h_body.ws_id.to_string();
     let started = std::time::Instant::now();
     let task = tokio::spawn(async move {
-        reader::read_with_timeout(
+        reader::read_with_timeout_and_headers_hook(
             &app_body,
             &ws_body,
             &ControlLocation::new(dir_body, None),
             Some(&principal_cb),
             Duration::from_secs(6),
+            headers_cb,
         )
         .await
     });
     tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(Duration::from_secs(2), headers_received.notified()).await.unwrap();
     principal.cancel();
     let body_res = tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
     assert!(matches!(body_res, Err(crate::subagent_depth::Fail::Status(Status::UNAUTHORIZED, _))));
@@ -1938,5 +1941,77 @@ async fn round2_pinning_body_cancel_content_type_param_limit_trailing_slash_and_
         .unwrap();
     assert_eq!(encoded_refused.status(), Status::NOT_FOUND);
     assert_eq!(encoded_refused.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()), Some("no-store"));
+
+    // 7. Semicolon query delimiters (`integrations;directory=...`) get `no-store` across preview and auth refusals.
+    assert!(super::is_integrations_path(&format!("/api/workspaces/{}/integrations;directory=/secret", h.ws_id)));
+    assert!(super::is_integrations_path(&format!(
+        "/api/workspaces/{}/integrations/fixture/hosts;directory=/secret",
+        h.ws_id
+    )));
+    for semi_path in [
+        format!("/api/workspaces/{}/integrations;directory=/secret", h.ws_id),
+        format!("/api/workspaces/{}/integrations/fixture/hosts;directory=/secret", h.ws_id),
+    ] {
+        let semi_prev = h
+            .client
+            .get(format!("http://127.0.0.1:{port}{semi_path}"))
+            .header(header::HOST, &preview_host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(semi_prev.status(), Status::NOT_FOUND, "{semi_path}");
+        assert_eq!(
+            semi_prev.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "{semi_path}"
+        );
+        let semi_auth = h.client.get(format!("http://127.0.0.1:{port}{semi_path}")).send().await.unwrap();
+        assert_eq!(semi_auth.status(), Status::UNAUTHORIZED, "{semi_path}");
+        assert_eq!(
+            semi_auth.headers().get(header::CACHE_CONTROL).and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "{semi_path}"
+        );
+    }
     local_task.abort();
+
+    // 8. Fully percent-encoded 36-char UUID (`108` raw chars, `36` decoded) passes Fastify `maxParamLength: 100`.
+    let encoded_ws_id: String = h.ws_id.to_string().bytes().map(|b| format!("%{b:02X}")).collect();
+    assert_eq!(encoded_ws_id.len(), 108);
+    let encoded_ws_resp = h
+        .client
+        .get(format!("{}/api/workspaces/{encoded_ws_id}/integrations", h.base))
+        .query(&[("directory", &dir)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(encoded_ws_resp.status(), Status::OK);
+
+    // 9. `capture_location_pin` rejects non-canonical paths and `pin_still_live_sync` rejects a replaced
+    // workspace root even while an independent target directory stays untouched.
+    let pin_root = TempDir(crate::shared::test_dir("int-pin-root"));
+    let root_a = pin_root.0.join("root-a");
+    let wt_b = pin_root.0.join("wt-b");
+    fs::create_dir_all(&root_a).unwrap();
+    fs::create_dir_all(&wt_b).unwrap();
+    let root_canon = dunce::canonicalize(&root_a).unwrap();
+    let wt_canon = dunce::canonicalize(&wt_b).unwrap();
+    let mut fake_ws = h.app.workspace(&h.ws_id.to_string()).unwrap();
+    fake_ws.path = root_canon.clone();
+    // Non-canonical `..` path must be rejected by `capture_location_pin` (never recorded as a pin).
+    let non_canon = wt_canon.join("..").join("wt-b").to_string_lossy().into_owned();
+    assert!(crate::plugin_controls::engine::capture_location_pin(&fake_ws, &non_canon).await.is_none());
+
+    let wt_str = wt_canon.to_string_lossy().into_owned();
+    let pin = crate::plugin_controls::engine::capture_location_pin(&fake_ws, &wt_str).await.unwrap();
+    assert!(crate::plugin_controls::engine::pin_still_live_sync(&root_canon, &wt_str, &pin));
+
+    // Replacing the workspace root while `wt-b` stays in place must invalidate the pin immediately.
+    let root_moved = pin_root.0.join("root-moved");
+    fs::rename(&root_canon, &root_moved).unwrap();
+    fs::create_dir_all(&root_canon).unwrap();
+    assert!(
+        !crate::plugin_controls::engine::pin_still_live_sync(&root_canon, &wt_str, &pin),
+        "swapped workspace root must fail pre-write commit pin check even when linked worktree stays untouched"
+    );
 }

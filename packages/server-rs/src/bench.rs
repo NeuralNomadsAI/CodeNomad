@@ -296,6 +296,11 @@ mod trace_tests {
         assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/%69ntegrations/blender/attach"), "<unmatched>");
         assert_eq!(sanitize_trace_path("/%61pi/workspaces/ws-secret/integrations/blender/attach"), "<unmatched>");
         assert_eq!(sanitize_trace_path("/api/%77orkspaces/ws-secret/integrations"), "<unmatched>");
+        assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/integrations;directory=/top/secret"), "<unmatched>");
+        assert_eq!(
+            sanitize_trace_path("/api/workspaces/ws-secret/integrations/blender/hosts;directory=/top/secret"),
+            "<unmatched>"
+        );
         assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/integrations/blender/other"), "<unmatched>");
         assert_eq!(sanitize_trace_path("/api/workspaces/ws-secret/files"), "/api/workspaces/ws-secret/files");
     }

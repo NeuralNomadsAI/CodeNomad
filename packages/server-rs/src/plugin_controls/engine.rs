@@ -115,61 +115,71 @@ fn revision_eq(expected: &str, actual: &str) -> bool {
     expected.len() == actual.len() && bool::from(expected.as_bytes().ct_eq(actual.as_bytes()))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LocationPin {
-    pub(crate) root_canonical: Option<std::path::PathBuf>,
-    pub(crate) root_identity: Option<String>,
+    pub(crate) root_canonical: std::path::PathBuf,
+    pub(crate) root_identity: String,
     pub(crate) target_canonical: Option<std::path::PathBuf>,
     pub(crate) target_identity: Option<String>,
 }
 
-pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str) -> LocationPin {
+pub(crate) async fn capture_location_pin(workspace: &Workspace, directory: &str) -> Option<LocationPin> {
     let root = workspace.path.clone();
     let dir = directory.to_owned();
-    tokio::task::spawn_blocking(move || LocationPin {
-        root_canonical: dunce::canonicalize(&root).ok(),
-        root_identity: crate::files::directory_identity(&root).ok(),
-        target_canonical: dunce::canonicalize(&dir).ok(),
-        target_identity: crate::files::directory_identity(Path::new(&dir)).ok(),
+    tokio::task::spawn_blocking(move || {
+        let root_canonical = dunce::canonicalize(&root).ok()?;
+        if root_canonical != root {
+            return None;
+        }
+        let root_identity = crate::files::directory_identity(&root_canonical).ok()?;
+        let dir_path = Path::new(&dir);
+        let (target_canonical, target_identity) = match dunce::canonicalize(dir_path) {
+            Ok(canon) => {
+                if canon != dir_path {
+                    return None;
+                }
+                let id = crate::files::directory_identity(&canon).ok()?;
+                (Some(canon), Some(id))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if ownership::resolve_directory(&dir).as_deref() != Some(dir_path) {
+                    return None;
+                }
+                (None, None)
+            }
+            Err(_) => return None,
+        };
+        Some(LocationPin { root_canonical, root_identity, target_canonical, target_identity })
     })
     .await
-    .unwrap_or(LocationPin {
-        root_canonical: None,
-        root_identity: None,
-        target_canonical: None,
-        target_identity: None,
-    })
+    .ok()
+    .flatten()
 }
 
-async fn pin_still_live(workspace: &Workspace, directory: &str, pin: &LocationPin) -> bool {
+pub(crate) fn pin_still_live_sync(root: &Path, dir: &str, pin: &LocationPin) -> bool {
+    if dunce::canonicalize(root).ok().as_ref() != Some(&pin.root_canonical) {
+        return false;
+    }
+    if crate::files::directory_identity(&pin.root_canonical).ok().as_deref() != Some(pin.root_identity.as_str()) {
+        return false;
+    }
+    let dir_path = Path::new(dir);
+    match (&pin.target_canonical, &pin.target_identity) {
+        (Some(expected_target), Some(expected_id)) => {
+            dunce::canonicalize(dir_path).ok().as_ref() == Some(expected_target)
+                && expected_target == dir_path
+                && crate::files::directory_identity(expected_target).ok().as_deref() == Some(expected_id.as_str())
+        }
+        (None, None) => ownership::resolve_directory(dir).as_deref() == Some(dir_path),
+        _ => false,
+    }
+}
+
+pub(crate) async fn pin_still_live(workspace: &Workspace, directory: &str, pin: &LocationPin) -> bool {
     let root = workspace.path.clone();
     let dir = directory.to_owned();
     let pin = pin.clone();
-    tokio::task::spawn_blocking(move || {
-        if let Some(ref expected_root) = pin.root_canonical
-            && dunce::canonicalize(&root).ok().as_ref() != Some(expected_root)
-        {
-            return false;
-        }
-        if let Some(ref rid) = pin.root_identity
-            && crate::files::directory_identity(&root).ok().as_deref() != Some(rid.as_str())
-        {
-            return false;
-        }
-        if let Some(ref expected_target) = pin.target_canonical
-            && dunce::canonicalize(&dir).ok().as_ref() != Some(expected_target)
-        {
-            return false;
-        }
-        if let Some(ref tid) = pin.target_identity
-            && crate::files::directory_identity(Path::new(&dir)).ok().as_deref() != Some(tid.as_str())
-        {
-            return false;
-        }
-        true
-    })
-    .await
-    .unwrap_or(false)
+    tokio::task::spawn_blocking(move || pin_still_live_sync(&root, &dir, &pin)).await.unwrap_or(false)
 }
 
 pub(super) struct ReadContext {
@@ -472,13 +482,16 @@ pub(super) async fn read_context(
         return Err(foreign);
     }
     let location_dir = resolve_owned_directory(app, &workspace, &directory).await.ok_or(foreign.clone())?;
-    if resolve_owned_directory(app, &workspace, &location_dir).await.is_none() {
+    let location = ControlLocation::new(location_dir, None);
+    // Pin root and target physical identities BEFORE native `/api/config` & `/api/plugin` reads,
+    // refusing redirected paths and re-confirming ownership while the captured pin stays live.
+    let location_pin = capture_location_pin(&workspace, &location.directory).await.ok_or(foreign.clone())?;
+    if resolve_owned_directory(app, &workspace, &location.directory).await.as_deref()
+        != Some(location.directory.as_str())
+        || !pin_still_live(&workspace, &location.directory, &location_pin).await
+    {
         return Err(foreign);
     }
-    let location = ControlLocation::new(location_dir, None);
-    // Pin root and target physical identities BEFORE native `/api/config` & `/api/plugin` reads so
-    // any directory swap during snapshot collection is detected and refused.
-    let location_pin = capture_location_pin(&workspace, &location.directory).await;
 
     let query = [("location[directory]", location.directory.as_str())];
     let (config, plugin) = tokio::join!(
@@ -929,24 +942,17 @@ pub(super) async fn mutate(
 
 #[derive(Clone, Debug)]
 pub(crate) struct PinnedLocation {
+    pub(crate) workspace_root: std::path::PathBuf,
     pub(crate) directory: String,
-    pub(crate) identity: Option<String>,
+    pub(crate) pin: LocationPin,
 }
 
 fn check_pinned_location_sync(pinned: Option<&PinnedLocation>) -> Result<(), Fail> {
-    let Some(pin) = pinned else {
+    let Some(pinned) = pinned else {
         return Ok(());
     };
-    let foreign = || fail(Status::FORBIDDEN, "Location is not owned by this workspace");
-    if let Some(ref expected_id) = pin.identity {
-        let Ok(canon) = dunce::canonicalize(&pin.directory) else {
-            return Err(foreign());
-        };
-        if canon != Path::new(&pin.directory)
-            || crate::files::directory_identity(&canon).ok().as_deref() != Some(expected_id.as_str())
-        {
-            return Err(foreign());
-        }
+    if !pin_still_live_sync(&pinned.workspace_root, &pinned.directory, &pinned.pin) {
+        return Err(fail(Status::FORBIDDEN, "Location is not owned by this workspace"));
     }
     Ok(())
 }
@@ -997,7 +1003,7 @@ where
     if let Some(ref pinned) = pinned_endpoint {
         assert_current(app, pinned, &ctx.workspace, principal.as_ref()).map_err(map_fail)?;
     }
-    if pinned_location.as_ref().is_some_and(|p| p.directory != ctx.location.directory) {
+    if pinned_location.as_ref().is_some_and(|p| p.directory != ctx.location.directory || p.pin != ctx.location_pin) {
         return Err(map_fail(fail(Status::FORBIDDEN, "Location is not owned by this workspace")));
     }
     let target =

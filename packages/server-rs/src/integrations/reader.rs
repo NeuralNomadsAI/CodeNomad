@@ -160,6 +160,38 @@ pub(crate) async fn read_with_timeout(
     principal: Option<&CancellationToken>,
     timeout: Duration,
 ) -> Result<IntegrationsResponse, Fail> {
+    read_inner(
+        app,
+        workspace_id,
+        location,
+        principal,
+        timeout,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
+pub(crate) async fn read_with_timeout_and_headers_hook(
+    app: &App,
+    workspace_id: &str,
+    location: &ControlLocation,
+    principal: Option<&CancellationToken>,
+    timeout: Duration,
+    on_status_headers: Arc<tokio::sync::Notify>,
+) -> Result<IntegrationsResponse, Fail> {
+    read_inner(app, workspace_id, location, principal, timeout, Some(on_status_headers)).await
+}
+
+async fn read_inner(
+    app: &App,
+    workspace_id: &str,
+    location: &ControlLocation,
+    principal: Option<&CancellationToken>,
+    timeout: Duration,
+    #[cfg(test)] on_status_headers: Option<Arc<tokio::sync::Notify>>,
+) -> Result<IntegrationsResponse, Fail> {
     let ((snapshot, workspace, endpoint, pin), catalog) =
         tokio::try_join!(engine::read_bound(app, workspace_id, location, principal, None), async {
             Ok::<_, Fail>(app.integration_catalog.read_view(true).await)
@@ -175,6 +207,8 @@ pub(crate) async fn read_with_timeout(
         let workspace = workspace.clone();
         let dir = owned.directory.clone();
         let pin = pin.clone();
+        #[cfg(test)]
+        let on_status_headers = on_status_headers.clone();
         async move {
             // Short-circuit entries that require no RPC without consuming a concurrency slot.
             if let Some(local) = local_status_state(recognition) {
@@ -199,7 +233,17 @@ pub(crate) async fn read_with_timeout(
             {
                 return StatusRead::Aborted;
             }
-            read_one_status(app, &endpoint, &dir, recognition, principal, timeout).await
+            read_one_status(
+                app,
+                &endpoint,
+                &dir,
+                recognition,
+                principal,
+                timeout,
+                #[cfg(test)]
+                on_status_headers.as_deref(),
+            )
+            .await
         }
     }))
     .await;
@@ -382,6 +426,7 @@ async fn read_one_status(
     recognition: &IntegrationRecognition,
     principal: Option<&CancellationToken>,
     timeout: Duration,
+    #[cfg(test)] on_status_headers: Option<&tokio::sync::Notify>,
 ) -> StatusRead {
     let Ok(url) = endpoint.url.join(&format!("/api/rpc/{}/status", recognition.entry.rpc)) else {
         return StatusRead::State(IntegrationRuntimeState::Unknown);
@@ -414,6 +459,10 @@ async fn read_one_status(
     let status = response.status();
     if !is_json_content_type(response.headers()) {
         return StatusRead::State(IntegrationRuntimeState::Unknown);
+    }
+    #[cfg(test)]
+    if let Some(notify) = on_status_headers {
+        notify.notify_one();
     }
     if status == Status::BAD_REQUEST {
         return match read_json_cancellable(response, RPC_ERROR_MAX_BYTES, principal, deadline).await {

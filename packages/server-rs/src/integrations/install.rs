@@ -146,8 +146,11 @@ async fn install_inner(
     authorize(app, &workspace, &endpoint, &owned.directory, &pin, principal.as_ref()).await?;
 
     let spec = format!("{}@{}", entry.package, entry.range);
-    let pinned_location =
-        engine::PinnedLocation { directory: owned.directory.clone(), identity: pin.target_identity.clone() };
+    let pinned_location = engine::PinnedLocation {
+        workspace_root: workspace.path.clone(),
+        directory: owned.directory.clone(),
+        pin: pin.clone(),
+    };
     let result = sources::add_pinned(
         app,
         workspace_id,

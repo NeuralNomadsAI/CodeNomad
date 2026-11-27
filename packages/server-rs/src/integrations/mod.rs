@@ -69,9 +69,10 @@ fn decode_segment(seg: &str) -> Option<std::borrow::Cow<'_, str>> {
 }
 
 /// True for any path under `/api/workspaces/:id/integrations` (including percent-encoded prefix
-/// segments and unmatched subpaths), used to enforce `Cache-Control: no-store` on admission
-/// refusals and trace redaction.
+/// segments, `;` query delimiters like Fastify/find-my-way, and unmatched subpaths), used to
+/// enforce `Cache-Control: no-store` on admission refusals and trace redaction.
 pub(crate) fn is_integrations_path(path: &str) -> bool {
+    let path = path.split_once(';').map_or(path, |(head, _)| head);
     let Some(rest) = path.strip_prefix('/') else {
         return false;
     };
@@ -272,32 +273,14 @@ async fn read_post_json(headers: &HeaderMap, body: Body, invalid: fn() -> Respon
 
 const FASTIFY_MAX_PARAM_LEN: usize = 100;
 
-/// Fastify 5 (`find-my-way` `maxParamLength: 100`) leaves any route whose parameter segment exceeds
-/// 100 UTF-16 code units unmatched (`404 Not Found`) before invoking the handler or body parser.
-fn param_exceeds_fastify_limit(uri: &axum::http::Uri, params: &[&str]) -> bool {
-    if params.iter().any(|p| p.encode_utf16().count() > FASTIFY_MAX_PARAM_LEN) {
-        return true;
-    }
-    let mut parts = uri.path().trim_start_matches('/').split('/');
-    let _api = parts.next();
-    let _workspaces = parts.next();
-    if let Some(raw_id) = parts.next()
-        && raw_id.encode_utf16().count() > FASTIFY_MAX_PARAM_LEN
-    {
-        return true;
-    }
-    let _integrations = parts.next();
-    if let Some(raw_integration) = parts.next()
-        && raw_integration.encode_utf16().count() > FASTIFY_MAX_PARAM_LEN
-    {
-        return true;
-    }
-    false
+/// Fastify 5 (`find-my-way` `maxParamLength: 100`) checks parameter length AFTER percent-decoding
+/// and leaves any route whose decoded parameter exceeds 100 UTF-16 code units unmatched (`404`).
+fn param_exceeds_fastify_limit(params: &[&str]) -> bool {
+    params.iter().any(|p| p.encode_utf16().count() > FASTIFY_MAX_PARAM_LEN)
 }
 
 async fn get_integrations(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     workspace: Result<Path<String>, PathRejection>,
     RawQuery(raw): RawQuery,
     principal: Option<Extension<Principal>>,
@@ -305,7 +288,7 @@ async fn get_integrations(
     let Ok(Path(workspace_id)) = workspace else {
         return no_store((Status::BAD_REQUEST, Json(json!({ "error": INVALID_READ }))).into_response());
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id]) {
         return not_found().await;
     }
     let Some(location) = parse_read_query(raw.as_deref()) else {
@@ -323,7 +306,6 @@ async fn get_integrations(
 
 async fn post_install(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
@@ -333,7 +315,7 @@ async fn post_install(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_install();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     let parsed_body = match read_post_json(&headers, body, invalid_install).await {
@@ -369,7 +351,6 @@ fn parse_install_body(value: &Value) -> Option<Scope> {
 
 async fn get_hosts(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     principal: Option<Extension<Principal>>,
@@ -377,7 +358,7 @@ async fn get_hosts(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     if !valid_params(&workspace_id, &integration_id) {
@@ -394,7 +375,6 @@ async fn get_hosts(
 
 async fn get_binding(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     principal: Option<Extension<Principal>>,
@@ -402,7 +382,7 @@ async fn get_binding(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     if !valid_params(&workspace_id, &integration_id) {
@@ -428,7 +408,6 @@ async fn get_binding(
 
 async fn post_install_host(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
@@ -438,7 +417,7 @@ async fn post_install_host(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     let parsed_body = match read_post_json(&headers, body, invalid_attachment).await {
@@ -461,7 +440,6 @@ async fn post_install_host(
 
 async fn post_attach(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
@@ -471,7 +449,7 @@ async fn post_attach(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     let parsed_body = match read_post_json(&headers, body, invalid_attachment).await {
@@ -515,7 +493,6 @@ fn parse_attach_body(value: &Value) -> Option<(&str, &str)> {
 
 async fn post_detach(
     State(app): State<Shared>,
-    uri: axum::http::Uri,
     params: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
@@ -525,7 +502,7 @@ async fn post_detach(
     let Ok(Path((workspace_id, integration_id))) = params else {
         return invalid_attachment();
     };
-    if param_exceeds_fastify_limit(&uri, &[&workspace_id, &integration_id]) {
+    if param_exceeds_fastify_limit(&[&workspace_id, &integration_id]) {
         return not_found().await;
     }
     let parsed_body = match read_post_json(&headers, body, invalid_attachment).await {
@@ -573,29 +550,14 @@ pub(crate) async fn owns_location(
     let scope = app.scope.clone();
     let pin_clone = pin.clone();
     let checked = tokio::task::spawn_blocking(move || {
-        let root_live = pin_clone
-            .root_canonical
-            .as_ref()
-            .is_none_or(|expected| dunce::canonicalize(&root).ok().as_ref() == Some(expected))
-            && pin_clone
-                .root_identity
-                .as_deref()
-                .is_none_or(|rid| crate::files::directory_identity(&root).ok().as_deref() == Some(rid));
-        if !root_live {
+        if !crate::plugin_controls::engine::pin_still_live_sync(&root, &dir, &pin_clone) {
             return Some(false);
         }
-        if let Some(ref tid) = pin_clone.target_identity {
-            let Ok(target) = dunce::canonicalize(&dir) else {
-                return Some(false);
-            };
-            if !target.starts_with(&scope)
-                || pin_clone.target_canonical.as_ref().is_some_and(|expected| expected != &target)
-                || target != std::path::Path::new(&dir)
-                || crate::files::directory_identity(&target).ok().as_deref() != Some(tid.as_str())
-            {
+        if let Some(ref target) = pin_clone.target_canonical {
+            if !target.starts_with(&scope) {
                 return Some(false);
             }
-            if target == root {
+            if target == &root {
                 return Some(true);
             }
         }
@@ -606,9 +568,12 @@ pub(crate) async fn owns_location(
     .flatten();
     match checked {
         Some(owned) => owned,
-        None => crate::worktrees::ownership::resolve(app, workspace, directory)
-            .await
-            .is_some_and(|owned| owned.directory == directory),
+        None => {
+            crate::worktrees::ownership::resolve(app, workspace, directory)
+                .await
+                .is_some_and(|owned| owned.directory == directory)
+                && crate::plugin_controls::engine::pin_still_live(workspace, directory, pin).await
+        }
     }
 }
 
