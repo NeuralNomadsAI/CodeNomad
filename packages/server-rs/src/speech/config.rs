@@ -56,7 +56,16 @@ fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
     value.map(js_trim).filter(|s| !s.is_empty()).map(str::to_owned)
 }
 
-fn env_non_empty(key: &str) -> Option<String> {
+fn env_non_empty(settings: &Settings, key: &str) -> Option<String> {
+    #[cfg(test)]
+    if let Some((api_key, base_url)) = settings.speech_env_for_test() {
+        return match key {
+            "OPENAI_API_KEY" => api_key.filter(|s| !s.is_empty()),
+            "OPENAI_BASE_URL" => base_url.filter(|s| !s.is_empty()),
+            _ => None,
+        };
+    }
+    let _ = settings;
     env::var(key).ok().filter(|s| !s.is_empty())
 }
 
@@ -165,11 +174,15 @@ fn parse_server_speech(server: &Doc) -> Result<ParsedSpeech, InvalidSpeechConfig
     })
 }
 
-fn resolve_shared(speech: &ParsedSpeech) -> NormalizedSpeechSettings {
+fn resolve_shared(settings: &Settings, speech: &ParsedSpeech) -> NormalizedSpeechSettings {
+    let shared_base_url = non_empty_trimmed(speech.base_url.as_deref());
+    // Never pair the host process OPENAI_API_KEY with an explicit YAML baseUrl
+    // (a paired remote device may patch speech.baseUrl while speech_pairing clears speech.apiKey).
+    let env_api_key = if shared_base_url.is_none() { env_non_empty(settings, "OPENAI_API_KEY") } else { None };
     NormalizedSpeechSettings {
         provider: non_empty_trimmed(speech.provider.as_deref()).unwrap_or_else(|| DEFAULT_PROVIDER.into()),
-        api_key: non_empty_trimmed(speech.api_key.as_deref()).or_else(|| env_non_empty("OPENAI_API_KEY")),
-        base_url: non_empty_trimmed(speech.base_url.as_deref()).or_else(|| env_non_empty("OPENAI_BASE_URL")),
+        api_key: non_empty_trimmed(speech.api_key.as_deref()).or(env_api_key),
+        base_url: shared_base_url.or_else(|| env_non_empty(settings, "OPENAI_BASE_URL")),
         stt_model: non_empty_trimmed(speech.stt_model.as_deref()).unwrap_or_else(|| DEFAULT_STT_MODEL.into()),
         tts_model: non_empty_trimmed(speech.tts_model.as_deref()).unwrap_or_else(|| DEFAULT_TTS_MODEL.into()),
         tts_voice: non_empty_trimmed(speech.tts_voice.as_deref()).unwrap_or_else(|| DEFAULT_TTS_VOICE.into()),
@@ -177,9 +190,14 @@ fn resolve_shared(speech: &ParsedSpeech) -> NormalizedSpeechSettings {
     }
 }
 
-fn resolve_directional(speech: &ParsedSpeech, dir: &ParsedDirection, is_stt: bool) -> NormalizedSpeechSettings {
+fn resolve_directional(
+    settings: &Settings,
+    speech: &ParsedSpeech,
+    dir: &ParsedDirection,
+    is_stt: bool,
+) -> NormalizedSpeechSettings {
     if !speech.separate_providers {
-        return resolve_shared(speech);
+        return resolve_shared(settings, speech);
     }
     let shared_base_url = non_empty_trimmed(speech.base_url.as_deref());
     let raw_dir_base_url = non_empty_trimmed(dir.base_url.as_deref());
@@ -194,12 +212,13 @@ fn resolve_directional(speech: &ParsedSpeech, dir: &ParsedDirection, is_stt: boo
     let api_key = if has_complete {
         dir_api_key
     } else if has_none {
-        non_empty_trimmed(speech.api_key.as_deref()).or_else(|| env_non_empty("OPENAI_API_KEY"))
+        let env_api_key = if shared_base_url.is_none() { env_non_empty(settings, "OPENAI_API_KEY") } else { None };
+        non_empty_trimmed(speech.api_key.as_deref()).or(env_api_key)
     } else {
         None
     };
     let base_url = if has_complete || has_none {
-        dir_base_url.or(shared_base_url).or_else(|| env_non_empty("OPENAI_BASE_URL"))
+        dir_base_url.or(shared_base_url).or_else(|| env_non_empty(settings, "OPENAI_BASE_URL"))
     } else {
         dir_base_url
     };
@@ -233,45 +252,13 @@ fn resolve_directional(speech: &ParsedSpeech, dir: &ParsedDirection, is_stt: boo
 pub(super) fn resolve_stt_settings(settings: &Settings) -> Result<NormalizedSpeechSettings, InvalidSpeechConfig> {
     let server = settings.owner(Kind::Config, "server");
     let speech = parse_server_speech(&server)?;
-    Ok(resolve_directional(&speech, &speech.stt, true))
+    Ok(resolve_directional(settings, &speech, &speech.stt, true))
 }
 
 pub(super) fn resolve_tts_settings(settings: &Settings) -> Result<NormalizedSpeechSettings, InvalidSpeechConfig> {
     let server = settings.owner(Kind::Config, "server");
     let speech = parse_server_speech(&server)?;
-    Ok(resolve_directional(&speech, &speech.tts, false))
-}
-
-fn vc_provider_configured(vc: Option<&Value>, provider: &str) -> bool {
-    let Some(raw) = vc.and_then(Value::as_object).and_then(|o| o.get(provider)).and_then(Value::as_object) else {
-        return false;
-    };
-    if !raw.keys().all(|k| matches!(k.as_str(), "apiKey" | "model" | "voice")) {
-        return false;
-    }
-    let key_ok = raw
-        .get("apiKey")
-        .and_then(Value::as_str)
-        .map(js_trim)
-        .is_some_and(|s| !s.is_empty() && s.len() <= 4096 && s.bytes().all(|b| (0x21..=0x7e).contains(&b)));
-    let model_ok = raw.get("model").and_then(Value::as_str).map(js_trim).is_some_and(|s| {
-        !s.is_empty()
-            && s.len() <= 256
-            && s.as_bytes()[0].is_ascii_alphanumeric()
-            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'/' | b'-'))
-    });
-    let voice_ok = match raw.get("voice") {
-        None | Some(Value::Null) => true,
-        Some(Value::String(v)) => {
-            let s = js_trim(v);
-            !s.is_empty()
-                && s.len() <= 128
-                && s.as_bytes()[0].is_ascii_alphanumeric()
-                && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        }
-        Some(_) => false,
-    };
-    key_ok && model_ok && voice_ok
+    Ok(resolve_directional(settings, &speech, &speech.tts, false))
 }
 
 fn has_desktop_identity(settings: &Settings) -> bool {
@@ -337,8 +324,8 @@ pub(super) fn read_desktop_consent(settings: &Settings, engine: &str) -> Result<
     let Ok(doc) = document::read(&dir.join(format!("consent-{engine}.yaml"))) else {
         return Ok(None);
     };
-    let version = doc.get("notice").and_then(Value::as_object).and_then(|o| o.get("version")).and_then(Value::as_u64);
-    Ok((version == Some(LIVE_VOICE_NOTICE_VERSION)).then_some(LIVE_VOICE_NOTICE_VERSION))
+    let version = doc.get("notice").and_then(Value::as_object).and_then(|o| o.get("version")).and_then(Value::as_f64);
+    Ok((version == Some(LIVE_VOICE_NOTICE_VERSION as f64)).then_some(LIVE_VOICE_NOTICE_VERSION))
 }
 
 pub(super) fn write_desktop_consent(settings: &Settings, engine: &str) -> Result<Option<u64>, DesktopStoreError> {
@@ -356,18 +343,16 @@ pub(super) fn capabilities_json(settings: &Settings, is_local: bool) -> Result<V
     let server = settings.owner(Kind::Config, "server");
     let speech = parse_server_speech(&server).map_err(|_| ())?;
     let separate = speech.separate_providers;
-    let stt = resolve_directional(&speech, &speech.stt, true);
-    let tts = resolve_directional(&speech, &speech.tts, false);
+    let stt = resolve_directional(settings, &speech, &speech.stt, true);
+    let tts = resolve_directional(settings, &speech, &speech.tts, false);
     let stt_configured = stt.api_key.is_some();
     let tts_configured = tts.api_key.is_some();
     let configured = if separate { stt_configured && tts_configured } else { stt_configured || tts_configured };
     let shared_base_url = if separate {
         None
     } else {
-        non_empty_trimmed(speech.base_url.as_deref()).or_else(|| env_non_empty("OPENAI_BASE_URL"))
+        non_empty_trimmed(speech.base_url.as_deref()).or_else(|| env_non_empty(settings, "OPENAI_BASE_URL"))
     };
-    let raw_server = settings.raw_config_owner("server").ok();
-    let vc = raw_server.as_ref().and_then(|s| s.get("voiceConversation"));
     let desktop_engine = is_local && has_desktop_identity(settings);
 
     let mut out = Map::new();
@@ -397,13 +382,8 @@ pub(super) fn capabilities_json(settings: &Settings, is_local: bool) -> Result<V
             out.insert("ttsBaseUrl".into(), json!(url));
         }
     }
-    out.insert(
-        "voiceConversation".into(),
-        json!({
-            "geminiLive": { "configured": vc_provider_configured(vc, "geminiLive") },
-            "openaiRealtime": { "configured": vc_provider_configured(vc, "openaiRealtime") },
-        }),
-    );
+    // Omit `voiceConversation` while the live voice WebSocket `/api/speech/conversation/live`
+    // is not served here: the UI treats absence as unsupported instead of attempting a doomed upgrade.
     if desktop_engine {
         let mut consent = Map::new();
         for engine in ["gemini-live", "openai-realtime"] {

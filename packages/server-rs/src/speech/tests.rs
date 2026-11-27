@@ -64,8 +64,9 @@ impl Harness {
         .unwrap();
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let settings = Settings::new(Location::resolve(config_path.to_str().unwrap()));
-        // Isolate desktop voice env from host environment variables by default.
+        // Isolate desktop voice and speech env from host environment variables by default.
         settings.set_desktop_voice_env_for_test(None, "stable".into());
+        settings.set_speech_env_for_test(None, None);
         let dev = if ingress {
             devices::open_ingress_for_test(&dir, "https://10.0.0.5:9898".into())
         } else {
@@ -176,8 +177,40 @@ async fn capabilities_and_direction_resolution_match_ts_contracts() {
     assert_eq!(caps["sttBaseUrl"], "https://api.groq.com/openai/v1");
     assert_eq!(caps["sttModel"], "whisper-large-v3");
     assert_eq!(caps["ttsModel"], "shared-tts");
-    assert_eq!(caps["voiceConversation"]["geminiLive"]["configured"], true);
-    assert_eq!(caps["voiceConversation"]["openaiRealtime"]["configured"], false);
+    assert!(
+        caps.get("voiceConversation").is_none(),
+        "voiceConversation must stay omitted while /api/speech/conversation/live is not served"
+    );
+
+    // 2b. Process OPENAI_API_KEY applies only without an explicit YAML baseUrl (blocks remote-patched baseUrl exfiltration).
+    let h_env_default = Harness::new("speech-env-default", Some("server:\n  speech: {}\n"), false);
+    h_env_default.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), None);
+    let caps_env = super::config::capabilities_json(&h_env_default.app.settings, true).unwrap();
+    assert_eq!(caps_env["configured"], true);
+    assert_eq!(caps_env["sttConfigured"], true);
+    assert_eq!(caps_env["ttsConfigured"], true);
+
+    let h_env_custom_url = Harness::new(
+        "speech-env-custom-url",
+        Some("server:\n  speech:\n    baseUrl: https://attacker.invalid/v1\n"),
+        false,
+    );
+    h_env_custom_url.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), None);
+    let caps_blocked = super::config::capabilities_json(&h_env_custom_url.app.settings, true).unwrap();
+    assert_eq!(caps_blocked["configured"], false);
+    assert_eq!(caps_blocked["sttConfigured"], false);
+    assert_eq!(caps_blocked["ttsConfigured"], false);
+    assert!(super::config::resolve_stt_settings(&h_env_custom_url.app.settings).unwrap().api_key.is_none());
+    assert!(super::config::resolve_tts_settings(&h_env_custom_url.app.settings).unwrap().api_key.is_none());
+
+    let h_env_sep_custom = Harness::new(
+        "speech-env-sep-custom",
+        Some("server:\n  speech:\n    separateProviders: true\n    baseUrl: https://attacker.invalid/v1\n"),
+        false,
+    );
+    h_env_sep_custom.app.settings.set_speech_env_for_test(Some("sk-host-env-secret"), None);
+    assert!(super::config::resolve_stt_settings(&h_env_sep_custom.app.settings).unwrap().api_key.is_none());
+    assert!(super::config::resolve_tts_settings(&h_env_sep_custom.app.settings).unwrap().api_key.is_none());
 
     // 3. Directional key with matching shared URL forms a complete pair; foreign URL without key does not.
     let h_pair = Harness::new(
@@ -298,7 +331,8 @@ async fn desktop_engine_and_consent_isolate_by_profile_and_reject_remote() {
     assert_eq!(
         client
             .put(format!("{base}/api/speech/conversation/consent"))
-            .json(&json!({"engine": "gemini-live", "version": 2}))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(r#"{"engine":"gemini-live","version":2.0}"#)
             .send()
             .await
             .unwrap()
@@ -354,33 +388,74 @@ async fn desktop_engine_and_consent_isolate_by_profile_and_reject_remote() {
     server.abort();
 }
 
+type StallHook = Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>;
+
+struct DropSignal(Option<Arc<Notify>>);
+impl Drop for DropSignal {
+    fn drop(&mut self) {
+        if let Some(n) = self.0.take() {
+            n.notify_one();
+        }
+    }
+}
+
 #[tokio::test]
 async fn transcribe_handles_multipart_fallback_validation_redaction_and_cancellation() {
     let secret = "speech-credential-sentinel-not-a-real-key";
-    let bodies: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let bodies: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
     let mode: Arc<Mutex<&'static str>> = Arc::new(Mutex::new("fallback"));
-    let stall: Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>> = Arc::new(Mutex::new(None));
+    let stall: StallHook = Arc::new(Mutex::new(None));
+    let disconnect_dropped: Arc<Mutex<Option<Arc<Notify>>>> = Arc::new(Mutex::new(None));
     let calls = Arc::new(AtomicUsize::new(0));
+    let redirect_hits = Arc::new(AtomicUsize::new(0));
+
+    let r_hits = redirect_hits.clone();
+    let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_addr = redirect_listener.local_addr().unwrap();
+    let redirect_task = tokio::spawn(async move {
+        let router = Router::new().fallback(any(move || {
+            let hits = r_hits.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                Status::OK
+            }
+        }));
+        axum::serve(redirect_listener, router).await.unwrap();
+    });
 
     let b_ref = bodies.clone();
     let m_ref = mode.clone();
     let s_ref = stall.clone();
+    let d_ref = disconnect_dropped.clone();
     let c_ref = calls.clone();
+    let redirect_target = format!("http://{redirect_addr}/steal");
     let upstream_router = Router::new().fallback(any(move |req: Request| {
         let bodies = b_ref.clone();
         let mode = m_ref.clone();
         let stall = s_ref.clone();
+        let disconnect_dropped = d_ref.clone();
         let calls = c_ref.clone();
+        let redirect_target = redirect_target.clone();
         async move {
             assert_eq!(req.uri().path(), "/v1/audio/transcriptions");
             let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("").to_owned();
             assert_eq!(auth, format!("Bearer {secret}"));
             let raw = axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024).await.unwrap();
-            let text = String::from_utf8_lossy(&raw).into_owned();
             let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
-            bodies.lock().unwrap().push(text);
+            bodies.lock().unwrap().push(raw.to_vec());
             let cur_mode = *mode.lock().unwrap();
+            if cur_mode == "url_safe_ok" {
+                return (Status::OK, Json(json!({"text": "urlsafe"}))).into_response();
+            }
+            if cur_mode == "redirect" {
+                return Response::builder()
+                    .status(Status::TEMPORARY_REDIRECT)
+                    .header(header::LOCATION, redirect_target)
+                    .body(Body::empty())
+                    .unwrap();
+            }
             if cur_mode == "stall" {
+                let _drop_guard = DropSignal(disconnect_dropped.lock().unwrap().clone());
                 let hook = stall.lock().unwrap().clone();
                 if let Some((entered, release)) = hook {
                     entered.notify_one();
@@ -443,9 +518,11 @@ async fn transcribe_handles_multipart_fallback_validation_redaction_and_cancella
     {
         let recorded = bodies.lock().unwrap();
         assert_eq!(recorded.len(), 2);
-        assert!(recorded[0].contains("verbose_json"));
-        assert!(!recorded[1].contains("response_format"));
-        for body in recorded.iter() {
+        let first = String::from_utf8_lossy(&recorded[0]);
+        let second = String::from_utf8_lossy(&recorded[1]);
+        assert!(first.contains("verbose_json"));
+        assert!(!second.contains("response_format"));
+        for body in [&first, &second] {
             assert!(body.contains("filename=\"prompt-input.m4a\"\r\nContent-Type: audio/mp4"), "{body}");
         }
     }
@@ -470,6 +547,35 @@ async fn transcribe_handles_multipart_fallback_validation_redaction_and_cancella
         Status::BAD_GATEWAY
     );
     assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+    // 1b. URL-safe Base64 (without padding) decodes identically to Node Buffer.from(..., "base64").
+    *mode.lock().unwrap() = "url_safe_ok";
+    let urlsafe_res = client
+        .post(format!("{base}/api/speech/transcribe"))
+        .json(&json!({"audioBase64": "---_", "mimeType": "audio/wav"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(urlsafe_res.status(), Status::OK);
+    assert_eq!(urlsafe_res.json::<Value>().await.unwrap()["text"], "urlsafe");
+    assert!(
+        bodies.lock().unwrap().last().unwrap().windows(3).any(|w| w == [0xfb, 0xef, 0xbf]),
+        "URL-safe base64 payload bytes must match decoded audio"
+    );
+
+    // 1c. Cross-origin redirect returns 502 and never follows/leaks Authorization to another origin.
+    *mode.lock().unwrap() = "redirect";
+    assert_eq!(
+        client
+            .post(format!("{base}/api/speech/transcribe"))
+            .json(&json!({"audioBase64": "AAA=", "mimeType": "audio/wav"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        Status::BAD_GATEWAY
+    );
+    assert_eq!(redirect_hits.load(Ordering::SeqCst), 0, "cross-origin redirect must not be followed");
 
     // 2. Upstream credential echo is redacted from 502 response body.
     *mode.lock().unwrap() = "echo_secret";
@@ -524,8 +630,25 @@ async fn transcribe_handles_multipart_fallback_validation_redaction_and_cancella
     );
     unconf_server.abort();
 
-    // 5. Principal revocation aborts in-flight transcribe immediately with 401 and no retry.
+    // 5a. Client HTTP disconnect aborts the in-flight upstream STT request promptly without retrying.
     *mode.lock().unwrap() = "stall";
+    let calls_before_dc = calls.load(Ordering::SeqCst);
+    let (dc_entered, dc_release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let dc_dropped = Arc::new(Notify::new());
+    *stall.lock().unwrap() = Some((dc_entered.clone(), dc_release.clone()));
+    *disconnect_dropped.lock().unwrap() = Some(dc_dropped.clone());
+    let dc_client = client.clone();
+    let dc_url = format!("{base}/api/speech/transcribe");
+    let dc_task = tokio::spawn(async move {
+        let _ = dc_client.post(dc_url).json(&json!({"audioBase64": "YXVkaW8=", "mimeType": "audio/mp4"})).send().await;
+    });
+    tokio::time::timeout(Duration::from_secs(10), dc_entered.notified()).await.unwrap();
+    dc_task.abort();
+    tokio::time::timeout(Duration::from_secs(10), dc_dropped.notified()).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), calls_before_dc + 1, "disconnected transcribe must not retry");
+    *disconnect_dropped.lock().unwrap() = None;
+
+    // 5b. Principal revocation aborts in-flight transcribe immediately with 401 and no retry.
     let calls_before = calls.load(Ordering::SeqCst);
     let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     *stall.lock().unwrap() = Some((entered.clone(), release.clone()));
@@ -553,6 +676,7 @@ async fn transcribe_handles_multipart_fallback_validation_redaction_and_cancella
 
     server.abort();
     up_task.abort();
+    redirect_task.abort();
 }
 
 #[tokio::test]
@@ -561,23 +685,31 @@ async fn synthesize_stream_relays_binary_audio_redacts_errors_and_cancels_upstre
     let mode: Arc<Mutex<&'static str>> = Arc::new(Mutex::new("binary"));
     let entered_hook: Arc<Mutex<Option<Arc<Notify>>>> = Arc::new(Mutex::new(None));
     let dropped_hook: Arc<Mutex<Option<Arc<Notify>>>> = Arc::new(Mutex::new(None));
+    let redirect_hits = Arc::new(AtomicUsize::new(0));
 
-    struct DropSignal(Option<Arc<Notify>>);
-    impl Drop for DropSignal {
-        fn drop(&mut self) {
-            if let Some(n) = self.0.take() {
-                n.notify_one();
+    let r_hits = redirect_hits.clone();
+    let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_addr = redirect_listener.local_addr().unwrap();
+    let redirect_task = tokio::spawn(async move {
+        let router = Router::new().fallback(any(move || {
+            let hits = r_hits.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                Status::OK
             }
-        }
-    }
+        }));
+        axum::serve(redirect_listener, router).await.unwrap();
+    });
 
     let m_ref = mode.clone();
     let e_ref = entered_hook.clone();
     let d_ref = dropped_hook.clone();
+    let redirect_target = format!("http://{redirect_addr}/steal");
     let upstream_router = Router::new().fallback(any(move |req: Request| {
         let mode = m_ref.clone();
         let entered_hook = e_ref.clone();
         let dropped_hook = d_ref.clone();
+        let redirect_target = redirect_target.clone();
         async move {
             assert_eq!(req.uri().path(), "/v1/audio/speech");
             let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("").to_owned();
@@ -589,6 +721,13 @@ async fn synthesize_stream_relays_binary_audio_redacts_errors_and_cancels_upstre
                     .status(Status::OK)
                     .header(header::CONTENT_TYPE, "audio/wav")
                     .body(Body::from(vec![0u8, 128u8, 255u8]))
+                    .unwrap(),
+                "no_content" => Status::NO_CONTENT.into_response(),
+                "reset_content" => Status::RESET_CONTENT.into_response(),
+                "redirect" => Response::builder()
+                    .status(Status::TEMPORARY_REDIRECT)
+                    .header(header::LOCATION, redirect_target)
+                    .body(Body::empty())
                     .unwrap(),
                 "echo_secret" => (Status::BAD_REQUEST, Json(json!({"error": {"message": secret}}))).into_response(),
                 "stall_before_headers" => {
@@ -670,6 +809,23 @@ async fn synthesize_stream_relays_binary_audio_redacts_errors_and_cancels_upstre
     assert_eq!(err_res.status(), Status::BAD_GATEWAY);
     assert!(!err_res.text().await.unwrap().contains(secret));
 
+    // 3b. Upstream 204/205 empty-body responses and cross-origin redirects return 502.
+    for upstream_mode in ["no_content", "reset_content", "redirect"] {
+        *mode.lock().unwrap() = upstream_mode;
+        assert_eq!(
+            client
+                .post(format!("{base}/api/speech/synthesize/stream"))
+                .json(&json!({"text": "fixture"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            Status::BAD_GATEWAY,
+            "mode {upstream_mode}"
+        );
+    }
+    assert_eq!(redirect_hits.load(Ordering::SeqCst), 0, "TTS cross-origin redirect must not be followed");
+
     // 4. Disconnecting before headers closes the upstream provider request.
     *mode.lock().unwrap() = "stall_before_headers";
     let (entered, dropped) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
@@ -706,6 +862,7 @@ async fn synthesize_stream_relays_binary_audio_redacts_errors_and_cancels_upstre
 
     server.abort();
     up_task.abort();
+    redirect_task.abort();
 }
 
 #[tokio::test]

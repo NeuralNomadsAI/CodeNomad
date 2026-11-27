@@ -62,13 +62,33 @@ fn is_loopback_url(url: &Url) -> bool {
     trimmed.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
+fn same_origin_redirect_policy() -> reqwest::redirect::Policy {
+    // Only follow same-origin redirects (scheme + host + port) so Authorization
+    // is never sent in cleartext on HTTPS -> HTTP downgrades or to foreign origins.
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() < 10
+            && attempt
+                .previous()
+                .first()
+                .is_some_and(|origin| origin.origin().is_tuple() && origin.origin() == attempt.url().origin())
+        {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
 fn http_client(url: &Url) -> Result<&'static Client, ProviderError> {
     let loopback = is_loopback_url(url);
     let slot = if loopback { &SPEECH_LOOPBACK_CLIENT } else { &SPEECH_CLIENT };
     if let Some(client) = slot.get() {
         return Ok(client);
     }
-    let mut builder = Client::builder().connect_timeout(Duration::from_secs(30)).read_timeout(Duration::from_secs(300));
+    let mut builder = Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(300))
+        .redirect(same_origin_redirect_policy());
     if loopback {
         builder = builder.no_proxy();
     }
@@ -81,15 +101,26 @@ fn format_rejection_regex() -> &'static Regex {
 }
 
 pub(super) fn decode_audio_base64(raw: &str) -> Result<Vec<u8>, ()> {
-    let compact: String = raw.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    if compact.is_empty() {
+    // Accept both standard (+/) and URL-safe (-_) Base64 alphabets like Node's Buffer.from(..., "base64").
+    let mut normalized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+        normalized.push(match ch {
+            '-' => '+',
+            '_' => '/',
+            other => other,
+        });
+    }
+    if normalized.is_empty() {
         return Err(());
     }
     let engine = GeneralPurpose::new(
         &alphabet::STANDARD,
         GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
     );
-    let bytes = engine.decode(compact).map_err(|_| ())?;
+    let bytes = engine.decode(normalized).map_err(|_| ())?;
     if bytes.is_empty() {
         return Err(());
     }
@@ -355,7 +386,8 @@ pub(super) async fn synthesize_stream(
         drop(response);
         return Err(ProviderError::Cancelled);
     }
-    if !response.status().is_success() {
+    let status = response.status();
+    if !status.is_success() || matches!(status, reqwest::StatusCode::NO_CONTENT | reqwest::StatusCode::RESET_CONTENT) {
         drop(response);
         return Err(ProviderError::Upstream);
     }

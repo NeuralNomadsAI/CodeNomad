@@ -32,7 +32,7 @@ use provider::{ProviderError, SynthesizeInput, TranscribeInput, decode_audio_bas
 
 const TRANSCRIPTION_BODY_LIMIT: usize = 1024 * 1024;
 const SYNTHESIZE_BODY_LIMIT: usize = 1024 * 1024;
-const CONTROL_BODY_LIMIT: usize = 4096;
+const CONTROL_BODY_LIMIT: usize = 1024 * 1024;
 const NOT_CONFIGURED_MESSAGE: &str = "Speech provider is not configured. Add an API key in Speech settings.";
 
 pub fn routes() -> Router<Shared> {
@@ -132,7 +132,7 @@ async fn put_consent(
     let invalid = || error(Status::BAD_REQUEST, "Invalid voice notice");
     let obj = value.as_object().filter(|o| o.len() == 2).ok_or_else(invalid)?;
     let engine = obj.get("engine").and_then(Value::as_str).and_then(parse_live_voice_engine).ok_or_else(invalid)?;
-    let version_ok = obj.get("version").and_then(Value::as_u64) == Some(LIVE_VOICE_NOTICE_VERSION);
+    let version_ok = obj.get("version").and_then(Value::as_f64).is_some_and(|v| v == LIVE_VOICE_NOTICE_VERSION as f64);
     if !version_ok {
         return Err(invalid());
     }

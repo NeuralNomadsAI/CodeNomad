@@ -41,6 +41,8 @@ pub struct Settings {
     write_exit: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     #[cfg(test)]
     desktop_voice_env: Mutex<Option<(Option<String>, String)>>,
+    #[cfg(test)]
+    speech_env: Mutex<Option<(Option<String>, Option<String>)>>,
 }
 
 #[cfg(test)]
@@ -50,6 +52,13 @@ impl Settings {
     }
     pub(crate) fn desktop_voice_env_for_test(&self) -> Option<(Option<String>, String)> {
         self.desktop_voice_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub(crate) fn set_speech_env_for_test(&self, api_key: Option<&str>, base_url: Option<&str>) {
+        *self.speech_env.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((api_key.map(str::to_owned), base_url.map(str::to_owned)));
+    }
+    pub(crate) fn speech_env_for_test(&self) -> Option<(Option<String>, Option<String>)> {
+        self.speech_env.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub(crate) fn lock_write_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
         self.write.lock().unwrap_or_else(|e| e.into_inner())
@@ -112,6 +121,8 @@ impl Settings {
             write_exit: Mutex::new(None),
             #[cfg(test)]
             desktop_voice_env: Mutex::new(None),
+            #[cfg(test)]
+            speech_env: Mutex::new(None),
         }
     }
     fn file(&self, kind: Kind) -> &std::path::Path {
