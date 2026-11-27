@@ -6,7 +6,9 @@ use std::{
     sync::Arc,
 };
 
-fn make_window(prefs: Preferences) -> (Rc<RefCell<Preferences>>, rune::Runtime<view::Window>) {
+pub(super) fn make_window(
+    prefs: Preferences,
+) -> (Rc<RefCell<Preferences>>, rune::Runtime<view::Window>) {
     let root = crate::init();
     let shared = root.settings.shared.clone();
     *shared.borrow_mut() = prefs;
@@ -21,21 +23,21 @@ fn make_window(prefs: Preferences) -> (Rc<RefCell<Preferences>>, rune::Runtime<v
     (shared, rt)
 }
 
-fn click(rt: &mut rune::Runtime<view::Window>, key: &str) {
+pub(super) fn click(rt: &mut rune::Runtime<view::Window>, key: &str) {
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing key {key}"));
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.02);
 }
 
-fn tick(rt: &mut rune::Runtime<view::Window>) {
+pub(super) fn tick(rt: &mut rune::Runtime<view::Window>) {
     rt.update(|s, tx| {
         view::spec().poll.unwrap()(s, 0.0, tx);
     });
     rt.frame(0.02);
 }
 
-async fn settle_meta(listener: &TcpListener, rt: &mut rune::Runtime<view::Window>) {
+pub(super) async fn settle_meta(listener: &TcpListener, rt: &mut rune::Runtime<view::Window>) {
     tick(rt);
     let meta = request(listener).await;
     assert_eq!(meta.first, "GET /api/meta HTTP/1.1");
@@ -43,7 +45,10 @@ async fn settle_meta(listener: &TcpListener, rt: &mut rune::Runtime<view::Window
     tick(rt);
 }
 
-async fn next_request(listener: &TcpListener, rt: &mut rune::Runtime<view::Window>) -> Request {
+pub(super) async fn next_request(
+    listener: &TcpListener,
+    rt: &mut rune::Runtime<view::Window>,
+) -> Request {
     timeout(Duration::from_secs(5), async {
         loop {
             tick(rt);
@@ -57,7 +62,7 @@ async fn next_request(listener: &TcpListener, rt: &mut rune::Runtime<view::Windo
     .expect("timed out waiting for expected missions HTTP request")
 }
 
-fn click_option(rt: &mut rune::Runtime<view::Window>, prefix: &str, text: &str) {
+pub(super) fn click_option(rt: &mut rune::Runtime<view::Window>, prefix: &str, text: &str) {
     let key = rt.elements().into_iter().find_map(|el| {
         let key = el.key?;
         (key.starts_with(prefix) && key != format!("{prefix}-trigger")).then_some(key)
@@ -119,6 +124,17 @@ fn missions_without_project_context_makes_no_project_reads_and_persists_global_d
             })
         );
         patch
+            .reply(
+                200,
+                json!({"settings": {"locale": "en", "missionDeleteSessions": true}}),
+            )
+            .await;
+        let confirm_read = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            confirm_read.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        confirm_read
             .reply(
                 200,
                 json!({"settings": {"locale": "en", "missionDeleteSessions": true}}),
@@ -420,28 +436,31 @@ fn missions_saved_configurations_remove_and_invalid_repair_require_confirmation(
                 "expected": [{ "key": "missionProfileDefaults", "present": true, "value": "corrupt" }]
             })
         );
-        repair
-            .reply(
-                200,
-                json!({
-                    "settings": {
-                        "locale": "en",
-                        "missionProfileDefaults": [],
-                        "missionModels": [{
-                            "version": 1,
-                            "id": model_id,
-                            "name": "Nightly Audit",
-                            "objective": "Check build",
-                            "notes": "",
-                            "template": "custom"
-                        }]
-                    }
-                }),
-            )
-            .await;
+        let repaired_doc = json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": [],
+                "missionModels": [{
+                    "version": 1,
+                    "id": model_id,
+                    "name": "Nightly Audit",
+                    "objective": "Check build",
+                    "notes": "",
+                    "template": "custom"
+                }]
+            }
+        });
+        repair.reply(200, repaired_doc.clone()).await;
+        let repair_read = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            repair_read.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        repair_read.reply(200, repaired_doc).await;
         wait_until(|| {
             tick(&mut rt);
             rt.find("mission-defaults-repair").is_none()
+                && !shared.borrow().missions.defaults_writing()
         })
         .await;
 
@@ -463,18 +482,20 @@ fn missions_saved_configurations_remove_and_invalid_repair_require_confirmation(
             "PATCH /api/storage/config/ui?conditional=missions-v1 HTTP/1.1"
         );
         assert_eq!(remove.body["patch"]["settings"]["missionModels"], json!([]));
-        remove
-            .reply(
-                200,
-                json!({
-                    "settings": {
-                        "locale": "en",
-                        "missionProfileDefaults": [],
-                        "missionModels": []
-                    }
-                }),
-            )
-            .await;
+        let removed_doc = json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": [],
+                "missionModels": []
+            }
+        });
+        remove.reply(200, removed_doc.clone()).await;
+        let remove_read = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            remove_read.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        remove_read.reply(200, removed_doc).await;
         wait_until(|| {
             tick(&mut rt);
             shared
@@ -892,7 +913,7 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
         );
 
         // Opening Preferences with no active project/launcher must not panic on RefCell re-borrow.
-        let mut empty = crate::init();
+        let empty = crate::init();
         let mut empty_backend = shared.borrow().backend.clone().unwrap();
         empty_backend.session_directory = Some("/empty-tab-checkout".into());
         empty.settings.shared.borrow_mut().backend = Some(empty_backend);
@@ -900,25 +921,11 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
         assert_eq!(opener.as_deref(), Some("/empty-tab-checkout"));
         {
             let mut prefs = empty.settings.shared.borrow_mut();
-            prefs.missions.capture_opener(opener);
+            prefs.missions.capture_opener(opener, None);
             assert_eq!(
                 prefs.missions.pinned_directory(),
                 Some("/empty-tab-checkout")
             );
         }
-
-        // Stale external ACK with older guard does not overwrite a newer snapshot.
-        let stale_guard = shared.borrow().config_guard();
-        shared.borrow_mut().invalidate_config_for_missions();
-        shared.borrow_mut().apply_mission_config_checked(
-            json!({"settings": {"locale": "fr", "missionDeleteSessions": true}}),
-            stale_guard,
-        );
-        assert!(
-            shared
-                .borrow()
-                .saved(Owner::Config)
-                .is_some_and(|doc| doc["settings"]["missionDeleteSessions"].is_null())
-        );
     });
 }

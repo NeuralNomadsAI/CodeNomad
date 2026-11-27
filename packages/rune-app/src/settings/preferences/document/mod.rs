@@ -35,6 +35,7 @@ struct Read {
     queued: bool,
     failed: bool,
     reattach: bool,
+    force_authoritative: bool,
     recheck: bool,
     fresh_for_write: bool,
 }
@@ -150,6 +151,12 @@ impl Document {
         self.invalidation_seq.fetch_add(1, Ordering::Release);
     }
 
+    pub(super) fn invalidate_authoritative(&mut self) {
+        self.read.queued = true;
+        self.read.force_authoritative = true;
+        self.invalidation_seq.fetch_add(1, Ordering::Release);
+    }
+
     pub(super) fn invalidate_from_sse(&mut self) {
         self.read.queued = true;
     }
@@ -181,31 +188,25 @@ impl Document {
         self.read.failed
     }
 
-    pub(super) fn invalidation_seq(&self) -> u64 {
-        self.invalidation_seq.load(Ordering::Acquire)
-    }
-
     pub(super) fn write_authority(&self) -> (Arc<AtomicU64>, u64) {
         (self.epoch_guard.clone(), self.transport_epoch)
     }
 
-    pub(super) fn apply_external_snapshot(
-        &mut self,
-        snapshot: Value,
-        expected_seq: Option<u64>,
-    ) -> bool {
-        if self.read.reattach
-            || self.read.queued
-            || self.flight.is_some()
-            || expected_seq.is_some_and(|seq| seq != self.invalidation_seq.load(Ordering::Acquire))
-        {
-            self.invalidate();
-            return false;
-        }
+    pub(super) fn busy_for_external_write(&self) -> bool {
+        self.refreshing()
+            || !self.write.pending.is_empty()
+            || self.next_transcript_ready()
+            || !self.write.retry.is_empty()
+            || !self.write.uncertain.is_empty()
+            || self.confirmed_epoch != self.transport_epoch
+            || self.read.failed
+    }
+
+    #[cfg(test)]
+    pub(super) fn seed_external_snapshot(&mut self, snapshot: Value) {
         self.snapshot = Some(snapshot);
         self.read.failed = false;
         self.invalidation_seq.fetch_add(1, Ordering::Release);
-        true
     }
 
     pub(super) fn awaiting_initial_read(&self) -> bool {

@@ -792,7 +792,8 @@ try {
   }
 
   async function checkStats() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
+    assert.equal(streams.size,1,'Stats shares the single multiplexed EventSource')
+    const stream = Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
     const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
@@ -857,11 +858,13 @@ try {
     await page.waitForFunction(()=>!document.body.innerText.includes('Daily activity'))
     assert.equal(aggregates.length,6)
     assert.deepEqual(unexpected,[])
+    assert.equal(streams.size,1,'Stats keeps the single multiplexed EventSource')
     console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,restoredOtherWindow:true,emptyBreakdowns:true,hiddenAbort:true,hiddenRefresh:false}))
   }
 
   async function checkNotifications() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
+    assert.equal(streams.size,1,'Notifications shares the single multiplexed EventSource')
+    const stream = Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const message = 'Short announcement from the fixture'
     const envelope = {type:'instance.event',instanceId:project.id,event:{
@@ -923,6 +926,7 @@ try {
     assert.equal(notificationRouting.copy.history,true)
     assert.equal(notificationRouting.copy.system,true)
     assert.equal(notifyFocused,true)
+    assert.equal(streams.size,1,'Notifications keeps the single multiplexed EventSource')
     console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true,bubbleAnnounced:true,bubbleExpired:true,accessibleUnread:true}))
   }
 

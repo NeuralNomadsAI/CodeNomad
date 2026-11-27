@@ -254,6 +254,7 @@ impl Document {
         active_client_ids: &[String],
         seen_drops: u64,
         prefs_transport_lost: bool,
+        external_write_in_flight: bool,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> (bool, bool) {
@@ -393,6 +394,9 @@ impl Document {
                 settled = true;
             }
         }
+        if external_write_in_flight {
+            return (changed, settled);
+        }
         let writes_allowed = !self.read.failed && self.confirmed_epoch == self.transport_epoch;
         let atomic = backend.client.supports_atomic_settings_patches();
         if writes_allowed
@@ -415,20 +419,24 @@ impl Document {
         let needs_fresh_on_disk = !atomic && self.needs_fresh_snapshot();
         let operation = if !self.write.retry.is_empty() {
             self.read.reattach = false;
+            self.read.force_authoritative = false;
             self.read.queued = false;
             Operation::Read {
                 retry: std::mem::take(&mut self.write.retry),
             }
         } else if std::mem::take(&mut self.read.reattach) {
+            self.read.force_authoritative = false;
             self.read.queued = false;
             Operation::Read {
                 retry: BTreeSet::new(),
             }
-        } else if writes_allowed
-            && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
-                || ((needs_fresh_on_disk || palette_needs_fresh) && !self.read.fresh_for_write)
-                || (palette_needs_fresh && (self.read.queued || sse_stale))
-                || (!self.write.uncertain.is_empty() && self.read.queued))
+        } else if std::mem::take(&mut self.read.force_authoritative)
+            || (writes_allowed
+                && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
+                    || ((needs_fresh_on_disk || palette_needs_fresh)
+                        && !self.read.fresh_for_write)
+                    || (palette_needs_fresh && (self.read.queued || sse_stale))
+                    || (!self.write.uncertain.is_empty() && self.read.queued)))
         {
             self.read.queued = false;
             Operation::Read {

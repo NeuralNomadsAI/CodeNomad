@@ -1,11 +1,16 @@
 //! Location-scoped Subagent depth state machine matching `mission-subagent-depth.tsx`.
-use crate::{platform, settings::providers::Target};
+use super::SendAuthority;
+use crate::{
+    platform,
+    settings::{ServerOwner, providers::Target},
+};
 use codenomad_client::{
     Receiver, Sender, bounded, same_server_path,
     settings::missions::{
         SubagentDepthError, SubagentDepthSnapshot, read_subagent_depth, set_subagent_depth,
     },
 };
+use std::sync::{Arc, atomic::AtomicU64};
 
 struct QueuedChoice {
     value: String,
@@ -61,6 +66,7 @@ pub(super) struct State {
     scope: Option<(String, u64)>,
     opener_directory: Option<String>,
     authority: u64,
+    resolved_authority: Option<u64>,
     seen_revision: Option<u64>,
     read_started_revision: Option<u64>,
     manual_epoch: u64,
@@ -82,15 +88,33 @@ impl State {
             *self = Self::default();
             return;
         }
-        self.suspend();
+        self.invalidate_location();
+    }
+
+    pub(super) fn invalidate_location(&mut self) -> bool {
+        let mut changed = self.resolved_authority.take().is_some()
+            | self.queued.take().is_some()
+            | std::mem::take(&mut self.pending_save)
+            | std::mem::take(&mut self.dirty)
+            | self.read_flight.take().is_some()
+            | self.read_started_revision.take().is_some()
+            | self.seen_revision.take().is_some();
         if self.phase == Phase::Saving || self.save_flight.is_some() {
             self.save_flight = None;
-            self.pending_save = false;
-            self.queued = None;
             self.phase = Phase::Uncertain;
+            changed = true;
+        } else if self.phase == Phase::Reading {
+            self.phase = if self.snapshot.is_some() {
+                Phase::Ready
+            } else {
+                Phase::Idle
+            };
+            changed = true;
         } else if self.phase == Phase::Unsupported {
             self.phase = Phase::Idle;
+            changed = true;
         }
+        changed
     }
 
     pub(super) fn suspend(&mut self) {
@@ -164,19 +188,38 @@ impl State {
         self.busy() || self.pending_save
     }
 
-    pub(super) fn disabled(&self, active: bool, has_target: bool) -> bool {
+    pub(super) fn disabled(
+        &self,
+        active: bool,
+        has_target: bool,
+        pinned_directory: Option<&str>,
+    ) -> bool {
+        let Some(directory) = pinned_directory else {
+            return true;
+        };
         !active
             || !has_target
             || matches!(self.phase, Phase::Uncertain | Phase::Unsupported)
             || self.error
+            || self.resolved_authority != Some(self.authority)
+            || self
+                .opener_directory
+                .as_deref()
+                .is_none_or(|od| !same_server_path(od, directory))
             || self
                 .snapshot
                 .as_ref()
                 .is_none_or(|s| s.capability.is_none() || s.project.is_none())
     }
 
-    pub(super) fn choose(&mut self, value: String, active: bool, has_target: bool) {
-        if self.disabled(active, has_target) || value == "masked" {
+    pub(super) fn choose(
+        &mut self,
+        value: String,
+        active: bool,
+        has_target: bool,
+        pinned_directory: Option<&str>,
+    ) {
+        if self.disabled(active, has_target, pinned_directory) || value == "masked" {
             return;
         }
         if !self.locked() && value == self.saved_value() {
@@ -260,6 +303,8 @@ impl State {
         open_epoch: u64,
         transport_lost: bool,
         active: bool,
+        prefs_authority: &Arc<AtomicU64>,
+        #[cfg(test)] pre_put_gate: &mut Option<Receiver<()>>,
         wake: &rune::Waker,
     ) -> bool {
         let mut changed = false;
@@ -281,24 +326,21 @@ impl State {
                 && self.authority != authority
             {
                 self.authority = authority;
-                self.seen_revision = None;
-                self.queued = None;
-                if self.phase == Phase::Saving || self.save_flight.is_some() {
-                    self.save_flight = None;
-                    self.pending_save = false;
-                    self.phase = Phase::Uncertain;
-                } else if self.phase == Phase::Reading {
-                    self.suspend();
-                } else if self.phase == Phase::Unsupported {
-                    self.phase = Phase::Idle;
-                }
-                changed = true;
+                changed |= self.invalidate_location();
             }
             let (save_changed, _) = self.poll_save_only(transport_lost || !target.online());
             changed |= save_changed;
-            if location_failed && self.snapshot.is_none() && !self.error {
-                self.error = true;
-                changed = true;
+            if location_failed && self.phase != Phase::Uncertain {
+                if self.snapshot.take().is_some() {
+                    self.opener_directory = None;
+                    self.resolved_authority = None;
+                    self.draft.clear();
+                    changed = true;
+                }
+                if !self.error {
+                    self.error = true;
+                    changed = true;
+                }
             }
             return changed;
         };
@@ -319,6 +361,8 @@ impl State {
                     || self.queued.is_some());
             if keep_same_checkout {
                 self.scope = Some(scope);
+                self.authority = authority;
+                self.resolved_authority = None;
                 self.suspend();
             } else {
                 *self = Self {
@@ -330,15 +374,24 @@ impl State {
             changed = true;
         } else if self.authority != authority {
             self.authority = authority;
-            self.seen_revision = None;
+            changed |= self.invalidate_location();
+        }
+        if self
+            .opener_directory
+            .as_deref()
+            .is_some_and(|od| !same_server_path(od, directory))
+        {
+            self.suspend();
             self.queued = None;
-            if self.phase == Phase::Saving || self.save_flight.is_some() {
-                self.save_flight = None;
-                self.pending_save = false;
-                self.phase = Phase::Uncertain;
-            } else if self.phase == Phase::Reading {
-                self.suspend();
-            } else if self.phase == Phase::Unsupported {
+            self.pending_save = false;
+            self.dirty = false;
+            self.saved = false;
+            self.error = false;
+            self.resolved_authority = None;
+            self.opener_directory = None;
+            if self.phase != Phase::Uncertain {
+                self.snapshot = None;
+                self.draft.clear();
                 self.phase = Phase::Idle;
             }
             changed = true;
@@ -388,6 +441,7 @@ impl State {
                                 && valid_depth_choice(&snapshot, &queued.value)
                         });
                         self.opener_directory = Some(directory.to_owned());
+                        self.resolved_authority = Some(authority);
                         self.snapshot = Some(snapshot);
                         self.draft = fresh;
                         self.dirty = false;
@@ -419,7 +473,18 @@ impl State {
 
         if self.pending_save && self.save_flight.is_none() && self.read_flight.is_none() {
             self.pending_save = false;
-            if let Some(snapshot) = &self.snapshot
+            if self.resolved_authority != Some(authority)
+                || self
+                    .opener_directory
+                    .as_deref()
+                    .is_none_or(|od| !same_server_path(od, directory))
+                || !ServerOwner::backend_verified(backend)
+            {
+                self.dirty = false;
+                self.queued = None;
+                self.draft = confirmed_depth_value(self.snapshot.as_ref());
+                changed = true;
+            } else if let Some(snapshot) = &self.snapshot
                 && let (Some(capability), Some(project)) = (&snapshot.capability, &snapshot.project)
             {
                 let parsed = if self.draft.is_empty() {
@@ -434,6 +499,13 @@ impl State {
                         .map(Some)
                 };
                 if let Some(depth) = parsed {
+                    let send_authority = SendAuthority::capture(
+                        prefs_authority.clone(),
+                        None,
+                        backend,
+                        #[cfg(test)]
+                        pre_put_gate.take(),
+                    );
                     let (out, inbox) = bounded(1);
                     let backend = backend.clone();
                     let workspace = workspace.to_owned();
@@ -445,14 +517,18 @@ impl State {
                     self.saved = false;
                     self.save_flight = Some(inbox);
                     platform::spawn(async move {
-                        let result = set_subagent_depth(
-                            &backend,
-                            &workspace,
-                            &directory,
-                            depth,
-                            &expectation,
-                        )
-                        .await;
+                        let result = if !send_authority.authorize_send(&backend).await {
+                            Err(SubagentDepthError::Failed)
+                        } else {
+                            set_subagent_depth(
+                                &backend,
+                                &workspace,
+                                &directory,
+                                depth,
+                                &expectation,
+                            )
+                            .await
+                        };
                         if out.send(result).await.is_ok() {
                             wake();
                         }
@@ -531,12 +607,14 @@ mod tests {
     fn queued_choice_is_dropped_when_directory_changes_and_flush_never_spins_on_pending_save() {
         let mut state = State {
             authority: 7,
+            resolved_authority: Some(7),
+            opener_directory: Some("/checkout-a".into()),
             phase: Phase::Saving,
             snapshot: Some(snap("/checkout-a", Some(2))),
             draft: "2".into(),
             ..State::default()
         };
-        state.choose("4".into(), true, true);
+        state.choose("4".into(), true, true, Some("/checkout-a"));
         assert!(state.queued.is_some());
         assert!(!state.saving());
         assert!(state.has_unconfirmed());
@@ -557,9 +635,18 @@ mod tests {
 
         // An unsubmitted pending_save reports unconfirmed without blocking flush draining.
         state.phase = Phase::Ready;
-        state.choose("3".into(), true, true);
+        state.choose("3".into(), true, true, Some("/checkout-a"));
         assert!(state.pending_save);
         assert!(!state.saving());
         assert!(state.has_unconfirmed());
+
+        // Invalidating location drops pending writes and blocks new choices until re-resolved.
+        assert!(state.invalidate_location());
+        assert!(!state.pending_save);
+        assert!(state.queued.is_none());
+        assert!(state.disabled(true, true, None));
+        assert!(state.disabled(true, true, Some("/checkout-a")));
+        state.choose("5".into(), true, true, Some("/checkout-a"));
+        assert!(!state.pending_save);
     }
 }

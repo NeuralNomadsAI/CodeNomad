@@ -69,6 +69,7 @@ impl State {
         &self,
         active: bool,
         has_target: bool,
+        pinned_directory: Option<&str>,
         info_open: Option<InfoTip>,
         open_picker: Option<Picker>,
         layers: &mut Vec<El>,
@@ -77,7 +78,7 @@ impl State {
         choose: impl Fn(&mut S, String) + Clone + 'static,
         refresh: impl Fn(&mut S) + Clone + 'static,
     ) -> El {
-        let disabled = self.disabled(active, has_target);
+        let disabled = self.disabled(active, has_target, pinned_directory);
         let effective = self.snapshot.as_ref().and_then(|s| s.effective_depth);
         let inherit_label = if self
             .snapshot
