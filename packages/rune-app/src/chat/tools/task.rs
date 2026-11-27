@@ -112,7 +112,7 @@ pub(super) fn body(
         && query.is_some_and(|q| {
             q.active
                 && q.claimed.is_none_or(|c| !c.get())
-                && super::super::document::bounded_prose_matches_for(
+                && super::super::document::bounded_prose_highlights_for(
                     s,
                     key,
                     &prompt_key,

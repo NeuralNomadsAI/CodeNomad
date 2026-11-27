@@ -29,6 +29,19 @@ pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) 
     !ranges.is_empty() || active_image.is_some() || unhighlighted_image
 }
 
+pub fn prose_has_match_with_images(
+    source: &str,
+    truncated: bool,
+    query: crate::timeline::search::Query<'_>,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> bool {
+    let source = literal_breaks_with_images(source, truncated, fallback_label);
+    let (ranges, active_image, unhighlighted_image) =
+        prose_ranges_with_images(&source, query, 1, image_search_text);
+    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
+}
+
 pub fn prose_has_highlight_with_images(
     source: &str,
     truncated: bool,
@@ -97,7 +110,10 @@ pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<LiftedImage> {
                             .push_back(std::mem::take(&mut current_alt));
                     }
                 }
-                Event::Text(text) | Event::Code(text) => current_alt.push_str(&text),
+                Event::Text(text)
+                | Event::Code(text)
+                | Event::InlineHtml(text)
+                | Event::Html(text) => current_alt.push_str(&text),
                 Event::SoftBreak | Event::HardBreak => current_alt.push(' '),
                 _ => {}
             }
@@ -374,7 +390,12 @@ fn prose_ranges_with_images(
                         }
                     }
                 }
-                Event::Text(ref text) | Event::Code(ref text) if skipped_image_collect_alt => {
+                Event::Text(ref text)
+                | Event::Code(ref text)
+                | Event::InlineHtml(ref text)
+                | Event::Html(ref text)
+                    if skipped_image_collect_alt =>
+                {
                     skipped_image_alt.push_str(text);
                 }
                 Event::SoftBreak | Event::HardBreak if skipped_image_collect_alt => {
@@ -706,7 +727,10 @@ fn literal_breaks_with_images<'a>(
                         last = range.end;
                     }
                 }
-                Event::Text(text) | Event::Code(text) => stripped_alt.push_str(&text),
+                Event::Text(text)
+                | Event::Code(text)
+                | Event::InlineHtml(text)
+                | Event::Html(text) => stripped_alt.push_str(&text),
                 Event::SoftBreak | Event::HardBreak => stripped_alt.push(' '),
                 _ => {}
             }
@@ -1223,6 +1247,18 @@ fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text()
         &|_, _| None,
         &|_| ImageSearch::Inline,
     ));
+    let html_alt = literal_breaks_with_images("![<chart>](missing.png)", false, &|src, _| {
+        Some(src.to_owned())
+    });
+    assert_eq!(html_alt, "![&#60;chart&#62;]()");
+    let html_terms = vec!["<chart>".into()];
+    let html_query = crate::timeline::search::Query {
+        terms: &html_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(prose_has_match(&html_alt, html_query));
     assert_eq!(
         prose_lifted_images(
             "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)\n\n![left![ ](https://example.test/i.png)right](ws.png)",

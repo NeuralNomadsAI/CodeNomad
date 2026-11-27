@@ -238,8 +238,9 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         None
     );
 
-    // A lifted remote image in a task prompt must not claim the active highlight away from
-    // subsequent paintable prose (such as task output).
+    // A lifted remote image in a task prompt stays visible for hidden-input probing
+    // (`bounded_prose_matches_for`) without claiming the active highlight away from subsequent
+    // paintable prose (`bounded_prose_highlights_for`).
     let s = init();
     let terms = vec!["Plan".into()];
     let query = rune_theme_codenomad::timeline::search::Query {
@@ -248,7 +249,7 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         active: true,
         claimed: None,
     };
-    assert!(!super::super::bounded_prose_matches_for(
+    assert!(super::super::bounded_prose_matches_for(
         &s,
         "task-card",
         "task-card-task-prompt",
@@ -257,7 +258,16 @@ fn match_local_image_handles_windows_case_relative_suffix_ambiguity_and_percent_
         Conversation::Root,
         query,
     ));
-    assert!(super::super::bounded_prose_matches_for(
+    assert!(!super::super::bounded_prose_highlights_for(
+        &s,
+        "task-card",
+        "task-card-task-prompt",
+        "![Plan](https://example.test/plan.png)",
+        4096,
+        Conversation::Root,
+        query,
+    ));
+    assert!(super::super::bounded_prose_highlights_for(
         &s,
         "task-card",
         "task-card-task-output",

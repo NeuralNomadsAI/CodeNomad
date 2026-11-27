@@ -81,6 +81,26 @@ pub(super) fn bounded_prose_matches(
     let local = local_images::prepare(s, key, &shown, truncated, conversation);
     let fallback = local.fallback_label();
     let image_search = local.image_search_text();
+    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback, &image_search)
+}
+
+pub(super) fn bounded_prose_highlights_for(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    base_limit: usize,
+    conversation: Conversation<'_>,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
+    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
+    let truncated = shown.len() < source.len();
+    let local = local_images::prepare(s, key, &shown, truncated, conversation);
+    let fallback = local.fallback_label();
+    let image_search = local.image_search_text();
     markdown::prose_has_highlight_with_images(&shown, truncated, query, &fallback, &image_search)
 }
 
