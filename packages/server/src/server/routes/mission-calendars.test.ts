@@ -5,6 +5,8 @@ import { registerMissionRoutes } from "./missions"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { missionProgramInput } from "../../missions/program-tool"
 
 const directory = "C:/private-fixture/worktree", projectID = "private-project"
 
@@ -63,7 +65,11 @@ async function fixture() {
     return { status: response.statusCode, body: response.json() }
   }
   const rpc = client.rpc(), mission = async (missionID: string) => (await rpc.mission({ missionID })).mission
-  return { automations, sessions, call, mission, rpc, close: async () => { await app.close(); await dispose() } }
+  // An agent's conversation of the project: mission.program reaches the same operation through the private bridge.
+  sessions.set("ses_agent", { id: "ses_agent", projectID, location: { directory } })
+  const agent = (program: object, sessionID = "ses_agent") => controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence,
+    settings: { getProfileScope: () => ({ key: "profile" }) } } as never, sessionID, { kind: "schedule", input: { program } }, new AbortController().signal) as Promise<any>
+  return { automations, sessions, call, mission, rpc, agent, close: async () => { await app.close(); await dispose() } }
 }
 const profile = { agent: "fixture", model: { providerID: "provider", id: "model" } }
 const configuration = (objective = "Review", when: unknown[] = [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }]) => ({
@@ -122,5 +128,25 @@ test("a programming is paused, resumed and deleted, and refused with its reason"
     assert.equal((await f.call("PUT", "/cal_review", { configuration: { ...configuration(), unknown: true } })).status, 400)
     assert.deepEqual((await f.call("DELETE", "/cal_review")).body, { calendars: [] })
     assert.deepEqual([(await f.call("DELETE", "/cal_review")).status, (await f.call("POST", "/cal_review/pause")).body.code], [404, "calendar-missing"])
+  } finally { await f.close() }
+})
+
+test("an agent saves, lists, pauses and deletes a programmed Mission of its conversation's directory", async () => {
+  const f = await fixture()
+  try {
+    assert.deepEqual(await f.agent({ action: "list" }), { programs: [] })
+    const saved = await f.agent({ action: "save", id: "cal_agent", configuration: configuration(), paused: true })
+    const [program] = saved.programs
+    assert.deepEqual([program.id, program.title, program.paused, program.launch, "nextDueAt" in program], ["cal_agent", "Daily review", true, configuration().launch, false])
+    assert.equal((await f.mission(program.missionID)).runState, "prepared")
+    assert.equal((await f.agent({ action: "save", id: "cal_agent", configuration: configuration("Review again") })).programs.length, 1, "saving again replaces")
+    assert.equal((await f.agent({ action: "resume", id: "cal_agent" })).programs[0].paused, false)
+    assert.deepEqual(await f.agent({ action: "save", id: "cal_other", configuration: configuration("Review", [{ kind: "mission-completed", missionID: "msn_other" }]) }),
+      { refused: "calendar-unsupported", reason: "event" })
+    assert.deepEqual(await f.agent({ action: "pause", id: "cal_absent" }), { refused: "calendar-missing" })
+    assert.deepEqual(await f.agent({ action: "delete", id: "cal_agent" }), { programs: [] })
+    await assert.rejects(f.agent({ action: "list" }, "ses_unknown"), "a conversation outside the project controls nothing")
+    for (const invalid of [{ action: "list", id: "cal_agent" }, { action: "save", id: "cal_agent" }, { action: "pause" }, { action: "pause", id: "cal_agent", paused: true }, { action: "save", id: "a b", configuration: configuration() }])
+      assert.equal(missionProgramInput.safeParse(invalid).success, false, JSON.stringify(invalid).slice(0, 60))
   } finally { await f.close() }
 })

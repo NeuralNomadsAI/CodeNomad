@@ -55,7 +55,7 @@ test("presence-owned setup registers one-time Missions without touching the reti
     } as never)
     assert.equal(typeof cleanup, "function")
     try {
-      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete", "mission_calendar_run"])
+      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "program", "settings", "control", "configure", "delete", "mission_calendar_run"])
       requestRange = range
       assert.deepEqual((await snapshot!() as { missions: unknown[] }).missions, [])
       assert.ok(rangeReads > 0)
