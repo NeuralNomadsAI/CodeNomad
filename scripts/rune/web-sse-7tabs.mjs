@@ -108,18 +108,26 @@ export function parseCdpSseFrame(event) {
   try { parsed = JSON.parse(event.data) } catch {}
   const eventName = typeof event?.eventName === 'string' && event.eventName.length > 0 ? event.eventName : null
   const isNamedDelta = eventName === 'session.text.delta'
-  const hasEnvelopeEvent = parsed?.event != null && typeof parsed.event === 'object'
+  const hasEnvelopeEvent = parsed?.event != null && typeof parsed.event === 'object' && !Array.isArray(parsed.event)
   const nativeEvent = hasEnvelopeEvent ? parsed.event : (parsed?.type === 'session.text.delta' || isNamedDelta ? parsed : null)
-  const payload = hasEnvelopeEvent ? nativeEvent?.data : (nativeEvent?.data ?? parsed?.data ?? parsed)
+  const envelopeData = hasEnvelopeEvent && nativeEvent.data != null && typeof nativeEvent.data === 'object' && !Array.isArray(nativeEvent.data)
+    ? nativeEvent.data
+    : null
+  const rootData = !hasEnvelopeEvent && parsed?.data != null && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
+    ? parsed.data
+    : null
+  const pick = key => hasEnvelopeEvent
+    ? (envelopeData?.[key] ?? null)
+    : (rootData?.[key] ?? parsed?.[key] ?? null)
   return {
     requestId: event.requestId,
     eventName,
     type: parsed?.type ?? null,
     instanceId: parsed?.instanceId ?? null,
     nativeType: nativeEvent?.type ?? (isNamedDelta ? 'session.text.delta' : null),
-    sessionID: payload?.sessionID ?? null,
-    assistantMessageID: payload?.assistantMessageID ?? null,
-    delta: payload?.delta ?? null,
+    sessionID: pick('sessionID'),
+    assistantMessageID: pick('assistantMessageID'),
+    delta: pick('delta'),
   }
 }
 
@@ -138,6 +146,7 @@ export function assertExactInjectedMultiset(frames, sseRequestId, expectedEntrie
     assert.equal(frame.requestId, sseRequestId, `Injected SSE frame for ${frame.assistantMessageID} arrived on unexpected requestId ${frame.requestId}`)
     assert(frame.eventName == null || frame.eventName === 'message', `Injected SSE frame for ${frame.assistantMessageID} arrived with SSE eventName ${frame.eventName}, expected default message`)
     assert.equal(frame.type, 'instance.event', `Injected SSE frame for ${frame.assistantMessageID} had envelope type ${frame.type}, expected instance.event`)
+    assert.equal(frame.nativeType, 'session.text.delta', `Injected SSE frame for ${frame.assistantMessageID} had native event type ${frame.nativeType}, expected session.text.delta`)
     assert.equal(typeof frame.assistantMessageID, 'string', 'Injected SSE frame assistantMessageID must be a string')
     assert.equal(typeof frame.instanceId, 'string', 'Injected SSE frame instanceId must be a string')
     assert.equal(typeof frame.sessionID, 'string', 'Injected SSE frame sessionID must be a string')

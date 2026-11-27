@@ -276,6 +276,48 @@ test('assertExactInjectedMultiset rejects stray, duplicate, or misrouted injecte
     ...exactFrames,
     rawUntypedDataDuplicate,
   ], 'sse-1', expected), /expected instance\.event/)
+  const rawEmptyDataWithRootDuplicate = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      data: {},
+      assistantMessageID: 'sse-live-1',
+      sessionID: 'ses_tab_1',
+      delta: 'Tab 1',
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    ...exactFrames,
+    rawEmptyDataWithRootDuplicate,
+  ], 'sse-1', expected), /expected instance\.event/)
+  const instanceEventWithoutEvent = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      type: 'instance.event',
+      instanceId: 'ws-1',
+      assistantMessageID: 'sse-live-1',
+      sessionID: 'ses_tab_1',
+      delta: 'Tab 1',
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    instanceEventWithoutEvent,
+    exactFrames[1],
+  ], 'sse-1', expected), /expected session\.text\.delta/)
+  const reasoningDeltaReplacement = parseCdpSseFrame({
+    requestId: 'sse-1',
+    eventName: 'message',
+    data: JSON.stringify({
+      type: 'instance.event',
+      instanceId: 'ws-1',
+      event: {type: 'session.reasoning.delta', data: {sessionID: 'ses_tab_1', assistantMessageID: 'sse-live-1', delta: 'Tab 1'}},
+    }),
+  })
+  assert.throws(() => assertExactInjectedMultiset([
+    reasoningDeltaReplacement,
+    exactFrames[1],
+  ], 'sse-1', expected), /expected session\.text\.delta/)
   const legitimateStepStarted = parseCdpSseFrame({
     requestId: 'sse-1',
     eventName: 'message',
