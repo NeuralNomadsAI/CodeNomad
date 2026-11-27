@@ -405,7 +405,6 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -420,7 +419,6 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m as u32, d as u32)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn civil_to_unix_secs(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64) -> i64 {
     days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
 }
@@ -563,24 +561,59 @@ where
     format_utc_iso(utc_secs, parsed.millis)
 }
 
-/// Convert an edited timezone-less local date-time (e.g. `2026-11-26T14:30`) to UTC RFC 3339
-/// (`...Z`), matching CodeNomad UI's `normalizeFormStringValue`. Returns `None` when `value` is
-/// not a local timezone-less date-time (explicit offsets, date-only values, or invalid strings).
+#[allow(dead_code)]
+fn format_iso_year(year: i64) -> String {
+    if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else if year > 9999 {
+        format!("+{year:06}")
+    } else {
+        format!("-{:06}", year.unsigned_abs())
+    }
+}
+
+/// Format a parsed timezone-less local date-time into canonical ECMAScript padded ISO-8601 local
+/// syntax (`YYYY-MM-DDTHH:mm:ss.sss` or `±YYYYYY-MM-DDTHH:mm:ss.sss`) so desktop and wasm32 share
+/// one exact grammar before converting local time to UTC.
+#[allow(dead_code)]
+pub(crate) fn format_canonical_local_iso(parsed: ParsedLocalDateTime) -> Option<String> {
+    let local_secs = civil_to_unix_secs(
+        parsed.year,
+        parsed.month,
+        parsed.day,
+        parsed.hour,
+        parsed.minute,
+        parsed.second,
+    );
+    let days = local_secs.div_euclid(86_400);
+    let sod = local_secs.rem_euclid(86_400);
+    let (ly, lm, ld) = civil_from_days(days);
+    let lh = sod / 3600;
+    let lmin = (sod % 3600) / 60;
+    let lsec = sod % 60;
+    let y = format_iso_year(ly);
+    Some(format!(
+        "{y}-{lm:02}-{ld:02}T{lh:02}:{lmin:02}:{lsec:02}.{:03}",
+        parsed.millis
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn canonical_local_date_time_iso(value: &str) -> Option<String> {
+    format_canonical_local_iso(parse_local_date_time_without_zone(trim_es(value))?)
+}
+
+/// Convert an edited timezone-less local date-time (e.g. `2026-11-26T14:30` or `2026-2-3T4:30`) to
+/// UTC RFC 3339 (`...Z`), matching CodeNomad UI's `normalizeFormStringValue`. Returns `None` when
+/// `value` is not a local timezone-less date-time (explicit offsets, date-only values, or invalid
+/// strings).
 pub fn normalize_edited_local_date_time(value: &str) -> Option<String> {
     let trimmed = trim_es(value);
     let parsed = parse_local_date_time_without_zone(trimmed)?;
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (
-            parsed.year,
-            parsed.month,
-            parsed.day,
-            parsed.hour,
-            parsed.minute,
-            parsed.second,
-            parsed.millis,
-        );
-        let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(trimmed));
+        let canonical = format_canonical_local_iso(parsed)?;
+        let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(&canonical));
         if !d.get_time().is_finite() {
             return None;
         }
@@ -1638,11 +1671,19 @@ impl Parser {
                         index,
                         inner: Box::new(inner),
                     },
-                    GroupKind::Lookaround { positive, behind } => Expr::Lookaround {
-                        positive,
-                        behind,
-                        inner: Box::new(inner),
-                    },
+                    GroupKind::Lookaround { positive, behind } => {
+                        if behind && expr_has_captures_or_backrefs(&inner) {
+                            // ECMAScript lookbehinds match right-to-left, which changes greedy
+                            // capture allocation (e.g. `(?<=([ab]+)([bc]+))\1`). Defer capture-
+                            // bearing lookbehinds to OpenCode instead of applying forward captures.
+                            self.deferred = true;
+                        }
+                        Expr::Lookaround {
+                            positive,
+                            behind,
+                            inner: Box::new(inner),
+                        }
+                    }
                     GroupKind::Flags {
                         ignore_case,
                         multiline,
@@ -1969,6 +2010,18 @@ fn resolve_backrefs(
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+fn expr_has_captures_or_backrefs(expr: &Expr) -> bool {
+    match expr {
+        Expr::Capture { .. } | Expr::Backref(_) | Expr::NamedBackref(_) => true,
+        Expr::Group(inner)
+        | Expr::Lookaround { inner, .. }
+        | Expr::Flags { inner, .. }
+        | Expr::Repeat { inner, .. } => expr_has_captures_or_backrefs(inner),
+        Expr::Concat(items) | Expr::Alt(items) => items.iter().any(expr_has_captures_or_backrefs),
+        _ => false,
     }
 }
 

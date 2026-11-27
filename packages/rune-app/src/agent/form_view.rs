@@ -184,9 +184,44 @@ fn field_description(field: &serde_json::Value) -> Option<&str> {
         .filter(|desc| !desc.is_empty())
 }
 
+fn is_websearch_provider_form(form: &Form) -> bool {
+    if !form.infer_websearch || form.fields.len() != 1 {
+        return false;
+    }
+    let field = &form.fields[0];
+    if field["type"] != "string"
+        || field["custom"] == true
+        || field["hidden"] == true
+        || field["required"] != true
+    {
+        return false;
+    }
+    let Some(options) = field["options"].as_array().filter(|opts| !opts.is_empty()) else {
+        return false;
+    };
+    match field["key"].as_str() {
+        Some("provider") => true,
+        Some("choice") => {
+            options.len() == 3
+                && ["allow", "choose", "disable"]
+                    .iter()
+                    .all(|val| options.iter().any(|o| o["value"] == *val))
+        }
+        _ => false,
+    }
+}
+
+fn form_display_title(form: &Form) -> &str {
+    if is_websearch_provider_form(form) {
+        t("toolCall.websearch.provider")
+    } else {
+        form.title.as_str()
+    }
+}
+
 fn field_caption(
     field: &serde_json::Value,
-    form: &Form,
+    display_title: &str,
     visible_count: usize,
     untitled_count: usize,
     untitled_ordinal: usize,
@@ -194,7 +229,7 @@ fn field_caption(
     if let Some(title) = field_title(field) {
         return (title.to_string(), true);
     }
-    let form_title = form.title.trim();
+    let form_title = display_title.trim();
     if visible_count == 1 && !form_title.is_empty() {
         return (form_title.to_string(), false);
     }
@@ -248,17 +283,18 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
         .filter(|(f, _)| f["hidden"] != true)
         .map(|(f, res)| (*f, res))
         .collect();
+    let display_title = form_display_title(form);
     let visible_count = visible.len();
     let header_required = visible_count == 1
         && field_title(visible[0].0).is_none()
-        && !form.title.trim().is_empty()
+        && !display_title.trim().is_empty()
         && agent_forms::field_required(visible[0].0);
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
         .child(form_controls::form_header(
             t("permissionApproval.kind.question"),
-            &form.title,
+            display_title,
             header_required,
         ));
     if !eval.supported || eval.has_unanswerable_active || eval.has_invalid_hidden_active {
@@ -279,8 +315,13 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
             untitled_ordinal += 1;
         }
         let required = agent_forms::field_required(field);
-        let (field_name, show_heading) =
-            field_caption(field, form, visible_count, untitled_count, untitled_ordinal);
+        let (field_name, show_heading) = field_caption(
+            field,
+            display_title,
+            visible_count,
+            untitled_count,
+            untitled_ordinal,
+        );
         let field_desc = field_description(field);
         if show_heading {
             body = body.child(form_controls::field_heading(&field_name, required));

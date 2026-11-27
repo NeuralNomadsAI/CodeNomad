@@ -311,26 +311,94 @@ pub struct Ui {
     trailing: Option<bool>,
     catalog_trailing: Option<String>,
 }
-fn body_mentions_field_key(body: &str, key: &str) -> bool {
-    if key.is_empty() {
-        return false;
-    }
-    let bytes = body.as_bytes();
-    for (idx, _) in body.match_indices(key) {
-        let before_ok = idx == 0 || {
-            let b = bytes[idx - 1];
-            !(b.is_ascii_alphanumeric() || b == b'_')
-        };
-        let after_idx = idx + key.len();
-        let after_ok = after_idx == bytes.len() || {
-            let b = bytes[after_idx];
-            !(b.is_ascii_alphanumeric() || b == b'_')
-        };
-        if before_ok && after_ok {
-            return true;
+fn extract_field_key_from_message(message: &str, valid_keys: &[&str]) -> Option<String> {
+    // OpenCode form validation messages end with `: <field_key>` (e.g.
+    // `Form field does not match pattern: code`). Match only the explicit suffix token,
+    // never arbitrary English prose words earlier in the sentence.
+    let tail = message.rsplit_once(": ")?.1.trim();
+    let candidate = tail
+        .trim_end_matches('.')
+        .trim_matches(|c| matches!(c, '"' | '\'' | '`'))
+        .trim();
+    valid_keys
+        .iter()
+        .find(|&&k| k == candidate)
+        .map(|k| (*k).to_string())
+}
+
+fn collect_structured_field_keys(
+    value: &serde_json::Value,
+    valid_keys: &[&str],
+    out: &mut Vec<String>,
+) {
+    fn push_key(raw: &str, valid_keys: &[&str], out: &mut Vec<String>) {
+        if valid_keys.contains(&raw) && !out.iter().any(|existing| existing == raw) {
+            out.push(raw.to_string());
         }
     }
-    false
+    if let Some(obj) = value.as_object() {
+        for prop in ["field", "key"] {
+            if let Some(k) = obj.get(prop).and_then(serde_json::Value::as_str) {
+                push_key(k, valid_keys, out);
+            }
+        }
+        if let Some(path) = obj.get("path").and_then(serde_json::Value::as_array)
+            && let Some(last) = path.last().and_then(serde_json::Value::as_str)
+        {
+            push_key(last, valid_keys, out);
+        }
+        for map_key in ["fields", "fieldErrors"] {
+            if let Some(map) = obj.get(map_key).and_then(serde_json::Value::as_object) {
+                for k in map.keys() {
+                    push_key(k, valid_keys, out);
+                }
+            }
+        }
+        for arr_key in ["issues", "errors", "details"] {
+            if let Some(arr) = obj.get(arr_key).and_then(serde_json::Value::as_array) {
+                for item in arr {
+                    collect_structured_field_keys(item, valid_keys, out);
+                }
+            }
+        }
+        for nested in ["error", "data"] {
+            if let Some(child) = obj.get(nested) {
+                if child.is_object() {
+                    collect_structured_field_keys(child, valid_keys, out);
+                } else if let Some(msg) = child.as_str()
+                    && let Some(k) = extract_field_key_from_message(msg, valid_keys)
+                {
+                    push_key(&k, valid_keys, out);
+                }
+            }
+        }
+        if let Some(msg) = obj.get("message").and_then(serde_json::Value::as_str)
+            && let Some(k) = extract_field_key_from_message(msg, valid_keys)
+        {
+            push_key(&k, valid_keys, out);
+        }
+    }
+}
+
+fn extract_rejected_field_keys(body: &str, valid_keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+        collect_structured_field_keys(&json, valid_keys, &mut out);
+        if !out.is_empty() {
+            return out;
+        }
+        if let Some(s) = json.as_str()
+            && let Some(k) = extract_field_key_from_message(s, valid_keys)
+        {
+            out.push(k);
+            return out;
+        }
+        return out;
+    }
+    if let Some(k) = extract_field_key_from_message(body, valid_keys) {
+        out.push(k);
+    }
+    out
 }
 
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
@@ -1196,28 +1264,21 @@ impl Ui {
                                     .iter()
                                     .any(|f| f.id == form_id && f.fields == submitted_fields)
                             {
-                                let matching: Vec<&(String, serde_json::Value)> =
-                                    if let Some(body) = detail {
-                                        deferred_fields
-                                            .iter()
-                                            .filter(|(k, _)| body_mentions_field_key(body, k))
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
+                                let all_keys: Vec<&str> = submitted_fields
+                                    .iter()
+                                    .filter_map(|f| f["key"].as_str())
+                                    .collect();
+                                let rejected_keys = detail
+                                    .as_deref()
+                                    .map(|body| extract_rejected_field_keys(body, &all_keys))
+                                    .unwrap_or_default();
                                 let to_mark: Vec<(String, serde_json::Value)> =
-                                    if !matching.is_empty() {
-                                        matching.into_iter().cloned().collect()
-                                    } else if deferred_fields.len() == 1
-                                        && !detail.as_deref().is_some_and(|body| {
-                                            submitted_fields.iter().any(|f| {
-                                                f["key"].as_str().is_some_and(|k| {
-                                                    k != deferred_fields[0].0
-                                                        && body_mentions_field_key(body, k)
-                                                })
-                                            })
-                                        })
-                                    {
+                                    if !rejected_keys.is_empty() {
+                                        deferred_fields
+                                            .into_iter()
+                                            .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
+                                            .collect()
+                                    } else if deferred_fields.len() == 1 {
                                         deferred_fields
                                     } else {
                                         Vec::new()

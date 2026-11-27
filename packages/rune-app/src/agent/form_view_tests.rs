@@ -6426,3 +6426,255 @@ fn transient_503_keeps_deferred_retryable_unicode_capture_names_extended_iso_yea
         );
     });
 }
+
+#[test]
+fn exact_validator_field_attribution_rtl_lookbehind_defer_committed_multiselect_order_canonical_local_iso_and_localized_websearch_consent()
+ {
+    crate::strings::with_locale("en", || {
+        // 1. Two deferred fields (`code` and `pattern`) with `^a{257}$`: OpenCode rejecting
+        // `Form field does not match pattern: code` must mark ONLY `code` invalid, never `pattern`.
+        let two_def_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r25-attr".into(),
+            title: "Two deferred".into(),
+            fields: vec![
+                json!({"key": "code", "title": "Code", "type": "string", "required": true, "pattern": "^a{257}$"}),
+                json!({"key": "pattern", "title": "Pattern", "type": "string", "required": true, "pattern": "^a{257}$"}),
+            ],
+        };
+        let (jobs, _) = codenomad_client::bounded(1);
+        let (stop, _) = codenomad_client::bounded(1);
+        let (results_tx, results) = codenomad_client::bounded(4);
+        let (forms_tx, forms_rx) = codenomad_client::bounded(4);
+        let mut handle = crate::agent::Handle::test(jobs, stop, results);
+        handle.forms = forms_tx;
+        let mut ui = crate::agent::Ui::new(handle);
+        ui.reading = false;
+        ui.known = true;
+        ui.mark_pending_known();
+        ui.forms_lane.reading = false;
+        ui.online = true;
+        while forms_rx.try_recv().is_ok() {}
+        ui.selected = two_def_form.id.clone();
+        ui.forms.push(two_def_form.clone());
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        ui.drafts
+            .get_mut(&("form-r25-attr".into(), "code".into()))
+            .unwrap()
+            .editor()
+            .text = "b".into();
+        ui.drafts
+            .get_mut(&("form-r25-attr".into(), "pattern".into()))
+            .unwrap()
+            .editor()
+            .text = "a".repeat(257);
+        let mut state = crate::init();
+        state.phase = crate::Phase::Ready;
+        state.agent = Some(ui);
+        let mut rt = Runtime::new(state, render_form, (420.0, 720.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        rt.update(|s, _| s.agent.as_mut().unwrap().answer_form("form-r25-attr"));
+        let g = match forms_rx.try_recv() {
+            Ok(crate::agent::PendingJob::Act(_, generation)) => generation,
+            _ => panic!("expected PendingJob::Act"),
+        };
+        results_tx
+            .try_send(crate::agent::Result::ActForm(
+                crate::agent_api::FormReplyOutcome::ValidationRejected(Some(
+                    "{\"error\":\"Form field does not match pattern: code\"}".into(),
+                )),
+                Some(vec![two_def_form.clone()]),
+                g,
+            ))
+            .unwrap();
+        rt.update(|s, _| {
+            s.agent.as_mut().unwrap().poll();
+        });
+        rt.frame(1.0 / 60.0);
+        let after_rej = rt.accessibility_json();
+        assert!(
+            find_node(&after_rej, &agent_forms::field_error_key("code")).is_some(),
+            "rejected field `code` must show a field error"
+        );
+        assert!(
+            find_node(&after_rej, &agent_forms::field_error_key("pattern")).is_none(),
+            "unrelated valid field `pattern` must NOT be marked invalid because the sentence contains the word 'pattern'"
+        );
+        // Fixing `code` immediately re-enables Answer without touching `pattern`.
+        rt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r25-attr".into(), "code".into()))
+                .unwrap()
+                .editor()
+                .text = "a".repeat(257);
+        });
+        rt.frame(1.0 / 60.0);
+        assert!(
+            !has_state(
+                find_node(&rt.accessibility_json(), "answer-question").unwrap(),
+                "disabled"
+            ),
+            "fixing `code` must re-enable Answer"
+        );
+
+        // 2. Capture-bearing lookbehind `^abc(?<=([ab]+)([bc]+))\1$` defers to OpenCode instead
+        // of falsely rejecting ECMAScript's valid right-to-left match `"abca"`.
+        let rtl_lb_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r25-rtl-lb".into(),
+            title: "RTL lookbehind".into(),
+            fields: vec![json!({
+                "key": "val",
+                "title": "Val",
+                "type": "string",
+                "required": true,
+                "pattern": "^abc(?<=([ab]+)([bc]+))\\1$"
+            })],
+        };
+        let mut budget = crate::agent::string_constraints::MatchBudget::new();
+        assert_eq!(
+            crate::agent::string_constraints::matches_string_constraints_budgeted(
+                &rtl_lb_form.fields[0],
+                "abca",
+                &mut budget
+            ),
+            Ok(crate::agent::string_constraints::MatchOutcome::Deferred),
+            "capture-bearing lookbehind must defer instead of applying wrong forward capture priority"
+        );
+        let mut lbdrafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&rtl_lb_form), &mut lbdrafts);
+        lbdrafts
+            .get_mut(&("form-r25-rtl-lb".into(), "val".into()))
+            .unwrap()
+            .editor()
+            .text = "abca".into();
+        assert_eq!(
+            agent_forms::answer(&rtl_lb_form, &lbdrafts).unwrap()["val"],
+            json!("abca")
+        );
+
+        // 3. Blurring a custom multiselect after typing `qa,prod` preserves exact typed order
+        // `["qa", "prod"]` (matching Solid), and multiple promoted declared values (`beta,alpha`)
+        // preserve deterministic typed order `["beta", "alpha"]`.
+        let order_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r25-order".into(),
+            title: "Order".into(),
+            fields: vec![json!({
+                "key": "targets",
+                "title": "Targets",
+                "type": "multiselect",
+                "custom": true,
+                "options": [
+                    {"value": "alpha", "label": "Alpha"},
+                    {"value": "beta", "label": "Beta"},
+                    {"value": "prod", "label": "Production"}
+                ]
+            })],
+        };
+        let (mut ostate, _orx) = state_with_form(order_form.clone());
+        {
+            let a = ostate.agent.as_mut().unwrap();
+            let d = a
+                .drafts
+                .get_mut(&("form-r25-order".into(), "targets".into()))
+                .unwrap();
+            d.custom.focused = true;
+            d.custom_editor().text = "qa,prod".into();
+            a.reconcile_custom_focus();
+            a.drafts
+                .get_mut(&("form-r25-order".into(), "targets".into()))
+                .unwrap()
+                .custom
+                .focused = false;
+            assert!(a.reconcile_custom_focus());
+        }
+        let a = ostate.agent.as_ref().unwrap();
+        assert_eq!(
+            agent_forms::answer(&a.forms[0], &a.drafts).unwrap()["targets"],
+            json!(["qa", "prod"]),
+            "blurring `qa,prod` must preserve Solid's exact typed order"
+        );
+        // Multiple declared values preserve deterministic typed order `["beta", "alpha"]`.
+        let (mut ostate2, _orx2) = state_with_form(order_form);
+        {
+            let a = ostate2.agent.as_mut().unwrap();
+            let d = a
+                .drafts
+                .get_mut(&("form-r25-order".into(), "targets".into()))
+                .unwrap();
+            d.custom.focused = true;
+            d.custom_editor().text = "beta,alpha".into();
+            a.reconcile_custom_focus();
+            a.drafts
+                .get_mut(&("form-r25-order".into(), "targets".into()))
+                .unwrap()
+                .custom
+                .focused = false;
+            assert!(a.reconcile_custom_focus());
+        }
+        let a2 = ostate2.agent.as_ref().unwrap();
+        assert_eq!(
+            agent_forms::answer(&a2.forms[0], &a2.drafts).unwrap()["targets"],
+            json!(["beta", "alpha"]),
+            "promoting multiple declared values on blur must preserve deterministic typed order"
+        );
+
+        // 4. Unpadded local `2026-2-3T4:30` formats to canonical padded ISO `2026-02-03T04:30:00.000`
+        // for Chromium/wasm32 Date parsing so desktop and wasm agree identically.
+        assert_eq!(
+            crate::agent::string_constraints::canonical_local_date_time_iso("2026-2-3T4:30")
+                .as_deref(),
+            Some("2026-02-03T04:30:00.000")
+        );
+        assert_eq!(
+            crate::agent::string_constraints::canonical_local_date_time_iso("+010000-01-01T00:00")
+                .as_deref(),
+            Some("+010000-01-01T00:00:00.000")
+        );
+    });
+
+    // 5. Native Web Search provider consent form localizes both its heading and its untitled
+    // radio-group accessible name in French (`Fournisseur de recherche web`), matching Solid.
+    crate::strings::with_locale("fr", || {
+        let ws_form = Form {
+            tool: None,
+            infer_websearch: true,
+            id: "form-r25-ws".into(),
+            title: "Web Search".into(),
+            fields: vec![json!({
+                "key": "choice",
+                "type": "string",
+                "required": true,
+                "options": [
+                    {"value": "allow", "label": "Allow"},
+                    {"value": "choose", "label": "Choose"},
+                    {"value": "disable", "label": "Disable"}
+                ]
+            })],
+        };
+        let (ws_state, _wsrx) = state_with_form(ws_form);
+        let mut wrt = Runtime::new(ws_state, render_form, (420.0, 720.0), Env::new(false, 1.0));
+        wrt.frame(0.0);
+        let wtree = wrt.accessibility_json();
+        let group = find_node(&wtree, &agent_forms::field_group_key("choice")).unwrap();
+        assert_eq!(
+            group["name"], "Fournisseur de recherche web",
+            "recognized Web Search consent form must use localized title as radio-group name"
+        );
+        assert!(
+            wrt.elements().iter().any(|e| {
+                e.text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Fournisseur de recherche web"))
+            }),
+            "recognized Web Search consent form must localize its visible heading"
+        );
+    });
+}

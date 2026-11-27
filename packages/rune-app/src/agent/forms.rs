@@ -688,8 +688,9 @@ impl Draft {
         &mut self.custom
     }
     /// Promote newly entered declared options from custom multiselect input into `selected` when
-    /// the custom editor commits on blur, preserving Solid's behavior when custom text is later
-    /// replaced while keeping explicit duplicates (e.g. checked `prod` + typed `prod`) intact.
+    /// the custom editor commits on blur, preserving exact typed wire order (matching Solid) while
+    /// keeping promoted declared choices checked if custom text is later replaced and keeping
+    /// explicit duplicates (e.g. checked `prod` + typed `prod`) intact.
     pub fn reconcile_committed_multiselect_custom(
         &mut self,
         options: &[NormalizedOption<'_>],
@@ -702,33 +703,70 @@ impl Draft {
         {
             return false;
         }
-        let mut to_promote = HashSet::new();
-        for entry in parse_custom_entries(&self.custom.text) {
-            if !entry.value.is_empty()
-                && options.iter().any(|o| o.value == entry.value)
-                && !self.selected.contains(entry.value.as_str())
+        let parsed: Vec<String> = parse_custom_entries(&self.custom.text)
+            .into_iter()
+            .filter(|entry| !entry.value.is_empty())
+            .map(|entry| entry.value)
+            .collect();
+        let mut to_promote = Vec::new();
+        let mut seen_promote = HashSet::new();
+        for value in &parsed {
+            if options.iter().any(|o| o.value == value.as_str())
+                && !self.selected.contains(value.as_str())
+                && seen_promote.insert(value.as_str())
             {
-                to_promote.insert(entry.value);
+                to_promote.push(value.clone());
             }
         }
         if to_promote.is_empty() {
             return false;
         }
-        let mut remaining_removals = to_promote.clone();
+        // Snapshot the exact pre-blur wire sequence (`selected` / `preserved_custom_selected` in
+        // their existing order, followed by the user-typed custom entries in exact typed order) so
+        // committing on blur never reorders `qa,prod` into `["prod","qa"]`.
+        let mut exact_order = Vec::new();
+        let mut emitted_selected = HashSet::new();
+        let mut emitted_preserved = HashSet::new();
+        if let Some(prev_order) = &self.multiselect_order {
+            for item in prev_order {
+                if self.selected.contains(item) {
+                    emitted_selected.insert(item.clone());
+                    exact_order.push(item.clone());
+                } else if self.preserved_custom_selected.contains(item)
+                    && !options.iter().any(|o| o.value == item.as_str())
+                {
+                    emitted_preserved.insert(item.clone());
+                    exact_order.push(item.clone());
+                }
+            }
+        }
+        for item in &self.selected {
+            if !emitted_selected.contains(item) {
+                exact_order.push(item.clone());
+            }
+        }
+        for item in &self.preserved_custom {
+            if self.preserved_custom_selected.contains(item)
+                && !options.iter().any(|o| o.value == item.as_str())
+                && !emitted_preserved.contains(item)
+            {
+                exact_order.push(item.clone());
+            }
+        }
+        exact_order.extend(parsed);
+
+        let mut remaining_removals: HashSet<String> = to_promote.iter().cloned().collect();
         remove_promoted_lines(&mut self.custom, |decoded| {
             remaining_removals.remove(decoded)
         });
         for value in to_promote {
-            if self.selected.insert(value.clone()) {
-                self.multiselect_order
-                    .get_or_insert_with(Vec::new)
-                    .push(value);
-            }
+            self.selected.insert(value);
         }
+        self.multiselect_order = Some(exact_order);
         self.custom_baseline = self.custom.text.clone();
         self.dirty = true;
         self.text_dirty.set(true);
-        self.custom_dirty.set(true);
+        self.custom_dirty.set(false);
         true
     }
     pub fn is_dirty(&self) -> bool {
@@ -1619,8 +1657,18 @@ fn validate_budgeted_with_deferred(
             if let Some(order) = &d.multiselect_order {
                 for item in order {
                     if d.selected.contains(item) {
-                        emitted_selected.insert(item.clone());
-                        values.push(item.clone());
+                        if emitted_selected.insert(item.clone()) {
+                            values.push(item.clone());
+                        } else if allow_custom
+                            && !custom_edited
+                            && let Some(rem) = custom_counts.get_mut(item.as_str())
+                            && *rem > 0
+                        {
+                            *rem -= 1;
+                            values.push(item.clone());
+                        } else {
+                            values.push(item.clone());
+                        }
                     } else if allow_custom
                         && d.preserved_custom_selected.contains(item)
                         && !is_declared(item)

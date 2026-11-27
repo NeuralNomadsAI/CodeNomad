@@ -3,6 +3,7 @@ use crate::{
     backend::{Backend, read_json},
     history::{Result, valid_id},
 };
+use futures_lite::StreamExt;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -446,11 +447,26 @@ impl Backend {
             return FormReplyOutcome::Ok;
         }
         if matches!(status.as_u16(), 400 | 422) {
-            let body = response.bytes().await.ok().and_then(|bytes| {
-                let capped = &bytes[..bytes.len().min(16_384)];
-                let text = String::from_utf8_lossy(capped).trim().to_string();
-                (!text.is_empty()).then_some(text)
-            });
+            const MAX_REJECTION_BODY_BYTES: usize = 16_384;
+            let mut buf = Vec::new();
+            let mut chunks = response.bytes_stream();
+            while let Some(chunk) = chunks.next().await {
+                let Ok(chunk) = chunk else {
+                    break;
+                };
+                let remaining = MAX_REJECTION_BODY_BYTES.saturating_sub(buf.len());
+                if remaining == 0 {
+                    break;
+                }
+                let take = chunk.len().min(remaining);
+                buf.extend_from_slice(&chunk[..take]);
+                if buf.len() >= MAX_REJECTION_BODY_BYTES {
+                    break;
+                }
+            }
+            drop(chunks);
+            let text = String::from_utf8_lossy(&buf).trim().to_string();
+            let body = (!text.is_empty()).then_some(text);
             return FormReplyOutcome::ValidationRejected(body);
         }
         FormReplyOutcome::Failed
@@ -597,7 +613,7 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
             id,
             title: string(&row["title"], 4096)?,
             fields,
-            infer_websearch: tool.is_none() && metadata["kind"] == "websearch.provider",
+            infer_websearch: metadata["kind"] == "websearch.provider",
             tool,
         });
     }
@@ -959,5 +975,95 @@ mod tests {
                 .all(|line| !line.contains("/permission") && !line.contains("/form")),
             "Action::Model must not read unrelated permission or form endpoints: {requests:?}"
         );
+    }
+
+    #[test]
+    fn form_reply_streams_at_most_16kib_on_400_and_treats_503_as_transient_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+        let handle = std::thread::spawn(move || {
+            let fields_json = r#"[{"key":"code","type":"string","required":true}]"#;
+            let form_body = format!(
+                r#"{{"data":[{{"id":"f1","sessionID":"ses_f","title":"Q","fields":{fields_json}}}]}}"#
+            );
+            let mut reply_count = 0usize;
+            for incoming in listener.incoming() {
+                if stop_srv.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(mut stream) = incoming else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let first_line = head.lines().next().unwrap_or("");
+                if first_line.starts_with("GET ") && first_line.contains("/form HTTP") {
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        form_body.len(),
+                        form_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                } else if first_line.starts_with("POST ") && first_line.contains("/form/f1/reply") {
+                    reply_count += 1;
+                    if reply_count == 1 {
+                        // Stream 20 KiB then hold the connection open for 5s before closing:
+                        // client must stop at 16 KiB without waiting for EOF.
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                        );
+                        let chunk = "x".repeat(20_000);
+                        let header = format!("{:x}\r\n", chunk.len());
+                        let _ = stream.write_all(header.as_bytes());
+                        let _ = stream.write_all(chunk.as_bytes());
+                        let _ = stream.write_all(b"\r\n");
+                        let _ = stream.flush();
+                        std::thread::sleep(Duration::from_secs(3));
+                    } else {
+                        let msg = "service unavailable";
+                        let resp = format!(
+                            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            msg.len(),
+                            msg
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                }
+            }
+        });
+        let backend = test_backend(addr, "ses_f");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let action = Action::Answer(
+            "f1".into(),
+            json!({"code": "abc"}),
+            vec![json!({"key":"code","type":"string","required":true})],
+        );
+        let t0 = std::time::Instant::now();
+        let outcome_400 = rt.block_on(backend.agent_form_action(&action));
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "400 rejection must stop reading after 16 KiB without waiting for slow EOF"
+        );
+        match outcome_400 {
+            FormReplyOutcome::ValidationRejected(Some(body)) => {
+                assert_eq!(body.len(), 16_384);
+            }
+            other => panic!("expected capped ValidationRejected, got {other:?}"),
+        }
+        let outcome_503 = rt.block_on(backend.agent_form_action(&action));
+        assert_eq!(
+            outcome_503,
+            FormReplyOutcome::Failed,
+            "HTTP 503 must classify as transient Failed, not ValidationRejected"
+        );
+        stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(addr);
+        let _ = handle.join();
     }
 }
