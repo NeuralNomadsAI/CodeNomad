@@ -114,6 +114,10 @@
   transition: transform 0.12s ease;
 }
 
+:dir(rtl) .session-automations-done-chevron {
+  transform: rotate(180deg);
+}
+
 .session-automations-done-toggle[aria-expanded="true"] .session-automations-done-chevron {
   transform: rotate(90deg);
 }

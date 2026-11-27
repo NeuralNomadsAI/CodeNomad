@@ -8,6 +8,7 @@ export type SessionAutomationsSnapshot = { status: "loading" } | SessionAutomati
 const LOADING: SessionAutomationsSnapshot = { status: "loading" }
 const DUE_GRACE_MS = 1_500
 const OVERDUE_BACKOFF_MS = 15_000
+const EVENT_TRIGGER_POLL_MS = 15_000
 const MAX_DUE_DELAY_MS = 60 * 60 * 1000
 
 interface Entry {
@@ -51,6 +52,13 @@ export function createSessionAutomationsStore(
   const busyKey = (instanceId: string, sessionId: string, automationId: string) => `${instanceId}\0${sessionId}\0${automationId}`
   const publish = (stateKey: string, snapshot: SessionAutomationsSnapshot) =>
     setSnapshots(current => new Map(current).set(stateKey, snapshot))
+  const dropSnapshot = (stateKey: string) =>
+    setSnapshots(current => {
+      if (!current.has(stateKey)) return current
+      const next = new Map(current)
+      next.delete(stateKey)
+      return next
+    })
 
   const clearDueTimer = (entry: Entry | undefined) => {
     if (!entry?.dueTimer) return
@@ -75,21 +83,39 @@ export function createSessionAutomationsStore(
   ) => {
     clearDueTimer(entry)
     if (entry.demand === 0 || options.signal?.(instanceId)?.aborted) return
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return
     const nextDue = earliestActiveDueAt(automations)
-    if (nextDue === null) {
+    const hasActiveEventTrigger = automations.some(item => item.status === "active" && item.trigger.type === "event")
+    if (nextDue === null && !hasActiveEventTrigger) {
       entry.overdueChecks = 0
       return
     }
-    const remaining = nextDue - now()
     let delayMs: number
-    if (remaining > 0 && !retryFailure) {
-      entry.overdueChecks = 0
-      delayMs = Math.min(remaining + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
-    } else {
-      // Bound retries if an automation stays overdue or its due-time read fails transiently.
+    if (retryFailure) {
+      // Bound retries if a due-time or event-driven read fails transiently.
       if (entry.overdueChecks >= 3) return
       entry.overdueChecks += 1
       delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
+    } else if (nextDue !== null) {
+      const remaining = nextDue - now()
+      if (remaining > 0) {
+        entry.overdueChecks = 0
+        delayMs = Math.min(remaining + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
+      } else if (hasActiveEventTrigger) {
+        entry.overdueChecks = 0
+        delayMs = EVENT_TRIGGER_POLL_MS
+      } else {
+        // Bound retries if an automation stays overdue (e.g. session busy or late run).
+        if (entry.overdueChecks >= 3) return
+        entry.overdueChecks += 1
+        delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
+      }
+      if (hasActiveEventTrigger && delayMs > EVENT_TRIGGER_POLL_MS) {
+        delayMs = EVENT_TRIGGER_POLL_MS
+      }
+    } else {
+      entry.overdueChecks = 0
+      delayMs = EVENT_TRIGGER_POLL_MS
     }
     entry.dueTimer = setTimeout(() => {
       entry.dueTimer = undefined
@@ -105,14 +131,29 @@ export function createSessionAutomationsStore(
     if (!entry || entry.demand === 0) return Promise.resolve()
     const authority = options.signal?.(instanceId)
     if (entry.authority !== authority || !entry.releaseAuthority) {
+      const switched = entry.authority !== undefined && entry.authority !== authority
       entry.releaseAuthority?.()
       cancel(entry)
+      if (switched) {
+        entry.version += 1
+        entry.overdueChecks = 0
+        dropSnapshot(stateKey)
+      }
       entry.authority = authority
-      const abort = () => { if (entry.authority === authority) { entry.version++; cancel(entry) } }
+      const abort = () => {
+        if (entry.authority === authority) {
+          entry.version++
+          cancel(entry)
+          dropSnapshot(stateKey)
+        }
+      }
       authority?.addEventListener("abort", abort, { once: true })
       entry.releaseAuthority = () => { authority?.removeEventListener("abort", abort); entry.releaseAuthority = undefined }
     }
-    if (authority?.aborted) return Promise.resolve()
+    if (authority?.aborted) {
+      dropSnapshot(stateKey)
+      return Promise.resolve()
+    }
     if (entry.reading) {
       entry.reading.dirty = true
       return entry.reading.promise

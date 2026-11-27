@@ -4,6 +4,7 @@ import { ChevronRight, Pause, Play, Trash2 } from "lucide-solid"
 import type { SessionAutomation } from "../../../../server/src/opencode/automation-contract"
 import { useI18n } from "../../lib/i18n"
 import { TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, getRenderTextWindow } from "../../lib/render-text-window"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { showConfirmDialog } from "../../stores/alerts"
 import { runSessionAutomationAction, sessionAutomations } from "../../stores/session-automations"
 import { SessionAutomationDetailDialog } from "./session-automation-detail-dialog"
@@ -75,12 +76,17 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
   const [showDone, setShowDone] = createSignal(false)
   const [detailId, setDetailId] = createSignal<string | null>(null)
   let detailReturnTarget: HTMLElement | undefined
+  let viewAbort = new AbortController()
 
   createEffect(() => {
     props.instanceId
     props.sessionId
+    props.active
+    const controller = new AbortController()
+    viewAbort = controller
     setShowDone(false)
     setDetailId(null)
+    onCleanup(() => controller.abort())
   })
 
   createEffect(() => {
@@ -118,6 +124,9 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
       const target = [source, next, fallback].find(element => element?.isConnected)
       target?.focus({ preventScroll: true })
     }
+    const attachment = serverEvents.signalForInstance(instanceId)
+    const confirmSignal = attachment ? AbortSignal.any([viewAbort.signal, attachment]) : viewAbort.signal
+    if (confirmSignal.aborted) return
     const confirmed = await showConfirmDialog(
       t("instanceShell.automations.delete.message", { name: boundedText(item.name, 120) }),
       {
@@ -125,8 +134,9 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
         confirmLabel: t("instanceShell.automations.actions.delete"),
         returnFocus,
       },
+      confirmSignal,
     )
-    if (!confirmed) return
+    if (!confirmed || confirmSignal.aborted) return
     const deleted = await runSessionAutomationAction(instanceId, sessionId, item.id, "delete")
     if (deleted && detailId() === item.id) setDetailId(null)
     if (!source.isConnected && document.activeElement === document.body) returnFocus()

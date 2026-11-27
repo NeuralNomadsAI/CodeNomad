@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import type { SessionAutomation } from "../../../../server/src/opencode/automation-contract"
+import type { SessionAutomation } from "../../../server/src/opencode/automation-contract"
 
 let browser: Browser, url: string
 before(async () => {
@@ -256,6 +256,24 @@ test("keeps Pause and Delete inside a narrow row even with a long MCP event trig
     assert.ok(rowBox && pauseBox && deleteBox)
     assert.ok(pauseBox.x + pauseBox.width <= rowBox.x + rowBox.width + 1, "Pause stays inside row")
     assert.ok(deleteBox.x + deleteBox.width <= rowBox.x + rowBox.width + 1, "Delete stays inside row")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("dismisses an open Delete confirmation when switching conversations without mutating the old target", async () => {
+  const { page, errors, actions } = await open({
+    ses_auto: { status: "ok", automations: [activeAuto] },
+    ses_other: { status: "ok", automations: [] },
+  })
+  try {
+    const row = block(page).locator('[data-automation-id="aut_active"]')
+    await row.waitFor()
+    await row.getByRole("button", { name: "Delete automation" }).click()
+    const confirmButton = page.getByRole("button", { name: "Delete automation" }).last()
+    await confirmButton.waitFor()
+    await call(page, "select", "ses_other")
+    await confirmButton.waitFor({ state: "detached" })
+    assert.equal(actions.length, 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

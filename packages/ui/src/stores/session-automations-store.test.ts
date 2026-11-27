@@ -210,4 +210,64 @@ describe("session automations store", () => {
     t.mock.timers.tick(20_000)
     assert.equal(f.reads.length, 2, "released demand never fires a timer refresh")
   })
+
+  it("drops cached snapshots when attachment authority is revoked or replaced", async () => {
+    let authority = new AbortController()
+    const f = fixture({ signal: () => authority.signal })
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({
+      status: "ok",
+      automations: [automation("aut_secret", { action: { type: "prompt", prompt: "Secret from backend A" } })],
+    })
+    await f.settle()
+    assert.equal(f.store.state("i", "ses_a").status, "ok")
+
+    // Detach backend A and replace with backend B that returns unavailable.
+    authority.abort()
+    assert.deepEqual(f.store.state("i", "ses_a"), { status: "loading" }, "revoked attachment drops stale snapshot")
+    authority = new AbortController()
+    const refreshPromise = f.store.refresh("i", "ses_a")
+    assert.equal(f.reads.length, 2)
+    f.reads[1]!.resolve({ status: "unavailable" })
+    await refreshPromise
+    assert.deepEqual(f.store.state("i", "ses_a"), { status: "unavailable" }, "replacement never inherits old backend prompt")
+    release()
+  })
+
+  it("refreshes active event-triggered automations while demanded and stops when paused or released", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const f = fixture()
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({
+      status: "ok",
+      automations: [automation("aut_evt", {
+        status: "active",
+        trigger: { type: "event", server: "github", event: "push" },
+        action: { type: "shell", command: "npm test" },
+        nextDueAt: undefined,
+        runCount: 0,
+      })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    t.mock.timers.tick(15_000)
+    assert.equal(f.reads.length, 2, "polls active event-triggered automation while Status is shown")
+    f.reads[1]!.resolve({
+      status: "ok",
+      automations: [automation("aut_evt", {
+        status: "paused",
+        trigger: { type: "event", server: "github", event: "push" },
+        action: { type: "shell", command: "npm test" },
+        nextDueAt: undefined,
+        runCount: 1,
+      })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    t.mock.timers.tick(60_000)
+    assert.equal(f.reads.length, 2, "stops polling once event-triggered automation is paused")
+    release()
+  })
 })
