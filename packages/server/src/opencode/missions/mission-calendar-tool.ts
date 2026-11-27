@@ -38,7 +38,7 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
       try {
         const occurrence = missionCalendarOccurrence(tool.messageID)
         if (!occurrence || !(await ctx.session.get({ sessionID: tool.sessionID })).metadata?.[MISSION_CALENDAR_CARRIER]) throw new Error("mission-calendar-caller")
-        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, when, calendar } = input as Record<string, unknown>
+        const { objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, when, calendar, prepared } = input as Record<string, unknown>
         const mission = parseCreateMissionInput({ objective, title, notes, template, taskMode, profiles, coordinatorGoal, coordinatorSessionID, permissions, requestID: occurrence.automationID })
         const events = missionCalendarEventsSchema.parse(when ?? [])
         const key = missionCalendarKey(stableToken(`${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24),
@@ -51,7 +51,7 @@ export const registerMissionCalendarTool = (ctx: Context, registered: <T>(work: 
         const step = <K extends keyof MissionCalendarControl>(name: K) => ((input: never) => registered(async () =>
           (await (own ??= ownMissions(ctx.location.directory)))[name](input))) as MissionCalendarControl[K]
         return { content: JSON.stringify(await runMissionCalendar({ create: step("create"), lifecycle: step("lifecycle"), mission: step("mission"), delete: step("delete") },
-          ctx.storage, key, occurrence, mission, news)) }
+          ctx.storage, key, occurrence, mission, { news, ...(typeof prepared === "string" && prepared.length <= 100 ? { prepared } : {}) })) }
       } catch (error) {
         // Fixed codes only: native errors and credentials stay out of the automation's output.
         throw new Error(error instanceof Error && /^mission-calendar-[a-z-]+$/.test(error.message) ? error.message : "mission-calendar-failed")

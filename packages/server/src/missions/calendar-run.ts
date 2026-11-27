@@ -30,7 +30,9 @@ const launchSchema = z.object({ at: z.number().int().nonnegative(), outcome: z.s
 const slotSchema = z.object({ version: z.literal(1),
   // `outcome`: seen no longer active, so later runs need not ask Missions again.
   launched: z.object({ automationID: z.string().min(1).max(100), run: z.number().int().positive(), missionID: z.string().min(1).max(100),
-    at: z.number().int().nonnegative(), outcome: z.string().min(1).max(40).optional() }).strict().optional(),
+    at: z.number().int().nonnegative(), outcome: z.string().min(1).max(40).optional(),
+    // The prepared Mission that stands for the programmed one until its first launch starts it.
+    placeholder: z.literal(true).optional() }).strict().optional(),
   /** The conversation every launch coordinates in, once the first launch created it. */
   coordinatorSessionID: z.string().min(1).max(240).optional(),
   history: z.array(launchSchema).max(MISSION_CALENDAR_HISTORY).optional(),
@@ -80,14 +82,15 @@ type Launch = Omit<MissionCreateInput, "requestID" | "prepared">
  * coordinator conversation. Nothing launches while the previous launch is still active,
  * or when the events (`news`) brought nothing new since the last launch; an active
  * launch leaves the events unread, so their news waits for it. Repeating a run changes
- * nothing, and the runs of one programmed Mission follow one another. */
+ * nothing, and the runs of one programmed Mission follow one another. `prepared` names
+ * the Mission created with the programming: the first launch starts it instead of creating one. */
 export function runMissionCalendar(control: MissionCalendarControl, storage: Storage, key: string, occurrence: Occurrence,
-  mission: Launch, news?: MissionCalendarNews, now: () => number = Date.now): Promise<MissionCalendarResult> {
-  return runMissionExclusive(`calendar:${key}`, () => runOccurrence(control, storage, key, occurrence, mission, news, now))
+  mission: Launch, options: { news?: MissionCalendarNews; prepared?: string; now?: () => number } = {}): Promise<MissionCalendarResult> {
+  return runMissionExclusive(`calendar:${key}`, () => runOccurrence(control, storage, key, occurrence, mission, options.news, options.prepared, options.now ?? Date.now))
 }
 
 async function runOccurrence(control: MissionCalendarControl, storage: Storage, key: string, occurrence: Occurrence,
-  mission: Launch, news: MissionCalendarNews | undefined, now: () => number): Promise<MissionCalendarResult> {
+  mission: Launch, news: MissionCalendarNews | undefined, prepared: string | undefined, now: () => number): Promise<MissionCalendarResult> {
   // A Mission created by a run that never started it is started by whichever run finds it.
   const start = async (map: MissionPanelMap | MissionMap) => {
     const pending = map.control?.pending.length ? map.control : undefined
@@ -96,24 +99,45 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
       expectedRevision: pending?.expectedRevision ?? map.revision })).mission
   }
   const slot = slotSchema.safeParse(await storage.get(key)).data
-  const repeated = slot?.launched?.automationID === occurrence.automationID && slot.launched.run === occurrence.run
   let launched = slot?.launched, checkpoints = slot?.checkpoints, history = slot?.history ?? [], retiring = slot?.retiring ?? []
+  // An edit of the programming before its first launch prepares another Mission.
+  if (prepared && (!launched || launched.placeholder && launched.missionID !== prepared))
+    launched = { automationID: occurrence.automationID, run: occurrence.run, missionID: prepared, at: now(), placeholder: true }
+  const repeated = !!launched && !launched.placeholder && launched.automationID === occurrence.automationID && launched.run === occurrence.run
   let coordinatorSessionID = slot?.coordinatorSessionID
   const save = () => storage.set(key, JSON.parse(JSON.stringify({ version: 1, launched, coordinatorSessionID, checkpoints,
     ...(history.length ? { history } : {}), ...(retiring.length ? { retiring } : {}) })) as MissionJsonValue)
   const answer = (outcome: MissionCalendarResult["outcome"], status = launched?.outcome): MissionCalendarResult => ({ outcome,
     ...(launched ? { missionID: launched.missionID } : {}), ...(status ? { status } : {}), ...(coordinatorSessionID ? { coordinatorSessionID } : {}), history })
-  if (launched && !repeated && !launched.outcome) {
+  if (repeated) {
+    // The run already launched: only its start may be left to finish.
+    const current = (await control.mission(launched!.missionID)).mission
+    if (current) return answer("launched", (await start(current)).status)
+    launched = undefined
+  }
+  if (launched && !launched.placeholder && !launched.outcome) {
     const previous = (await control.mission(launched.missionID)).mission
     if (previous?.status === "active") return answer("waiting", (await start(previous)).status)
     launched = { ...launched, outcome: previous?.status ?? "removed" }
   }
-  if (news && !repeated) {
+  if (news) {
     const read = await news(checkpoints ?? [])
     checkpoints = read.checkpoints
     if (!read.changed) { await save(); return answer("idle") }
   }
-  if (launched && !repeated) {
+  if (launched?.placeholder) {
+    const waiting = (await control.mission(launched.missionID)).mission
+    if (waiting?.status === "active" && waiting.runState === "prepared") {
+      coordinatorSessionID = waiting.coordinatorSessionId
+      launched = { ...occurrence, missionID: waiting.id, at: now() }
+      await save()
+      return answer("launched", (await start(waiting)).status)
+    }
+    // A person started, ended or removed it: an ordinary previous launch from here.
+    const { placeholder: _placeholder, ...ordinary } = launched
+    launched = waiting ? ordinary : undefined
+  }
+  if (launched) {
     // Asked again at the moment of replacing: a person may have resumed a launch seen ended.
     const previous = (await control.mission(launched.missionID)).mission
     if (previous?.status === "active") {
@@ -142,7 +166,7 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
   const created = (mission.coordinatorSessionID || !coordinatorSessionID ? await create(mission.coordinatorSessionID)
     : await create(coordinatorSessionID).catch(() => create())).mission
   coordinatorSessionID = created.coordinatorSessionId
-  launched = { ...occurrence, missionID: created.id, at: repeated && slot?.launched ? slot.launched.at : now() }
+  launched = { ...occurrence, missionID: created.id, at: now() }
   await save()
   return answer("launched", (await start(created)).status)
 }

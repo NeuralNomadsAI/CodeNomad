@@ -4,22 +4,22 @@ import { z } from "zod"
 import { missionCalendarAutomations } from "../../missions/calendar-automation"
 import { missionCalendarIDSchema } from "../../missions/calendar-run"
 import { missionConfigurationSchema } from "../../missions/launch-policy"
+import type { MissionRead } from "../../missions/model"
 import { MissionCalendarMissing, missionCalendars } from "../../opencode/mission-calendars"
-import type { SettingsService } from "../../settings/service"
-import type { WorkspaceManager } from "../../workspaces/manager"
-import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { requestAdmission } from "../request-admission"
-import { MissionMapMutationError, prepareMissionMapMutation, type MissionMapMutationManager } from "./mission-map-mutation"
+import { prepareMissionCreation } from "./mission-creation-pipeline"
+import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
+import type { MissionRouteDeps } from "./missions"
 
-type Deps = { workspaceManager: MissionMapMutationManager & Pick<WorkspaceManager, "getServiceWslDistro">; worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope"> }
+type Deps = Pick<MissionRouteDeps, "workspaceManager" | "worktreeDeletionFence" | "settings" | "permissionModes">
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0")).optional()
 const params = z.object({ id: z.string().min(1).max(200), calendar: missionCalendarIDSchema.optional(), action: z.enum(["pause", "resume"]).optional() }).strict()
 const configuration = z.object(missionConfigurationSchema.shape).strict().omit({ roots: true, profileID: true, executionHost: true, coordinatorSelectionAuthor: true })
 const body = z.object({ configuration, directory }).strict()
 
-/** Mission calendars are native Automations: these routes only translate the editor's
- * launch criteria and list, pause, resume or delete what OpenCode holds. */
+/** Programmed Missions ("calendars") are native Automations: these routes translate the
+ * form's launch criteria, prepare the Mission the first launch starts, and list, pause,
+ * resume or delete what OpenCode holds. */
 export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
   const serve = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, saves = false) => app.route({ method, url, handler: async (request, reply) => {
     const selected = params.safeParse(request.params), input = saves ? body.safeParse(request.body) : undefined
@@ -27,20 +27,40 @@ export function registerMissionCalendars(app: FastifyInstance, deps: Deps) {
     if (!selected.success || !query.success || input && !input.success) return reply.code(400).send({ error: "Invalid Mission calendar request", code: "calendar-input-invalid" })
     const lifetime = requestAdmission(request, reply)
     try {
+      const requested = input?.data.directory ?? query.data.directory
       const owned = await prepareMissionMapMutation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence, workspaceID: selected.data.id,
-        directory: input?.data.directory ?? query.data.directory, signal: lifetime.signal, wait: lifetime.wait })
-      return await owned.run(async () => {
+        directory: requested, signal: lifetime.signal, wait: lifetime.wait })
+      return await owned.run(async (rpc, options) => {
         const calendars = missionCalendars(owned.client, owned.location, owned.projectID, lifetime.signal)
-        const calendar = selected.data.calendar
+        const calendar = selected.data.calendar, call = { ...options, signal: lifetime.signal }
         if (input) {
           const scope = deps.settings?.getProfileScope(), distro = deps.workspaceManager.getServiceWslDistro(selected.data.id)
           const parsed = missionConfigurationSchema.safeParse({ ...input.data.configuration, profileID: scope?.key ?? null,
             executionHost: distro ? `wsl:${distro}` : "local", roots: [{ mode: "directory-only", directory: owned.location.directory }] })
           if (!parsed.success) return reply.code(400).send({ error: "Invalid Mission calendar configuration", code: "calendar-input-invalid" })
-          const id = calendar ?? `cal_${randomUUID().replaceAll("-", "")}`, automations = missionCalendarAutomations(parsed.data, id)
-          if (!Array.isArray(automations)) return reply.code(422).send({ error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: automations.unsupported })
+          const id = calendar ?? `cal_${randomUUID().replaceAll("-", "")}`, config = parsed.data
+          const unsupported = missionCalendarAutomations(config, id)
+          if (!Array.isArray(unsupported)) return reply.code(422).send({ error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: unsupported.unsupported })
+          const existing = calendar ? (await lifetime.wait(calendars.list())).find(item => item.id === calendar) : undefined
+          if (calendar && !existing) throw new MissionCalendarMissing()
+          // Until its first launch the programmed Mission is an ordinary prepared one: it has its line and can be played by hand.
+          const current = existing?.missionID ? (await lifetime.wait(rpc.mission({ missionID: existing.missionID }, call)) as MissionRead).mission : undefined
+          const pristine = current?.status === "active" && current.runState === "prepared"
+          let prepared: string | undefined
+          if (!current || pristine) {
+            // An edit before the first launch prepares the Mission again, in the same conversation.
+            if (pristine) await lifetime.wait(rpc.delete({ missionID: current.id, expectedRevision: current.revision, requestID: `calendar_edit_${randomUUID().slice(0, 8)}`, deleteManagedSessions: false }, call))
+            const coordinatorSessionId = config.coordinatorSessionID ?? (pristine ? current.coordinatorSessionId : undefined)
+            const creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence, workspaceID: selected.data.id,
+              signal: lifetime.signal, wait: lifetime.wait, permissionModes: deps.permissionModes,
+              request: JSON.parse(JSON.stringify({ requestId: `calendar_${id}_${randomUUID().slice(0, 8)}`, objective: config.objective, title: config.title, notes: config.notes,
+                template: config.template, profiles: config.profiles, taskMode: config.taskMode, coordinatorGoal: config.coordinatorGoal, coordinatorSessionId,
+                directory: owned.location.directory })) })
+            prepared = (await creation.execute()).mission.id
+          }
           await owned.refresh()
-          await lifetime.wait(calendars.save(id, automations))
+          const automations = missionCalendarAutomations(config, id, prepared)
+          await lifetime.wait(calendars.save(id, Array.isArray(automations) ? automations : []))
         } else if (method === "POST") await lifetime.wait(calendars[selected.data.action!](calendar!))
         else if (method === "DELETE") await lifetime.wait(calendars.delete(calendar!))
         await owned.refresh()

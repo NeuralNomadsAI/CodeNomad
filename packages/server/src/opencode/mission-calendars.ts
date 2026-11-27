@@ -11,6 +11,10 @@ export type MissionCalendarLast = { outcome: "launched" | "waiting" | "idle"; mi
   history: Array<{ at: number; outcome: string }> }
 export type MissionCalendarView = {
   id: string; title: string; paused: boolean
+  /** The Mission that is the programmed one right now: its current launch, or the one prepared for the first. */
+  missionID?: string
+  /** The launch criteria as entered. */
+  launch?: unknown
   /** The Mission each launch creates and the events it waits for, as given at creation. */
   mission: Record<string, unknown>
   rules: Array<{ automationID: string; trigger: AutomationInfo["trigger"]; tz: string; nextDueAt?: number; lastRunAt?: number
@@ -65,10 +69,12 @@ export function missionCalendars(client: Client, location: { directory: string; 
       const groups = new Map<string, AutomationInfo[]>()
       for (const info of await own()) groups.set(calendarOf(info), [...groups.get(calendarOf(info)) ?? [], info])
       return [...groups].map(([id, infos]) => {
-        const { calendar: _calendar, ...mission } = (infos[0]!.action as { args?: Record<string, unknown> }).args ?? {}
+        const { calendar: _calendar, launch, prepared, ...mission } = (infos[0]!.action as { args?: Record<string, unknown> }).args ?? {}
         // The calendar's latest run, whichever rule made it.
         const latest = infos.filter(info => info.lastRunAt !== undefined && last(info)).sort((a, b) => b.lastRunAt! - a.lastRunAt!)[0]
+        const missionID = (latest && last(latest)!.missionID) ?? (typeof prepared === "string" ? prepared : undefined)
         return { id, title: infos[0]!.name, paused: infos.every(info => info.status !== "active"), mission,
+          ...(missionID ? { missionID } : {}), ...(launch === undefined ? {} : { launch }),
           rules: infos.map(info => ({ automationID: info.id, trigger: info.trigger, tz: info.tz, runCount: info.runCount,
             ...(info.nextDueAt === undefined ? {} : { nextDueAt: info.nextDueAt }), ...(info.lastRunAt === undefined ? {} : { lastRunAt: info.lastRunAt }),
             ...(info.lastOutcome === undefined ? {} : { lastOutcome: info.lastOutcome }), ...(info.lastOutput ? { lastOutput: info.lastOutput } : {}) })),

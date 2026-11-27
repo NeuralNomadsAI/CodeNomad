@@ -26,7 +26,7 @@ function fixture() {
   }
   const calendars = missionCalendars(client as never, { directory: "D:\\project" }, "project")
   const rule = (cron: string, calendar: string, objective = "Review"): MissionCalendarAutomation => ({ name: "Sync", trigger: { type: "cron", cron, tz: "UTC" },
-    action: { type: "code", code: MISSION_CALENDAR_CODE, args: { calendar, objective, template: "custom" } } })
+    action: { type: "code", code: MISSION_CALENDAR_CODE, args: { calendar, objective, template: "custom", launch: { when: [] }, prepared: "msn_prepared" } } })
   return { rows, sessions, calls, calendars, rule, failCreatesFrom: (value: number) => { failCreateAt = value } }
 }
 
@@ -42,7 +42,7 @@ test("a calendar is the Automations that name it in the Location's carrier conve
   const [calendar, ...others] = await f.calendars.list()
   assert.equal(others.length, 0)
   assert.deepEqual([calendar!.id, calendar!.title, calendar!.paused, calendar!.rules.map(rule => rule.automationID)], ["cal_sync", "Sync", false, ["aut_1", "aut_2"]])
-  assert.deepEqual(calendar!.mission, { objective: "Review", template: "custom" })
+  assert.deepEqual([calendar!.mission, calendar!.launch, calendar!.missionID], [{ objective: "Review", template: "custom" }, { when: [] }, "msn_running"])
   assert.deepEqual(calendar!.last, { outcome: "waiting", missionID: "msn_running", status: "active", coordinatorSessionID: "ses_1",
     history: [{ at: 10, outcome: "completed" }], at: 50 }, "the latest run of any rule")
 })
@@ -54,6 +54,7 @@ test("saving again replaces the rules under the same identity, and a paused cale
   await f.calendars.save("cal_sync", [f.rule("0 10 * * *", "cal_sync", "Review again")])
   const [calendar] = await f.calendars.list()
   assert.deepEqual([calendar!.id, calendar!.paused, calendar!.mission.objective, calendar!.rules.map(rule => rule.automationID)], ["cal_sync", true, "Review again", ["aut_2"]])
+  assert.equal(calendar!.missionID, "msn_prepared", "before the first launch, the prepared Mission")
   await f.calendars.resume("cal_sync")
   assert.equal((await f.calendars.list())[0]!.paused, false)
   await f.calendars.delete("cal_sync")
