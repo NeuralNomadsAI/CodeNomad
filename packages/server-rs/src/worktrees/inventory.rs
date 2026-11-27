@@ -509,9 +509,335 @@ fn separate_marker_in(scope: &Path, root: &Path, common: &Path) -> Result<Vec<u8
     Ok(marker)
 }
 
+fn local_include_scope(scope: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut comps = scope.components();
+        let prefix = comps.next()?;
+        let root = comps.next()?;
+        if !matches!(prefix, std::path::Component::Prefix(_)) || !matches!(root, std::path::Component::RootDir) {
+            return None;
+        }
+        let mut out = PathBuf::new();
+        out.push(prefix.as_os_str());
+        out.push(root.as_os_str());
+        Some(out)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = scope;
+        Some(PathBuf::from("/"))
+    }
+}
+
+fn read_config_file_nofollow(path: &Path) -> Result<Vec<u8>, ()> {
+    use std::io::Read;
+    const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = opts.open(path).map_err(|_| ())?;
+    let meta = file.metadata().map_err(|_| ())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            return Err(());
+        }
+    }
+    if !meta.is_file() || meta.len() > MAX_CONFIG_BYTES {
+        return Err(());
+    }
+    let mut out = Vec::new();
+    file.take(MAX_CONFIG_BYTES + 1).read_to_end(&mut out).map_err(|_| ())?;
+    if out.len() as u64 > MAX_CONFIG_BYTES { Err(()) } else { Ok(out) }
+}
+
+fn parse_git_config_include_paths(bytes: &[u8]) -> Result<Vec<String>, ()> {
+    let text = std::str::from_utf8(bytes).map_err(|_| ())?;
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    let mut chars = text.chars().peekable();
+    let mut in_include = false;
+    let mut paths = Vec::new();
+    while let Some(&ch) = chars.peek() {
+        if matches!(ch, ' ' | '\t' | '\r' | '\n') {
+            chars.next();
+            continue;
+        }
+        if matches!(ch, '#' | ';') {
+            for c in chars.by_ref() {
+                if c == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if ch == '[' {
+            chars.next();
+            let mut section = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    section.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            in_include = section.eq_ignore_ascii_case("include") || section.eq_ignore_ascii_case("includeif");
+            let mut quoted = false;
+            let mut closed = false;
+            while let Some(c) = chars.next() {
+                if c == '\n' {
+                    break;
+                }
+                if quoted {
+                    if c == '\\' {
+                        let _ = chars.next();
+                    } else if c == '"' {
+                        quoted = false;
+                    }
+                } else if c == '"' {
+                    quoted = true;
+                } else if c == ']' {
+                    closed = true;
+                    break;
+                }
+            }
+            if !closed {
+                return Err(());
+            }
+            continue;
+        }
+        let mut key = String::new();
+        while let Some(&c) = chars.peek() {
+            if matches!(c, ' ' | '\t' | '=' | '#' | ';' | '\r' | '\n') {
+                break;
+            }
+            key.push(c);
+            chars.next();
+        }
+        while let Some(&c) = chars.peek() {
+            if matches!(c, ' ' | '\t') {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let is_include_path = in_include && key.eq_ignore_ascii_case("path");
+        if chars.peek() == Some(&'=') {
+            chars.next();
+            while let Some(&c) = chars.peek() {
+                if matches!(c, ' ' | '\t') {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let mut value = String::new();
+            let mut pending_ws = String::new();
+            let mut quoted = false;
+            while let Some(c) = chars.next() {
+                if !quoted && matches!(c, '#' | ';') {
+                    for rest in chars.by_ref() {
+                        if rest == '\n' {
+                            break;
+                        }
+                    }
+                    break;
+                }
+                if c == '\n' {
+                    if quoted && is_include_path {
+                        return Err(());
+                    }
+                    break;
+                }
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                    if quoted && is_include_path {
+                        return Err(());
+                    }
+                    break;
+                }
+                if c == '"' {
+                    if !pending_ws.is_empty() {
+                        value.push_str(&pending_ws);
+                        pending_ws.clear();
+                    }
+                    quoted = !quoted;
+                    continue;
+                }
+                if c == '\\' {
+                    match chars.next() {
+                        Some('\n') => continue,
+                        Some('\r') if chars.peek() == Some(&'\n') => {
+                            chars.next();
+                            continue;
+                        }
+                        Some(esc) => {
+                            if !pending_ws.is_empty() {
+                                value.push_str(&pending_ws);
+                                pending_ws.clear();
+                            }
+                            let decoded = match esc {
+                                '\\' => '\\',
+                                '"' => '"',
+                                'n' => '\n',
+                                't' => '\t',
+                                'b' => '\x08',
+                                _ if is_include_path => return Err(()),
+                                other => other,
+                            };
+                            value.push(decoded);
+                        }
+                        None if is_include_path => return Err(()),
+                        None => break,
+                    }
+                    continue;
+                }
+                if !quoted && matches!(c, ' ' | '\t') {
+                    pending_ws.push(c);
+                } else {
+                    if !pending_ws.is_empty() {
+                        value.push_str(&pending_ws);
+                        pending_ws.clear();
+                    }
+                    value.push(c);
+                }
+            }
+            if quoted && is_include_path {
+                return Err(());
+            }
+            if is_include_path {
+                paths.push(value);
+            }
+        } else {
+            for c in chars.by_ref() {
+                if c == '\n' {
+                    break;
+                }
+            }
+            if is_include_path {
+                return Err(());
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// Resolves a Git config include entry, returning `(opened_path, real_path)` when the target file
+/// exists on the local volume. `opened_path` preserves the symlink's own directory so transitive
+/// relative includes are checked from the same directory Git resolves them against.
+fn resolve_config_include_in(
+    include_scope: &Path,
+    base_dir: &Path,
+    raw: &str,
+) -> Result<Option<(PathBuf, PathBuf)>, ()> {
+    if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
+        return Err(());
+    }
+    let expanded = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).ok_or(())?;
+        PathBuf::from(home).join(rest)
+    } else if raw == "~" {
+        return Err(());
+    } else {
+        PathBuf::from(raw)
+    };
+    let simplified = dunce::simplified(&expanded);
+    super::ownership::reject_network_path(&simplified.to_string_lossy(), simplified)?;
+    let joined = if simplified.is_absolute() { simplified.to_path_buf() } else { base_dir.join(simplified) };
+    let parent = joined.parent().ok_or(())?;
+    let name = joined.file_name().ok_or(())?;
+    let parent_str = parent.to_str().ok_or(())?;
+    let (real_parent, anchor) = super::ownership::resolve_media_path_checked(include_scope, parent_str)?.ok_or(())?;
+    if real_parent != anchor {
+        return Ok(None);
+    }
+    let candidate = real_parent.join(name);
+    match std::fs::symlink_metadata(&candidate) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(include_scope, &candidate) {
+            Ok(Some((real, _))) => Ok(Some((candidate, real))),
+            Err(std::io::ErrorKind::NotFound) => Ok(None),
+            Ok(None) | Err(_) => Err(()),
+        },
+        Ok(meta) if meta.is_file() => {
+            candidate.starts_with(include_scope).then(|| Some((candidate.clone(), candidate))).ok_or(())
+        }
+        _ => Err(()),
+    }
+}
+
+fn validate_local_config_includes_in(scope: &Path, common: &Path, admin: &Path) -> bool {
+    if scope.as_os_str().is_empty() {
+        return true;
+    }
+    let Some(include_scope) = local_include_scope(scope) else {
+        return false;
+    };
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    for candidate in [common.join("config"), admin.join("config.worktree")] {
+        let resolved = match std::fs::symlink_metadata(&candidate) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(scope, &candidate) {
+                Ok(Some((real, _))) => Some((candidate, real)),
+                Err(std::io::ErrorKind::NotFound) => None,
+                Ok(None) | Err(_) => return false,
+            },
+            Ok(meta) if meta.is_file() && candidate.starts_with(scope) => Some((candidate.clone(), candidate)),
+            _ => return false,
+        };
+        if let Some(pair) = resolved
+            && seen.insert(pair.clone())
+        {
+            queue.push_back(pair);
+        }
+    }
+    while let Some((opened, real)) = queue.pop_front() {
+        let Ok(bytes) = read_config_file_nofollow(&real) else {
+            return false;
+        };
+        let Ok(include_values) = parse_git_config_include_paths(&bytes) else {
+            return false;
+        };
+        if include_values.is_empty() {
+            continue;
+        }
+        let Some(base_dir) = opened.parent() else {
+            return false;
+        };
+        for value in include_values {
+            let Ok(target) = resolve_config_include_in(&include_scope, base_dir, &value) else {
+                return false;
+            };
+            if let Some(pair) = target
+                && seen.insert(pair.clone())
+            {
+                if seen.len() > 32 {
+                    return false;
+                }
+                queue.push_back(pair);
+            }
+        }
+    }
+    true
+}
+
 #[derive(PartialEq)]
 enum PreConfig {
-    Found((PathBuf, PathBuf, [Option<ConfigStamp>; 2])),
+    Found(Box<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])>),
     None,
     Refused,
 }
@@ -560,7 +886,10 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
                 let Some(s1) = config_stamp_in(scope, &common.join("config.worktree")) else {
                     return PreConfig::Refused;
                 };
-                return PreConfig::Found((common.clone(), common, [s0, s1]));
+                if !validate_local_config_includes_in(scope, &common, &common) {
+                    return PreConfig::Refused;
+                }
+                return PreConfig::Found(Box::new((common.clone(), common, [s0, s1])));
             }
             Ok(meta) if meta.is_file() => {
                 let Ok(bytes) = small(&marker) else {
@@ -618,7 +947,10 @@ fn pre_config_stamps_in(scope: &Path, path: &Path) -> PreConfig {
                 let Some(s1) = config_stamp_in(scope, &admin.join("config.worktree")) else {
                     return PreConfig::Refused;
                 };
-                return PreConfig::Found((common, admin, [s0, s1]));
+                if !validate_local_config_includes_in(scope, &common, &admin) {
+                    return PreConfig::Refused;
+                }
+                return PreConfig::Found(Box::new((common, admin, [s0, s1])));
             }
             Ok(_) => return PreConfig::Refused,
         }
@@ -719,7 +1051,7 @@ pub(crate) async fn probe_root_checkout(scope: &Path, workspace: &Workspace) -> 
         return Err(super::probe_error());
     }
     let pre = match pre {
-        PreConfig::Found(stamp) => Some(stamp),
+        PreConfig::Found(stamp) => Some(*stamp),
         PreConfig::None => None,
         PreConfig::Refused => return Ok(RootCheckout::Git(Err(native_error()))),
     };
@@ -756,7 +1088,7 @@ async fn checkout_in(scope: &Path, path: &Path) -> Result<Physical, Error> {
     .await
     .unwrap_or(PreConfig::Refused);
     let pre = match pre {
-        PreConfig::Found(stamp) => Some(stamp),
+        PreConfig::Found(stamp) => Some(*stamp),
         PreConfig::None => None,
         PreConfig::Refused => return Err(native_error()),
     };
@@ -1154,143 +1486,20 @@ pub(crate) async fn catalogue_at_with_local(
     catalogue_in_at(app, w, refresh, true, endpoint, timeout, prechecked_local).await
 }
 
-fn local_include_scope(scope: &Path) -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        let mut comps = scope.components();
-        let prefix = comps.next()?;
-        let root = comps.next()?;
-        if !matches!(prefix, std::path::Component::Prefix(_)) || !matches!(root, std::path::Component::RootDir) {
-            return None;
-        }
-        let mut out = PathBuf::new();
-        out.push(prefix.as_os_str());
-        out.push(root.as_os_str());
-        Some(out)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = scope;
-        Some(PathBuf::from("/"))
-    }
-}
-
-fn resolve_config_include_in(include_scope: &Path, base_dir: &Path, raw: &str) -> Result<Option<PathBuf>, ()> {
-    if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
-        return Err(());
-    }
-    let expanded = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).ok_or(())?;
-        PathBuf::from(home).join(rest)
-    } else if raw == "~" {
-        return Err(());
-    } else {
-        PathBuf::from(raw)
-    };
-    let simplified = dunce::simplified(&expanded);
-    super::ownership::reject_network_path(&simplified.to_string_lossy(), simplified)?;
-    let joined = if simplified.is_absolute() { simplified.to_path_buf() } else { base_dir.join(simplified) };
-    let parent = joined.parent().ok_or(())?;
-    let name = joined.file_name().ok_or(())?;
-    let parent_str = parent.to_str().ok_or(())?;
-    let (real_parent, anchor) = super::ownership::resolve_media_path_checked(include_scope, parent_str)?.ok_or(())?;
-    if real_parent != anchor {
-        return Ok(None);
-    }
-    let candidate = real_parent.join(name);
-    match std::fs::symlink_metadata(&candidate) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(include_scope, &candidate) {
-            Ok(Some((real, _))) => Ok(Some(real)),
-            Err(std::io::ErrorKind::NotFound) => Ok(None),
-            Ok(None) | Err(_) => Err(()),
-        },
-        Ok(meta) if meta.is_file() => candidate.starts_with(include_scope).then_some(Some(candidate)).ok_or(()),
-        _ => Err(()),
-    }
-}
-
 async fn validate_local_config_includes(scope: &Path, local: &Physical) -> Result<(), Error> {
     if scope.as_os_str().is_empty() {
         return Ok(());
     }
-    let include_scope = local_include_scope(scope).ok_or_else(native_error)?;
-    let root_ok = tokio::task::spawn_blocking({
-        let scope = scope.to_path_buf();
-        let root = local.root.clone();
-        move || canonical_dir_in(&scope, &root, &root)
+    let scope = scope.to_path_buf();
+    let root = local.root.clone();
+    let common = local.common.clone();
+    let admin = local.admin.clone();
+    let ok = tokio::task::spawn_blocking(move || {
+        canonical_dir_in(&scope, &root, &root) && validate_local_config_includes_in(&scope, &common, &admin)
     })
     .await
     .unwrap_or(false);
-    if !root_ok {
-        return Err(native_error());
-    }
-    let mut queue = std::collections::VecDeque::new();
-    let mut seen = HashSet::new();
-    for candidate in [local.common.join("config"), local.admin.join("config.worktree")] {
-        let scope_owned = scope.to_path_buf();
-        let present = tokio::task::spawn_blocking(move || match std::fs::symlink_metadata(&candidate) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Ok(meta) if meta.file_type().is_symlink() => match resolve_symlink_file_in(&scope_owned, &candidate) {
-                Ok(Some(_)) => Ok(Some(candidate)),
-                Err(std::io::ErrorKind::NotFound) => Ok(None),
-                Ok(None) | Err(_) => Err(()),
-            },
-            Ok(meta) if meta.is_file() => candidate.starts_with(&scope_owned).then_some(Some(candidate)).ok_or(()),
-            _ => Err(()),
-        })
-        .await
-        .map_err(|_| native_error())?
-        .map_err(|()| native_error())?;
-        if let Some(path) = present
-            && seen.insert(path.clone())
-        {
-            queue.push_back(path);
-        }
-    }
-    while let Some(file) = queue.pop_front() {
-        let file_str = file.to_str().ok_or_else(native_error)?;
-        let out =
-            crate::git::run(&local.root, &["config", "--null", "--list", "--no-includes", "--file", file_str], 4 << 20)
-                .await
-                .map_err(|_| native_error())?
-                .ok()
-                .map_err(|_| native_error())?
-                .text();
-        let include_values: Vec<String> = out
-            .split('\0')
-            .filter_map(|entry| {
-                let (k, v) = entry.split_once('\n')?;
-                (k == "include.path" || (k.starts_with("includeif.") && k.ends_with(".path"))).then(|| v.to_owned())
-            })
-            .collect();
-        if include_values.is_empty() {
-            continue;
-        }
-        let base_dir = file.parent().ok_or_else(native_error)?.to_path_buf();
-        let include_scope_owned = include_scope.clone();
-        let targets = tokio::task::spawn_blocking(move || -> Result<Vec<PathBuf>, ()> {
-            let mut out = Vec::new();
-            for value in include_values {
-                if let Some(target) = resolve_config_include_in(&include_scope_owned, &base_dir, &value)? {
-                    out.push(target);
-                }
-            }
-            Ok(out)
-        })
-        .await
-        .map_err(|_| native_error())?
-        .map_err(|()| native_error())?;
-        for target in targets {
-            if seen.insert(target.clone()) {
-                if seen.len() > 32 {
-                    return Err(native_error());
-                }
-                queue.push_back(target);
-            }
-        }
-    }
-    Ok(())
+    if ok { Ok(()) } else { Err(native_error()) }
 }
 
 async fn catalogue_in_at(
