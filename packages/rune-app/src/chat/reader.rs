@@ -530,6 +530,10 @@ impl Reader {
         }
     }
 
+    pub(crate) fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
     pub(crate) fn defers_scroll(&self) -> bool {
         self.resume_pending || self.pending_scroll || self.hidden
     }
@@ -6234,6 +6238,344 @@ mod resume_tests {
         assert!(
             (anchor_rel_y - (-80.0)).abs() <= 2.0,
             "second downward wheel on resize probe frame must keep r2w-20 at -80 px, got {anchor_rel_y}"
+        );
+    }
+
+    #[test]
+    fn widening_on_replay_delivery_frame_preserves_top_clamped_rebound() {
+        let long_sentence = "Wrapped transcript content that shrinks substantially vertically when the viewport widens significantly. ";
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rwide-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(5)),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full20", 0..20);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (1200.0, 390.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rwide-01", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, wide_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+
+        rt.set_viewport((480.0, 390.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rwide-01", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, narrow_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            narrow_offset > wide_offset + 80.0,
+            "expected rwide-01 much lower at 480 px than 1200 px: narrow={narrow_offset}, wide={wide_offset}"
+        );
+
+        rt.set_viewport((320.0, 420.0), 1.0);
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rwide-01", 0.0);
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim01_05", 1..5),
+                        older: Some(serde_json::json!("older-rwide")),
+                        newer: Some(serde_json::json!("newer-rwide")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((480.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + 40.0, h_rect[1] + h_rect[3] / 2.0);
+        // Upward delta does NOT hit top at 480 px (narrow_offset - upward_dy > 0),
+        // but DOES hit top at 1200 px (wide_offset - upward_dy < -40) so overshoot is discarded.
+        let upward_dy = (wide_offset + narrow_offset) / 2.0;
+        assert!(upward_dy > wide_offset + 40.0 && upward_dy < narrow_offset - 40.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, upward_dy).at(wx, wy));
+        rt.frame(0.016);
+        assert_eq!(rt.state.messages.len(), 20);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Before Frame B: widen to 1200 px and queue a 100 px downward rebound.
+        rt.set_viewport((1200.0, 390.0), 1.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, -100.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, _) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            (final_offset - 100.0).abs() <= 3.0,
+            "widened replay must clamp upward delta at top and rebound to 100 px, got {final_offset} (wide_offset={wide_offset}, upward_dy={upward_dy})"
+        );
+    }
+
+    #[test]
+    fn shortening_viewport_on_latest_replay_delivery_frame_measures_from_new_bottom() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rlat-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim26_30", 26..30),
+                        older: Some(serde_json::json!("older-rlat")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        rt.wheel_event(rune::WheelEvent::new(0.0, 80.0).at(wx, wy));
+        rt.frame(0.016);
+        assert_eq!(rt.state.messages.len(), 30);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Shorten viewport height by 100 px at the same width on the delivery frame.
+        rt.set_viewport((844.0, 360.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        let distance_from_bottom = final_max - final_offset;
+        assert!(
+            (distance_from_bottom - 80.0).abs() <= 2.0,
+            "Latest replay after shortening viewport must land 80 px above new bottom, got {distance_from_bottom} (offset={final_offset}, max={final_max})"
+        );
+    }
+
+    #[test]
+    fn shortening_viewport_on_downward_replay_delivery_frame_clears_following_when_off_bottom() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rfol-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(old_max > 200.0);
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 40.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, start_offset, start_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            ((start_max - start_offset) - 40.0).abs() <= 2.0,
+            "expected 40 px above bottom before suspend: offset={start_offset}, max={start_max}"
+        );
+        rt.update(|s, _| suspend(s));
+        assert!(
+            matches!(
+                rt.state.reader.as_ref().unwrap().bookmark,
+                Bookmark::Message { .. }
+            ),
+            "off-bottom position before suspend must save Bookmark::Message"
+        );
+        // Move to narrow viewport while suspended so resuming at 844 px defers scroll for the rail.
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_30", 15..30),
+                        older: Some(serde_json::json!("older-rfol")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // 60 px downward would hit bottom in the 460 px viewport (40 px left),
+        // but stays 80 px above bottom once the viewport shortens to 360 px (+100 px max).
+        rt.wheel_event(rune::WheelEvent::new(0.0, -60.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        rt.set_viewport((844.0, 360.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(
+            final_max - final_offset > 50.0,
+            "downward replay in shortened viewport must stay off-bottom: offset={final_offset}, max={final_max}"
+        );
+        rt.update(|s, _| suspend(s));
+        assert!(
+            matches!(
+                rt.state.reader.as_ref().unwrap().bookmark,
+                Bookmark::Message { .. }
+            ),
+            "switching away after off-bottom replay in shortened viewport must save reading position, not Latest: {:?}",
+            rt.state.reader.as_ref().unwrap().bookmark
         );
     }
 }

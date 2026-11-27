@@ -23,6 +23,7 @@ struct ScrollObserved {
     viewport_w: f32,
     viewport_h: f32,
     seq: u64,
+    last_resize_seq: u64,
     manual_seq: u64,
     ignore_manual_once: bool,
     ignore_remount_bottom: bool,
@@ -87,97 +88,17 @@ enum FrameRestoreTarget {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct PostProbe {
     clock: f64,
-    start_offset: f32,
-    anchor_base: Option<(String, f32)>,
-    last_base: Option<(String, f32)>,
 }
 
-enum ReplayScroll {
-    Bottom,
-    Key(String, f32),
-    Offset(f32),
-}
-
-fn resolve_replay_scroll(
-    probe: &PostProbe,
-    cur_max: f32,
-    anchor: &Bookmark,
-    deltas: &[f32],
-) -> (f32, bool, ReplayScroll) {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum ReplayEdge {
-        None,
-        Top,
-        Bottom,
-    }
-    let start = match anchor {
-        Bookmark::Latest => cur_max,
-        Bookmark::Message { .. } => probe.start_offset,
-    };
-    let mut dest = start;
-    let mut edge = match anchor {
-        Bookmark::Latest => ReplayEdge::Bottom,
-        Bookmark::Message { .. } => ReplayEdge::None,
-    };
+fn replay_deltas(start: f32, max: f32, deltas: &[f32]) -> f32 {
+    let mut dest = start.clamp(0.0, max);
     for &dy in deltas {
-        let raw = dest - dy;
-        if raw <= 0.0 {
-            dest = 0.0;
-            edge = ReplayEdge::Top;
-        } else if raw >= cur_max {
-            dest = cur_max;
-            edge = ReplayEdge::Bottom;
-        } else {
-            dest = raw;
-        }
+        dest = (dest - dy).clamp(0.0, max);
     }
-    let total_dy: f32 = deltas.iter().copied().sum();
-    let unclamped_clamped = (start - total_dy).clamp(0.0, cur_max);
-    let rebounded_from_edge = (dest - unclamped_clamped).abs() > 0.5;
-    let scroll = if !rebounded_from_edge {
-        match anchor {
-            Bookmark::Message { .. } => {
-                if let Some((id, base)) = &probe.anchor_base {
-                    ReplayScroll::Key(id.clone(), *base + total_dy)
-                } else {
-                    ReplayScroll::Offset(dest)
-                }
-            }
-            Bookmark::Latest => {
-                if total_dy <= 0.5 {
-                    ReplayScroll::Bottom
-                } else if let Some((id, base)) = &probe.last_base {
-                    ReplayScroll::Key(id.clone(), *base + total_dy)
-                } else {
-                    ReplayScroll::Offset(dest)
-                }
-            }
-        }
-    } else {
-        match edge {
-            ReplayEdge::Top => ReplayScroll::Offset(dest),
-            ReplayEdge::Bottom => {
-                if (cur_max - dest).max(0.0) <= 0.5 {
-                    ReplayScroll::Bottom
-                } else if let Some((id, base)) = &probe.last_base {
-                    ReplayScroll::Key(id.clone(), *base + (probe.start_offset - dest))
-                } else {
-                    ReplayScroll::Offset(dest)
-                }
-            }
-            ReplayEdge::None => {
-                if let Some((id, base)) = &probe.anchor_base {
-                    ReplayScroll::Key(id.clone(), *base + (probe.start_offset - dest))
-                } else {
-                    ReplayScroll::Offset(dest)
-                }
-            }
-        }
-    };
-    (dest, total_dy.abs() > 0.5, scroll)
+    dest
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -307,20 +228,37 @@ impl Reading {
         fr.post_probe.as_ref().is_some_and(|p| p.clock == clock) && cur_seq == fr.obs_seq + 1
     }
 
-    pub(super) fn keeps_sync_undo_alive(&self) -> bool {
+    fn pending_resize_wheel_replay(&self) -> bool {
+        let cur = self.scroll_state.get();
         self.frame_restore.as_ref().is_some_and(|fr| {
-            !fr.handled
-                || (matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
-                    && self.scroll_state.get().seq == fr.obs_seq)
+            fr.handled
+                && !fr.probe_live
+                && fr.post_probe.is_some()
+                && matches!(
+                    &fr.target,
+                    FrameRestoreTarget::ReplayDeltas { deltas, .. } if !deltas.is_empty()
+                )
+                && cur.last_resize_seq == cur.seq
+                && cur.seq == fr.obs_seq + 1
         })
     }
 
+    pub(super) fn keeps_sync_undo_alive(&self) -> bool {
+        self.pending_resize_wheel_replay()
+            || self.frame_restore.as_ref().is_some_and(|fr| {
+                !fr.handled
+                    || (matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+                        && self.scroll_state.get().seq == fr.obs_seq)
+            })
+    }
+
     pub(super) fn awaiting_wheel_replay(&self) -> bool {
-        self.frame_restore.as_ref().is_some_and(|fr| {
-            !fr.handled
-                && fr.probe_live
-                && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
-        })
+        self.pending_resize_wheel_replay()
+            || self.frame_restore.as_ref().is_some_and(|fr| {
+                !fr.handled
+                    && fr.probe_live
+                    && matches!(fr.target, FrameRestoreTarget::ReplayDeltas { .. })
+            })
     }
 
     fn begin_wheel_gesture(&mut self) {
@@ -430,19 +368,6 @@ impl Reading {
             }
         }
         None
-    }
-
-    fn live_row_offset(&self, id: &str, history_bounds: [f32; 4]) -> Option<f32> {
-        if history_bounds[3] <= 0.0 || !history_bounds[1].is_finite() {
-            return None;
-        }
-        let rows = self.live_rows.borrow();
-        let (weak, live) = rows.get(id)?;
-        if weak.strong_count() == 0 {
-            return None;
-        }
-        let rect = live.get();
-        (rect[3] > 0.0 && rect[1].is_finite()).then_some(rect[1] - history_bounds[1])
     }
 
     pub(crate) fn live_bookmark(&self, history_bounds: [f32; 4], gap: bool) -> Bookmark {
@@ -1158,13 +1083,22 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     let history = history
         .on_scroll_offset(move |at| {
             let prev = scroll_state.get();
+            let resized = prev.seq > 0
+                && ((at.viewport[0] - prev.viewport_w).abs() > 0.5
+                    || (at.viewport[1] - prev.viewport_h).abs() > 0.5);
+            let next_seq = prev.seq + 1;
             let mut next = ScrollObserved {
                 offset: at.offset[1],
                 prev_offset: prev.offset,
                 max: at.max[1],
                 viewport_w: at.viewport[0],
                 viewport_h: at.viewport[1],
-                seq: prev.seq + 1,
+                seq: next_seq,
+                last_resize_seq: if resized {
+                    next_seq
+                } else {
+                    prev.last_resize_seq
+                },
                 manual_seq: prev.manual_seq,
                 ignore_manual_once: false,
                 ignore_remount_bottom: false,
@@ -1379,15 +1313,11 @@ fn handle_reading_wheel(
             }
             if post_probe && !undid {
                 deltas.push(ev.dy);
-                let (next_dest, scroll_cmd) = if let Some(probe) = &fr.post_probe {
-                    let (next_dest, _, scroll_cmd) =
-                        resolve_replay_scroll(probe, obs_max, anchor, deltas);
-                    (next_dest, scroll_cmd)
-                } else {
-                    let next_dest = (obs_offset - ev.dy).clamp(0.0, obs_max);
-                    (next_dest, ReplayScroll::Offset(next_dest))
-                };
+                let next_dest = (obs_offset - ev.dy).clamp(0.0, obs_max);
                 let moved_history = (obs_offset - next_dest).abs() > 0.5;
+                let pin_bottom = matches!(anchor, Bookmark::Latest)
+                    && obs_max > 0.5
+                    && next_dest >= obs_max - 0.5;
                 fr.obs_offset = next_dest;
                 fr.obs_seq = cur_seq;
                 reading.resize_anchor = None;
@@ -1401,8 +1331,8 @@ fn handle_reading_wheel(
                     } else {
                         reading.bump_manual_scroll();
                     }
+                    reading.note_programmatic_scroll();
                 }
-                let pin_bottom = matches!(scroll_cmd, ReplayScroll::Bottom);
                 let at_bottom = pin_bottom || obs_max <= 0.5 || next_dest >= obs_max - 0.5;
                 reading.at_bottom = at_bottom;
                 reading.following = at_bottom;
@@ -1410,16 +1340,11 @@ fn handle_reading_wheel(
                 s.transcript_display
                     .reading_mut()
                     .advance_row_guard(s.revision);
-                match scroll_cmd {
-                    ReplayScroll::Bottom => Reading::restore(&Bookmark::Latest, tx),
-                    ReplayScroll::Key(id, at) => {
-                        tx.instant();
-                        tx.scroll_key_to(id, at);
-                    }
-                    ReplayScroll::Offset(dest) => {
-                        tx.instant();
-                        tx.scroll_to_y("history", dest);
-                    }
+                if pin_bottom {
+                    Reading::restore(&Bookmark::Latest, tx);
+                } else {
+                    tx.instant();
+                    tx.scroll_to_y("history", next_dest);
                 }
                 return true;
             }
@@ -1881,8 +1806,6 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                     .reader
                     .as_ref()
                     .is_some_and(crate::chat::reader::Reader::has_pending_scroll);
-                let history_bounds = s.tool_diff_preferences.history_bounds.get();
-                let last_row_id = s.messages.last().map(|row| row.id.clone());
                 let reading = s.transcript_display.reading_mut();
                 match fr.target {
                     FrameRestoreTarget::Anchor(id, anchor_offset) => {
@@ -1899,41 +1822,39 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         tx.scroll_key_to(id, anchor_offset + delta);
                     }
                     FrameRestoreTarget::ReplayDeltas { anchor, deltas, .. } => {
-                        let anchor_base = match &anchor {
-                            Bookmark::Message { id, offset } => {
-                                let base = reading
-                                    .live_row_offset(id, history_bounds)
-                                    .unwrap_or(*offset);
-                                Some((id.clone(), base))
-                            }
-                            Bookmark::Latest => None,
+                        let start = match &anchor {
+                            Bookmark::Latest => cur.max,
+                            Bookmark::Message { .. } => cur.offset,
                         };
-                        let last_base = last_row_id.and_then(|id| {
-                            let base = reading.live_row_offset(&id, history_bounds)?;
-                            Some((id, base))
-                        });
-                        let probe = PostProbe {
-                            clock: tx.clock(),
-                            start_offset: cur.offset,
-                            anchor_base,
-                            last_base,
-                        };
-                        let (dest, had_net_delta, scroll_cmd) =
-                            resolve_replay_scroll(&probe, cur.max, &anchor, &deltas);
-                        let pin_bottom = matches!(scroll_cmd, ReplayScroll::Bottom);
-                        let keyed_may_move =
-                            had_net_delta && matches!(scroll_cmd, ReplayScroll::Key(..));
-                        if (cur.offset - dest).abs() <= 0.5 && !keyed_may_move {
+                        let dest = replay_deltas(start, cur.max, &deltas);
+                        let pin_bottom = matches!(anchor, Bookmark::Latest)
+                            && cur.max > 0.5
+                            && dest >= cur.max - 0.5;
+                        let probe = PostProbe { clock: tx.clock() };
+                        if (cur.offset - dest).abs() <= 0.5 {
                             let at_bottom = pin_bottom || cur.at_bottom();
                             reading.at_bottom = at_bottom;
                             reading.following = at_bottom;
-                            match scroll_cmd {
-                                ReplayScroll::Bottom => Reading::restore(&Bookmark::Latest, tx),
-                                ReplayScroll::Key(id, at) => {
-                                    tx.instant();
-                                    tx.scroll_key_to(id, at);
-                                }
-                                ReplayScroll::Offset(_) => tx.live_only(),
+                            reading.frame_restore_epoch += 1;
+                            reading.frame_restore = Some(FrameRestore {
+                                epoch: reading.frame_restore_epoch,
+                                obs_offset: dest,
+                                obs_max: cur.max,
+                                obs_seq: cur.seq,
+                                target: FrameRestoreTarget::ReplayDeltas {
+                                    anchor,
+                                    deltas,
+                                    restored_anchor: false,
+                                },
+                                probe_live: false,
+                                handled: true,
+                                post_probe: Some(probe),
+                                checked: Cell::new(Some(None)),
+                            });
+                            if pin_bottom {
+                                Reading::restore(&Bookmark::Latest, tx);
+                            } else {
+                                tx.live_only();
                             }
                             return;
                         }
@@ -1942,6 +1863,7 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         } else {
                             reading.bump_manual_scroll();
                         }
+                        reading.note_programmatic_scroll();
                         let at_bottom = pin_bottom || cur.max <= 0.5 || dest >= cur.max - 0.5;
                         reading.at_bottom = at_bottom;
                         reading.following = at_bottom;
@@ -1967,16 +1889,11 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                         if let Some(reader) = &mut s.reader {
                             reader.defer_sync_until(cur.seq + 1);
                         }
-                        match scroll_cmd {
-                            ReplayScroll::Bottom => Reading::restore(&Bookmark::Latest, tx),
-                            ReplayScroll::Key(id, at) => {
-                                tx.instant();
-                                tx.scroll_key_to(id, at);
-                            }
-                            ReplayScroll::Offset(dest) => {
-                                tx.instant();
-                                tx.scroll_to_y("history", dest);
-                            }
+                        if pin_bottom {
+                            Reading::restore(&Bookmark::Latest, tx);
+                        } else {
+                            tx.instant();
+                            tx.scroll_to_y("history", dest);
                         }
                     }
                     FrameRestoreTarget::FromBottom => {
@@ -2032,7 +1949,71 @@ pub(crate) fn preserve_on_resize(
     if s.messages.is_empty()
         || s.reader
             .as_ref()
-            .is_some_and(|reader| reader.defers_scroll())
+            .is_some_and(crate::chat::reader::Reader::is_hidden)
+    {
+        return;
+    }
+    if s.transcript_display.reading().pending_resize_wheel_replay() {
+        let cur = s.transcript_display.reading().scroll_state.get();
+        let anchor_present = s
+            .transcript_display
+            .reading()
+            .frame_restore
+            .as_ref()
+            .is_some_and(|fr| match &fr.target {
+                FrameRestoreTarget::ReplayDeltas { anchor, .. } => match anchor {
+                    Bookmark::Latest => !s.history_detached,
+                    Bookmark::Message { id, .. } => s.messages.iter().any(|row| row.id == *id),
+                },
+                _ => false,
+            });
+        if anchor_present {
+            let anchor = {
+                let reading = s.transcript_display.reading_mut();
+                let Some(fr) = reading.frame_restore.as_mut() else {
+                    return;
+                };
+                let FrameRestoreTarget::ReplayDeltas {
+                    anchor,
+                    restored_anchor,
+                    ..
+                } = &mut fr.target
+                else {
+                    return;
+                };
+                *restored_anchor = true;
+                reading.frame_restore_epoch += 1;
+                fr.epoch = reading.frame_restore_epoch;
+                fr.obs_seq = cur.seq;
+                fr.probe_live = true;
+                fr.handled = false;
+                fr.post_probe = None;
+                fr.checked.set(Some(Some(0.0)));
+                reading.resize_anchor = None;
+                let at_bottom = cur.at_bottom();
+                reading.at_bottom = at_bottom;
+                reading.following = at_bottom;
+                anchor.clone()
+            };
+            s.revision += 1;
+            let rev = s.revision;
+            let reading = s.transcript_display.reading_mut();
+            reading.advance_row_guard(rev);
+            reading.note_programmatic_scroll();
+            if let Some(reader) = &mut s.reader {
+                reader.defer_sync_until(cur.seq + 2);
+            }
+            Reading::restore(&anchor, tx);
+            return;
+        }
+        s.transcript_display.reading_mut().frame_restore = None;
+    }
+    if s.transcript_display.reading().awaiting_wheel_replay() {
+        return;
+    }
+    if s.reader
+        .as_ref()
+        .is_some_and(|reader| reader.defers_scroll())
     {
         return;
     }
