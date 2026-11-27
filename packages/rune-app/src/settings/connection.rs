@@ -212,6 +212,17 @@ pub(crate) fn connection_event(
                 wake();
             }
         }
+        Event::Workspace(WorkspaceEvent::WorktreesChanged { workspace_id }) => {
+            let prefs = s.settings.shared.borrow();
+            if prefs
+                .provider_target
+                .as_ref()
+                .is_some_and(|target| target.is_workspace(workspace_id))
+                && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
         Event::Workspace(WorkspaceEvent::SessionMoved {
             workspace_id,
             session_id,

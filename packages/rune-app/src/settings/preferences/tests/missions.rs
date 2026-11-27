@@ -913,20 +913,18 @@ fn missions_french_scope_switch_same_model_keeps_variant_and_tab_switch_cancels_
             "late reply after leaving Missions must never publish when returning to Missions"
         );
 
-        // Opening Preferences with no active project/launcher must not panic on RefCell re-borrow.
+        // Opening Preferences with no active project/launcher must not panic on RefCell re-borrow
+        // and must not trust an unverified cached session_directory.
         let empty = crate::init();
         let mut empty_backend = shared.borrow().backend.clone().unwrap();
         empty_backend.session_directory = Some("/empty-tab-checkout".into());
         empty.settings.shared.borrow_mut().backend = Some(empty_backend);
         let opener = crate::settings::missions::opener_directory(&empty);
-        assert_eq!(opener.as_deref(), Some("/empty-tab-checkout"));
+        assert_eq!(opener, None);
         {
             let mut prefs = empty.settings.shared.borrow_mut();
             prefs.missions.capture_opener(opener, None);
-            assert_eq!(
-                prefs.missions.pinned_directory(),
-                Some("/empty-tab-checkout")
-            );
+            assert_eq!(prefs.missions.pinned_directory(), None);
         }
     });
 }

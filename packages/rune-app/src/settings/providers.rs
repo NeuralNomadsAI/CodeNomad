@@ -19,6 +19,8 @@ pub(super) struct Target {
     revision: u64,
     mission_catalog: u64,
     observed: Option<u64>,
+    observed_location_revision: u64,
+    observed_upstream_healthy: bool,
     authority: u64,
     online: bool,
     stats: [u64; 2],
@@ -54,6 +56,10 @@ impl Target {
                     true,
                 )
             };
+        let observed_location_revision = backend
+            .client
+            .location_revision(&workspace, session.as_deref());
+        let observed_upstream_healthy = backend.client.workspace_upstream_healthy(&workspace);
         Some(Self {
             backend,
             workspace,
@@ -62,6 +68,8 @@ impl Target {
             revision: 0,
             mission_catalog: 0,
             observed,
+            observed_location_revision,
+            observed_upstream_healthy,
             authority: 0,
             online,
             stats: [0; 2],
@@ -95,6 +103,14 @@ impl Target {
         if !self.backend.client.same_connection(&current.client) {
             self.backend = current.clone();
             self.observed = None;
+            self.observed_location_revision = self
+                .backend
+                .client
+                .location_revision(&self.workspace, self.session.as_deref());
+            self.observed_upstream_healthy = self
+                .backend
+                .client
+                .workspace_upstream_healthy(&self.workspace);
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
@@ -237,6 +253,22 @@ impl Target {
         self.authority.wrapping_add(self.revision)
     }
 
+    pub(super) fn sync_location_state(&mut self) -> bool {
+        let rev = self
+            .backend
+            .client
+            .location_revision(&self.workspace, self.session.as_deref());
+        let healthy = self
+            .backend
+            .client
+            .workspace_upstream_healthy(&self.workspace);
+        let changed =
+            self.observed_location_revision != rev || self.observed_upstream_healthy != healthy;
+        self.observed_location_revision = rev;
+        self.observed_upstream_healthy = healthy;
+        changed
+    }
+
     pub(super) fn mission_catalog_revision(&self) -> u64 {
         self.revision().wrapping_add(self.mission_catalog)
     }
@@ -295,6 +327,8 @@ impl Target {
 
     #[cfg(test)]
     pub(super) fn fixture(backend: Backend, workspace: &str, session: Option<&str>) -> Self {
+        let observed_location_revision = backend.client.location_revision(workspace, session);
+        let observed_upstream_healthy = backend.client.workspace_upstream_healthy(workspace);
         Self {
             backend,
             workspace: workspace.to_owned(),
@@ -303,6 +337,8 @@ impl Target {
             revision: 0,
             mission_catalog: 0,
             observed: None,
+            observed_location_revision,
+            observed_upstream_healthy,
             authority: 0,
             online: true,
             stats: [0; 2],

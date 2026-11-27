@@ -7,7 +7,9 @@ use crate::{
 };
 use codenomad_client::{
     Receiver, Sender, absolute_server_path, bounded, same_server_path,
-    settings::missions::{MissionPreferenceExpectation, resolve_workspace_directory},
+    settings::missions::{
+        MissionDefaultScope, MissionPreferenceExpectation, resolve_workspace_directory,
+    },
 };
 use rune::Waker;
 use serde_json::Value;
@@ -184,6 +186,8 @@ pub(in crate::settings) struct Shared {
     pub(super) defaults: defaults::State,
     pub(super) library: library::State,
     pub(super) depth: depth::State,
+    scope: Option<MissionDefaultScope>,
+    profiles_open: bool,
     open_epoch: u64,
     pinned_directory: Option<String>,
     pinned_location_revision: Option<u64>,
@@ -253,6 +257,22 @@ impl Shared {
         self.depth.save_in_flight()
     }
 
+    pub(in crate::settings) fn scope(&self) -> MissionDefaultScope {
+        self.scope.unwrap_or(MissionDefaultScope::All)
+    }
+
+    pub(super) fn set_scope(&mut self, scope: MissionDefaultScope) {
+        self.scope = Some(scope);
+    }
+
+    pub(in crate::settings) fn profiles_open(&self) -> bool {
+        self.profiles_open
+    }
+
+    pub(super) fn toggle_profiles_open(&mut self) {
+        self.profiles_open = !self.profiles_open;
+    }
+
     pub(in crate::settings) fn revoke_location(&self) {
         self.location_token.fetch_add(1, Ordering::SeqCst);
     }
@@ -267,8 +287,9 @@ impl Shared {
                 .client
                 .workspace_upstream_healthy(t.location().0)
         });
+        let has_session = target.is_some_and(|t| t.location().1.is_some());
         let next_dir = directory
-            .filter(|_| upstream_healthy)
+            .filter(|_| upstream_healthy && !has_session)
             .filter(|path| absolute_server_path(path));
         let next_target = target.map(|t| {
             let (ws, ses) = t.location();
@@ -491,6 +512,10 @@ impl Shared {
         self.defaults.rebind(same_address);
         self.library.rebind(same_address);
         self.depth.rebind(same_address);
+        if !same_address {
+            self.scope = None;
+            self.profiles_open = false;
+        }
         self.pinned_directory = None;
         self.pinned_location_revision = None;
         self.pinned_target = None;
@@ -691,19 +716,24 @@ impl Shared {
 }
 
 pub(in crate::settings) fn opener_directory(s: &crate::State) -> Option<String> {
+    let has_active_session = if s.screen.launcher().is_some() {
+        crate::workspace::active_session(s).is_some()
+    } else {
+        crate::settings::bound_backend(s).is_some_and(|backend| !backend.session.is_empty())
+    };
+    if has_active_session {
+        return None;
+    }
     if let Some((_, directory)) = crate::git::file_link_scope(s)
         && absolute_server_path(directory)
     {
         return Some(directory.to_owned());
     }
     if let Some(launcher) = s.screen.launcher()
-        && crate::workspace::active_session(s).is_none()
         && let Some(project) = launcher.project.as_ref()
         && absolute_server_path(&project.path)
     {
         return Some(project.path.clone());
     }
-    crate::settings::bound_backend(s)
-        .and_then(|backend| backend.session_directory)
-        .filter(|path| absolute_server_path(path))
+    None
 }

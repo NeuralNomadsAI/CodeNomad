@@ -358,6 +358,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .as_mut()
                 .zip(mission_catalog_changes.as_ref())
                 .is_some_and(|(target, changes)| target.mission_catalog_catalogue(changes));
+            let location_state_changed = shared
+                .provider_target
+                .as_mut()
+                .is_some_and(providers::Target::sync_location_state);
             if (old
                 != shared
                     .provider_target
@@ -367,7 +371,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 || bound
                 || stats_changed
                 || integrations_changed
-                || mission_catalog_changed)
+                || mission_catalog_changed
+                || location_state_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();

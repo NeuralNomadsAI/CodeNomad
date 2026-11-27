@@ -5,7 +5,11 @@ use super::{
 };
 use crate::settings::{providers::Target, view};
 use codenomad_client::stream::{CatalogueChanges, CatalogueWatch};
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 fn masked_depth_snapshot_json(directory: &str, expectation: &str) -> Value {
     json!({
@@ -100,7 +104,7 @@ fn upstream_error_blocks_depth_reresolution_and_put_until_connected() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -299,7 +303,7 @@ fn reopening_web_preferences_with_steady_catalogue_watch_keeps_queued_depth_writ
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -405,13 +409,21 @@ fn unmasking_empty_experimental_with_inherit_preserves_choice_queued_during_conf
 
         let exp_1 = "5".repeat(64);
         let exp_2 = "6".repeat(64);
+        let mut saw_session = false;
         let mut saw_agents = false;
         let mut saw_providers = false;
         let mut saw_models = false;
         let mut saw_depth = false;
-        for _ in 0..4 {
+        for _ in 0..5 {
             let req = next_request(&listener, &mut rt).await;
-            if req
+            if req.first == "GET /workspaces/captured/instance/api/session/session HTTP/1.1" {
+                saw_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/repo/wt-a"}}}),
+                )
+                .await;
+            } else if req
                 .first
                 .starts_with("GET /workspaces/captured/instance/api/agent")
             {
@@ -452,7 +464,7 @@ fn unmasking_empty_experimental_with_inherit_preserves_choice_queued_during_conf
                 panic!("unexpected request: {}", req.first);
             }
         }
-        assert!(saw_agents && saw_providers && saw_models && saw_depth);
+        assert!(saw_session && saw_agents && saw_providers && saw_models && saw_depth);
         wait_until(|| {
             tick(&mut rt);
             !shared
@@ -606,5 +618,265 @@ fn mission_catalog_events_refresh_missions_without_touching_providers() {
             catalog_rev_before.wrapping_add(1)
         );
         drop(watch);
+    });
+}
+
+#[test]
+fn session_moved_while_preferences_closed_ignores_stale_opener_and_resolves_moved_worktree() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        backend.session_directory = Some("/repo/wt-a".into());
+        let backend_client = backend.client.clone();
+
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = accept_sse_stream(&listener).await;
+        let _ = timeout(Duration::from_secs(2), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
+
+        // While Preferences is closed, another client moves the session from A to B.
+        let before_move = backend_client.location_revision("captured", Some("session"));
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.event\",\"instanceId\":\"captured\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| backend_client.location_revision("captured", Some("session")) > before_move)
+            .await;
+
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+
+        // Even though the backend still carries stale session_directory "/repo/wt-a",
+        // opener_directory must return None for an active session and capture_opener must refuse stale A.
+        assert_eq!(crate::settings::missions::opener_directory(&root), None);
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            assert_eq!(prefs.missions.pinned_directory(), None);
+            prefs.provider_target = Some(target);
+        }
+
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        // Authoritative session lookup resolves moved worktree B; depth GET and PUT must target B only.
+        let exp_b = "9".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-b",
+            "%2Frepo%2Fwt-b",
+            Some(2),
+            &exp_b,
+            true,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-b"))
+        })
+        .await;
+
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        let put_b = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_b.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_b.body["location"]["directory"], json!("/repo/wt-b"));
+        assert_eq!(put_b.body["depth"], json!(4));
+        assert_eq!(put_b.body["expectation"], json!(exp_b));
+        put_b.reply_no_content().await;
+    });
+}
+
+#[test]
+fn worktrees_changed_wakes_open_preferences_window_without_manual_tick() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend = backend.clone();
+        let backend_client = backend.client.clone();
+
+        let (watch, task) = CatalogueWatch::new(backend.clone(), Arc::new(|| {}));
+        platform::spawn(task);
+        let mut sse_stream = accept_sse_stream(&listener).await;
+        wait_until(|| watch.generation() == 1).await;
+        let _ = watch.take_provider_changes();
+        let _ = watch.take_mission_catalog_changes();
+
+        let mut root = crate::init();
+        root.screen = crate::screen::Screen::Launcher(crate::launcher::Launcher::fixture());
+        root.workspace = Some(crate::workspace::Ui::new());
+        let project = crate::catalog::Project {
+            id: "captured".into(),
+            path: "/repo/wt-a".into(),
+        };
+        crate::workspace::opened(&mut root, &project);
+        crate::workspace::bound(&mut root, &backend);
+        {
+            let launcher = root.screen.launcher_mut().unwrap();
+            launcher.connection = Some(backend.clone());
+            launcher.project = Some(project);
+            launcher.catalogue_watch = Some(watch);
+        }
+
+        let wake_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake_count_cb = wake_count.clone();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(move || {
+            wake_count_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        *shared.borrow_mut() = prefs;
+
+        let target = Target::capture(&root).unwrap();
+        shared.borrow_mut().provider_target = Some(target);
+        crate::settings::poll(&mut root, &mut rune::Tx::default());
+        let wakes_before = wake_count.load(std::sync::atomic::Ordering::SeqCst);
+
+        // Deliver ONLY workspace.worktreesChanged: settings::poll must detect the Hub location_revision
+        // bump via Target::sync_location_state and wake the native Preferences window.
+        let before_rev = backend_client.location_revision("captured", Some("session"));
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"captured\"}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| backend_client.location_revision("captured", Some("session")) > before_rev)
+            .await;
+
+        crate::settings::poll(&mut root, &mut rune::Tx::default());
+        assert!(
+            wake_count.load(std::sync::atomic::Ordering::SeqCst) > wakes_before,
+            "workspace.worktreesChanged must wake the open native Preferences window"
+        );
+    });
+}
+
+#[test]
+fn native_preferences_reopen_preserves_missions_scope_and_profiles_disclosure() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        prefs.window_wake = Some(Arc::new(|| {}));
+        prefs.config.snapshot = Some(json!({
+            "settings": {
+                "locale": "en",
+                "missionProfileDefaults": []
+            }
+        }));
+        let shared = Rc::new(RefCell::new(prefs));
+        let target_scope = codenomad_client::settings::missions::MissionDefaultScope::ALL[1];
+
+        fn scope_trigger_value(a11y: &serde_json::Value) -> Option<String> {
+            if a11y["key"] == "mission-scope-trigger" {
+                return a11y["value"].as_str().map(str::to_owned);
+            }
+            a11y["children"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(scope_trigger_value)
+        }
+
+        // Open native Preferences window #1, choose a non-default scope and expand Profiles disclosure.
+        let initial_value;
+        let chosen_value;
+        {
+            let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+            let mut rt = rune::Runtime::new(
+                window,
+                view::view,
+                (1100.0, 760.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            settle_meta(&listener, &mut rt).await;
+            click(&mut rt, "settings-missions");
+            tick(&mut rt);
+            initial_value = scope_trigger_value(&rt.accessibility_json())
+                .expect("mission-scope-trigger must expose initial value");
+            click(&mut rt, "mission-scope-trigger");
+            click(&mut rt, "option1");
+            click(&mut rt, "trigger");
+            tick(&mut rt);
+            chosen_value = scope_trigger_value(&rt.accessibility_json())
+                .expect("mission-scope-trigger must expose chosen value");
+            assert_ne!(chosen_value, initial_value);
+            assert_eq!(shared.borrow().missions.scope(), target_scope);
+            assert!(shared.borrow().missions.profiles_open());
+            assert!(
+                rt.find("mission-reset-profiles").is_some(),
+                "expanding Profiles disclosure must render mission-reset-profiles"
+            );
+        }
+
+        // Reopen native Preferences window #2 on the same Preferences state: scope and disclosure must persist.
+        {
+            let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+            let mut rt = rune::Runtime::new(
+                window,
+                view::view,
+                (1100.0, 760.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            settle_meta(&listener, &mut rt).await;
+            click(&mut rt, "settings-missions");
+            tick(&mut rt);
+            let reopened_value = scope_trigger_value(&rt.accessibility_json())
+                .expect("reopened mission-scope-trigger must expose chosen value");
+            assert_ne!(
+                reopened_value, initial_value,
+                "reopened native Preferences window must preserve selected Missions scope"
+            );
+            assert!(
+                rt.find("mission-reset-profiles").is_some(),
+                "reopened native Preferences window must preserve expanded Profiles disclosure"
+            );
+            assert_eq!(shared.borrow().missions.scope(), target_scope);
+            assert!(shared.borrow().missions.profiles_open());
+        }
+
+        // Switching to a different backend clears the remembered scope and disclosure state.
+        shared.borrow_mut().missions.rebind(false);
+        assert_eq!(
+            shared.borrow().missions.scope(),
+            codenomad_client::settings::missions::MissionDefaultScope::All
+        );
+        assert!(!shared.borrow().missions.profiles_open());
     });
 }

@@ -469,9 +469,13 @@ impl SharedStream {
                     }
                     hub.note_workspace_upstream_status(id, *connected);
                 }
-                FrameClass::ReplayStopped(id) => {
+                FrameClass::ReplayStopped { id, error } => {
                     inner.replays.remove(id);
-                    hub.note_workspace_upstream_status(id, false);
+                    if *error {
+                        hub.note_workspace_upstream_status(id, false);
+                    } else {
+                        hub.note_workspace_stopped(id);
+                    }
                 }
                 FrameClass::WorkspaceLocationChanged(id) => {
                     hub.note_workspace_location_change(id);
@@ -637,7 +641,7 @@ impl SharedStream {
 enum FrameClass {
     None,
     ReplayStatus { id: String, connected: bool },
-    ReplayStopped(String),
+    ReplayStopped { id: String, error: bool },
     WorkspaceLocationChanged(String),
     SessionMoved { workspace: String, session: String },
 }
@@ -669,7 +673,10 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
                 Some("workspace stopped" | "workspace error")
             )
         {
-            return FrameClass::ReplayStopped(id.to_owned());
+            return FrameClass::ReplayStopped {
+                id: id.to_owned(),
+                error: value["reason"] == "workspace error",
+            };
         }
         return FrameClass::ReplayStatus {
             id: id.to_owned(),
@@ -680,7 +687,10 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
         && let Some(id) = value["workspaceId"].as_str()
         && crate::history::valid_id(id)
     {
-        return FrameClass::ReplayStopped(id.to_owned());
+        return FrameClass::ReplayStopped {
+            id: id.to_owned(),
+            error: false,
+        };
     }
     if value["type"] == "workspace.worktreesChanged"
         && let Some(id) = value["workspaceId"].as_str()
@@ -724,6 +734,7 @@ struct LocationRevisions {
     session: HashMap<(String, String), u64>,
     overflow: u64,
     upstream_unhealthy: HashSet<String>,
+    upstream_verified_healthy: HashSet<String>,
     overflow_unhealthy: bool,
 }
 
@@ -751,21 +762,45 @@ impl Hub {
         Self::bump_workspace_revision(&mut rev, workspace);
     }
 
+    pub(crate) fn note_workspace_stopped(&self, workspace: &str) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+        rev.upstream_unhealthy.remove(workspace);
+        rev.upstream_verified_healthy.remove(workspace);
+    }
+
     pub(crate) fn note_workspace_upstream_status(&self, workspace: &str, connected: bool) {
         let mut rev = self.location_revisions.lock().unwrap();
         Self::bump_workspace_revision(&mut rev, workspace);
         if connected {
             rev.upstream_unhealthy.remove(workspace);
-        } else if rev.upstream_unhealthy.len() < MAX_TRACKED_LOCATIONS {
-            rev.upstream_unhealthy.insert(workspace.to_owned());
-        } else if !rev.upstream_unhealthy.contains(workspace) {
-            rev.overflow_unhealthy = true;
+            if rev.overflow_unhealthy {
+                if rev.upstream_verified_healthy.len() >= MAX_TRACKED_LOCATIONS
+                    && !rev.upstream_verified_healthy.contains(workspace)
+                {
+                    rev.upstream_verified_healthy.clear();
+                }
+                rev.upstream_verified_healthy.insert(workspace.to_owned());
+            }
+        } else {
+            rev.upstream_verified_healthy.remove(workspace);
+            if rev.upstream_unhealthy.len() < MAX_TRACKED_LOCATIONS {
+                rev.upstream_unhealthy.insert(workspace.to_owned());
+            } else if !rev.upstream_unhealthy.contains(workspace) {
+                rev.overflow_unhealthy = true;
+            }
         }
     }
 
     pub(crate) fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
         let rev = self.location_revisions.lock().unwrap();
-        !rev.overflow_unhealthy && !rev.upstream_unhealthy.contains(workspace)
+        if rev.upstream_unhealthy.contains(workspace) {
+            return false;
+        }
+        if rev.overflow_unhealthy {
+            return rev.upstream_verified_healthy.contains(workspace);
+        }
+        true
     }
 
     pub(crate) fn note_session_location_change(&self, workspace: &str, session: &str) {

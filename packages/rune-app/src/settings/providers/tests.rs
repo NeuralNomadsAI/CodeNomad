@@ -28,6 +28,8 @@ impl Harness {
             revision: 0,
             mission_catalog: 0,
             observed: None,
+            observed_location_revision: 0,
+            observed_upstream_healthy: true,
             authority: 0,
             online: true,
             stats: [0; 2],

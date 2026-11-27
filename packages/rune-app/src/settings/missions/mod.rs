@@ -65,28 +65,13 @@ pub(super) enum Confirm {
     RefreshDepth,
 }
 
+#[derive(Default)]
 pub(super) struct Missions {
-    scope: MissionDefaultScope,
-    profiles_open: bool,
     catalog: catalog::State,
     open_picker: Option<Picker>,
     info_open: Option<InfoTip>,
     confirm: Option<Confirm>,
     wake: Option<Waker>,
-}
-
-impl Default for Missions {
-    fn default() -> Self {
-        Self {
-            scope: MissionDefaultScope::All,
-            profiles_open: false,
-            catalog: catalog::State::default(),
-            open_picker: None,
-            info_open: None,
-            confirm: None,
-            wake: None,
-        }
-    }
 }
 
 impl Missions {

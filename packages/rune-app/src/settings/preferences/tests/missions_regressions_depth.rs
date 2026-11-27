@@ -96,7 +96,7 @@ fn worktrees_changed_and_upstream_event_status_invalidate_pinned_location_and_re
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         assert_eq!(
@@ -200,7 +200,7 @@ fn reopening_web_settings_on_same_session_preserves_queued_depth_write() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -309,7 +309,7 @@ fn native_flush_launches_and_confirms_unsubmitted_pending_depth_choice() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -381,12 +381,20 @@ fn masked_empty_experimental_allows_queued_inherit_choice_during_reread() {
         tick(&mut rt);
 
         let exp_masked = "d".repeat(64);
+        let mut got_session = false;
         let mut got_catalog = 0usize;
         let mut got_depth = false;
-        while !(got_catalog == 3 && got_depth) {
+        while !(got_session && got_catalog == 3 && got_depth) {
             let req = next_request(&listener, &mut rt).await;
             let url = req.first.split_whitespace().nth(1).unwrap();
-            if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
+            if url == "/workspaces/captured/instance/api/session/session" {
+                got_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/repo/wt-a"}}}),
+                )
+                .await;
+            } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
                 got_depth = true;
                 req.reply(200, masked_depth_snapshot_json("/repo/wt-a", &exp_masked))
                     .await;
@@ -532,7 +540,7 @@ fn agent_updated_refreshes_missions_catalog_and_discarded_depth_does_not_repeat_
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -740,12 +748,20 @@ fn depth_get_mismatched_directory_is_rejected_and_never_authorizes_foreign_put()
         tick(&mut rt);
 
         let exp_b = "9".repeat(64);
+        let mut got_session = false;
         let mut got_catalog = 0usize;
         let mut got_depth = false;
-        while !(got_catalog == 3 && got_depth) {
+        while !(got_session && got_catalog == 3 && got_depth) {
             let req = next_request(&listener, &mut rt).await;
             let url = req.first.split_whitespace().nth(1).unwrap();
-            if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
+            if url == "/workspaces/captured/instance/api/session/session" {
+                got_session = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"session","location":{"directory":"/repo/wt-a"}}}),
+                )
+                .await;
+            } else if url == "/api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a" {
                 got_depth = true;
                 // Reply with a valid snapshot for a DIFFERENT checkout (/repo/wt-b).
                 req.reply(200, depth_snapshot_json("/repo/wt-b", Some(2), &exp_b))
@@ -953,7 +969,7 @@ fn transport_loss_during_queued_reread_marks_depth_uncertain_so_flush_warns() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {

@@ -110,7 +110,7 @@ fn missions_session_moved_and_rebind_invalidate_pinned_directory_and_retarget_wr
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -291,7 +291,7 @@ fn missions_patch_and_depth_put_check_shared_authority_and_attestation_before_se
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -379,7 +379,7 @@ fn missions_patch_and_depth_put_check_shared_authority_and_attestation_before_se
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -584,7 +584,7 @@ fn depth_put_aborts_when_session_moved_arrives_during_server_attestation() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {

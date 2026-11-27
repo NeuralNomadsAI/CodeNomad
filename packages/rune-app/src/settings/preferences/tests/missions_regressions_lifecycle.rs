@@ -107,7 +107,7 @@ fn depth_put_aborts_when_sse_session_moved_arrives_during_flush_attestation() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -381,7 +381,7 @@ fn closing_web_settings_preserves_inflight_depth_put_acknowledgement() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -478,7 +478,7 @@ fn unrelated_workspace_session_move_does_not_block_depth_writes() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -693,7 +693,7 @@ fn closing_web_settings_drains_queued_depth_choice_after_first_put_acknowledgeme
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -921,7 +921,7 @@ fn revoked_location_token_blocks_queued_depth_background_followup_put() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_a,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
@@ -1010,7 +1010,7 @@ fn depth_choice_queued_during_post_save_get_drains_after_web_settings_close() {
             "%2Frepo%2Fwt-a",
             Some(2),
             &exp_1,
-            false,
+            true,
         )
         .await;
         wait_until(|| {
