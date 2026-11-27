@@ -7,6 +7,7 @@
 pub mod agent_api;
 pub mod attachments;
 pub mod backend;
+pub mod blank_session_cleanup;
 pub mod catalog;
 pub mod content;
 pub mod files;

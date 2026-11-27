@@ -28,6 +28,7 @@ mod sessions;
 mod settings;
 mod shared;
 mod sidecars;
+mod speech;
 mod storage;
 mod subagent_depth;
 mod temporary_workspaces;
@@ -187,6 +188,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(extensions::routes())
         .merge(missions::routes())
         .merge(sidecars::routes())
+        .merge(speech::routes())
         .merge(usage::routes())
         .merge(provider_usage::routes())
         .merge(previews::routes())

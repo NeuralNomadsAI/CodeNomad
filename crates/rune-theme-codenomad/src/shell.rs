@@ -1,4 +1,5 @@
 //! Geometry shared by the application bar and conversation panels.
+pub mod blank_cleanup;
 pub mod command_palette;
 pub mod icons;
 pub mod notices;

@@ -10,11 +10,11 @@ use crate::Error;
 const DRAIN_SLACK: usize = 64 * 1024;
 const DRAIN_TIME: Duration = Duration::from_secs(2);
 
-pub(super) fn too_large() -> Error {
+pub(crate) fn too_large() -> Error {
     crate::shared::fastify::error(Status::PAYLOAD_TOO_LARGE, "FST_ERR_CTP_BODY_TOO_LARGE", "Request body is too large")
 }
 
-pub(super) async fn read(body: Body, limit: usize, declared: Option<usize>) -> Result<Vec<u8>, Error> {
+pub(crate) async fn read(body: Body, limit: usize, declared: Option<usize>) -> Result<Vec<u8>, Error> {
     let mut stream = body.into_data_stream();
     let mut bytes = Vec::new();
     let mut total = 0usize;

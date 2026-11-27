@@ -286,6 +286,15 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
                 !can_close_session,
             ));
         }
+        items.push(static_item(
+            "cleanup-blank-sessions",
+            t("commands.scrubSessions.label"),
+            Some(t("commands.scrubSessions.description")),
+            t("commands.scrubSessions.keywords"),
+            Category::Session,
+            Some("cleanup-blank-sessions"),
+            !super::super::blank_cleanup::can_start(s),
+        ));
         if s.screen
             .launcher()
             .is_some_and(|l| sidebar::visible_session_ids(l).len() > 1)
@@ -465,6 +474,9 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
         "new-session" => launcher::create_blank(s),
         "close-session" => {
             launcher::close_session(s, tx);
+        }
+        "cleanup-blank-sessions" => {
+            super::super::blank_cleanup::open_confirm(s, None, tx);
         }
         "next-session" => shortcuts::select_relative_session(s, true, tx),
         "previous-session" => shortcuts::select_relative_session(s, false, tx),

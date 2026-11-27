@@ -567,12 +567,11 @@ fn detach_entry(
         } else {
             (None, Vec::new())
         };
-    if release_on_server && let (Some(backend), Some(project)) = (removed_binding, removed_project)
-    {
-        platform::spawn(async move {
-            let _ = backend.release_project(&project.id).await;
-        });
-    }
+    let release_target = if release_on_server {
+        removed_binding.zip(removed_project)
+    } else {
+        None
+    };
     propagate_closed_locks_to_entries(ui, &propagate_locks);
     if ui.entries.is_empty() {
         ui.entries
@@ -585,6 +584,12 @@ fn detach_entry(
         ui.active.min(ui.entries.len() - 1)
     };
     ui.changed();
+    if let Some((backend, project)) = release_target {
+        crate::shell::blank_cleanup::abort_for_project(s, &project.id);
+        platform::spawn(async move {
+            let _ = backend.release_project(&project.id).await;
+        });
+    }
     if let Some(attempt_id) = propagate_to_active
         && s.composer.unconfirmed_state().is_none()
     {
