@@ -60,17 +60,21 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
                     &[&message.body],
                     document::PROSE_LIMIT,
                     |shown, _| {
-                        rune_theme_codenomad::markdown::tool_pane(
-                            rune_theme_codenomad::timeline::search::ink(
-                                rune_theme_codenomad::markdown::code(shown, "text", false, true),
-                                shown,
-                                search.map(|hit| {
-                                    hit.query(Some((codenomad_client::search::Kind::Text, 0)))
-                                }),
+                        crate::chat::reading::inner_scroller(
+                            rune_theme_codenomad::markdown::tool_pane(
+                                rune_theme_codenomad::timeline::search::ink(
+                                    rune_theme_codenomad::markdown::code(
+                                        shown, "text", false, true,
+                                    ),
+                                    shown,
+                                    search.map(|hit| {
+                                        hit.query(Some((codenomad_client::search::Kind::Text, 0)))
+                                    }),
+                                ),
+                                true,
                             ),
-                            true,
+                            false,
                         )
-                        .data(crate::chat::reading::InnerScrollRegion)
                     },
                 )
             } else {

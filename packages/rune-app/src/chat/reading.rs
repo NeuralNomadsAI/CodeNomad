@@ -120,8 +120,104 @@ fn replay_deltas_checked(start: f32, max: f32, deltas: &[f32]) -> (f32, bool) {
     (dest, clamped)
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct InnerScrollRegion;
+pub(crate) const HOVER_SESSION_LIST: u8 = 1 << 0;
+pub(crate) const HOVER_RIGHT_PANEL: u8 = 1 << 1;
+pub(crate) const HOVER_COMPOSER: u8 = 1 << 2;
+pub(crate) const HOVER_TIMELINE: u8 = 1 << 3;
+pub(crate) const HOVER_SEARCH_BODY: u8 = 1 << 4;
+pub(crate) const HOVER_MODEL_LIST: u8 = 1 << 5;
+pub(crate) const HOVER_PENDING_FIELDS: u8 = 1 << 6;
+pub(crate) const HOVER_SESSION_STACK: u8 = 1 << 7;
+
+pub(crate) fn track_other_scroller_hover(el: El, bit: u8) -> El {
+    el.on_hover_change(move |s: &mut State, hovered, tx| {
+        if hovered {
+            s.tool_diff_preferences.hovered_other_scrollers |= bit;
+        } else {
+            s.tool_diff_preferences.hovered_other_scrollers &= !bit;
+        }
+        tx.live_only();
+    })
+}
+
+#[derive(Clone)]
+pub(crate) struct InnerScrollRegion {
+    pos: std::sync::Arc<[std::sync::atomic::AtomicU32; 4]>,
+    has_horizontal_child: bool,
+}
+
+impl InnerScrollRegion {
+    fn load(&self) -> ([f32; 2], [f32; 2]) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            [
+                f32::from_bits(self.pos[0].load(Relaxed)),
+                f32::from_bits(self.pos[1].load(Relaxed)),
+            ],
+            [
+                f32::from_bits(self.pos[2].load(Relaxed)),
+                f32::from_bits(self.pos[3].load(Relaxed)),
+            ],
+        )
+    }
+
+    fn can_scroll(&self, dx: f32, dy: f32) -> (bool, bool) {
+        let (offset, max) = self.load();
+        let can_x = self.has_horizontal_child
+            || (dx > 0.0 && offset[0] > 0.5)
+            || (dx < 0.0 && offset[0] + 0.5 < max[0]);
+        let can_y = (dy > 0.0 && offset[1] > 0.5) || (dy < 0.0 && offset[1] + 0.5 < max[1]);
+        (can_x, can_y)
+    }
+}
+
+pub(crate) fn inner_scroller(el: El, has_horizontal_child: bool) -> El {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    let pos = Arc::new([
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+    ]);
+    let watch = pos.clone();
+    let region = InnerScrollRegion {
+        pos,
+        has_horizontal_child,
+    };
+    let wheel = region.clone();
+    el.on_scroll_offset(move |at| {
+        watch[0].store(at.offset[0].to_bits(), Relaxed);
+        watch[1].store(at.offset[1].to_bits(), Relaxed);
+        watch[2].store(at.max[0].to_bits(), Relaxed);
+        watch[3].store(at.max[1].to_bits(), Relaxed);
+    })
+    .data(region)
+    .on_wheel(move |s: &mut State, ev, tx| {
+        if !ev.touch && !s.screen.is_launcher() {
+            let (dx, dy) = effective_wheel_delta(&ev);
+            let (can_x, can_y) = wheel.can_scroll(dx, dy);
+            s.transcript_display
+                .reading_mut()
+                .note_inner_wheel(tx.clock(), can_x, can_y);
+        }
+        false
+    })
+}
+
+pub(crate) fn inner_diff_scroller(el: El, can_x: bool, can_y: bool) -> El {
+    el.on_wheel(move |s: &mut State, ev, tx| {
+        if !ev.touch && !s.screen.is_launcher() {
+            let (dx, dy) = effective_wheel_delta(&ev);
+            s.transcript_display.reading_mut().note_inner_wheel(
+                tx.clock(),
+                can_x && dx.abs() > 0.001,
+                can_y && dy.abs() > 0.001,
+            );
+        }
+        false
+    })
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct FrameRestore {
@@ -162,6 +258,7 @@ pub(crate) struct Reading {
     frame_restore: Option<FrameRestore>,
     phased_wheel_active: bool,
     phased_vertical_claimed_clock: Option<f64>,
+    inner_wheel_can_scroll: Option<(f64, bool, bool)>,
     paging_key_clock: Option<f64>,
     history_hovered: bool,
     sync_undo_gesture_clock: Option<f64>,
@@ -204,6 +301,7 @@ impl Default for Reading {
             frame_restore: None,
             phased_wheel_active: false,
             phased_vertical_claimed_clock: None,
+            inner_wheel_can_scroll: None,
             paging_key_clock: None,
             history_hovered: false,
             sync_undo_gesture_clock: None,
@@ -420,6 +518,24 @@ impl Reading {
         self.phased_vertical_claimed_clock.is_some_and(|at| {
             clock.is_finite() && at.is_finite() && (clock - at) < SYNC_UNDO_GESTURE_IDLE_SECS
         })
+    }
+
+    fn note_inner_wheel(&mut self, clock: f64, can_x: bool, can_y: bool) {
+        match self.inner_wheel_can_scroll {
+            Some((at, x, y)) if at == clock => {
+                self.inner_wheel_can_scroll = Some((clock, x || can_x, y || can_y));
+            }
+            _ => {
+                self.inner_wheel_can_scroll = Some((clock, can_x, can_y));
+            }
+        }
+    }
+
+    fn take_inner_wheel(&mut self, clock: f64) -> (bool, bool) {
+        match self.inner_wheel_can_scroll.take() {
+            Some((at, x, y)) if at == clock => (x, y),
+            _ => (false, false),
+        }
     }
 
     fn sync_undo_gesture_active(&self) -> bool {
@@ -1333,11 +1449,18 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     history.on_wheel(move |s: &mut State, ev, tx| {
         let same_scope =
             !s.screen.is_launcher() && s.transcript_display.reading().same_scope(&wheel_scope);
+        let inner_can_scroll = if same_scope {
+            s.transcript_display
+                .reading_mut()
+                .take_inner_wheel(tx.clock())
+        } else {
+            (false, false)
+        };
         if same_scope && ev.phase == rune_theme_codenomad::timeline::GesturePhase::Began {
             s.transcript_display.reading_mut().begin_wheel_gesture();
         }
         let handled = if watch_wheel {
-            handle_reading_wheel(s, &wheel_scope, &ev, tx)
+            handle_reading_wheel(s, &wheel_scope, &ev, inner_can_scroll, tx)
         } else {
             false
         };
@@ -1350,8 +1473,10 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
 }
 
 pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) {
+    let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     if s.screen.is_launcher()
         || !crate::timeline::conversation_shown(s)
+        || (has_project && s.shell.has_floating())
         || event.mods.cmd
         || event.mods.alt
         || event.mods.ctrl
@@ -1368,20 +1493,51 @@ pub(crate) fn note_history_paging_key(s: &mut State, event: &rune::KeyEvent, tx:
     if !paging {
         return;
     }
+    let session_list_pageable = has_project
+        && s.shell.visible(0)
+        && s.tool_diff_preferences.session_list_scroll.get().1 > 0.5;
+    let session_list_before_history_pageable = session_list_pageable && s.shell.docked_left();
+    let right_panel_pageable = has_project
+        && s.shell.visible(1)
+        && match crate::workspace::right_panel_tab(s) {
+            crate::workspace::RightPanelTab::Status => {
+                s.tool_diff_preferences.right_panel_status_scroll.get().1 > 0.5
+            }
+            _ => true,
+        };
+    let composer_pageable = s.tool_diff_preferences.composer_scroll.get().1 > 0.5;
+    let stack_pageable = s.tool_diff_preferences.stack_scroll.get().1 > 0.5;
     let focused_in_history = history_focused || tx.focus_within("history");
     let focused_in_other_scroller = !focused_in_history
-        && (tx.focus_within("session-list")
-            || tx.focus_within("right-panel")
+        && ((tx.focus_within("session-list") && session_list_pageable)
+            || (tx.focus_within("right-panel") && right_panel_pageable)
             || tx.focus_within("history-search-body")
             || tx.focus_within("model-list")
             || tx.focus_within("pending-fields")
             || tx.focus_within(rune_theme_codenomad::timeline::VIEWPORT)
-            || (tx.focus_within("composer")
-                && s.tool_diff_preferences.composer_scroll.get().1 > 0.5)
-            || (tx.focus_within("session-stack")
-                && s.tool_diff_preferences.stack_scroll.get().1 > 0.5));
+            || (tx.focus_within("composer") && composer_pageable)
+            || (tx.focus_within("session-stack") && stack_pageable));
+    let hovered_bits = s.tool_diff_preferences.hovered_other_scrollers;
+    let hovered_in_other_scroller = !s.transcript_display.reading().history_hovered
+        && ((hovered_bits & HOVER_SESSION_LIST != 0 && session_list_pageable)
+            || (hovered_bits & HOVER_RIGHT_PANEL != 0 && right_panel_pageable)
+            || (hovered_bits & HOVER_SEARCH_BODY != 0 && crate::timeline::search::is_open(s))
+            || (hovered_bits & HOVER_MODEL_LIST != 0
+                && s.agent.as_ref().is_some_and(|a| a.picker))
+            || (hovered_bits & HOVER_PENDING_FIELDS != 0
+                && s.agent
+                    .as_ref()
+                    .is_some_and(|a| !a.permissions.is_empty() || !a.forms.is_empty()))
+            || (hovered_bits & HOVER_TIMELINE != 0 && crate::timeline::rail_pageable(s))
+            || (hovered_bits & HOVER_COMPOSER != 0 && composer_pageable)
+            || (hovered_bits & HOVER_SESSION_STACK != 0 && stack_pageable));
+    let history_pageable = s.transcript_display.reading().scroll_state.get().max > 0.5;
+    let tree_fallback_is_history =
+        history_pageable && !session_list_before_history_pageable && !stack_pageable;
     let targets_history = focused_in_history
-        || (!focused_in_other_scroller && s.transcript_display.reading().history_hovered);
+        || (!focused_in_other_scroller
+            && (s.transcript_display.reading().history_hovered
+                || (!hovered_in_other_scroller && tree_fallback_is_history)));
     let clock = tx.clock();
     let reading = s.transcript_display.reading_mut();
     if targets_history {
@@ -1435,6 +1591,7 @@ fn handle_reading_wheel(
     s: &mut State,
     wheel_scope: &Rc<()>,
     ev: &rune::WheelEvent,
+    (inner_can_x, inner_can_y): (bool, bool),
     tx: &mut Tx,
 ) -> bool {
     if s.screen.is_launcher()
@@ -1516,15 +1673,19 @@ fn handle_reading_wheel(
                 && history_bounds[3] > 0.0
             {
                 let scope = wheel_scope.clone();
+                let inner_can_consume = inner_can_x || inner_can_y;
                 tx.element_at_in(
                     "history",
                     history_bounds[0] + ev.x,
                     history_bounds[1] + ev.y,
                     move |s: &mut State, picked, tx| {
-                        let over_inner_scroller = picked.as_ref().is_some_and(|p| {
-                            p.data::<InnerScrollRegion>().is_some()
-                                || p.path().split('/').any(|seg| seg == "scroll")
-                        });
+                        let over_inner_scroller = inner_can_consume
+                            || picked.as_ref().is_some_and(|p| {
+                                p.data::<InnerScrollRegion>().is_some_and(|r| {
+                                    let (cx, cy) = r.can_scroll(dx, dy);
+                                    cx || cy
+                                }) || p.path().split('/').any(|seg| seg == "scroll")
+                            });
                         if !over_inner_scroller
                             && !s.screen.is_launcher()
                             && s.transcript_display.reading().same_scope(&scope)
@@ -1545,6 +1706,10 @@ fn handle_reading_wheel(
                 );
             }
         }
+        return false;
+    }
+    let fresh_or_unphased = ev.phase != rune_theme_codenomad::timeline::GesturePhase::Moved;
+    if inner_can_y && (!vertical_locked || fresh_or_unphased) {
         return false;
     }
     if active_frame_restore {

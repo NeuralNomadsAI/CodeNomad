@@ -355,6 +355,16 @@ fn rail_scroll(s: &State, el: El) -> El {
                 wake();
             }
         })
+        .on_hover_change(|s: &mut State, hovered, tx| {
+            if hovered {
+                s.tool_diff_preferences.hovered_other_scrollers |=
+                    crate::chat::reading::HOVER_TIMELINE;
+            } else {
+                s.tool_diff_preferences.hovered_other_scrollers &=
+                    !crate::chat::reading::HOVER_TIMELINE;
+            }
+            tx.live_only();
+        })
 }
 
 pub(crate) fn notice_key(s: &State) -> Option<&'static str> {

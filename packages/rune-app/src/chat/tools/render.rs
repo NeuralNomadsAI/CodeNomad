@@ -537,7 +537,7 @@ fn render_body(
                 } else {
                     TOOL_LIMIT
                 };
-                block = block.child(
+                block = block.child(crate::chat::reading::inner_scroller(
                     markdown::tool_pane(
                         window(s, input_key, &[&input], limit, |shown, units| {
                             markdown::search_code(
@@ -549,9 +549,9 @@ fn render_body(
                             )
                         }),
                         false,
-                    )
-                    .data(crate::chat::reading::InnerScrollRegion),
-                );
+                    ),
+                    false,
+                ));
             } else {
                 block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
             }
@@ -617,13 +617,13 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(
+                    block = block.child(crate::chat::reading::inner_scroller(
                         markdown::tool_pane(
                             document::prose_search(s, message, key, output_key, parts[0], query),
                             false,
-                        )
-                        .data(crate::chat::reading::InnerScrollRegion),
-                    );
+                        ),
+                        false,
+                    ));
                 }
             } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
@@ -643,7 +643,7 @@ fn render_body(
                         claimed.set(true);
                     }
                 } else {
-                    block = block.child(
+                    block = block.child(crate::chat::reading::inner_scroller(
                         markdown::tool_pane(
                             document::prose_pane_search(
                                 s,
@@ -656,9 +656,9 @@ fn render_body(
                                 query,
                             ),
                             false,
-                        )
-                        .data(crate::chat::reading::InnerScrollRegion),
-                    );
+                        ),
+                        false,
+                    ));
                 }
             } else if (has_output || is_tool_truncated) && !specialized_task {
                 let structured_out = if expanded_tool_output.is_some() {
@@ -716,7 +716,7 @@ fn render_body(
                                         .child(wrap_control(s, &wrap_key, wrap))
                                         .child(text(lang).text_role(TextRole::Label))
                                 }))
-                                .child(
+                                .child(crate::chat::reading::inner_scroller(
                                     markdown::tool_pane(
                                         window(
                                             s,
@@ -744,9 +744,9 @@ fn render_body(
                                             },
                                         ),
                                         matches!(tool.name.as_str(), "edit" | "write"),
-                                    )
-                                    .data(crate::chat::reading::InnerScrollRegion),
-                                )
+                                    ),
+                                    !wrap,
+                                ))
                         };
                         block = block.child(if let Some(results) = result_list {
                             results
@@ -852,7 +852,7 @@ fn render_error(
                     .child(text(t("toolCall.error.label")))
                     .child(copy(s, message, key, &tool.id, Section::Error, ancestors)),
             )
-            .child(
+            .child(crate::chat::reading::inner_scroller(
                 markdown::tool_pane(
                     window(
                         s,
@@ -868,9 +868,9 @@ fn render_error(
                         },
                     ),
                     false,
-                )
-                .data(crate::chat::reading::InnerScrollRegion),
-            )
+                ),
+                false,
+            ))
     })
 }
 

@@ -319,164 +319,174 @@ pub(super) fn append_steps(
             col()
                 .full_width()
                 .key(format!("{step_key}-mount-{mount_gen}"))
-                .child(duration::observe_clip(
-                    s,
-                    markdown::steps_pane(
-                        format!("{step_key}-scroll"),
-                        t("toolCall.task.sections.steps"),
-                        row_count,
-                        version,
-                        move |_: &State, index| Cow::Owned(key_source[index].clone()),
-                        move |s: &State, index| {
-                            #[cfg(test)]
-                            s.transcript_display
-                                .task_row_builds
-                                .set(s.transcript_display.task_row_builds.get() + 1);
-                            crate::strings::with_locale(active_locale, || {
-                                if has_reveal && index == 0 {
-                                    let toggle = build_step_key.clone();
-                                    let hidden_label = catalogue::format(
-                                        active_locale,
-                                        if hidden_total == 1 {
-                                            "messageBlock.hiddenParts.one"
-                                        } else {
-                                            "messageBlock.hiddenParts.other"
-                                        },
-                                        &[("count", &hidden_total.to_string())],
-                                    );
-                                    let label = catalogue::format(
-                                        active_locale,
-                                        "messageBlock.hiddenParts.show",
-                                        &[("count", &reveal_count.to_string())],
-                                    );
-                                    return col()
-                                        .key(build_keys[0].clone())
-                                        .role("listitem")
-                                        .child(
-                                            layout::action_row()
-                                                .child(
-                                                    text(hidden_label).text_role(TextRole::Label),
-                                                )
-                                                .child(
-                                                    layout::button_tx(
-                                                        &label,
-                                                        false,
-                                                        screen::action_tx(
-                                                            &s.input_scope,
-                                                            move |s, tx| {
-                                                                Display::reveal_task_at_least(
-                                                                    s, &toggle, next_extra,
-                                                                );
-                                                                if reveal_clears_gap {
-                                                                    tx.scroll_to_instant(
-                                                                        format!("{toggle}-scroll"),
-                                                                        0.0,
-                                                                        0.0,
-                                                                    );
-                                                                }
-                                                            },
-                                                        ),
-                                                    )
-                                                    .key(format!("reveal-{build_step_key}")),
-                                                ),
-                                        );
-                                }
-                                let item_index = index - offset;
-                                let row_key = &build_keys[index];
-                                match items.as_ref() {
-                                    StepItems::Child {
-                                        child_id,
-                                        ancestors,
-                                        steps,
-                                        per_nested_budget,
-                                    } => {
-                                        let (msg, step) = &steps[item_index];
-                                        let owner = format!("child:{child_id}:{msg}");
-                                        let anc_refs: Vec<&str> =
-                                            ancestors.iter().map(String::as_str).collect();
-                                        let mut row_budget = *per_nested_budget;
-                                        s.transcript_display.tool_clock.with_active_clip(
-                                            &build_clip,
-                                            || {
-                                                col().key(row_key.clone()).role("listitem").child(
-                                                    super::super::render::render_nested(
-                                                        s,
-                                                        &owner,
-                                                        step,
-                                                        row_key,
-                                                        &anc_refs,
-                                                        &mut row_budget,
-                                                    ),
-                                                )
+                .child(crate::chat::reading::inner_scroller(
+                    duration::observe_clip(
+                        s,
+                        markdown::steps_pane(
+                            format!("{step_key}-scroll"),
+                            t("toolCall.task.sections.steps"),
+                            row_count,
+                            version,
+                            move |_: &State, index| Cow::Owned(key_source[index].clone()),
+                            move |s: &State, index| {
+                                #[cfg(test)]
+                                s.transcript_display
+                                    .task_row_builds
+                                    .set(s.transcript_display.task_row_builds.get() + 1);
+                                crate::strings::with_locale(active_locale, || {
+                                    if has_reveal && index == 0 {
+                                        let toggle = build_step_key.clone();
+                                        let hidden_label = catalogue::format(
+                                            active_locale,
+                                            if hidden_total == 1 {
+                                                "messageBlock.hiddenParts.one"
+                                            } else {
+                                                "messageBlock.hiddenParts.other"
                                             },
-                                        )
+                                            &[("count", &hidden_total.to_string())],
+                                        );
+                                        let label = catalogue::format(
+                                            active_locale,
+                                            "messageBlock.hiddenParts.show",
+                                            &[("count", &reveal_count.to_string())],
+                                        );
+                                        return col()
+                                            .key(build_keys[0].clone())
+                                            .role("listitem")
+                                            .child(
+                                                layout::action_row()
+                                                    .child(
+                                                        text(hidden_label)
+                                                            .text_role(TextRole::Label),
+                                                    )
+                                                    .child(
+                                                        layout::button_tx(
+                                                            &label,
+                                                            false,
+                                                            screen::action_tx(
+                                                                &s.input_scope,
+                                                                move |s, tx| {
+                                                                    Display::reveal_task_at_least(
+                                                                        s, &toggle, next_extra,
+                                                                    );
+                                                                    if reveal_clears_gap {
+                                                                        tx.scroll_to_instant(
+                                                                            format!(
+                                                                                "{toggle}-scroll"
+                                                                            ),
+                                                                            0.0,
+                                                                            0.0,
+                                                                        );
+                                                                    }
+                                                                },
+                                                            ),
+                                                        )
+                                                        .key(format!("reveal-{build_step_key}")),
+                                                    ),
+                                            );
                                     }
-                                    StepItems::Legacy { tool, base } => tool.metadata["summary"]
-                                        .as_array()
-                                        .and_then(|arr| arr.get(base + item_index))
-                                        .map_or_else(
-                                            || col().key(row_key.clone()).role("listitem"),
-                                            |step| render_legacy_row(s, step, row_key),
-                                        ),
+                                    let item_index = index - offset;
+                                    let row_key = &build_keys[index];
+                                    match items.as_ref() {
+                                        StepItems::Child {
+                                            child_id,
+                                            ancestors,
+                                            steps,
+                                            per_nested_budget,
+                                        } => {
+                                            let (msg, step) = &steps[item_index];
+                                            let owner = format!("child:{child_id}:{msg}");
+                                            let anc_refs: Vec<&str> =
+                                                ancestors.iter().map(String::as_str).collect();
+                                            let mut row_budget = *per_nested_budget;
+                                            s.transcript_display.tool_clock.with_active_clip(
+                                                &build_clip,
+                                                || {
+                                                    col()
+                                                        .key(row_key.clone())
+                                                        .role("listitem")
+                                                        .child(super::super::render::render_nested(
+                                                            s,
+                                                            &owner,
+                                                            step,
+                                                            row_key,
+                                                            &anc_refs,
+                                                            &mut row_budget,
+                                                        ))
+                                                },
+                                            )
+                                        }
+                                        StepItems::Legacy { tool, base } => {
+                                            tool.metadata["summary"]
+                                                .as_array()
+                                                .and_then(|arr| arr.get(base + item_index))
+                                                .map_or_else(
+                                                    || col().key(row_key.clone()).role("listitem"),
+                                                    |step| render_legacy_row(s, step, row_key),
+                                                )
+                                        }
+                                    }
+                                })
+                            },
+                            move |s: &mut State, range| {
+                                if s.current_scope(&scope) {
+                                    let vis_start = range.start.saturating_sub(offset);
+                                    let vis_end =
+                                        range.end.saturating_sub(offset).min(mounted_ids.len());
+                                    if vis_start < vis_end {
+                                        s.transcript_display.set_task_visible(
+                                            &anchor_key,
+                                            mounted_ids[vis_start..vis_end]
+                                                .iter()
+                                                .take(32)
+                                                .cloned()
+                                                .collect(),
+                                        );
+                                    }
                                 }
-                            })
-                        },
-                        move |s: &mut State, range| {
-                            if s.current_scope(&scope) {
-                                let vis_start = range.start.saturating_sub(offset);
-                                let vis_end =
-                                    range.end.saturating_sub(offset).min(mounted_ids.len());
-                                if vis_start < vis_end {
-                                    s.transcript_display.set_task_visible(
-                                        &anchor_key,
-                                        mounted_ids[vis_start..vis_end]
-                                            .iter()
-                                            .take(32)
-                                            .cloned()
-                                            .collect(),
-                                    );
+                                false
+                            },
+                            move |s: &mut State, at_bottom| {
+                                if s.current_scope(&bottom_scope)
+                                    && s.transcript_display
+                                        .set_task_at_bottom(&bottom_key, at_bottom)
+                                {
+                                    s.revision += 1;
+                                    return true;
                                 }
-                            }
-                            false
-                        },
-                        move |s: &mut State, at_bottom| {
-                            if s.current_scope(&bottom_scope)
-                                && s.transcript_display
-                                    .set_task_at_bottom(&bottom_key, at_bottom)
-                            {
-                                s.revision += 1;
-                                return true;
-                            }
-                            false
-                        },
-                        move |s: &mut State, change, tx| {
-                            if s.current_scope(&sel_scope) {
-                                let mut selected = Vec::new();
-                                if let Some(sel) = change.selection() {
-                                    for seg in sel.texts() {
-                                        if let Some((_, rest)) =
-                                            seg.path().split_once(&list_segment)
-                                            && let Some(row_key) = rest.split('/').next()
-                                            && !row_key.is_empty()
-                                            && !selected.iter().any(|existing| existing == row_key)
-                                        {
-                                            selected.push(row_key.to_owned());
-                                            if selected.len() >= 8 {
-                                                break;
+                                false
+                            },
+                            move |s: &mut State, change, tx| {
+                                if s.current_scope(&sel_scope) {
+                                    let mut selected = Vec::new();
+                                    if let Some(sel) = change.selection() {
+                                        for seg in sel.texts() {
+                                            if let Some((_, rest)) =
+                                                seg.path().split_once(&list_segment)
+                                                && let Some(row_key) = rest.split('/').next()
+                                                && !row_key.is_empty()
+                                                && !selected
+                                                    .iter()
+                                                    .any(|existing| existing == row_key)
+                                            {
+                                                selected.push(row_key.to_owned());
+                                                if selected.len() >= 8 {
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
+                                    if s.transcript_display.set_task_selected(&sel_key, selected) {
+                                        s.revision += 1;
+                                        return;
+                                    }
                                 }
-                                if s.transcript_display.set_task_selected(&sel_key, selected) {
-                                    s.revision += 1;
-                                    return;
-                                }
-                            }
-                            tx.live_only();
-                        },
-                    )
-                    .data(crate::chat::reading::InnerScrollRegion)
-                    .drawn_rect_into(&pane_clip),
+                                tx.live_only();
+                            },
+                        )
+                        .drawn_rect_into(&pane_clip),
+                    ),
+                    false,
                 )),
         );
     }

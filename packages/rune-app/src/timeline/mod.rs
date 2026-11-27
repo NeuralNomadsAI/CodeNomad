@@ -381,6 +381,11 @@ pub(crate) fn conversation_shown(s: &State) -> bool {
         && !crate::workspace::mission_has_reader(s)
 }
 
+pub(crate) fn rail_pageable(s: &State) -> bool {
+    let t = &s.transcript_display.timeline;
+    t.rail_shown && t.scroll.get().at.max[1] > 0.5
+}
+
 pub(super) fn apply_width(s: &mut State, width: f32, tx: &mut rune::Tx) -> bool {
     if !width.is_finite() || width <= 0.0 {
         return false;

@@ -51,21 +51,23 @@ pub(super) fn view(s: &State, tool: &Tool, key: &str, query: Option<Query<'_>>) 
                 Some(ch.len_utf16())
             })
             .sum();
-        block = block.child(rune::text(label)).child(
-            markdown::tool_pane(
-                window(
-                    s,
-                    format!("{key}-patch-{index}"),
-                    &[patch],
-                    limit,
-                    |shown, units| {
-                        markdown::search_code(shown, "diff", units <= TOOL_LIMIT, true, query)
-                    },
+        block = block
+            .child(rune::text(label))
+            .child(crate::chat::reading::inner_scroller(
+                markdown::tool_pane(
+                    window(
+                        s,
+                        format!("{key}-patch-{index}"),
+                        &[patch],
+                        limit,
+                        |shown, units| {
+                            markdown::search_code(shown, "diff", units <= TOOL_LIMIT, true, query)
+                        },
+                    ),
+                    true,
                 ),
-                true,
-            )
-            .data(crate::chat::reading::InnerScrollRegion),
-        );
+                false,
+            ));
         remaining -= used;
         rendered += 1;
     }
