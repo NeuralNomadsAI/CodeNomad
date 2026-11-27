@@ -17,6 +17,7 @@ pub(super) struct Target {
     session: Option<String>,
     owned_tab: bool,
     revision: u64,
+    mission_catalog: u64,
     observed: Option<u64>,
     authority: u64,
     online: bool,
@@ -28,30 +29,41 @@ pub(super) struct Target {
 
 impl Target {
     pub fn capture(s: &State) -> Option<Self> {
-        let (backend, workspace, session, owned_tab) = if let Some(l) = s.screen.launcher() {
-            let backend = l.connection.clone()?;
-            let workspace = l.project.as_ref()?.id.clone();
-            let session = crate::workspace::active_session(s).map(str::to_owned);
-            (backend, workspace, session, true)
-        } else {
-            let backend = super::bound_backend(s)?;
-            let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
-            (
-                backend,
-                workspace,
-                (!session.is_empty()).then_some(session),
-                false,
-            )
-        };
+        let (backend, workspace, session, owned_tab, observed, online) =
+            if let Some(l) = s.screen.launcher() {
+                let backend = l.connection.clone()?;
+                let workspace = l.project.as_ref()?.id.clone();
+                let session = crate::workspace::active_session(s).map(str::to_owned);
+                let (observed, online) = match l.catalogue_watch.as_ref() {
+                    Some(watch) => {
+                        let generation = watch.generation();
+                        (Some(generation), generation % 2 == 1)
+                    }
+                    None => (None, true),
+                };
+                (backend, workspace, session, true, observed, online)
+            } else {
+                let backend = super::bound_backend(s)?;
+                let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
+                (
+                    backend,
+                    workspace,
+                    (!session.is_empty()).then_some(session),
+                    false,
+                    None,
+                    true,
+                )
+            };
         Some(Self {
             backend,
             workspace,
             session,
             owned_tab,
             revision: 0,
-            observed: None,
+            mission_catalog: 0,
+            observed,
             authority: 0,
-            online: true,
+            online,
             stats: [0; 2],
             stats_status: None,
             integrations: 0,
@@ -225,6 +237,26 @@ impl Target {
         self.authority.wrapping_add(self.revision)
     }
 
+    pub(super) fn mission_catalog_revision(&self) -> u64 {
+        self.revision().wrapping_add(self.mission_catalog)
+    }
+
+    pub(super) fn mission_catalog_catalogue(&mut self, changes: &CatalogueChanges) -> bool {
+        if !self.matches(changes) {
+            return false;
+        }
+        self.mission_catalog = self.mission_catalog.wrapping_add(1);
+        true
+    }
+
+    pub(super) fn mission_catalog_hint(&mut self, workspace: &str) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        self.mission_catalog = self.mission_catalog.wrapping_add(1);
+        true
+    }
+
     fn matches(&self, changes: &CatalogueChanges) -> bool {
         match changes {
             CatalogueChanges::None => false,
@@ -269,6 +301,7 @@ impl Target {
             session: session.map(str::to_owned),
             owned_tab: false,
             revision: 0,
+            mission_catalog: 0,
             observed: None,
             authority: 0,
             online: true,

@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{Receiver, bounded, http::StreamDropGuard, runtime};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     sync::{
         Arc, Mutex,
@@ -461,17 +461,17 @@ impl SharedStream {
                 return;
             }
             match &class {
-                FrameClass::ReplayStatus(id) => {
+                FrameClass::ReplayStatus { id, connected } => {
                     if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(id) {
                         inner.replays.insert(id.clone(), frame.clone());
                     } else {
                         inner.replays_overflowed = true;
                     }
-                    hub.note_workspace_location_change(id);
+                    hub.note_workspace_upstream_status(id, *connected);
                 }
                 FrameClass::ReplayStopped(id) => {
                     inner.replays.remove(id);
-                    hub.note_workspace_location_change(id);
+                    hub.note_workspace_upstream_status(id, false);
                 }
                 FrameClass::WorkspaceLocationChanged(id) => {
                     hub.note_workspace_location_change(id);
@@ -636,7 +636,7 @@ impl SharedStream {
 
 enum FrameClass {
     None,
-    ReplayStatus(String),
+    ReplayStatus { id: String, connected: bool },
     ReplayStopped(String),
     WorkspaceLocationChanged(String),
     SessionMoved { workspace: String, session: String },
@@ -671,7 +671,10 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
         {
             return FrameClass::ReplayStopped(id.to_owned());
         }
-        return FrameClass::ReplayStatus(id.to_owned());
+        return FrameClass::ReplayStatus {
+            id: id.to_owned(),
+            connected: value["status"] == "connected",
+        };
     }
     if value["type"] == "workspace.stopped"
         && let Some(id) = value["workspaceId"].as_str()
@@ -720,6 +723,8 @@ struct LocationRevisions {
     workspace: HashMap<String, u64>,
     session: HashMap<(String, String), u64>,
     overflow: u64,
+    upstream_unhealthy: HashSet<String>,
+    overflow_unhealthy: bool,
 }
 
 #[derive(Default)]
@@ -731,8 +736,7 @@ pub(crate) struct Hub {
 }
 
 impl Hub {
-    pub(crate) fn note_workspace_location_change(&self, workspace: &str) {
-        let mut rev = self.location_revisions.lock().unwrap();
+    fn bump_workspace_revision(rev: &mut LocationRevisions, workspace: &str) {
         if let Some(entry) = rev.workspace.get_mut(workspace) {
             *entry = entry.wrapping_add(1);
         } else if rev.workspace.len() < MAX_TRACKED_LOCATIONS {
@@ -740,6 +744,28 @@ impl Hub {
         } else {
             rev.overflow = rev.overflow.wrapping_add(1);
         }
+    }
+
+    pub(crate) fn note_workspace_location_change(&self, workspace: &str) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+    }
+
+    pub(crate) fn note_workspace_upstream_status(&self, workspace: &str, connected: bool) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+        if connected {
+            rev.upstream_unhealthy.remove(workspace);
+        } else if rev.upstream_unhealthy.len() < MAX_TRACKED_LOCATIONS {
+            rev.upstream_unhealthy.insert(workspace.to_owned());
+        } else if !rev.upstream_unhealthy.contains(workspace) {
+            rev.overflow_unhealthy = true;
+        }
+    }
+
+    pub(crate) fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
+        let rev = self.location_revisions.lock().unwrap();
+        !rev.overflow_unhealthy && !rev.upstream_unhealthy.contains(workspace)
     }
 
     pub(crate) fn note_session_location_change(&self, workspace: &str, session: &str) {

@@ -955,7 +955,11 @@ fn revoked_location_token_blocks_queued_depth_background_followup_put() {
 
         // Even after PUT(4) returns 204, the revoked location_token must block any follow-up GET/PUT(5).
         put_4.reply_no_content().await;
-        closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+        wait_until(|| {
+            closed_missions.poll(&mut shared.borrow_mut(), &wake, false);
+            !shared.borrow().missions.depth_save_in_flight()
+        })
+        .await;
         assert!(
             timeout(Duration::from_millis(150), listener.accept())
                 .await

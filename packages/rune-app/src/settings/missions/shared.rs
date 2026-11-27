@@ -86,6 +86,7 @@ impl SendAuthority {
                 .as_ref()
                 .is_none_or(|(ws, ses, rev)| {
                     backend.client.location_revision(ws, ses.as_deref()) == *rev
+                        && backend.client.workspace_upstream_healthy(ws)
                 })
     }
 
@@ -247,6 +248,11 @@ impl Shared {
             .choose(value, active, has_target, pinned_directory);
     }
 
+    #[cfg(test)]
+    pub(in crate::settings) fn depth_save_in_flight(&self) -> bool {
+        self.depth.save_in_flight()
+    }
+
     pub(in crate::settings) fn revoke_location(&self) {
         self.location_token.fetch_add(1, Ordering::SeqCst);
     }
@@ -256,7 +262,14 @@ impl Shared {
         directory: Option<String>,
         target: Option<&Target>,
     ) {
-        let next_dir = directory.filter(|path| absolute_server_path(path));
+        let upstream_healthy = target.is_none_or(|t| {
+            t.backend()
+                .client
+                .workspace_upstream_healthy(t.location().0)
+        });
+        let next_dir = directory
+            .filter(|_| upstream_healthy)
+            .filter(|path| absolute_server_path(path));
         let next_target = target.map(|t| {
             let (ws, ses) = t.location();
             (t.backend().clone(), ws.to_owned(), ses.map(str::to_owned))
@@ -265,20 +278,21 @@ impl Shared {
             let (ws, ses) = t.location();
             t.backend().client.location_revision(ws, ses)
         });
-        let same_pinned = matches!(
-            (&self.pinned_target, &next_target, &self.pinned_directory),
-            (
-                Some((prev_b, prev_ws, prev_ses)),
-                Some((next_b, next_ws, next_ses)),
-                Some(cur_dir),
-            ) if prev_b.client.same_connection(&next_b.client)
-                && prev_ws == next_ws
-                && prev_ses == next_ses
-                && self.pinned_location_revision == next_loc_rev
-                && next_dir
-                    .as_deref()
-                    .is_none_or(|dir| same_server_path(cur_dir, dir))
-        );
+        let same_pinned = upstream_healthy
+            && matches!(
+                (&self.pinned_target, &next_target, &self.pinned_directory),
+                (
+                    Some((prev_b, prev_ws, prev_ses)),
+                    Some((next_b, next_ws, next_ses)),
+                    Some(cur_dir),
+                ) if prev_b.client.same_connection(&next_b.client)
+                    && prev_ws == next_ws
+                    && prev_ses == next_ses
+                    && self.pinned_location_revision == next_loc_rev
+                    && next_dir
+                        .as_deref()
+                        .is_none_or(|dir| same_server_path(cur_dir, dir))
+            );
         if same_pinned && self.depth.has_live_work() {
             if let Some(t) = target {
                 let auth = t.authority();
@@ -340,7 +354,17 @@ impl Shared {
             let rev_stale = self
                 .pinned_location_revision
                 .is_some_and(|rev| rev != current_loc_rev);
-            if !same_authority || rev_stale {
+            let upstream_unhealthy = !backend.client.workspace_upstream_healthy(workspace);
+            let needs_invalidation = !same_authority
+                || rev_stale
+                || (upstream_unhealthy
+                    && (self.pinned_directory.is_some()
+                        || self.pinned_location_revision.is_some()
+                        || self.pinned_target.is_some()
+                        || self.location_flight.is_some()
+                        || self.location_failed.is_some()
+                        || self.depth.has_live_work()));
+            if needs_invalidation {
                 self.revoke_location();
                 let invalidated = self.pinned_directory.take().is_some()
                     | self.pinned_location_revision.take().is_some()

@@ -10,6 +10,7 @@ mod memory;
 mod missions;
 mod missions_regressions;
 mod missions_regressions_depth;
+mod missions_regressions_events;
 mod missions_regressions_lifecycle;
 mod notifications;
 mod opencode;

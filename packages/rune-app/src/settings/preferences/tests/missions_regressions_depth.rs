@@ -576,7 +576,10 @@ fn agent_updated_refreshes_missions_catalog_and_discarded_depth_does_not_repeat_
             "discarding a queued depth choice after follow-up GET must not trigger a duplicate GET"
         );
 
-        // 2. Delivering agent.updated must invalidate provider_changes and refresh Missions catalog.
+        // 2. Delivering agent.updated must invalidate mission_catalog_changes without touching provider_changes.
+        wait_until(|| watch.generation() == 1).await;
+        let _ = watch.take_provider_changes();
+        let _ = watch.take_mission_catalog_changes();
         sse_stream
             .socket
             .write_all(
@@ -584,35 +587,79 @@ fn agent_updated_refreshes_missions_catalog_and_discarded_depth_does_not_repeat_
             )
             .await
             .unwrap();
-        let mut saw_provider_change = false;
+        let mut saw_mission_catalog_change = false;
         wait_until(|| {
-            let (changes, _, _) = watch.take_provider_changes();
+            let changes = watch.take_mission_catalog_changes();
             if matches!(
                 changes,
                 codenomad_client::stream::CatalogueChanges::Workspaces(ref set)
                     if set.contains("captured")
             ) {
-                saw_provider_change = true;
+                saw_mission_catalog_change = true;
             }
-            saw_provider_change
+            saw_mission_catalog_change
         })
         .await;
-        shared
-            .borrow_mut()
-            .provider_target
-            .as_mut()
-            .unwrap()
-            .hint("captured");
-        drain_location_catalog_and_depth(
-            &listener,
-            &mut rt,
-            "/repo/wt-a",
-            "%2Frepo%2Fwt-a",
-            Some(3),
-            &exp_ext,
-            false,
-        )
-        .await;
+        let (provider_changes, _, _) = watch.take_provider_changes();
+        assert!(matches!(
+            provider_changes,
+            codenomad_client::stream::CatalogueChanges::None
+        ));
+        let rev_before = shared.borrow().provider_target.as_ref().unwrap().revision();
+        assert!(
+            shared
+                .borrow_mut()
+                .provider_target
+                .as_mut()
+                .unwrap()
+                .mission_catalog_hint("captured")
+        );
+        assert_eq!(
+            shared.borrow().provider_target.as_ref().unwrap().revision(),
+            rev_before,
+            "mission_catalog_hint must not bump Providers revision"
+        );
+        // Only the Missions catalog (agents + providers + models) reloads; depth does not re-read.
+        let mut saw_agents = false;
+        let mut saw_providers = false;
+        let mut saw_models = false;
+        for _ in 0..3 {
+            let req = next_request(&listener, &mut rt).await;
+            if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/agent")
+            {
+                saw_agents = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[{"name":"build","mode":"primary"}]}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/provider")
+            {
+                saw_providers = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":{"all":[],"connected":[]}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/model")
+            {
+                saw_models = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[]}),
+                )
+                .await;
+            } else {
+                panic!("unexpected request after agent.updated: {}", req.first);
+            }
+        }
+        assert!(saw_agents && saw_providers && saw_models);
         drop(watch);
     });
 }
@@ -808,7 +855,8 @@ fn upstream_error_status_and_worktree_updated_bump_location_and_retry_failed_loo
         }
         assert_eq!(shared.borrow().missions.pinned_directory(), None);
 
-        // 1. instance.eventStatus:error, :connecting, and native worktree.updated must all bump Hub::location_revision.
+        // 1. instance.eventStatus:error, :connecting, and native worktree.updated must all bump Hub::location_revision,
+        // and lookup must remain blocked while upstream OpenCode status is not connected.
         for frame in [
             b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"error\",\"reason\":\"upstream closed\"}\n\n".as_slice(),
             b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"connecting\"}\n\n".as_slice(),
@@ -819,8 +867,35 @@ fn upstream_error_status_and_worktree_updated_bump_location_and_retry_failed_loo
             wait_until(|| backend_client.location_revision("captured", Some("session")) > before)
                 .await;
         }
+        assert!(
+            !backend_client.workspace_upstream_healthy("captured"),
+            "error/connecting status must mark workspace upstream unhealthy"
+        );
+        for _ in 0..4 {
+            tick(&mut rt);
+        }
+        assert!(
+            timeout(Duration::from_millis(120), listener.accept())
+                .await
+                .is_err(),
+            "location lookup must stay blocked while workspace upstream is unhealthy"
+        );
 
-        // 2. Advancing location_revision must clear location_failed so lookup retries automatically.
+        // 2. Delivering instance.eventStatus:connected restores upstream health, advances location_revision,
+        // clears location_failed, and retries lookup automatically.
+        let before_connected = backend_client.location_revision("captured", Some("session"));
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"connected\"}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| {
+            backend_client.location_revision("captured", Some("session")) > before_connected
+                && backend_client.workspace_upstream_healthy("captured")
+        })
+        .await;
         let exp_b = "8".repeat(64);
         drain_location_catalog_and_depth(
             &listener,

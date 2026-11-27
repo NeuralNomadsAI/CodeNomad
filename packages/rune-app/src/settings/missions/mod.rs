@@ -111,7 +111,14 @@ impl Missions {
         self.wake = Some(wake.clone());
         let writes_changed = prefs.poll_missions_writes(wake);
         let raw_target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-        let online = !prefs.is_transport_lost() && raw_target.is_some_and(Target::online);
+        let upstream_healthy = raw_target.is_none_or(|t| {
+            t.backend()
+                .client
+                .workspace_upstream_healthy(t.location().0)
+        });
+        let online = !prefs.is_transport_lost()
+            && raw_target.is_some_and(Target::online)
+            && upstream_healthy;
         let online_target = raw_target.filter(|_| online);
         let config_disabled = prefs.missions.defaults.reloading
             || prefs.missions.defaults.needs_reload
@@ -131,7 +138,7 @@ impl Missions {
             wake,
         );
         let depth_changed = if active {
-            let transport_lost = prefs.is_transport_lost();
+            let transport_lost = prefs.is_transport_lost() || !upstream_healthy;
             let authority = prefs.authority_handle();
             prefs.missions.poll_depth(
                 raw_target,
@@ -165,7 +172,12 @@ impl Missions {
         let prefs = shared.borrow();
         let has_target = prefs.can_retry()
             && !prefs.is_transport_lost()
-            && prefs.provider_target.as_ref().is_some_and(Target::online);
+            && prefs.provider_target.as_ref().is_some_and(|t| {
+                t.online()
+                    && t.backend()
+                        .client
+                        .workspace_upstream_healthy(t.location().0)
+            });
 
         let toggle_info = move |s: &mut S, tip: InfoTip| {
             if let Some(m) = access(s) {

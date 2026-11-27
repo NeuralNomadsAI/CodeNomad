@@ -1,0 +1,610 @@
+use super::{
+    missions::{click, click_option, next_request, settle_meta, tick},
+    missions_regressions::{depth_snapshot_json, drain_location_catalog_and_depth},
+    *,
+};
+use crate::settings::{providers::Target, view};
+use codenomad_client::stream::{CatalogueChanges, CatalogueWatch};
+use std::{cell::Cell, rc::Rc, sync::Arc};
+
+fn masked_depth_snapshot_json(directory: &str, expectation: &str) -> Value {
+    json!({
+        "location": { "directory": directory },
+        "capability": { "minimum": 1, "maximum": 5, "default": 2 },
+        "effectiveDepth": 2,
+        "nesting": { "effect": "allow", "hidden": false },
+        "origin": format!("{directory}/opencode.jsonc"),
+        "project": {
+            "path": format!("{directory}/opencode.jsonc"),
+            "depth": null,
+            "expectation": expectation,
+            "nestingSkipped": false,
+            "emptyExperimental": true
+        }
+    })
+}
+
+async fn accept_sse_stream(listener: &TcpListener) -> Request {
+    loop {
+        let req = request(listener).await;
+        if req.first == "GET /api/meta HTTP/1.1" {
+            req.reply(200, json!({"capabilities":[]})).await;
+            continue;
+        }
+        assert!(
+            req.first.starts_with("GET /api/events?"),
+            "unexpected pre-SSE request: {}",
+            req.first
+        );
+        let mut req = req;
+        req.socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        return req;
+    }
+}
+
+#[test]
+fn upstream_error_blocks_depth_reresolution_and_put_until_connected() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend_client = backend.client.clone();
+
+        let (wake_tx, wake_rx) = bounded(16);
+        let watch_wake: rune::Waker = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        prefs.watch(&watch_wake);
+        let mut sse_stream = accept_sse_stream(&listener).await;
+        let _ = timeout(Duration::from_secs(2), wake_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = prefs.stream.as_ref().unwrap().take();
+
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_a = "1".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_a,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Upstream OpenCode event stream drops while HTTP stays reachable: must invalidate /repo/wt-a,
+        // keep depth disabled, and avoid re-resolving or allowing PUT until `connected`.
+        let before_err = backend_client.location_revision("captured", Some("session"));
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"error\",\"reason\":\"upstream closed\"}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| {
+            backend_client.location_revision("captured", Some("session")) > before_err
+                && !backend_client.workspace_upstream_healthy("captured")
+        })
+        .await;
+
+        for _ in 0..5 {
+            tick(&mut rt);
+        }
+        assert_eq!(shared.borrow().missions.pinned_directory(), None);
+        assert!(shared.borrow().missions.depth_disabled(true, false, None));
+        // Even reopening on a stale opener directory must not re-pin while upstream is unhealthy.
+        let reopened = Target::capture(&root).unwrap();
+        shared
+            .borrow_mut()
+            .missions
+            .capture_opener(Some("/repo/wt-a".into()), Some(&reopened));
+        assert_eq!(shared.borrow().missions.pinned_directory(), None);
+        assert!(
+            timeout(Duration::from_millis(120), listener.accept())
+                .await
+                .is_err(),
+            "depth must not re-resolve or issue PUT while upstream OpenCode stream is unhealthy"
+        );
+
+        // Once upstream reconnects, lookup resolves the moved worktree /repo/wt-b and PUT targets B.
+        let before_ok = backend_client.location_revision("captured", Some("session"));
+        sse_stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"captured\",\"status\":\"connected\"}\n\n",
+            )
+            .await
+            .unwrap();
+        wait_until(|| {
+            backend_client.location_revision("captured", Some("session")) > before_ok
+                && backend_client.workspace_upstream_healthy("captured")
+        })
+        .await;
+
+        let exp_b = "2".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-b",
+            "%2Frepo%2Fwt-b",
+            Some(3),
+            &exp_b,
+            true,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-b"))
+        })
+        .await;
+
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        let put_b = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_b.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_b.body["location"]["directory"], json!("/repo/wt-b"));
+        assert_eq!(put_b.body["depth"], json!(4));
+        assert_eq!(put_b.body["expectation"], json!(exp_b));
+        put_b.reply_no_content().await;
+    });
+}
+
+#[test]
+fn reopening_web_preferences_with_steady_catalogue_watch_keeps_queued_depth_write() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend = backend.clone();
+
+        let (watch, task) = CatalogueWatch::new(backend.clone(), Arc::new(|| {}));
+        platform::spawn(task);
+        let _sse_stream = accept_sse_stream(&listener).await;
+        wait_until(|| watch.generation() == 1).await;
+        let _ = watch.take_provider_changes();
+        let _ = watch.take_mission_catalog_changes();
+
+        let mut root = crate::init();
+        root.screen = crate::screen::Screen::Launcher(crate::launcher::Launcher::fixture());
+        root.workspace = Some(crate::workspace::Ui::new());
+        let project = crate::catalog::Project {
+            id: "captured".into(),
+            path: "/repo/wt-a".into(),
+        };
+        crate::workspace::opened(&mut root, &project);
+        crate::workspace::bound(&mut root, &backend);
+        assert!(crate::workspace::contains_project(&root, "captured"));
+        {
+            let launcher = root.screen.launcher_mut().unwrap();
+            launcher.connection = Some(backend.clone());
+            launcher.project = Some(project);
+            launcher.catalogue_watch = Some(watch);
+        }
+
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+
+        let target = Target::capture(&root).unwrap();
+        assert!(target.online());
+        assert_eq!(target.authority(), 0);
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        crate::settings::poll(&mut root, &mut rune::Tx::default());
+        assert_eq!(
+            shared
+                .borrow()
+                .provider_target
+                .as_ref()
+                .unwrap()
+                .authority(),
+            0,
+            "initial validate against unchanged CatalogueWatch generation must not bump authority"
+        );
+
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let (mut saw_meta, mut saw_config, mut saw_state) = (false, false, false);
+        while !(saw_meta && saw_config && saw_state) {
+            let req = next_request(&listener, &mut rt).await;
+            match req.first.as_str() {
+                "GET /api/meta HTTP/1.1" => {
+                    saw_meta = true;
+                    req.reply(200, json!({"capabilities":[]})).await;
+                }
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                    saw_config = true;
+                    req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                }
+                "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                    saw_state = true;
+                    req.reply(200, json!({"state":{}})).await;
+                }
+                other => panic!("unexpected bootstrap request: {other}"),
+            }
+        }
+        wait_until(|| {
+            tick(&mut rt);
+            shared.borrow().config_loaded()
+        })
+        .await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "3".repeat(64);
+        let exp_2 = "4".repeat(64);
+        drain_location_catalog_and_depth(
+            &listener,
+            &mut rt,
+            "/repo/wt-a",
+            "%2Frepo%2Fwt-a",
+            Some(2),
+            &exp_1,
+            false,
+        )
+        .await;
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Start PUT(4), queue 5 while PUT(4) is in flight, then close and reopen Preferences.
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(put_4.body["depth"], json!(4));
+
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "5");
+        tick(&mut rt);
+
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.provider_target = None;
+            prefs.missions.suspend_reads();
+        }
+        let reopened = Target::capture(&root).unwrap();
+        assert!(reopened.online());
+        assert_eq!(reopened.authority(), 0);
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&reopened));
+            prefs.provider_target = Some(reopened);
+        }
+        // Real settings::poll runs Target::validate against the steady generation=1 CatalogueWatch.
+        crate::settings::poll(&mut root, &mut rune::Tx::default());
+        assert_eq!(
+            shared
+                .borrow()
+                .provider_target
+                .as_ref()
+                .unwrap()
+                .authority(),
+            0,
+            "reopening Preferences with unchanged CatalogueWatch generation must not revoke location"
+        );
+        tick(&mut rt);
+
+        // Reply 204 to PUT(4): follow-up GET and queued PUT(5) must still succeed.
+        put_4.reply_no_content().await;
+        let followup_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            followup_get.first,
+            "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
+        );
+        followup_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", Some(4), &exp_2))
+            .await;
+
+        let put_5 = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_5.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_5.body["depth"], json!(5));
+        assert_eq!(put_5.body["expectation"], json!(exp_2));
+        put_5.reply_no_content().await;
+    });
+}
+
+#[test]
+fn unmasking_empty_experimental_with_inherit_preserves_choice_queued_during_confirmation_get() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let root = crate::init();
+        let shared = root.settings.shared.clone();
+        prefs.window_wake = Some(Arc::new(|| {}));
+        *shared.borrow_mut() = prefs;
+        let target = Target::capture(&root).unwrap();
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs
+                .missions
+                .capture_opener(Some("/repo/wt-a".into()), Some(&target));
+            prefs.provider_target = Some(target);
+        }
+        let window = view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            window,
+            view::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        settle_meta(&listener, &mut rt).await;
+        click(&mut rt, "settings-missions");
+        tick(&mut rt);
+
+        let exp_1 = "5".repeat(64);
+        let exp_2 = "6".repeat(64);
+        let mut saw_agents = false;
+        let mut saw_providers = false;
+        let mut saw_models = false;
+        let mut saw_depth = false;
+        for _ in 0..4 {
+            let req = next_request(&listener, &mut rt).await;
+            if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/agent")
+            {
+                saw_agents = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[{"name":"build","mode":"primary"}]}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/provider")
+            {
+                saw_providers = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":{"all":[],"connected":[]}}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /workspaces/captured/instance/api/model")
+            {
+                saw_models = true;
+                req.reply(
+                    200,
+                    json!({"location":{"directory":"/repo/wt-a"},"data":[]}),
+                )
+                .await;
+            } else if req
+                .first
+                .starts_with("GET /api/workspaces/captured/subagent-depth?")
+            {
+                saw_depth = true;
+                req.reply(200, masked_depth_snapshot_json("/repo/wt-a", &exp_1))
+                    .await;
+            } else {
+                panic!("unexpected request: {}", req.first);
+            }
+        }
+        assert!(saw_agents && saw_providers && saw_models && saw_depth);
+        wait_until(|| {
+            tick(&mut rt);
+            !shared
+                .borrow()
+                .missions
+                .depth_disabled(true, true, Some("/repo/wt-a"))
+        })
+        .await;
+
+        // Unmask emptyExperimental: true by choosing "Inherit" (""), then reply 204.
+        shared
+            .borrow_mut()
+            .missions
+            .choose_depth(String::new(), true, true, Some("/repo/wt-a"));
+        let put_inherit = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_inherit.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_inherit.body["depth"], json!(null));
+        assert_eq!(put_inherit.body["expectation"], json!(exp_1));
+        put_inherit.reply_no_content().await;
+
+        // Hold the post-save confirmation GET open and queue "4" while it is in flight.
+        let confirm_get = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            confirm_get.first,
+            "GET /api/workspaces/captured/subagent-depth?directory=%2Frepo%2Fwt-a HTTP/1.1"
+        );
+        click(&mut rt, "mission-subagent-depth-trigger");
+        click_option(&mut rt, "mission-subagent-depth", "4");
+        tick(&mut rt);
+
+        // Confirmation GET returns emptyExperimental: false, depth: null -> queued "4" must be sent.
+        confirm_get
+            .reply(200, depth_snapshot_json("/repo/wt-a", None, &exp_2))
+            .await;
+
+        let put_4 = next_request(&listener, &mut rt).await;
+        assert_eq!(
+            put_4.first,
+            "PUT /api/workspaces/captured/subagent-depth HTTP/1.1"
+        );
+        assert_eq!(put_4.body["depth"], json!(4));
+        assert_eq!(put_4.body["expectation"], json!(exp_2));
+        put_4.reply_no_content().await;
+    });
+}
+
+#[test]
+fn mission_catalog_events_refresh_missions_without_touching_providers() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.as_mut().unwrap();
+        backend.workspace = "captured".into();
+        backend.session = "session".into();
+        let backend = backend.clone();
+
+        let (watch, task) = CatalogueWatch::new(backend.clone(), Arc::new(|| {}));
+        platform::spawn(task);
+        let mut sse_stream = accept_sse_stream(&listener).await;
+        wait_until(|| watch.generation() == 1).await;
+        let _ = watch.take_provider_changes();
+        let _ = watch.take_mission_catalog_changes();
+
+        let mut target = Target::fixture(backend.clone(), "captured", Some("session"));
+        for event_type in ["agent.updated", "plugin.updated", "models-dev.refreshed"] {
+            let frame = format!(
+                "data: {{\"type\":\"instance.event\",\"instanceId\":\"captured\",\"event\":{{\"type\":\"{event_type}\",\"data\":{{}}}}}}\n\n"
+            );
+            sse_stream.socket.write_all(frame.as_bytes()).await.unwrap();
+
+            let mut received = CatalogueChanges::None;
+            wait_until(|| {
+                let changes = watch.take_mission_catalog_changes();
+                if matches!(
+                    changes,
+                    CatalogueChanges::Workspaces(ref set) if set.contains("captured")
+                ) {
+                    received = changes;
+                    true
+                } else {
+                    false
+                }
+            })
+            .await;
+
+            let (provider_changes, _, _) = watch.take_provider_changes();
+            assert!(
+                matches!(provider_changes, CatalogueChanges::None),
+                "{event_type} must not trigger Providers panel reload"
+            );
+
+            let provider_rev_before = target.revision();
+            let catalog_rev_before = target.mission_catalog_revision();
+            assert!(target.mission_catalog_catalogue(&received));
+            assert_eq!(
+                target.revision(),
+                provider_rev_before,
+                "{event_type} must not bump Target::revision"
+            );
+            assert_eq!(
+                target.mission_catalog_revision(),
+                catalog_rev_before.wrapping_add(1),
+                "{event_type} must bump Target::mission_catalog_revision"
+            );
+        }
+
+        // Direct chat path (no CatalogueWatch): WorkspaceEvent::MissionCatalogChanged wakes and bumps only Missions catalog.
+        let root = crate::init();
+        let woke = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let woke_flag = woke.clone();
+        {
+            let mut prefs = root.settings.shared.borrow_mut();
+            prefs.window_wake = Some(Arc::new(move || {
+                woke_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }));
+            prefs.provider_target = Some(Target::fixture(backend, "captured", Some("session")));
+        }
+        let provider_rev_before = root
+            .settings
+            .shared
+            .borrow()
+            .provider_target
+            .as_ref()
+            .unwrap()
+            .revision();
+        let catalog_rev_before = root
+            .settings
+            .shared
+            .borrow()
+            .provider_target
+            .as_ref()
+            .unwrap()
+            .mission_catalog_revision();
+        crate::settings::connection_event(
+            &root,
+            &crate::transport::Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::MissionCatalogChanged {
+                    workspace_id: "captured".into(),
+                },
+            ),
+            true,
+        );
+        assert!(woke.load(std::sync::atomic::Ordering::SeqCst));
+        let shared = root.settings.shared.borrow();
+        let target = shared.provider_target.as_ref().unwrap();
+        assert_eq!(target.revision(), provider_rev_before);
+        assert_eq!(
+            target.mission_catalog_revision(),
+            catalog_rev_before.wrapping_add(1)
+        );
+        drop(watch);
+    });
+}

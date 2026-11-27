@@ -129,7 +129,9 @@ impl State {
             self.failed = false;
             changed = true;
         }
-        let revision = target.revision().wrapping_add(self.manual_epoch);
+        let revision = target
+            .mission_catalog_revision()
+            .wrapping_add(self.manual_epoch);
         if let Some(result) = self
             .flight
             .as_ref()

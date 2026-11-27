@@ -195,6 +195,11 @@ impl State {
             || self.background_read
     }
 
+    #[cfg(test)]
+    pub(super) fn save_in_flight(&self) -> bool {
+        self.save_flight.is_some()
+    }
+
     pub(super) fn adopt_reopened_authority(&mut self, authority: u64, target_revision: u64) {
         let revision = target_revision.wrapping_add(self.manual_epoch);
         self.authority = authority;
@@ -442,6 +447,14 @@ impl State {
             self.pending_save = false;
             match result {
                 Ok(()) => {
+                    if let Some(project) = self
+                        .snapshot
+                        .as_mut()
+                        .and_then(|snapshot| snapshot.project.as_mut())
+                    {
+                        project.depth = self.draft.parse::<u64>().ok();
+                        project.empty_experimental = false;
+                    }
                     self.dirty = false;
                     self.error = false;
                     self.saved = true;
@@ -523,6 +536,10 @@ impl State {
                     if same_server_path(&snapshot.directory, &target.directory)
                         && started_loc_rev == Some(current_loc_rev)
                         && target.location_revision == Some(current_loc_rev)
+                        && target
+                            .backend
+                            .client
+                            .workspace_upstream_healthy(&target.workspace)
                         && location_token.load(Ordering::SeqCst)
                             == target.expected_location_token
                         && prefs_authority.load(Ordering::SeqCst)
@@ -625,6 +642,10 @@ impl State {
             if self.resolved_authority != Some(target.authority)
                 || self.read_location_revision != Some(current_loc_rev)
                 || target.location_revision != Some(current_loc_rev)
+                || !target
+                    .backend
+                    .client
+                    .workspace_upstream_healthy(&target.workspace)
                 || location_token.load(Ordering::SeqCst) != target.expected_location_token
                 || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
                 || self
@@ -703,6 +724,10 @@ impl State {
                 .location_revision(&target.workspace, target.session.as_deref());
             if !ServerOwner::backend_verified(&target.backend)
                 || target.location_revision != Some(loc_rev)
+                || !target
+                    .backend
+                    .client
+                    .workspace_upstream_healthy(&target.workspace)
                 || location_token.load(Ordering::SeqCst) != target.expected_location_token
                 || prefs_authority.load(Ordering::SeqCst) != target.expected_prefs_authority
             {

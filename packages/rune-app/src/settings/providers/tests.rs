@@ -26,6 +26,7 @@ impl Harness {
             session: Some("ses1".into()),
             owned_tab: false,
             revision: 0,
+            mission_catalog: 0,
             observed: None,
             authority: 0,
             online: true,

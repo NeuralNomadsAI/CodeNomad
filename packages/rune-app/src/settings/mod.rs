@@ -311,6 +311,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             )
         });
         let integration_changes = watch.map(|watch| watch.take_integration_changes());
+        let mission_catalog_changes = watch.map(|watch| watch.take_mission_catalog_changes());
         let (changes, stopped, generation) = observation.map_or_else(
             || (Default::default(), Default::default(), None),
             |(changes, stopped, generation)| (changes, stopped, Some(generation)),
@@ -352,6 +353,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .is_some_and(|(target, (changes, session_changes))| {
                     target.integrations_catalogue(changes, session_changes)
                 });
+            let mission_catalog_changed = shared
+                .provider_target
+                .as_mut()
+                .zip(mission_catalog_changes.as_ref())
+                .is_some_and(|(target, changes)| target.mission_catalog_catalogue(changes));
             if (old
                 != shared
                     .provider_target
@@ -360,7 +366,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
                 || bound
                 || stats_changed
-                || integrations_changed)
+                || integrations_changed
+                || mission_catalog_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();
