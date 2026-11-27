@@ -4879,7 +4879,7 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
         for bad_date in [
             "-000000-01-01T00:00:00.000Z",
             "+999999-01-01T00:00:00.000Z",
-            "+010000-02-30T00:00:00.000Z",
+            "+010000-02-32T00:00:00.000Z",
         ] {
             let bad_field = json!({
                 "key": "when",
@@ -4892,6 +4892,21 @@ fn literal_backslashes_custom_order_visible_min_items_recoverable_oversized_exte
             assert!(
                 agent_forms::value(&bad_field, &bd).is_err(),
                 "invalid extended-year date-time `{bad_date}` must be rejected"
+            );
+        }
+        // JS `new Date(...)` rolls day 29..=31 into the next month instead of returning NaN.
+        {
+            let rollover_field = json!({
+                "key": "when",
+                "type": "string",
+                "format": "date-time",
+                "required": true
+            });
+            let mut rd = agent_forms::Draft::default();
+            rd.editor().text = "+010000-02-30T00:00:00.000Z".into();
+            assert_eq!(
+                agent_forms::value(&rollover_field, &rd).unwrap(),
+                Some(json!("+010000-02-30T00:00:00.000Z"))
             );
         }
 
@@ -5808,8 +5823,9 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
             "activating Show all must expose revealed text in the web mirror too: {web_items:?}"
         );
 
-        // 2. Strict cross-target date-time validation rejects invalid numeric/named dates like
-        // `99/99/2026`, `2/30/2026`, `Jan 99, 2026`, while accepting valid formats.
+        // 2. Cross-target date-time validation matches JS/Bun `new Date(...)`: rejects
+        // day 0, day >= 32, and invalid months (`99/99/2026`, `2/32/2026`, `Feb 32, 2026`,
+        // `Jan 99, 2026`), while accepting valid formats including JS month-day rollover (29..=31).
         let dt_field = json!({
             "key": "when",
             "title": "When",
@@ -5820,10 +5836,12 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         let mut budget = crate::agent::string_constraints::MatchBudget::new();
         for bad in [
             "99/99/2026",
-            "2/30/2026",
+            "2/32/2026",
+            "2026-02-00T10:00:00Z",
+            "2026-02-32T10:00:00Z",
             "13-01-2026 12:00",
             "Jan 99, 2026",
-            "Feb 30, 2026",
+            "Feb 32, 2026",
             "2026/13/01",
         ] {
             assert_eq!(
@@ -5839,6 +5857,12 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
         for good in [
             "2026-11-26T14:30:00Z",
             "2026-11-26 4:30",
+            "2026-02-29T10:00:00Z",
+            "2026-04-31T08:00:00.000Z",
+            "2026-02-30",
+            "2026-02-29 10:00",
+            "2/30/2026",
+            "Feb 30, 2026",
             "2026/11/26",
             "11/26/2026",
             "11-26-2026 14:30:00",
@@ -5856,6 +5880,29 @@ fn revealed_option_a11y_multiselect_multiplicity_strict_dates_empty_default_clea
                 "valid date-time {good:?} must be accepted"
             );
         }
+        // Hidden required date-time default with JS rollover (`2026-04-31T08:00:00Z`) stays answerable.
+        let hidden_rollover = Form {
+            tool: None,
+            infer_websearch: false,
+            owner: Default::default(),
+            id: "form-r34-rollover".into(),
+            title: "Rollover".into(),
+            fields: vec![json!({
+                "key": "when",
+                "title": "When",
+                "type": "string",
+                "format": "date-time",
+                "hidden": true,
+                "required": true,
+                "default": "2026-04-31T08:00:00Z"
+            })],
+        };
+        let (hr_state, _hrrx) = state_with_form(hidden_rollover.clone());
+        assert_eq!(
+            agent_forms::answer(&hidden_rollover, &hr_state.agent.as_ref().unwrap().drafts)
+                .unwrap(),
+            json!({ "when": "2026-04-31T08:00:00Z" })
+        );
 
         // 3. Optional string with `custom: true`, declared `prod`, and `default: ""`: Clear is
         // enabled initially because Rune would submit `""`, and clicking Clear omits the field.

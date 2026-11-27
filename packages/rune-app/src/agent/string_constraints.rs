@@ -403,17 +403,19 @@ fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime
         && (1..=12).contains(&month)
         && let Some(after_m_dash) = after_month.strip_prefix('-')
         && let Some((day, after_date)) = take_1_or_2_digits(after_m_dash)
-        && (1..=days_in_month_i64(year, month)).contains(&day)
+        && (1..=31).contains(&day)
     {
         let b = after_date.as_bytes();
         if !b.is_empty() && matches!(b[0], b'T' | b't' | b' ') {
             if let Some((hour, minute, second, millis, None)) =
                 parse_time_and_tz(&after_date[1..], false)
             {
+                let (norm_y, norm_m, norm_d) =
+                    civil_from_days(days_from_civil(year, i64::from(month), i64::from(day)));
                 return Some(ParsedLocalDateTime {
-                    year,
-                    month: i64::from(month),
-                    day: i64::from(day),
+                    year: norm_y,
+                    month: i64::from(norm_m),
+                    day: i64::from(norm_d),
                     hour: i64::from(hour),
                     minute: i64::from(minute),
                     second: i64::from(second),
@@ -427,10 +429,15 @@ fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime
         && parsed.has_time
         && parsed.tz_offset_ms.is_none()
     {
+        let (norm_y, norm_m, norm_d) = civil_from_days(days_from_civil(
+            parsed.year,
+            i64::from(parsed.month),
+            i64::from(parsed.day),
+        ));
         return Some(ParsedLocalDateTime {
-            year: parsed.year,
-            month: i64::from(parsed.month),
-            day: i64::from(parsed.day),
+            year: norm_y,
+            month: i64::from(norm_m),
+            day: i64::from(norm_d),
             hour: i64::from(parsed.hour),
             minute: i64::from(parsed.minute),
             second: i64::from(parsed.second),
@@ -959,7 +966,9 @@ fn parse_numeric_date_time(s: &str) -> Option<ParsedDateTime> {
     } else {
         return None;
     };
-    if !(1..=12).contains(&month) || !(1..=days_in_month_i64(year, month)).contains(&day) {
+    // JavaScript `new Date(...)` accepts days 1..=31 for any valid month (rolling overflow
+    // days into the next month) and rejects day 0 or day >= 32.
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     let tail = after_date
@@ -1048,7 +1057,7 @@ fn parse_named_month_date_time(s: &str) -> Option<ParsedDateTime> {
     } else {
         return None;
     };
-    if !(1..=days_in_month_i64(year, month)).contains(&day) {
+    if !(1..=31).contains(&day) {
         return None;
     }
     let tail = r3.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
@@ -1095,21 +1104,6 @@ fn parse_iso_year_prefix(s: &str) -> Option<(i64, usize)> {
         return Some((i64::from(year), 4));
     }
     None
-}
-
-fn days_in_month_i64(year: i64, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 0,
-    }
 }
 
 fn take_1_or_2_digits(s: &str) -> Option<(u32, &str)> {
@@ -1162,7 +1156,7 @@ fn is_valid_date_time(value: &str) -> bool {
                 let Some((day, after_d)) = take_1_or_2_digits(after_m_dash) else {
                     return false;
                 };
-                if !(1..=days_in_month_i64(year, month)).contains(&day) {
+                if !(1..=31).contains(&day) {
                     return false;
                 }
                 (day, after_d)
@@ -1285,17 +1279,17 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
     }
     // Reject invalid ISO dates (invalid month/day/range/time), except valid ISO dates with a
     // space/comma tail carrying timezone/meridiem/parenthesized cues that JS `Date` can accept.
-    if let Some((year, ylen)) = parse_iso_year_prefix(s) {
+    if let Some((_year, ylen)) = parse_iso_year_prefix(s) {
         let tail = &s.as_bytes()[ylen..];
         if tail.is_empty() || tail[0] == b'-' {
             let deferrable_iso_tail = s[ylen..]
                 .strip_prefix('-')
                 .and_then(take_1_or_2_digits)
                 .filter(|&(m, _)| (1..=12).contains(&m))
-                .and_then(|(m, rest)| {
+                .and_then(|(_m, rest)| {
                     if let Some(after_m_dash) = rest.strip_prefix('-') {
                         take_1_or_2_digits(after_m_dash)
-                            .filter(|&(d, _)| (1..=days_in_month_i64(year, m)).contains(&d))
+                            .filter(|&(d, _)| (1..=31).contains(&d))
                             .map(|(_, after_d)| after_d)
                     } else {
                         Some(rest)
@@ -1313,7 +1307,7 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
             return !deferrable_iso_tail;
         }
     }
-    // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/30/2026`, `13-01-2026`),
+    // Reject invalid numeric `A/B/C` or `A-B-C` dates (`99/99/2026`, `2/32/2026`, `13-01-2026`),
     // while deferring valid numeric dates with unrecognized non-ISO time/offset tails.
     let (date_part, after_date) = split_first_date_token(s);
     let first_sep = date_part.bytes().position(|b| matches!(b, b'/' | b'-'));
@@ -1337,15 +1331,13 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
                     .zip(parse_ascii_digits(p2))
                     .zip(parse_ascii_digits(p3))
                     .filter(|&((_, m), _)| p2.len() <= 2 && p3.len() <= 2 && (1..=12).contains(&m))
-                    .is_some_and(|((y, m), d)| {
-                        (1..=days_in_month_i64(i64::from(y), m)).contains(&d)
-                    })
+                    .is_some_and(|((_, _), d)| (1..=31).contains(&d))
             } else if p1.len() <= 2 && p2.len() <= 2 {
                 parse_ascii_digits(p1)
                     .zip(parse_ascii_digits(p2))
                     .zip(parse_year_2_or_4(p3))
                     .filter(|&((m, _), _)| (1..=12).contains(&m))
-                    .is_some_and(|((m, d), y)| (1..=days_in_month_i64(y, m)).contains(&d))
+                    .is_some_and(|((_, d), _)| (1..=31).contains(&d))
             } else {
                 false
             };
@@ -1360,7 +1352,7 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
             return !deferrable_tail;
         }
     }
-    // Reject 3-token named-month dates with impossible days (`Jan 99, 2026`, `Feb 30, 2026`).
+    // Reject 3-token named-month dates with impossible days (`Jan 99, 2026`, `Feb 32, 2026`).
     if let Some((mut t1, mut rest)) = next_date_piece(s) {
         if is_weekday_name(t1) {
             if let Some((nt, nr)) = next_date_piece(rest) {
@@ -1388,8 +1380,8 @@ fn looks_like_rejected_known_date_shape(s: &str) -> bool {
             } else {
                 None
             };
-            if let Some((y, m, d)) = day_year
-                && !(1..=days_in_month_i64(y, m)).contains(&d)
+            if let Some((_y, _m, d)) = day_year
+                && !(1..=31).contains(&d)
             {
                 return true;
             }
