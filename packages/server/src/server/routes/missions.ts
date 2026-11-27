@@ -31,6 +31,7 @@ import { registerMissionScheduleActivation } from "./mission-schedule-activation
 import { registerMissionScheduled } from "./mission-scheduled"
 import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 import { registerMissionScheduleList } from "./mission-schedule-list"
+import { registerMissionCalendars } from "./mission-calendars"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
@@ -84,6 +85,7 @@ const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), r
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
   registerMissionCreation(app, deps)
   registerMissionScheduleList(app, deps)
+  registerMissionCalendars(app, deps)
   registerMissionScheduleActivation(app, deps)
   registerMissionScheduled(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
