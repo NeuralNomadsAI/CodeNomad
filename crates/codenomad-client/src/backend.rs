@@ -116,6 +116,22 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
     crate::prompt::PromptError::Unconfirmed
 }
 
+async fn read_error_body(response: reqwest::Response) -> Result<Value> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::timeout(
+            crate::http::REQUEST_TIMEOUT,
+            crate::prompt_receipt::read_with_idle_timeout(response, None),
+        )
+        .await
+        .map_err(|_| crate::prompt::PromptError::Unconfirmed)?
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::prompt_receipt::read(response).await
+    }
+}
+
 pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
     let status = response.status();
     let before_dispatch = response
@@ -134,14 +150,14 @@ pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::p
     }
     match status {
         reqwest::StatusCode::NOT_IMPLEMENTED => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && body["error"].as_str() == Some("Route not implemented in this prototype")
             {
                 return crate::prompt::PromptError::Rejected;
             }
         }
         reqwest::StatusCode::BAD_GATEWAY => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && matches!(
                     body["error"].as_str(),
                     Some(
@@ -156,7 +172,7 @@ pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::p
             }
         }
         reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && matches!(
                     body["error"].as_str(),
                     Some(

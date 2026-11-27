@@ -1270,6 +1270,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if key == "rune.create_error" {
                     l.creation_uncertain = true;
                 }
+                if key == "rune.list_error" && l.connection.is_some() {
+                    l.projects_stale = true;
+                }
                 l.error = Some(key);
                 if matches!(key, "rune.restore_error" | "rune.open_error") {
                     use crate::shell::notifications::{Category, emit_outcome};
@@ -1363,7 +1366,7 @@ fn apply_connected(
     }
     let has_project = l.project.is_some();
     let job_pending = l.pending;
-    l.openings.retry_cleanup();
+    l.openings.retry_cleanup(l.connection.as_ref());
     crate::workspace::connected(s);
     if reauthenticated {
         crate::workspace::renew_connection(s);

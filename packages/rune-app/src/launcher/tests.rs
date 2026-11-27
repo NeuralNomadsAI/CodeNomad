@@ -1756,12 +1756,14 @@ fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
     let encoded = crate::workspace::encode(&saved).unwrap();
     std::fs::write(dir.join("state.json"), &encoded).unwrap();
 
-    // Stub server fails initial attestation/listing with 503.
+    // Stub server fails initial attestation/listing with 503 until flipped to healthy.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let addr = format!("http://{}/", listener.local_addr().unwrap());
     let stop = Arc::new(AtomicBool::new(false));
+    let healthy = Arc::new(AtomicBool::new(false));
     let stop_flag = stop.clone();
+    let healthy_flag = healthy.clone();
     let server = std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !stop_flag.load(SeqCst) && std::time::Instant::now() < deadline {
@@ -1770,10 +1772,31 @@ fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
                     let _ = socket.set_nonblocking(false);
                     let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
                     let mut buf = [0u8; 2048];
-                    let _ = socket.read(&mut buf);
-                    let _ = socket.write_all(
-                        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    );
+                    let n = socket.read(&mut buf).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    if !healthy_flag.load(SeqCst) {
+                        let _ = socket.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    } else if req.starts_with("GET /api/meta ") {
+                        let body = r#"{"apiContract":1,"serverId":"srv-boot","capabilities":[]}"#;
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes());
+                    } else if req.starts_with("GET /api/workspaces ") {
+                        let body = "[]";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes());
+                    } else {
+                        let _ = socket.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(2));
@@ -1845,6 +1868,10 @@ fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
         rt.state.screen.launcher().unwrap().error,
         Some("rune.list_error")
     );
+    assert!(
+        rt.state.screen.launcher().unwrap().projects_stale,
+        "initial listing failure must expose launcher retry action"
+    );
     let hydrated_snapshot = ui.snapshot();
     match &hydrated_snapshot.tabs[0] {
         crate::workspace::Tab::Workspace(w) => {
@@ -1873,6 +1900,27 @@ fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
         assert!(
             std::time::Instant::now() < deadline,
             "new tab was not persisted after failed initial listing"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // Retry from launcher recovers attestation and clears projects_stale even after new_tab cleared error.
+    assert!(rt.state.screen.launcher().unwrap().projects_stale);
+    healthy.store(true, SeqCst);
+    refresh_projects(&mut rt.state);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        now += 0.05;
+        rt.frame(now);
+        let recovered = rt.state.screen.launcher().is_some_and(|l| {
+            l.server_id.as_deref() == Some("srv-boot") && !l.projects_stale && !l.pending
+        });
+        if recovered {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "launcher retry did not recover initial attestation and project listing"
         );
         std::thread::sleep(Duration::from_millis(5));
     }

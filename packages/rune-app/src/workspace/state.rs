@@ -1965,11 +1965,7 @@ pub fn connected(s: &mut State) {
         ui.ready = false;
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if !booting
-        && !ui.persistence.loading
-        && ui.persistence.store.is_none()
-        && !ui.persistence.read_error
-    {
+    if !booting && !ui.persistence.loading {
         ui.ready = true;
     }
 }

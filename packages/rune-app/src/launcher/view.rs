@@ -105,7 +105,7 @@ pub fn view(s: &State) -> El {
             body = body.child(button_tx(
                 "refresh-projects",
                 t("sessionList.loadError.retry"),
-                l.projects_refresh.is_some() || waiting,
+                l.pending || l.projects_refresh.is_some() || waiting,
                 crate::screen::action_tx(&scope, |s: &mut State, _| {
                     launcher::refresh_projects(s);
                 }),

@@ -57,6 +57,16 @@ impl Openings {
             .lock()
             .map_err(|_| "opening owner unavailable".into())
     }
+    fn same_server(claim: &Backend, current: &Backend) -> bool {
+        claim.base == current.base
+            && match (
+                claim.client.server_identity(),
+                current.client.server_identity(),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            }
+    }
     pub fn begin(&self, backend: Backend, intent: &str) -> Result<Pending> {
         let request = codenomad_client::http::client_id()?;
         let mut retry_failed = false;
@@ -66,6 +76,10 @@ impl Openings {
             if !state.closed {
                 for claim in &mut state.entries {
                     if claim.revoked && !claim.cleaning && claim.done == Some(false) {
+                        if Self::same_server(&claim.backend, &backend) {
+                            claim.backend.client = backend.client.clone();
+                            claim.backend.client_id.clone_from(&backend.client_id);
+                        }
                         claim.done = None;
                         retry_failed = true;
                     }
@@ -239,10 +253,16 @@ impl Openings {
         self.state()
             .is_ok_and(|s| s.entries.iter().all(|c| !c.revoked || c.settled()))
     }
-    pub fn retry_cleanup(&self) {
+    pub fn retry_cleanup(&self, current: Option<&Backend>) {
         if let Ok(mut state) = self.state() {
             for claim in &mut state.entries {
-                if claim.revoked && claim.done == Some(false) {
+                if claim.revoked && !claim.cleaning && claim.done == Some(false) {
+                    if let Some(current) = current
+                        && Self::same_server(&claim.backend, current)
+                    {
+                        claim.backend.client = current.client.clone();
+                        claim.backend.client_id.clone_from(&current.client_id);
+                    }
                     claim.done = None;
                 }
             }
@@ -488,8 +508,17 @@ mod tests {
                             .is_some_and(|line| line.contains("/api/workspaces/creation/cancel"));
                         let (status, body) = if is_cancel {
                             cancel_hits.fetch_add(1, SeqCst);
-                            if cancel_status.load(SeqCst) == 200 {
-                                ("200 OK", r#"{"ok":true}"#)
+                            let expected = cancel_status.load(SeqCst);
+                            let has_fresh_cookie = text.lines().any(|line| {
+                                line.split_once(':').is_some_and(|(k, v)| {
+                                    k.eq_ignore_ascii_case("cookie")
+                                        && v.contains("cn_session=fresh")
+                                })
+                            });
+                            if expected == 204 || (expected == 401 && has_fresh_cookie) {
+                                ("204 No Content", "")
+                            } else if expected == 401 {
+                                ("401 Unauthorized", r#"{"error":"unauthorized"}"#)
                             } else {
                                 ("503 Service Unavailable", r#"{"error":"unavailable"}"#)
                             }
@@ -531,7 +560,7 @@ mod tests {
             atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
         };
 
-        let cancel_status = Arc::new(AtomicU16::new(200));
+        let cancel_status = Arc::new(AtomicU16::new(204));
         let cancel_hits = Arc::new(AtomicUsize::new(0));
         let (base, stop, handle) = opening_fixture_server(cancel_status, cancel_hits.clone());
         let owner = Openings::default();
@@ -591,8 +620,8 @@ mod tests {
         }
         assert!(!owner.settled());
 
-        // Server recovers: beginning a new opening retries failed cleanups, then slots free up.
-        cancel_status.store(200, SeqCst);
+        // 1. Server recovers: beginning a new opening retries failed cleanups, then slots free up.
+        cancel_status.store(204, SeqCst);
         assert!(owner.begin(backend.clone(), "tab-0").is_err());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !owner.settled() {
@@ -602,6 +631,48 @@ mod tests {
         let recovered = owner.begin(backend.clone(), "tab-0").unwrap();
         owner.state().unwrap().entries.clear();
         drop(recovered);
+
+        // 2. Reconnect path (`retry_cleanup`) refreshes rotated session cookies and frees the slot.
+        cancel_status.store(401, SeqCst);
+        let stale = Backend {
+            client: codenomad_client::http::Http::with_session_cookie(
+                &backend.base,
+                "cn_session",
+                "stale",
+            )
+            .unwrap(),
+            ..backend.clone()
+        };
+        let pending = owner.begin(stale, "tab-1").unwrap();
+        assert!(crate::platform::block_on(pending.create("/fixture")).is_err());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner
+            .state()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|c| c.cleaning || c.done != Some(false))
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!owner.settled());
+        let renewed = Backend {
+            client: codenomad_client::http::Http::with_session_cookie(
+                &backend.base,
+                "cn_session",
+                "fresh",
+            )
+            .unwrap(),
+            ..backend.clone()
+        };
+        owner.retry_cleanup(Some(&renewed));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !owner.settled() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(owner.pending().is_empty());
 
         stop.store(true, SeqCst);
         handle.join().unwrap();
@@ -614,7 +685,7 @@ mod tests {
             atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
         };
 
-        let cancel_status = Arc::new(AtomicU16::new(200));
+        let cancel_status = Arc::new(AtomicU16::new(204));
         let cancel_hits = Arc::new(AtomicUsize::new(0));
         let (base, stop, handle) = opening_fixture_server(cancel_status, cancel_hits.clone());
         let owner = Openings::default();
