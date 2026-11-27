@@ -315,3 +315,73 @@ fn arrows_select_rows_and_space_on_the_separate_eye_opens_the_file() {
         http.quiet().await;
     });
 }
+
+#[test]
+fn listing_and_preview_errors_render_localized_alerts_without_raw_reqwest_text() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut ui = http.ui(Store::default(), "files-i18n-alerts");
+        ui.panel = true;
+        ui.tree.activate(true);
+        let read = ui.tree.take_refresh().pop().unwrap();
+        assert!(ui.tree.complete(
+            read,
+            Err("error sending request for url (http://127.0.0.1:9999/files): HTTP status code 502"
+                .into()),
+            Ok,
+        ));
+        ui.open("secret.rs".into());
+        ui.reader
+            .scene(Err(codenomad_client::files::FileError::AccessDenied.into()));
+        let mut rt = shell_runtime_localized(ui);
+        let (en_listing, en_preview) = crate::strings::with_locale("en", || {
+            (
+                crate::strings::t("directoryBrowser.load.errorFallback"),
+                crate::strings::t("filesPanel.error.accessDenied"),
+            )
+        });
+        for locale in ["en", "fr"] {
+            crate::strings::with_locale(locale, || {
+                rt.update(|_, _| {});
+                rt.frame(0.02);
+                let tree = rt.accessibility_json().to_string();
+                let lower = tree.to_ascii_lowercase();
+                for forbidden in [
+                    "reqwest",
+                    "error sending request",
+                    "status code",
+                    "127.0.0.1",
+                    "file_access_denied",
+                ] {
+                    assert!(
+                        !lower.contains(forbidden),
+                        "raw detail `{forbidden}` leaked in locale {locale}: {tree}"
+                    );
+                }
+                let expected_listing = crate::strings::t("directoryBrowser.load.errorFallback");
+                let expected_preview = crate::strings::t("filesPanel.error.accessDenied");
+                if locale == "fr" {
+                    assert_ne!(expected_listing, en_listing);
+                    assert_ne!(expected_preview, en_preview);
+                    assert!(
+                        !tree.contains(en_listing),
+                        "stale English listing alert in locale {locale}: {tree}"
+                    );
+                    assert!(
+                        !tree.contains(en_preview),
+                        "stale English preview alert in locale {locale}: {tree}"
+                    );
+                }
+                assert!(
+                    tree.contains(expected_listing),
+                    "listing fallback alert missing in locale {locale}: {tree}"
+                );
+                assert!(
+                    tree.contains(expected_preview),
+                    "preview access-denied alert missing in locale {locale}: {tree}"
+                );
+            });
+        }
+        http.quiet().await;
+    });
+}
