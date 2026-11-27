@@ -237,9 +237,11 @@ export class MissionDocumentPassageEngine {
       if (doc.pending.admittedAt !== null || doc.pending.admissionAttempted) return "unknown"
       const at = Math.max(this.ports.now(), doc.pending.createdAt, doc.history.at(-1)?.settledAt ?? 0)
       const settled = await this.change(locked, doc, next => {
-        const cutoff = Math.max(at, ...next.calendars.map(item => item.wakePreparing?.dueAt ?? 0))
+        const preparedCutoff = Math.max(0, ...next.calendars.map(item => item.wakePreparing?.dueAt ?? 0))
         changes.settle(next, doc!.pending!.id, "failed", at, true)
-        if (next.calendars.some(item => item.role === "principal")) next.fanIn = this.windowValue(next, cutoff, true)
+        if (next.calendars.some(item => item.role === "principal") && (preparedCutoff > 0 || next.fanIn && !next.fanIn.completed)) {
+          next.fanIn = this.windowValue(next, Math.max(at, preparedCutoff), true)
+        }
       }, admission.current)
       await this.closeSuppressedWindow(locked, settled)
       await this.ports.retired?.(doc)

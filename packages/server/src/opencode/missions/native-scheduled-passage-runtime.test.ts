@@ -435,5 +435,52 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.equal(sends, beforeSends)
       assert.equal(sessions.size, beforeSessions)
     })
+    await t.test("principal wake settling missing reused coordinator unlocks Edit and Resume while the Code Mode wake is still in flight", async () => {
+      const beforeSends = sends
+      const wakeDescriptors = (["principal", "reconciliation"] as const).map(role => ({ role, slot: 0, timeGeneration: 1,
+        scheduleID: `sch_wake_missing_${role}`, sessionID: `ses_wake_missing_${role}`, name: `Wake Missing ${role}`, creation: "adopted" as const,
+        when: { type: "every" as const, every: "15 minutes", tz: "UTC" }, endsAt: null, ambiguous: [] }))
+      const wakeCalendars = wakeDescriptors.map(item => ({ role: item.role, slot: 0, timeGeneration: 1,
+        scheduleID: item.scheduleID, sessionID: item.sessionID, highWater: 0, pendingWake: null, wakePreparing: null }))
+      // While the Code Mode principal wake is running, runCount is still 0 and nextDueAt points at the firing slot (<= cutoff).
+      const firingDueAt = at + 1_000
+      for (const item of wakeDescriptors) {
+        infos.set(missionAutomationID(item.scheduleID), Schema.decodeUnknownSync(Automation.Info)({ id: missionAutomationID(item.scheduleID),
+          sessionID: item.sessionID, name: item.name, projectID: "project", directory, trigger: item.when, tz: "UTC", status: "active", runCount: 0,
+          nextDueAt: item.role === "principal" ? firingDueAt : at + 900_000, action: { type: "code", code: MISSION_WAKE_CODE }, time: { created: at, updated: at } }))
+        sessions.set(item.sessionID, Schema.decodeUnknownSync(Session.Info)({ id: item.sessionID, projectID: "project",
+          location: { directory }, model: NATIVE_SCHEDULE_CARRIER_MODEL, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: at, updated: at }, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: "wake_missing_reused", timeGeneration: 1, role: item.role, slot: 0 } } }))
+      }
+      const beforeSessions = sessions.size
+      let wakeDoc = await owner!.create("wake_missing_reused", { ...configuration, coordinatorSessionID: "ses_deleted_wake_reused" }, at, current)
+      const principal = wakeCalendars[0]
+      wakeDoc = await owner!.change(wakeDoc.id, wakeDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation, slots: wakeDescriptors }
+        changes.play(next, "play_wake_missing", at, [])
+        changes.synchronized(next, "play_wake_missing", wakeCalendars)
+        changes.prepareWake(next, { scheduleID: principal.scheduleID, run: 1, messageID: `msg_${principal.scheduleID}_1`, dueAt: firingDueAt })
+      })
+      assert.equal(await invoke(runtime => runtime.wake({
+        ...entry,
+        missionID: wakeDoc.id,
+        wake: { missionID: wakeDoc.id, generation: 1, scheduleID: principal.scheduleID, sessionID: principal.sessionID,
+          run: 1, messageID: `msg_${principal.scheduleID}_1`, dueAt: firingDueAt },
+      })), "settled")
+      wakeDoc = await owner!.read(wakeDoc.id) as MissionDocument
+      assert.equal(wakeDoc.pending, null)
+      assert.equal(wakeDoc.blocked, "failed")
+      assert.equal(wakeDoc.launchedCount, 0)
+      assert.equal(wakeDoc.calendars[0].highWater, 1)
+      assert.equal(wakeDoc.calendars[0].pendingWake, null)
+      assert.equal(wakeDoc.calendars[0].wakePreparing, null)
+      assert.equal(wakeDoc.fanIn?.completed, true)
+      assert.equal(projectMissionDocument(wakeDoc).edit.structural, true)
+      const actions = missionScheduleAvailableActions(wakeDoc)
+      assert.ok(actions.includes("configure"))
+      assert.ok(actions.includes("resume"))
+      assert.equal(sends, beforeSends)
+      assert.equal(sessions.size, beforeSessions)
+    })
   } finally { db.close() }
 })
