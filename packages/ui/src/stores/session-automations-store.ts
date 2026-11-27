@@ -23,6 +23,7 @@ const LOADING: SessionAutomationsSnapshot = { status: "loading" }
 const DUE_GRACE_MS = 1_500
 const OVERDUE_BACKOFF_MS = 15_000
 const EVENT_TRIGGER_POLL_MS = 15_000
+const SHELL_EXIT_SETTLE_MS = 1_500
 const MAX_DUE_DELAY_MS = 60 * 60 * 1000
 
 interface Entry {
@@ -32,7 +33,14 @@ interface Entry {
   releaseAuthority?: () => void
   reading?: { dirty: boolean; promise: Promise<void>; controller: AbortController }
   dueTimer?: ReturnType<typeof setTimeout>
+  shellFollowUpTimer?: ReturnType<typeof setTimeout>
   overdueChecks: number
+}
+
+function shellAutomationSignature(automations: readonly SessionAutomation[]): string | null {
+  const rows = automations.filter(item => item.action.type === "shell")
+  if (rows.length === 0) return null
+  return rows.map(item => `${item.id}\0${item.status}\0${item.runCount}\0${item.updatedAt}\0${item.lastOutcome ?? ""}\0${item.lastOutput ?? ""}`).join("\n")
 }
 
 function inspectActiveDueTimes(automations: readonly SessionAutomation[], nowMs: number): {
@@ -88,8 +96,15 @@ export function createSessionAutomationsStore(
     entry.dueTimer = undefined
   }
 
+  const clearShellFollowUp = (entry: Entry | undefined) => {
+    if (!entry?.shellFollowUpTimer) return
+    clearTimeout(entry.shellFollowUpTimer)
+    entry.shellFollowUpTimer = undefined
+  }
+
   const cancel = (entry: Entry | undefined) => {
     clearDueTimer(entry)
+    clearShellFollowUp(entry)
     const reading = entry?.reading
     if (!reading) return
     entry.reading = undefined
@@ -120,10 +135,16 @@ export function createSessionAutomationsStore(
     }
     let delayMs: number
     if (retryFailure) {
-      // Bound retries if a read fails transiently.
-      if (entry.overdueChecks >= 3) return
-      entry.overdueChecks += 1
-      delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
+      // Bound retries if a read fails transiently, while keeping the next known future deadline scheduled.
+      if (entry.overdueChecks < 3) {
+        entry.overdueChecks += 1
+        const backoff = OVERDUE_BACKOFF_MS * entry.overdueChecks
+        delayMs = futureDelay !== null ? Math.min(backoff, futureDelay) : backoff
+      } else if (futureDelay !== null) {
+        delayMs = futureDelay
+      } else {
+        return
+      }
     } else if (hasActiveEventTrigger) {
       entry.overdueChecks = 0
       delayMs = futureDelay !== null ? Math.min(EVENT_TRIGGER_POLL_MS, futureDelay) : EVENT_TRIGGER_POLL_MS
@@ -254,6 +275,33 @@ export function createSessionAutomationsStore(
           && (backendId === undefined || parseInstanceKey(owner).backendId === backendId)
           ? (entry.overdueChecks = 0, refresh(owner, sessionId))
           : undefined
+      })).then(() => undefined)
+    },
+    /** Refreshes demanded Sessions with shell automations on `shell.exited`, with one short follow-up if persistence lags the exit event. */
+    noteShellExited(instanceId: string): Promise<void> {
+      return Promise.all(Array.from(entries, ([stateKey, entry]) => {
+        const [owner, sessionId] = stateKey.split("\0") as [string, string]
+        if (entry.demand === 0 || owner !== instanceId) return undefined
+        const shown = untrack(snapshots).get(stateKey)
+        if (shown?.status !== "ok") return undefined
+        const before = shellAutomationSignature(shown.automations)
+        if (before === null) return undefined
+        clearShellFollowUp(entry)
+        entry.overdueChecks = 0
+        return refresh(owner, sessionId).then(() => {
+          if (entry.demand === 0 || entries.get(stateKey) !== entry || options.signal?.(owner)?.aborted) return
+          if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+          const after = untrack(snapshots).get(stateKey)
+          if (after?.status === "ok" && shellAutomationSignature(after.automations) === before) {
+            clearShellFollowUp(entry)
+            entry.shellFollowUpTimer = setTimeout(() => {
+              entry.shellFollowUpTimer = undefined
+              if (entry.demand > 0 && entries.get(stateKey) === entry && !options.signal?.(owner)?.aborted) {
+                void refresh(owner, sessionId)
+              }
+            }, SHELL_EXIT_SETTLE_MS)
+          }
+        })
       })).then(() => undefined)
     },
     forget(instanceId: string, sessionId: string): void {

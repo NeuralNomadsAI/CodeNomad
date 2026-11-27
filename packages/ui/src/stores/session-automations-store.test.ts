@@ -368,4 +368,87 @@ describe("session automations store", () => {
     assert.equal(formatAutomationMutationError(upstream, fallback), "Upstream lock active")
     assert.equal(formatAutomationMutationError(new Error("Network error"), fallback), fallback)
   })
+
+  it("keeps later future deadlines scheduled even after transient read failures exhaust retries", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    let clock = 1_000_000
+    const f = fixture({ now: () => clock })
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({
+      status: "ok",
+      automations: [
+        automation("aut_soon", { nextDueAt: clock + 10_000 }),
+        automation("aut_later", { nextDueAt: clock + 300_000 }),
+      ],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // First due fires at +11.5s and fails, followed by 3 retry failures (15s + 30s + 45s = 90s).
+    clock += 11_500
+    t.mock.timers.tick(11_500)
+    assert.equal(f.reads.length, 2)
+    f.reads[1]!.resolve({ status: "unavailable" })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    for (const [step, expectedReads] of [[15_000, 3], [30_000, 4], [45_000, 5]] as const) {
+      clock += step
+      t.mock.timers.tick(step)
+      assert.equal(f.reads.length, expectedReads)
+      f.reads[expectedReads - 1]!.resolve({ status: "unavailable" })
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+
+    // Remaining time to aut_later (300s total, 101.5s elapsed -> 198.5s + 1.5s grace = 200s).
+    clock += 199_900
+    t.mock.timers.tick(199_900)
+    assert.equal(f.reads.length, 5)
+    clock += 100
+    t.mock.timers.tick(100)
+    assert.equal(f.reads.length, 6, "still refreshes when the later automation becomes due after recovery")
+    release()
+  })
+
+  it("refreshes shell automations on shell.exited with one short follow-up when persistence lags", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const f = fixture()
+    const releaseShell = f.store.demand("i", "ses_shell")
+    const releasePrompt = f.store.demand("i", "ses_prompt")
+    const initialShell = automation("aut_shell", {
+      status: "active",
+      action: { type: "shell", command: "npm test" },
+      nextDueAt: Date.now() + 3_600_000,
+      runCount: 2,
+      lastOutcome: "fired",
+      lastOutput: "previous run",
+      updatedAt: 100,
+    })
+    f.reads[0]!.resolve({ status: "ok", automations: [initialShell] })
+    f.reads[1]!.resolve({ status: "ok", automations: [automation("aut_prompt")] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // shell.exited refreshes only the session with a shell automation.
+    const exitRefresh = f.store.noteShellExited("i")
+    assert.equal(f.reads.length, 3, "skips sessions without shell automations")
+    assert.equal(f.reads[2]!.sessionId, "ses_shell")
+    // Immediate read still sees pre-commit state -> triggers one 1.5s follow-up.
+    f.reads[2]!.resolve({ status: "ok", automations: [initialShell] })
+    await exitRefresh
+    t.mock.timers.tick(1_500)
+    assert.equal(f.reads.length, 4, "runs one follow-up refresh when result was not persisted yet")
+    f.reads[3]!.resolve({
+      status: "ok",
+      automations: [{ ...initialShell, lastOutput: "new run green", updatedAt: 200 }],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    t.mock.timers.tick(10_000)
+    assert.equal(f.reads.length, 4, "no extra polling after follow-up settles")
+
+    releaseShell()
+    releasePrompt()
+  })
 })

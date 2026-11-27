@@ -139,9 +139,7 @@ async function isOwnedAutomation(
 ): Promise<boolean> {
   if (projected.sessionID !== sessionID) return false
   if (projected.projectID !== owned.projectID) return false
-  const automationLocation = { directory: projected.directory }
-  if (!sameLocation({ directory: owned.location.directory }, automationLocation)) return false
-  return manager.ownsLocation(workspaceId, automationLocation, owned.connection.client, { signal })
+  return manager.ownsLocation(workspaceId, { directory: projected.directory }, owned.connection.client, { signal })
 }
 
 /**
@@ -260,8 +258,8 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         : `/api/experimental/automation/${encodedId}/${action}`
       const method = action === "delete" ? "DELETE" : "POST"
       const response = await owned.connection.fetch(
-        automationUrl(owned.connection, targetPath, owned.location.directory),
-        { method, headers, signal, redirect: "error" },
+        automationUrl(owned.connection, targetPath, current.directory),
+        { method, headers: automationHeaders(owned.connection, current.directory), signal, redirect: "error" },
       )
       if (response.status === 404) {
         await response.body?.cancel()

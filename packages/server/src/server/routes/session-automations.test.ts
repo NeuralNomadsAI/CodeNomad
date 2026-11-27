@@ -30,6 +30,7 @@ function fixture() {
   const calls: Array<{ method: string; url: string; directoryHeader?: string }> = []
   const state = {
     owned: true,
+    ownedDirectories: new Set(["/repo/root", "/repo/worktree"]),
     missing: false,
     carrierOwned: false,
     carrierError: undefined as unknown,
@@ -81,9 +82,9 @@ function fixture() {
     workspaceManager: {
       get: () => (state.closed ? undefined : workspace),
       getServiceLocation: () => (state.closed ? undefined : location),
-      ownsLocation: async () => {
+      ownsLocation: async (_id: string, loc: { directory: string }) => {
         state.onOwnsLocation?.()
-        return state.owned
+        return state.owned && state.ownedDirectories.has(loc.directory)
       },
       getSharedServiceConnection: async () => ({
         client,
@@ -239,15 +240,23 @@ test("rejects Mission schedule carriers and indeterminate carrier ownership on l
   } finally { await f.app.close() }
 })
 
-test("blocks cross-project and cross-directory automations for the same session and flags upstream errors", async () => {
+test("lists and mutates same-project automations across owned worktrees while blocking foreign projects and directories", async () => {
   const f = fixture()
   try {
+    const inRoot = rawAutomation({ id: "aut_root", sessionID: "ses_a", projectID: "proj_1", directory: "/repo/root" })
     const crossProject = rawAutomation({ id: "aut_other_proj", sessionID: "ses_a", projectID: "proj_other", directory: "/repo/worktree" })
     const crossDir = rawAutomation({ id: "aut_other_dir", sessionID: "ses_a", projectID: "proj_1", directory: "/other/project" })
     f.state.fetch = async (url, init) => {
-      f.calls.push({ method: init?.method ?? "GET", url: url.toString() })
+      const headers = new Headers(init?.headers)
+      f.calls.push({ method: init?.method ?? "GET", url: url.toString(), directoryHeader: headers.get("x-opencode-directory") ?? undefined })
       if (url.pathname === "/api/experimental/automation") {
-        return Response.json({ data: [rawAutomation(), crossProject, crossDir] })
+        return Response.json({ data: [rawAutomation(), inRoot, crossProject, crossDir] })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_root" && (init?.method ?? "GET") === "GET") {
+        return Response.json({ data: inRoot })
+      }
+      if (url.pathname === "/api/experimental/automation/aut_root/pause" && init?.method === "POST") {
+        return Response.json({ data: { ...inRoot, status: "paused" } })
       }
       if (url.pathname === "/api/experimental/automation/aut_other_proj" && (init?.method ?? "GET") === "GET") {
         return Response.json({ data: crossProject })
@@ -269,7 +278,12 @@ test("blocks cross-project and cross-directory automations for the same session 
 
     const listed = await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })
     assert.equal(listed.statusCode, 200)
-    assert.deepEqual(listed.json().automations.map((a: { id: string }) => a.id), ["aut_1"])
+    assert.deepEqual(listed.json().automations.map((a: { id: string }) => a.id), ["aut_1", "aut_root"])
+
+    const pausedRoot = await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_root/pause" })
+    assert.equal(pausedRoot.statusCode, 200)
+    assert.equal(pausedRoot.json().automation.status, "paused")
+    assert.equal(f.calls.at(-1)?.directoryHeader, "%2Frepo%2Froot", "mutates in the automation's own owned directory")
 
     const callsBefore = f.calls.length
     assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_other_proj" })).statusCode, 403)

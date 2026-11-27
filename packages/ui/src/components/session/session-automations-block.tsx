@@ -77,7 +77,7 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
   const [detailId, setDetailId] = createSignal<string | null>(null)
   let detailReturnTarget: HTMLElement | undefined
   let blockRef: HTMLDivElement | undefined
-  let focusBeforeReorder: HTMLElement | null = null
+  let focusSnapshot: { element: HTMLElement; rowId: string | null; fallback: HTMLElement | null } | null = null
   let viewAbort = new AbortController()
 
   createEffect(() => {
@@ -117,17 +117,34 @@ const SessionAutomationsBlock: Component<SessionAutomationsBlockProps> = (props)
     liveIds()
     doneIds()
     const active = document.activeElement
-    focusBeforeReorder = active instanceof HTMLElement && blockRef?.contains(active) ? active : null
+    if (active instanceof HTMLElement && blockRef?.contains(active)) {
+      focusSnapshot = {
+        element: active,
+        rowId: active.closest<HTMLElement>("[data-automation-id]")?.getAttribute("data-automation-id") ?? null,
+        fallback: blockRef.parentElement?.querySelector<HTMLElement>("[data-status-section-trigger]") ?? null,
+      }
+    } else {
+      focusSnapshot = null
+    }
   })
 
   createEffect(() => {
     liveIds()
     doneIds()
-    const target = focusBeforeReorder
-    focusBeforeReorder = null
-    if (target && target.isConnected && document.activeElement === document.body) {
-      target.focus({ preventScroll: true })
+    const snapshot = focusSnapshot
+    focusSnapshot = null
+    if (!snapshot || document.activeElement !== document.body) return
+    if (snapshot.element.isConnected) {
+      snapshot.element.focus({ preventScroll: true })
+      return
     }
+    const movedToFoldedDone = Boolean(snapshot.rowId && !showDone() && done().some(item => item.id === snapshot.rowId))
+    const doneToggle = blockRef?.querySelector<HTMLElement>(".session-automations-done-toggle") ?? null
+    const firstSummary = blockRef?.querySelector<HTMLElement>(".session-automation-summary") ?? null
+    const candidates = movedToFoldedDone
+      ? [doneToggle, firstSummary, snapshot.fallback]
+      : [firstSummary, doneToggle, snapshot.fallback]
+    candidates.find(element => element?.isConnected)?.focus({ preventScroll: true })
   })
 
   createEffect(() => {

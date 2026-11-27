@@ -29,6 +29,8 @@ serverEvents.on("instance.event", (event) => {
     sessionAutomations.forget(event.instanceId, native.data.sessionID)
   } else if (EXECUTION_SETTLED_EVENTS.has(native.type) && typeof native.data?.sessionID === "string") {
     void sessionAutomations.refresh(event.instanceId, native.data.sessionID)
+  } else if (native.type === "shell.exited") {
+    void sessionAutomations.noteShellExited(event.instanceId)
   } else if (native.type === "session.shell.ended") {
     const shellSessionId = typeof native.data?.sessionID === "string"
       ? native.data.sessionID
@@ -36,7 +38,7 @@ serverEvents.on("instance.event", (event) => {
         ? native.data.shell.metadata.sessionID
         : undefined
     if (shellSessionId) void sessionAutomations.refresh(event.instanceId, shellSessionId)
-    else void sessionAutomations.refreshDemanded(event.instanceId)
+    else void sessionAutomations.noteShellExited(event.instanceId)
   } else if (native.type === "server.connected") {
     reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
   }

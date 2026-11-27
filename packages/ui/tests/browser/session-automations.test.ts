@@ -336,3 +336,29 @@ test("preserves keyboard focus on Pause/Resume when pausing reorders active rows
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("moves keyboard focus to the Done disclosure when a focused live automation completes into folded Done", async () => {
+  const list: SessionAutomation[] = [
+    { ...activeAuto, id: "aut_oneshot", name: "One-shot check", status: "active" },
+  ]
+  const { page, errors } = await open({ ses_auto: { status: "ok", automations: list } })
+  try {
+    const group = block(page)
+    await group.waitFor()
+    const summary = group.locator('[data-automation-id="aut_oneshot"] .session-automation-summary')
+    await summary.focus()
+    assert.equal(await summary.evaluate(el => el === document.activeElement), true)
+
+    // Complete the automation in the background while Done is folded.
+    list[0] = { ...list[0]!, status: "done", nextDueAt: undefined, lastOutcome: "fired" }
+    await call(page, "executionSucceeded", "ses_auto")
+    const doneToggle = group.getByRole("button", { name: "Done (1)" })
+    await doneToggle.waitFor()
+    assert.equal(
+      await doneToggle.evaluate(el => el === document.activeElement),
+      true,
+      "focus moves to Done disclosure instead of stranding on body",
+    )
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
