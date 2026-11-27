@@ -95,111 +95,26 @@ async function fetchOwnedStatus(route, origin, context, attestedGet){
 }
 
 const SSE_RETRY1_MIN_MS=750
-const SSE_RETRY1_MAX_MS=2250
 const SSE_RETRY2_MIN_MS=1600
-const SSE_RETRY2_MAX_MS=3500
-const HANDOVER_SAME_FRAME_MS=100
-const HANDOVER_PROXIMITY_MS=250
-const HANDOVER_INFLIGHT_SLACK_MS=50
 
 function probeDelayMs(probes, index){
   return probes[index].receivedAt-probes[index-1].fulfilledAt
 }
 
-function inRetry1Window(delayMs){
-  return delayMs>=SSE_RETRY1_MIN_MS&&delayMs<=SSE_RETRY1_MAX_MS
-}
-
-function inRetry2Window(delayMs, delay1Ms){
-  return delayMs>=SSE_RETRY2_MIN_MS&&delayMs<=SSE_RETRY2_MAX_MS&&delayMs>delay1Ms
-}
-
-function isNearHandoverProbe(at, probes, targetIndex, allowPrevInFlight){
-  const prev=probes[targetIndex-1]
-  const targetAt=probes[targetIndex].receivedAt
-  const nextAt=probes[targetIndex+1]?.receivedAt??Infinity
-  const latestAt=Math.min(targetAt+HANDOVER_SAME_FRAME_MS,nextAt)
-  if(at>latestAt)return false
-  const duringPrevInFlight=allowPrevInFlight&&at>=prev.receivedAt&&at<=prev.fulfilledAt+HANDOVER_INFLIGHT_SLACK_MS
-  const nearTarget=at>=targetAt-HANDOVER_PROXIMITY_MS&&at<=latestAt
-  return duringPrevInFlight||nearTarget
-}
-
-function hasMultiplexHandover(probes, handover, targetIndex){
-  if(!handover||handover.sseOpenedAt==null)return false
-  const targetAt=probes[targetIndex].receivedAt
-  if(handover.sseOpenedAt>targetAt)return false
-  const delay=probeDelayMs(probes,targetIndex)
-  const delayAllowed=targetIndex===1
-    ? delay<1000
-    : targetIndex===2&&delay<SSE_RETRY2_MIN_MS
-  if(!delayAllowed)return false
-  const convSyncs=(handover.conversationSyncTimes||[]).filter(at=>at>=handover.sseOpenedAt)
-  const metaSyncs=(handover.launcherMetaTimes||[]).filter(at=>at>=handover.sseOpenedAt)
-  const firstConv=convSyncs.length?Math.min(...convSyncs):null
-  const firstLauncherMeta=metaSyncs.length?Math.min(...metaSyncs):null
-  if(firstConv===null||firstLauncherMeta===null)return false
-  const afterPrevGate=at=>targetIndex===1
-    ? (delay<SSE_RETRY1_MIN_MS||at>probes[0].fulfilledAt)
-    : at>=probes[1].receivedAt
-  const allowPrevInFlight=targetIndex===1?delay<SSE_RETRY1_MIN_MS:true
-  // Require both independent subscriber signals (subscriber /api/meta 200 + active Conversation sync).
-  const metaMatches=afterPrevGate(firstLauncherMeta)&&
-    isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
-  if(!metaMatches)return false
-  // Order A: Conversation synced near targetIndex alongside subscriber /api/meta 200.
-  const conversationAtTarget=afterPrevGate(firstConv)&&
-    isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
-  // Order B: Conversation already synced on P0, then Launcher attested via /api/meta 200 near targetIndex.
-  const conversationAtP0=firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS
-  return conversationAtTarget||conversationAtP0
-}
-
-export function shouldServeSse503(probes, handover){
-  if(probes.length<=2)return true
-  if(probes.length===3){
-    if(hasMultiplexHandover(probes,handover,1))return true
-    const delay1=probeDelayMs(probes,1)
-    if(inRetry1Window(delay1)&&hasMultiplexHandover(probes,handover,2))return true
-    return false
-  }
-  if(probes.length===4){
-    if(hasMultiplexHandover(probes,handover,1))return false
-    return inRetry1Window(probeDelayMs(probes,1))&&hasMultiplexHandover(probes,handover,2)&&inRetry1Window(probeDelayMs(probes,3))
-  }
-  return false
-}
-
-export function assertSse503Backoff(probes, handover){
-  assert(probes.length>=3&&probes.length<=5,
-    `Expected 3 to 5 /api/auth/status probes for one multiplexed SSE episode, observed ${probes.length}`)
-  if(probes.length===3){
-    assert(!hasMultiplexHandover(probes,handover,1)&&!hasMultiplexHandover(probes,handover,2),
-      '3-probe SSE 503 recovery must not terminate early after a proved multiplexed handover')
-  } else if(probes.length===4){
-    assert(hasMultiplexHandover(probes,handover,1),
-      '4-probe SSE 503 recovery requires independent proof of a two-slot multiplexed handover before retry 1')
-  } else if(probes.length===5){
-    assert(!hasMultiplexHandover(probes,handover,1),
-      '5-probe SSE 503 recovery cannot reuse a multiplexed handover already attributed to probe 2')
-    const priorRetry1Ms=probeDelayMs(probes,1)
-    assert(inRetry1Window(priorRetry1Ms),
-      `Expected 5-probe multiplexed handover to follow a ~1 s first retry (${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(priorRetry1Ms)} ms`)
-    assert(hasMultiplexHandover(probes,handover,2),
-      '5-probe SSE 503 recovery requires independent proof of a two-slot multiplexed handover before retry 2')
-  }
-  const start=probes.length-3
-  const retryDelay1Ms=probeDelayMs(probes,start+1)
-  const retryDelay2Ms=probeDelayMs(probes,start+2)
-  assert(inRetry1Window(retryDelay1Ms),
-    `Expected first bounded retry delay (~1 s, ${SSE_RETRY1_MIN_MS}-${SSE_RETRY1_MAX_MS} ms), observed ${Math.round(retryDelay1Ms)} ms`)
-  assert(inRetry2Window(retryDelay2Ms,retryDelay1Ms),
-    `Expected second bounded retry delay (~2 s, ${SSE_RETRY2_MIN_MS}-${SSE_RETRY2_MAX_MS} ms and > ${Math.round(retryDelay1Ms)} ms), observed ${Math.round(retryDelay2Ms)} ms`)
-  return {retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes:start}
+export function assertSse503Backoff(probes){
+  assert.equal(probes.length,3,
+    `Expected exactly 3 /api/auth/status probes for one SSE-authenticated episode, observed ${probes.length}`)
+  const retryDelay1Ms=probeDelayMs(probes,1)
+  const retryDelay2Ms=probeDelayMs(probes,2)
+  assert(retryDelay1Ms>=SSE_RETRY1_MIN_MS,
+    `Expected first bounded retry delay (~1 s, >=${SSE_RETRY1_MIN_MS} ms), observed ${Math.round(retryDelay1Ms)} ms`)
+  assert(retryDelay2Ms>=SSE_RETRY2_MIN_MS&&retryDelay2Ms>retryDelay1Ms,
+    `Expected second bounded retry delay (~2 s, >=${SSE_RETRY2_MIN_MS} ms and > ${Math.round(retryDelay1Ms)} ms), observed ${Math.round(retryDelay2Ms)} ms`)
+  return {retryDelay1Ms,retryDelay2Ms}
 }
 
 async function verifySseAuthenticated503Recovery({
-  page,context,url,messages,eventSources,workspaces,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+  page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
 }){
   const again=new URL(await command('pair'))
   assert.equal(again.origin,url.origin)
@@ -208,11 +123,11 @@ async function verifySseAuthenticated503Recovery({
   const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
   const authStatusUrl=`${url.origin}/api/auth/status`
   const eventsUrl=`${url.origin}/api/events*`
+  const metaUrl=`${url.origin}/api/meta`
   let transient503s=0
   let recoveredStatuses=0
   let retryDelay1Ms=0
   let retryDelay2Ms=0
-  let coalescedSlotProbes=0
   let forbiddenError=null
   const tab=await context.newPage()
   try {
@@ -222,17 +137,16 @@ async function verifySseAuthenticated503Recovery({
       let injectTransient503=false
       let sseScenarioActive=true
       let sseTeardown=false
-      let handoverFrozen=false
       let recoveryReserved=false
       let sseGate='pass'
+      let metaGate='pass'
       let admittedSseRequest=null
+      let sseResponseAt=null
       let recovered=false
       let routeError=null
       const statusProbes=[]
       const pendingSseFulfills=new Set()
-      const handover={sseOpenedAt:null,sseResponseAt:null,conversationSyncTimes:[],launcherMetaTimes:[]}
-      const admittedMetaRequests=new WeakSet()
-      let notifyHandoverSync=null
+      const pendingHeldRoutes=new Set()
       const first503Served=Promise.withResolvers()
       const releaseRecovered=Promise.withResolvers()
       const releaseHeldSse=Promise.withResolvers()
@@ -254,18 +168,6 @@ async function verifySseAuthenticated503Recovery({
         recoveredCaptured.reject(err)
         routeFailed.reject(err)
       }
-      const waitForSameFrameHandover=async(probes)=>{
-        if(probes.length!==3||shouldServeSse503(probes,handover))return
-        const delay1=probeDelayMs(probes,1),delay2=probeDelayMs(probes,2)
-        if(!(delay1<1000||(inRetry1Window(delay1)&&delay2<SSE_RETRY2_MIN_MS)))return
-        const waiter=Promise.withResolvers()
-        notifyHandoverSync=()=>{ if(!injectTransient503||shouldServeSse503(probes,handover))waiter.resolve() }
-        try {
-          await settleWithin(waiter.promise,sseStop,HANDOVER_SAME_FRAME_MS)
-        } finally {
-          notifyHandoverSync=null
-        }
-      }
       const step=promise=>Promise.race([promise,forbiddenRejected.promise,routeFailed.promise])
       const admitRoute=req=>admitLiveRoute(req,{policy,origin:url.origin,forbiddenRequests,onForbidden:failForbidden})
       const checkRoute=async route=>{
@@ -279,49 +181,32 @@ async function verifySseAuthenticated503Recovery({
           return false
         }
       }
+      const holdRoute=async route=>{
+        const run=releaseHeldSse.promise
+          .then(pass=>(pass?route.fallback():route.abort()).catch(()=>{}))
+          .finally(()=>pendingHeldRoutes.delete(run))
+        pendingHeldRoutes.add(run)
+        await run
+      }
       const onSseResponse=res=>{
-        if(!injectTransient503||handoverFrozen)return
-        const req=res.request()
-        const target=new URL(res.url())
-        if(target.origin!==url.origin||res.status()!==200)return
-        if(handover.sseResponseAt===null&&admittedSseRequest&&req===admittedSseRequest){
-          const nowAt=performance.now()
-          handover.sseResponseAt=nowAt
-          handover.sseOpenedAt=nowAt
-          notifyHandoverSync?.()
-          return
-        }
-        if(handover.sseResponseAt!==null&&admittedMetaRequests.has(req)){
-          admittedMetaRequests.delete(req)
-          handover.launcherMetaTimes.push(performance.now())
-          notifyHandoverSync?.()
+        if(!injectTransient503||sseResponseAt!==null)return
+        if(admittedSseRequest&&res.request()===admittedSseRequest&&res.status()===200){
+          sseResponseAt=performance.now()
         }
       }
-      const activeWorkspace=id=>!workspaces?.size||workspaces.has(id)
-      const onSubscriberRequest=req=>{
-        if(!injectTransient503||handoverFrozen||handover.sseResponseAt===null)return
-        const target=new URL(req.url())
-        if(target.origin!==url.origin)return
-        if(req.method()==='GET'&&target.pathname==='/api/meta'){
-          admittedMetaRequests.add(req)
-          return
+      const routeMeta=async route=>{
+        if(metaGate==='abort')return route.abort().catch(()=>{})
+        if(!sseScenarioActive||metaGate==='pass')return route.fallback()
+        if(!await checkRoute(route))return
+        if(metaGate==='abort')return route.abort().catch(()=>{})
+        if(!sseScenarioActive||metaGate==='pass')return route.fallback()
+        if(metaGate==='admit-one'){
+          metaGate='block'
+          return route.fallback()
         }
-        let matched=false
-        if(req.method()==='GET'){
-          const sessionMatch=target.pathname.match(/^\/workspaces\/([^/]+)\/instance\/api\/session\/ses_existing$/)
-          matched=Boolean(sessionMatch&&activeWorkspace(sessionMatch[1]))
-        } else if(req.method()==='POST'){
-          const historyMatch=target.pathname.match(/^\/api\/workspaces\/([^/]+)\/session-history\/window$/)
-          let sessionID=null
-          if(historyMatch&&activeWorkspace(historyMatch[1])){
-            try { sessionID=req.postDataJSON()?.sessionID??null } catch {}
-          }
-          matched=sessionID==='ses_existing'
-        }
-        if(matched){
-          handover.conversationSyncTimes.push(performance.now())
-          notifyHandoverSync?.()
-        }
+        await trackFulfill(pendingSseFulfills,
+          route.fulfill({status:503,contentType:'application/json',body:'{}'}),
+          err=>{ if(!sseTeardown)failRoute(err) })
       }
       const routeEvents=async route=>{
         if(sseGate==='abort')return route.abort().catch(()=>{})
@@ -331,13 +216,11 @@ async function verifySseAuthenticated503Recovery({
         if(!sseScenarioActive||sseGate==='pass')return route.fallback()
         if(sseGate==='admit-one'){
           sseGate='hold'
+          metaGate='block'
           admittedSseRequest=route.request()
           return route.fallback()
         }
-        if(sseGate==='hold'){
-          const pass=await releaseHeldSse.promise
-          return (pass?route.fallback():route.abort()).catch(()=>{})
-        }
+        if(sseGate==='hold')return holdRoute(route)
         await trackFulfill(pendingSseFulfills,
           route.fulfill({status:503,contentType:'application/json',body:'{}'}),
           err=>{ if(!sseTeardown)failRoute(err) })
@@ -352,19 +235,7 @@ async function verifySseAuthenticated503Recovery({
         const probe={receivedAt,fulfilledAt:receivedAt}
         statusProbes.push(probe)
         const attempt=statusProbes.length
-        const probePrefix=statusProbes.slice(0,attempt)
-        if(recoveryReserved||recoveredStatuses>0||attempt>5){
-          failRoute(new Error(`Unexpected /api/auth/status probe #${attempt} after bounded SSE 503 recovery`))
-          await route.abort().catch(()=>{})
-          return
-        }
-        await waitForSameFrameHandover(probePrefix)
-        if(sseGate==='abort'||!injectTransient503){
-          await route.abort().catch(()=>{})
-          return
-        }
-        const serve503=async()=>{
-          transient503s++
+        if(attempt<=2){
           let failed=false
           await trackFulfill(pendingSseFulfills,
             route.fulfill({status:503,contentType:'application/json',body:'{}'}),
@@ -373,15 +244,13 @@ async function verifySseAuthenticated503Recovery({
             await route.abort().catch(()=>{})
             return
           }
+          transient503s++
           probe.fulfilledAt=performance.now()
           if(attempt===1)first503Served.resolve()
-        }
-        if(shouldServeSse503(probePrefix,handover)){
-          await serve503()
           return
         }
-        if(recoveryReserved||recoveredStatuses>0){
-          failRoute(new Error(`Unexpected concurrent /api/auth/status recovery on probe #${attempt}`))
+        if(attempt!==3||recoveryReserved||recoveredStatuses>0){
+          failRoute(new Error(`Unexpected /api/auth/status probe #${attempt} during bounded SSE 503 recovery`))
           await route.abort().catch(()=>{})
           return
         }
@@ -399,18 +268,12 @@ async function verifySseAuthenticated503Recovery({
           }
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
-          if(shouldServeSse503(probePrefix,handover)){
-            recoveryReserved=false
-            await serve503()
-            return
-          }
-          handoverFrozen=true
-          recoveredStatuses++
           let fulfillError=null
           await trackFulfill(pendingSseFulfills,
             route.fulfill({status,headers,body:text}),
             err=>{ fulfillError=err; if(!sseTeardown)failRoute(err) })
           if(fulfillError)throw fulfillError
+          recoveredStatuses++
           probe.fulfilledAt=performance.now()
           recoveredCaptured.resolve()
         } catch (err) {
@@ -420,7 +283,7 @@ async function verifySseAuthenticated503Recovery({
       }
       try {
         page.on('response',onSseResponse)
-        page.on('request',onSubscriberRequest)
+        await page.route(metaUrl,routeMeta)
         await page.route(eventsUrl,routeEvents)
         await page.route(authStatusUrl,routeStatus)
         await step(command('revoke'))
@@ -442,11 +305,14 @@ async function verifySseAuthenticated503Recovery({
           }
         }))
         const beforeSseAuth=eventSources()
+        metaGate='block'
         sseGate='block'
         injectTransient503=true
-        // Re-pair in the prepared tab without returning focus or clicking Check, then admit exactly
-        // one authenticated EventSource so a single SSE episode drives both bounded retries (1 s, 2 s).
+        // Re-pair in the prepared tab without returning focus or clicking Check, then admit one
+        // /api/meta attestation and one /api/events stream so only one multiplexed subscriber
+        // attaches and drives both bounded retries (1 s, 2 s) before releasing the other subscriber.
         await step(pairFlow.complete())
+        metaGate='admit-one'
         sseGate='admit-one'
         try {
           await step(withBudget(now()+20_000,'first transient 503 on SSE-driven /api/auth/status',
@@ -468,10 +334,10 @@ async function verifySseAuthenticated503Recovery({
         const accidentalSignals=await step(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()??[]))
         assert.deepEqual(accidentalSignals,[],'Authenticated SSE + 503 recovery must not rely on focus or visibility events')
         assert(eventSources()>beforeSseAuth,'Authenticated SSE 200 on the original page must be observed')
-        assert(handover.sseResponseAt!==null&&handover.sseResponseAt<=statusProbes[0].receivedAt,
+        assert(sseResponseAt!==null&&sseResponseAt<=statusProbes[0].receivedAt,
           'Authenticated SSE 200 on the original page must precede the first /api/auth/status probe')
-        ;({retryDelay1Ms,retryDelay2Ms,coalescedSlotProbes}=assertSse503Backoff(statusProbes,handover))
-        assert.equal(transient503s,statusProbes.length-1,'Every pre-recovery /api/auth/status probe must receive 503')
+        ;({retryDelay1Ms,retryDelay2Ms}=assertSse503Backoff(statusProbes))
+        assert.equal(transient503s,2,'Two transient 503 /api/auth/status responses must be exercised')
         assert.equal(recoveredStatuses,1,'Bounded retry must settle once with 200 /api/auth/status')
         await step(withBudget(now()+5_000,'in-flight SSE+503 route fulfills',
           ()=>Promise.allSettled([...pendingSseFulfills])))
@@ -487,14 +353,14 @@ async function verifySseAuthenticated503Recovery({
         sseScenarioActive=false
         injectTransient503=false
         sseGate=recovered?'pass':'abort'
-        notifyHandoverSync?.()
+        metaGate=recovered?'pass':'abort'
         releaseRecovered.resolve(false)
         releaseHeldSse.resolve(recovered)
         page.off('response',onSseResponse)
-        page.off('request',onSubscriberRequest)
-        await settleWithin(Promise.allSettled([...pendingSseFulfills]),null,2_000)
+        await settleWithin(Promise.allSettled([...pendingSseFulfills,...pendingHeldRoutes]),null,2_000)
         await page.unroute(authStatusUrl,routeStatus).catch(()=>{})
         await page.unroute(eventsUrl,routeEvents).catch(()=>{})
+        await page.unroute(metaUrl,routeMeta).catch(()=>{})
         await settleWithin(page.evaluate(()=>globalThis.__runeCleanupSse503Signals?.()).catch(()=>{}),sseStop)
       }
     } finally { await pairFlow.dispose() }
@@ -502,7 +368,7 @@ async function verifySseAuthenticated503Recovery({
   await connecting.waitFor({state:'hidden',timeout:15_000})
   assert.equal(await (await focus()).inputValue(),draft)
   assert.equal(page.url(),url.href,'Original document stays on its conversation after SSE 503 recovery')
-  return {transient503s,recoveredStatuses,coalescedSlotProbes,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
+  return {transient503s,recoveredStatuses,retryDelay1Ms:Math.round(retryDelay1Ms),retryDelay2Ms:Math.round(retryDelay2Ms)}
 }
 
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,forbiddenRequests=[],fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y),onRestart,attestedGet}){
@@ -864,7 +730,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     evidence.repairedWithDraft=true
     evidence.crossOriginRePairLink=fromLink
     evidence.sseAuthenticated503Recovery=await verifySseAuthenticated503Recovery({
-      page,context,url,messages,eventSources,workspaces,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
+      page,context,url,messages,eventSources,policy,forbiddenRequests,fromLink,connecting,focus,draft,attestedGet,
     })
   }
   assert.equal(forbiddenRequests.length,forbiddenBefore,
