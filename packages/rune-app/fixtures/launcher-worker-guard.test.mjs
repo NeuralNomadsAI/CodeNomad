@@ -61,18 +61,56 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
     proof: { result: 0 },
   })
   assert.equal(incompleteTree.workerExited, false)
-  assert.equal(incompleteTree.workerExitCode, 86)
+  assert.equal(incompleteTree.workerExitCode, null)
+  assert.equal(incompleteTree.supervisorExitCode, 86)
+  assert.equal(incompleteTree.supervisorExitSignal, null)
   assert.equal(incompleteTree.workerStopError, 'Fixture supervisor reported incomplete child tree termination')
   assert.equal(incompleteTree.finalResult, 1)
 
+  const posixEscalated = evaluateWorkerExit({
+    exit: { code: 1, signal: null },
+    workerStarted: true,
+    escalatedStop: true,
+    outerSignal: 'SIGTERM',
+    proof: { result: 0 },
+  })
+  assert.equal(posixEscalated.workerExited, false)
+  assert.equal(posixEscalated.workerExitCode, null)
+  assert.equal(posixEscalated.workerExitSignal, null)
+  assert.equal(posixEscalated.workerStopEscalated, true)
+  assert.equal(posixEscalated.supervisorExitCode, 1)
+  assert.equal(posixEscalated.supervisorExitSignal, null)
+  assert.equal(posixEscalated.interrupted, 'SIGTERM')
+  assert.equal(posixEscalated.workerStopError, 'Owned worker did not exit within grace period; supervisor forced termination')
+  assert.equal(posixEscalated.finalResult, 1)
+
+  const preLaunchInterrupt = evaluateWorkerExit({
+    exit: null,
+    workerStarted: false,
+    outerSignal: 'SIGINT',
+  })
+  assert.equal(preLaunchInterrupt.workerExited, false)
+  assert.equal(preLaunchInterrupt.workerExitCode, null)
+  assert.equal(preLaunchInterrupt.workerExitSignal, null)
+  assert.equal(preLaunchInterrupt.interrupted, 'SIGINT')
+  assert.equal(preLaunchInterrupt.workerStopError, undefined)
+  assert.equal(preLaunchInterrupt.workerSpawnError, undefined)
+  assert.equal(preLaunchInterrupt.finalResult, 1)
+
   const escalated = evaluateWorkerExit({
     exit: { code: null, signal: 'SIGKILL' },
+    escalatedStop: true,
     unconfirmedStop: true,
     stopError: new Error('Owned POSIX bridge did not confirm worker exit before escalation'),
     outerSignal: 'SIGINT',
     proof: { result: 0, interruptedSignal: 'SIGTERM' },
   })
   assert.equal(escalated.workerExited, false)
+  assert.equal(escalated.workerExitCode, null)
+  assert.equal(escalated.workerExitSignal, null)
+  assert.equal(escalated.workerStopEscalated, true)
+  assert.equal(escalated.supervisorExitCode, null)
+  assert.equal(escalated.supervisorExitSignal, 'SIGKILL')
   assert.equal(escalated.interrupted, 'SIGINT')
   assert.equal(escalated.workerStopError, 'Owned POSIX bridge did not confirm worker exit before escalation')
   assert.equal(escalated.finalResult, 1)
@@ -83,6 +121,7 @@ test('evaluateWorkerExit marks spawn errors, supervisor code 86, and unconfirmed
   })
   assert.equal(supervisorOnlyExit.workerExited, false)
   assert.equal(supervisorOnlyExit.workerExitCode, null)
+  assert.equal(supervisorOnlyExit.supervisorExitCode, 1)
   assert.equal(supervisorOnlyExit.workerSpawnError, 'Owned worker did not start (supervisor exit code=1, signal=null)')
   assert.equal(supervisorOnlyExit.finalResult, 1)
 
@@ -192,6 +231,44 @@ test('validateOwnedWorkerProfile rejects links and loopback start ack authentica
       const verifiedProof = JSON.parse(readFileSync(path.join(realProfile, 'proof.json'), 'utf8'))
       assert.equal(verifiedProof.result, 0)
       assert.equal(verifiedProof.workerExited, true)
+
+      const escalatedProfile = path.join(testsRoot, 'launcher-cccccccc-cccc-cccc-cccc-cccccccccccc')
+      await mkdir(escalatedProfile)
+      writeFileSync(path.join(escalatedProfile, 'proof.worker.json.tmp'), JSON.stringify({ result: 0 }))
+      const escalatedResult = publishWorkerProof({
+        workerProfile: escalatedProfile,
+        exit: { code: 1, signal: null },
+        workerStarted: true,
+        escalatedStop: true,
+        outerSignal: 'SIGTERM',
+        supervisorExit: { code: 1, signal: null },
+      })
+      assert.equal(escalatedResult, 1)
+      const escalatedProof = JSON.parse(readFileSync(path.join(escalatedProfile, 'proof.json'), 'utf8'))
+      assert.equal(escalatedProof.result, 1)
+      assert.equal(escalatedProof.workerExited, false)
+      assert.equal(escalatedProof.workerExitCode, null)
+      assert.equal(escalatedProof.workerStopEscalated, true)
+      assert.equal(escalatedProof.supervisorExitCode, 1)
+      assert.equal(escalatedProof.supervisorExitSignal, null)
+      assert.equal(escalatedProof.interruptedSignal, 'SIGTERM')
+
+      const interruptedProfile = path.join(testsRoot, 'launcher-dddddddd-dddd-dddd-dddd-dddddddddddd')
+      await mkdir(interruptedProfile)
+      const interruptedResult = publishWorkerProof({
+        workerProfile: interruptedProfile,
+        exit: null,
+        workerStarted: false,
+        outerSignal: 'SIGINT',
+      })
+      assert.equal(interruptedResult, 1)
+      const interruptedProof = JSON.parse(readFileSync(path.join(interruptedProfile, 'proof.json'), 'utf8'))
+      assert.equal(interruptedProof.result, 1)
+      assert.equal(interruptedProof.workerExited, false)
+      assert.equal(interruptedProof.workerExitCode, null)
+      assert.equal(interruptedProof.interruptedSignal, 'SIGINT')
+      assert.equal(interruptedProof.workerStopError, undefined)
+      assert.equal(interruptedProof.workerSpawnError, undefined)
     } finally {
       await rm(tmpRoot, { recursive: true, force: true })
     }

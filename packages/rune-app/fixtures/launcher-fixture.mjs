@@ -49,14 +49,37 @@ const validatedWorkerProfile=ownedWorker
   :undefined
 if(ownedWorker)await sendWorkerStartAck(Number(workerAckPortEnv),workerTokenEnv)
 if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDrawers||webSse7Tabs)&&!ownedWorker)){
+  let outerSignal=null
+  let onOuterSignal=signal=>{outerSignal??=signal}
+  const dispatchOuterSignal=signal=>{onOuterSignal(signal)}
+  process.on('SIGINT',dispatchOuterSignal)
+  process.on('SIGTERM',dispatchOuterSignal)
   const testsReal=(await assertWorktreeTestRoot(root)).testsReal
+  if(outerSignal){
+    process.off('SIGINT',dispatchOuterSignal)
+    process.off('SIGTERM',dispatchOuterSignal)
+    process.exit(outerSignal==='SIGINT'?130:143)
+  }
   const workerProfile=path.join(testsReal,`launcher-${randomUUID()}`)
   const workerToken=randomUUID()
   await mkdir(workerProfile)
+  if(outerSignal){
+    process.off('SIGINT',dispatchOuterSignal)
+    process.off('SIGTERM',dispatchOuterSignal)
+    const finalResult=publishWorkerProof({workerProfile,exit:null,workerStarted:false,outerSignal})
+    process.exit(finalResult)
+  }
   const graceMs=webAndroid?150000:25000
   let startAck,worker
   try{
     startAck=await createWorkerStartAck(workerToken)
+    if(outerSignal){
+      startAck.close()
+      process.off('SIGINT',dispatchOuterSignal)
+      process.off('SIGTERM',dispatchOuterSignal)
+      const finalResult=publishWorkerProof({workerProfile,exit:null,workerStarted:false,outerSignal})
+      process.exit(finalResult)
+    }
     const workerEnv={
       ...process.env,
       CODENOMAD_LAUNCHER_WORKER_PROFILE:workerProfile,
@@ -66,6 +89,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
     const spawnPosixBridge=()=>{
       const guardsUrl=new URL('../../../scripts/native-fixture-guards.mjs',import.meta.url).href
       const bridgeCode=`
+        import {closeSync,writeSync} from 'node:fs'
         import {spawnFixtureChild,stopFixtureChild} from ${JSON.stringify(guardsUrl)}
         const workerArgs=JSON.parse(process.env.CODENOMAD_POSIX_WORKER_ARGS)
         const graceMs=Number(process.env.CODENOMAD_POSIX_WORKER_GRACE_MS)
@@ -77,16 +101,20 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
           child.once('close',(code,signal)=>resolve({code,signal}))
           child.once('error',error=>resolve({code:null,signal:null,error}))
         })
-        let stopping,stopError,stopSettled
+        let stopping,stopError,stopSettled,escalated=false
         const stopDone=new Promise(resolve=>{stopSettled=resolve})
         const stop=line=>{
           stopping??=(async()=>{
             try{
               try{child.stdin?.end(line)}catch{}
               let t
-              try{await Promise.race([closed,new Promise(r=>{t=setTimeout(r,graceMs)})])}
+              let exitedInGrace=false
+              try{exitedInGrace=await Promise.race([closed.then(()=>true),new Promise(r=>{t=setTimeout(()=>r(false),graceMs)})])}
               finally{clearTimeout(t)}
-              await stopFixtureChild(child,closed,5500,2000)
+              if(!exitedInGrace&&child.exitCode===null&&child.signalCode===null){
+                escalated=true
+                await stopFixtureChild(child,closed,5500,2000)
+              }
             }catch(error){
               stopError=error
               console.error(error.message)
@@ -111,6 +139,15 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
           try{exit=await Promise.race([closed,new Promise(r=>{timer=setTimeout(()=>r(null),500)})])}
           finally{clearTimeout(timer)}
         }
+        const report={
+          escalated,
+          exitCode:exit?.code??null,
+          exitSignal:exit?.signal??null,
+          error:exit?.error?String(exit.error?.message??exit.error):null,
+          stopError:stopError?String(stopError?.message??stopError):null,
+        }
+        try{writeSync(3,JSON.stringify(report)+'\\n')}catch{}
+        try{closeSync(3)}catch{}
         if(exit?.error){console.error(exit.error?.message??exit.error);process.exit(1)}
         if(!exit||stopError||exit.code===86||exit.signal)process.exit(86)
         process.exit(exit.code??1)
@@ -119,7 +156,7 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
         cwd:root,
         detached:true,
         windowsHide:true,
-        stdio:['pipe','inherit','inherit'],
+        stdio:['pipe','inherit','inherit','pipe'],
         env:{
           ...workerEnv,
           CODENOMAD_POSIX_WORKER_ARGS:JSON.stringify([...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker']),
@@ -132,45 +169,53 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       :spawnPosixBridge()
   }catch(spawnError){
     startAck?.close()
+    process.off('SIGINT',dispatchOuterSignal)
+    process.off('SIGTERM',dispatchOuterSignal)
     console.error(spawnError?.message??spawnError)
-    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false})
+    const finalResult=publishWorkerProof({workerProfile,exit:{code:null,signal:null,error:spawnError},workerStarted:false,outerSignal})
     process.exit(finalResult)
   }
   worker.stdin?.on('error',()=>{})
+  let bridgeReportRaw=''
+  if(process.platform!=='win32'&&worker.stdio?.[3]){
+    worker.stdio[3].setEncoding('utf8')
+    worker.stdio[3].on('data',chunk=>{bridgeReportRaw+=chunk})
+    worker.stdio[3].on('error',()=>{})
+  }
   const closed=new Promise(resolve=>{
     worker.once('close',(code,signal)=>resolve({code,signal}))
     worker.once('error',error=>resolve({code:null,signal:null,error}))
   })
   const outerGraceMs=process.platform==='win32'?graceMs:graceMs+15000
-  let stopping,stopError,outerSignal,stopSettled,unconfirmedStop=false
+  let stopping,stopError,stopSettled,escalatedStop=false,unconfirmedStop=false
   const stopDone=new Promise(resolve=>{stopSettled=resolve})
   const stop=signal=>{
     outerSignal??=signal
     const shutdownLine=signal==='SIGINT'?'shutdown:SIGINT\n':'shutdown:SIGTERM\n'
-    stopping??=(process.platform==='win32'
-      ?stopFixtureChild(worker,closed,outerGraceMs,2000,{
-          close:()=>{try{worker.stdin?.end(shutdownLine)}catch{}},
-        })
-      :(async()=>{
-          try{worker.stdin?.end(shutdownLine)}catch{}
-          let t
-          let bridgeExited=false
-          try{bridgeExited=await Promise.race([closed.then(()=>true),new Promise(r=>{t=setTimeout(()=>r(false),outerGraceMs)})])}
-          finally{clearTimeout(t)}
-          if(!bridgeExited){
-            unconfirmedStop=true
-            // Terminate only the bridge handle (never the bridge process group) so the inner fixture supervisor stays alive to detect parent death and clean up descendants.
-            await stopFixtureHandle(worker,closed,2000,2000).catch(()=>{})
-            throw Error('Owned POSIX bridge did not confirm worker exit before escalation')
-          }
-        })()
-    ).catch(error=>{
+    stopping??=(async()=>{
+      try{worker.stdin?.end(shutdownLine)}catch{}
+      let t
+      let exitedInGrace=false
+      try{exitedInGrace=await Promise.race([closed.then(()=>true),new Promise(r=>{t=setTimeout(()=>r(false),outerGraceMs)})])}
+      finally{clearTimeout(t)}
+      if(!exitedInGrace&&worker.exitCode===null&&worker.signalCode===null){
+        escalatedStop=true
+        if(process.platform==='win32'){
+          await stopFixtureChild(worker,closed,0,2000)
+        }else{
+          unconfirmedStop=true
+          // Terminate only the bridge handle (never the bridge process group) so the inner fixture supervisor stays alive to detect parent death and clean up descendants.
+          await stopFixtureHandle(worker,closed,2000,2000).catch(()=>{})
+          throw Error('Owned POSIX bridge did not confirm worker exit before escalation')
+        }
+      }
+    })().catch(error=>{
       stopError=error
       console.error(error.message)
     }).finally(()=>{stopSettled({exited:false})})
   }
-  process.on('SIGINT',stop)
-  process.on('SIGTERM',stop)
+  onOuterSignal=stop
+  if(outerSignal)stop(outerSignal)
   const outcome=await Promise.race([
     closed.then(exit=>({exited:true,exit})),
     stopDone,
@@ -184,10 +229,24 @@ if(needsOwnedWindowsWorker(process.argv)||((webMobile||webKeyboard||webMobileDra
       exit=await Promise.race([closed,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),500)})])
     }finally{clearTimeout(timer)}
   }
-  process.off('SIGINT',stop)
-  process.off('SIGTERM',stop)
+  process.off('SIGINT',dispatchOuterSignal)
+  process.off('SIGTERM',dispatchOuterSignal)
   startAck.close()
-  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:startAck.hasStarted(),unconfirmedStop,stopError,outerSignal})
+  let supervisorExit=null
+  if(process.platform!=='win32'){
+    const reportLine=bridgeReportRaw.split(/\r?\n/).find(line=>line.trim().length>0)
+    let bridgeReport=null
+    if(reportLine){try{bridgeReport=JSON.parse(reportLine)}catch{}}
+    if(bridgeReport){
+      if(bridgeReport.escalated)escalatedStop=true
+      if(bridgeReport.stopError&&!stopError)stopError=Error(bridgeReport.stopError)
+      if(bridgeReport.error&&!exit?.error)exit={code:null,signal:null,error:Error(bridgeReport.error)}
+      supervisorExit={code:bridgeReport.exitCode??null,signal:bridgeReport.exitSignal??null}
+    }else if(!unconfirmedStop&&!stopError&&!exit?.error){
+      unconfirmedStop=true
+    }
+  }
+  const finalResult=publishWorkerProof({workerProfile,exit,workerStarted:startAck.hasStarted(),escalatedStop,unconfirmedStop,stopError,outerSignal,supervisorExit})
   process.exit(finalResult)
 }
 const webMissions=process.argv.includes('--web-missions')
@@ -728,6 +787,29 @@ const trackClientClose=child=>{
   return closedOnly
 }
 let clientStopError,interruptedSignal,abortClientWait,finalizing=false
+const waitClientExit=(child,closedOnly,budgetMs,getError)=>new Promise(resolve=>{
+  let settled=false,timer
+  const finish=outcome=>{
+    if(settled)return
+    settled=true
+    clearTimeout(timer)
+    child.off('error',onError)
+    abortClientWait=null
+    resolve(outcome)
+  }
+  const onError=error=>finish({timedOut:false,interrupted:null,code:1,error})
+  if(interruptedSignal){finish({timedOut:false,interrupted:interruptedSignal,code:1,error:null});return}
+  const initialError=getError?.()
+  if(initialError){finish({timedOut:false,interrupted:null,code:1,error:initialError});return}
+  child.once('error',onError)
+  abortClientWait=sig=>finish({timedOut:false,interrupted:sig,code:1,error:null})
+  timer=setTimeout(()=>finish({timedOut:true,interrupted:null,code:1,error:null}),budgetMs)
+  closedOnly.then(code=>{
+    const err=getError?.()
+    if(err)finish({timedOut:false,interrupted:null,code:1,error:err})
+    else finish({timedOut:false,interrupted:null,code,error:null})
+  })
+})
 const stopClientOnce=child=>{
   if(!child)return Promise.resolve()
   let stopPromise=clientStopPromises.get(child)
@@ -918,16 +1000,18 @@ try{
       client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       webState.clientStartedBy=new Date()
       const stageClosedOnly=trackClientClose(client)
-      const stageClosed=new Promise((resolve,reject)=>{stageClosedOnly.then(resolve);client.once('error',reject)})
+      let stageError
+      const onStageError=error=>{stageError??=error}
+      client.once('error',onStageError)
       clientRelay.allowClientPid(fixtureChildPid(client),stageClosedOnly)
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
-      const timer=setTimeout(()=>client.kill(),120000)
-      try{
-        result=await Promise.race([
-          stageClosed,
-          new Promise((_,reject)=>{abortClientWait=sig=>reject(Error(`Launcher interrupted by ${sig}`))}),
-        ])
-      }finally{abortClientWait=undefined;clearTimeout(timer)}
+      const outcome=await waitClientExit(client,stageClosedOnly,120000,()=>stageError)
+      client.off('error',onStageError)
+      if(outcome.timedOut||outcome.interrupted)await stopClientOnce(client)
+      if(outcome.error)throw outcome.error
+      if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
+      assert(!outcome.timedOut,`Restore stage ${stage} exceeded 120000ms`)
+      result=outcome.code
       if(interruptedSignal)throw Error(`Launcher interrupted by ${interruptedSignal}`)
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
@@ -958,32 +1042,14 @@ try{
     const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):webMobile?480000:web||filesState||gitPanel?300000:120000
     assert(Number.isInteger(budget)&&budget>0&&budget<=maxBudget,'Invalid client deadline')
     const closedOnly=clientClosedPromises.get(client)??webState.clientClosed??trackClientClose(client)
-    const exited=new Promise((resolve,reject)=>{
-      if(webState.clientError){reject(webState.clientError);return}
-      const onError=error=>reject(error)
-      client.once('error',onError)
-      closedOnly.then(code=>{
-        client.off('error',onError)
-        if(webState.clientError)reject(webState.clientError)
-        else resolve(code)
-      })
-    })
-    let timer
-    try{
-      const outcome=interruptedSignal
-        ?{timedOut:false,interrupted:interruptedSignal,code:1}
-        :await Promise.race([
-          exited.then(code=>({timedOut:false,interrupted:null,code})),
-          new Promise(resolve=>{timer=setTimeout(()=>resolve({timedOut:true,interrupted:null,code:1}),budget)}),
-          new Promise(resolve=>{abortClientWait=signal=>resolve({timedOut:false,interrupted:signal,code:1})}),
-        ])
-      if(outcome.timedOut||outcome.interrupted){
-        if(outcome.timedOut)expired=true
-        await stopClientOnce(client)
-      }
-      if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
-      result=outcome.code
-    }finally{clearTimeout(timer);abortClientWait=null}
+    const outcome=await waitClientExit(client,closedOnly,budget,()=>webState.clientError)
+    if(outcome.timedOut||outcome.interrupted){
+      if(outcome.timedOut)expired=true
+      await stopClientOnce(client)
+    }
+    if(outcome.error)throw outcome.error
+    if(outcome.interrupted)throw Error(`Launcher interrupted by ${outcome.interrupted}`)
+    result=outcome.code
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
   assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webSse7Tabs?7:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}

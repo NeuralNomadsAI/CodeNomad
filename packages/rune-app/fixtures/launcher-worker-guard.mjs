@@ -113,42 +113,73 @@ export async function sendWorkerStartAck(port, token) {
   })
 }
 
-export function evaluateWorkerExit({ exit, workerStarted = true, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null }) {
+export function evaluateWorkerExit({ exit, workerStarted = true, escalatedStop = false, unconfirmedStop = false, stopError = null, outerSignal = null, proof = null, supervisorExit = null }) {
+  const effectiveSupervisorExit = supervisorExit ?? exit
+  const preLaunchInterrupt = !workerStarted && exit === null && Boolean(outerSignal) && !stopError && !unconfirmedStop && !escalatedStop
   const spawnError = exit?.error ?? (!workerStarted && exit && exit.code !== 86
     ? new Error(`Owned worker did not start (supervisor exit code=${exit.code}, signal=${exit.signal})`)
     : null)
-  const workerExited = exit !== null && !spawnError && !unconfirmedStop && exit.code !== 86 && exit.signal === null && !stopError
-  const workerCode = exit && !spawnError ? (exit.code ?? (exit.signal === 'SIGINT' ? 130 : exit.signal === 'SIGTERM' ? 143 : 1)) : null
-  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError)
-  const interrupted = outerSignal ?? proof?.interruptedSignal ?? exit?.signal ?? (workerCode === 130 ? 'SIGINT' : workerCode === 143 ? 'SIGTERM' : null)
+  const supervisorStatusOnly = Boolean(
+    spawnError || escalatedStop || unconfirmedStop || stopError || exit?.code === 86 || effectiveSupervisorExit?.code === 86 || exit?.signal || effectiveSupervisorExit?.signal || preLaunchInterrupt,
+  )
+  const workerExited = exit !== null && !supervisorStatusOnly && exit.signal === null
+  const workerExitCode = workerExited ? exit.code : null
+  const workerExitSignal = null
+  const workerCode = workerExited ? (exit.code ?? 1) : null
+  const supervisorFailed = !workerExited || workerCode !== 0 || Boolean(exit?.signal) || Boolean(spawnError) || Boolean(stopError) || escalatedStop
+  const interrupted = outerSignal ?? proof?.interruptedSignal ?? effectiveSupervisorExit?.signal ?? (workerCode === 130 ? 'SIGINT' : workerCode === 143 ? 'SIGTERM' : null)
   const finalResult = proof?.result === 0 && !supervisorFailed && !interrupted ? 0 : 1
   const workerStopError = stopError
     ? String(stopError?.message ?? stopError)
-    : !workerExited && !spawnError
-      ? (exit?.code === 86 ? 'Fixture supervisor reported incomplete child tree termination' : 'Owned worker exit was not confirmed after stop')
-      : undefined
+    : preLaunchInterrupt || spawnError
+      ? undefined
+      : !workerExited
+        ? (exit?.code === 86 || effectiveSupervisorExit?.code === 86
+          ? 'Fixture supervisor reported incomplete child tree termination'
+          : escalatedStop
+            ? 'Owned worker did not exit within grace period; supervisor forced termination'
+            : 'Owned worker exit was not confirmed after stop')
+        : undefined
+  const includeSupervisorStatus = supervisorStatusOnly && !preLaunchInterrupt && effectiveSupervisorExit !== null
+    && (effectiveSupervisorExit.code !== null || effectiveSupervisorExit.signal !== null)
   return {
     workerExited,
     workerCode,
     supervisorFailed,
     interrupted,
     finalResult,
-    workerExitCode: exit && !spawnError ? exit.code : null,
-    workerExitSignal: exit && !spawnError ? exit.signal : null,
+    workerExitCode,
+    workerExitSignal,
+    ...(escalatedStop ? { workerStopEscalated: true } : {}),
+    ...(includeSupervisorStatus ? {
+      supervisorExitCode: effectiveSupervisorExit.code ?? null,
+      supervisorExitSignal: effectiveSupervisorExit.signal ?? null,
+    } : {}),
     ...(workerStopError ? { workerStopError } : {}),
     ...(spawnError ? { workerSpawnError: String(spawnError?.message ?? spawnError) } : {}),
   }
 }
 
-export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfirmedStop = false, stopError = null, outerSignal = null }) {
+export function publishWorkerProof({ workerProfile, exit, workerStarted, escalatedStop = false, unconfirmedStop = false, stopError = null, outerSignal = null, supervisorExit = null }) {
   assert.equal(typeof workerStarted, 'boolean', 'workerStarted must be a boolean')
   const workerProofFile = path.join(workerProfile, 'proof.worker.json.tmp')
   const supervisorProofTmp = path.join(workerProfile, 'proof.supervisor.json.tmp')
   const proofFile = path.join(workerProfile, 'proof.json')
   let proof
   try { proof = JSON.parse(readFileSync(workerProofFile, 'utf8')) } catch {}
-  const verdict = evaluateWorkerExit({ exit, workerStarted, unconfirmedStop, stopError, outerSignal, proof })
-  const { workerExited, interrupted, finalResult, workerExitCode, workerExitSignal, workerStopError, workerSpawnError } = verdict
+  const verdict = evaluateWorkerExit({ exit, workerStarted, escalatedStop, unconfirmedStop, stopError, outerSignal, proof, supervisorExit })
+  const {
+    workerExited,
+    interrupted,
+    finalResult,
+    workerExitCode,
+    workerExitSignal,
+    workerStopEscalated,
+    supervisorExitCode,
+    supervisorExitSignal,
+    workerStopError,
+    workerSpawnError,
+  } = verdict
   const finalProof = {
     ...(proof ?? { profile: workerProfile }),
     result: finalResult,
@@ -156,6 +187,9 @@ export function publishWorkerProof({ workerProfile, exit, workerStarted, unconfi
     workerExited,
     workerExitCode,
     workerExitSignal,
+    ...(workerStopEscalated ? { workerStopEscalated } : {}),
+    ...(supervisorExitCode !== undefined ? { supervisorExitCode } : {}),
+    ...(supervisorExitSignal !== undefined ? { supervisorExitSignal } : {}),
     ...(workerStopError ? { workerStopError } : {}),
     ...(workerSpawnError ? { workerSpawnError } : {}),
   }
