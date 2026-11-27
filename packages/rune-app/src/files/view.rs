@@ -347,13 +347,14 @@ fn reader_content(s: &State) -> El {
         ))
     } else {
         match ui.document.error() {
-            Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
-            Some(super::document::store::Error::Conflict(None)) => {
-                Some(t("filesPanel.draftConflict").into())
+            Some(conflict @ super::document::store::Error::Conflict(_)) => {
+                Some(super::errors::format_save_error(&conflict))
             }
-            save_error => ui.reader.error().map(str::to_owned).or_else(|| {
-                save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
-            }),
+            save_error => ui
+                .reader
+                .error()
+                .map(super::errors::format_preview_error)
+                .or_else(|| save_error.map(|error| super::errors::format_save_error(&error))),
         }
     };
     theme::surface(dark)
