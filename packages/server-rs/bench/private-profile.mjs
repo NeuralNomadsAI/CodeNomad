@@ -1,7 +1,7 @@
 // Canonical path fence for the headless comparison bench. Refuse before spawning.
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { lstat, readFile, readlink, realpath } from "node:fs/promises"
+import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -13,7 +13,8 @@ const below = (root, file) => {
   return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)
 }
 // The account's own profile (os.userInfo asks the system), even when HOME/USERPROFILE point elsewhere.
-const unsafeRoots = [...new Set([os.homedir(), os.userInfo().homedir])]
+const accountHome = os.userInfo().homedir
+const unsafeRoots = [...new Set([os.homedir(), accountHome])]
 
 const LOCAL_WINDOWS_DRIVE_TYPES = new Set(["Fixed", "Ram"])
 const LOCAL_LINUX_FS_TYPES = new Set([
@@ -26,10 +27,29 @@ const LOCAL_DARWIN_FS_TYPES = new Set(["apfs", "hfs", "ufs", "msdos", "exfat", "
 const windowsDriveTypeCache = new Map()
 const OPENCODE_BIN_NAMES = ["opencode2", "opencode"]
 
-const systemPowerShell = () => path.join(
-  process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
-  "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
-)
+export async function resolveSystemPowerShell(env = process.env) {
+  const sysRootKey = Object.keys(env).find(key => key.toLowerCase() === "systemroot")
+  const windirKey = Object.keys(env).find(key => key.toLowerCase() === "windir")
+  const rawRoot = (sysRootKey ? env[sysRootKey] : undefined) || (windirKey ? env[windirKey] : undefined) || "C:\\Windows"
+  assert(
+    typeof rawRoot === "string" && isDriveQualifiedWindowsPath(rawRoot),
+    `Refused: SystemRoot/WINDIR must be a drive-qualified local Windows path (${rawRoot})`,
+  )
+  const forbidden = await forbiddenHomeRoots({}, { accountHomeOnly: true })
+  const normalizedRoot = path.resolve(rawRoot)
+  assert(!forbidden.some(home => within(home, normalizedRoot)), `Refused: SystemRoot/WINDIR is inside the user's home (${rawRoot})`)
+  const resolvedRoot = await canonical(normalizedRoot)
+  assert(isDriveQualifiedWindowsPath(resolvedRoot), `Refused: SystemRoot/WINDIR resolves to a non-local path (${resolvedRoot})`)
+  assert(!forbidden.some(home => within(home, resolvedRoot)), `Refused: SystemRoot/WINDIR resolves inside the user's home (${resolvedRoot})`)
+  const exePath = path.join(resolvedRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+  const resolvedExe = await canonical(exePath)
+  assert(isDriveQualifiedWindowsPath(resolvedExe), `Refused: PowerShell resolves to a non-local path (${resolvedExe})`)
+  assert(!forbidden.some(home => within(home, resolvedExe)), `Refused: PowerShell resolves inside the user's home (${resolvedExe})`)
+  assert(within(resolvedRoot, resolvedExe), `Refused: PowerShell escapes SystemRoot (${resolvedExe})`)
+  const info = await stat(resolvedExe).catch(() => null)
+  assert(info?.isFile(), `Refused: Windows PowerShell executable not found (${resolvedExe})`)
+  return resolvedExe
+}
 
 export async function outsideUserHome(directory) {
   const resolved = await realpath(directory)
@@ -39,8 +59,9 @@ export async function outsideUserHome(directory) {
 
 const isDriveQualifiedWindowsPath = value => /^[A-Za-z]:[\\/]/.test(value)
 
-async function forbiddenHomeRoots(env = process.env) {
-  const candidates = [...unsafeRoots, env?.USERPROFILE, env?.HOME]
+async function forbiddenHomeRoots(env = process.env, { accountHomeOnly = false } = {}) {
+  const baseRoots = accountHomeOnly ? [accountHome] : unsafeRoots
+  const candidates = [...baseRoots, env?.USERPROFILE, env?.HOME]
     .filter(value => typeof value === "string" && path.isAbsolute(value))
     .map(value => path.resolve(value))
   const roots = [...new Set(candidates)]
@@ -48,13 +69,14 @@ async function forbiddenHomeRoots(env = process.env) {
   return [...new Set([...roots, ...canonicalRoots])]
 }
 
-async function queryWindowsDriveTypes(letters) {
+async function queryWindowsDriveTypes(letters, options = {}) {
   const missing = [...new Set(letters.map(l => l.toUpperCase()))].filter(l => !windowsDriveTypeCache.has(l))
   if (missing.length > 0) {
     for (const letter of missing) assert(/^[A-Z]$/.test(letter), `Invalid Windows drive letter: ${letter}`)
+    const powershell = await resolveSystemPowerShell(options.systemEnv ?? process.env)
     const list = missing.map(l => `'${l}'`).join(",")
     const { stdout } = await execFileAsync(
-      systemPowerShell(),
+      powershell,
       ["-NoProfile", "-NonInteractive", "-Command", `@(${list}) | ForEach-Object { "$_=$([System.IO.DriveInfo]::new($_).DriveType)" }`],
       { windowsHide: true, timeout: 20_000 },
     )
@@ -112,7 +134,7 @@ async function assertLocalVolume(targetPath, options = {}) {
     const letter = targetPath[0].toUpperCase()
     const driveType = options.probeDriveType
       ? await options.probeDriveType(letter)
-      : (await queryWindowsDriveTypes([letter]))[letter]
+      : (await queryWindowsDriveTypes([letter], options))[letter]
     if (!LOCAL_WINDOWS_DRIVE_TYPES.has(driveType)) {
       throw new assert.AssertionError({
         message: `Refused: OpenCode executable must reside on a local volume (${targetPath}, drive ${letter}: is ${driveType})`,
@@ -163,16 +185,10 @@ export async function assertPrivateOpenCodeExecutable(executable, options = {}) 
   if (platform === "win32" && !isDriveQualifiedWindowsPath(executable)) {
     throw new assert.AssertionError({ message: `Refused: OpenCode executable must be a drive-qualified local path (${executable})` })
   }
-  const forbidden = await forbiddenHomeRoots(options.env)
+  const forbidden = await forbiddenHomeRoots(options.env, { accountHomeOnly: options.accountHomeOnly })
   const normalized = path.resolve(executable)
   assert(!forbidden.some(home => within(home, normalized)), `Refused: OpenCode executable must be outside the user's home (${executable})`)
-  let resolved
-  try {
-    resolved = await canonical(normalized)
-  } catch (error) {
-    await assertLocalVolume(normalized, options)
-    throw error
-  }
+  const resolved = await canonical(normalized)
   if (platform === "win32" && !isDriveQualifiedWindowsPath(resolved)) {
     throw new assert.AssertionError({ message: `Refused: OpenCode executable resolves to a non-local path (${resolved})` })
   }
@@ -211,21 +227,14 @@ export async function sanitizeBenchPath(rawPath = process.env.PATH, options = {}
   const platform = options.platform ?? process.platform
   const delimiter = platform === "win32" ? ";" : ":"
   const pathext = options.pathext ?? process.env.PATHEXT
-  const forbidden = await forbiddenHomeRoots(options.env)
+  const forbidden = await forbiddenHomeRoots(options.env, { accountHomeOnly: options.accountHomeOnly })
   const allowedRoot = options.allowedRoot ? await canonical(path.resolve(options.allowedRoot)).catch(() => path.resolve(options.allowedRoot)) : null
   const rawEntries = String(rawPath ?? "")
     .split(delimiter)
     .map(entry => entry.trim().replace(/^"|"$/g, ""))
     .filter(Boolean)
 
-  if (platform === "win32" && !options.probeDriveType) {
-    const letters = rawEntries
-      .filter(entry => isDriveQualifiedWindowsPath(entry) && !forbidden.some(home => within(home, path.resolve(entry))))
-      .map(entry => entry[0].toUpperCase())
-    if (letters.length > 0) await queryWindowsDriveTypes(letters).catch(() => {})
-  }
-
-  const kept = []
+  const candidates = []
   for (const entry of rawEntries) {
     if (!path.isAbsolute(entry)) continue
     if (platform === "win32" && !isDriveQualifiedWindowsPath(entry)) continue
@@ -235,6 +244,16 @@ export async function sanitizeBenchPath(rawPath = process.env.PATH, options = {}
     if (!resolved) continue
     if (platform === "win32" && !isDriveQualifiedWindowsPath(resolved)) continue
     if (forbidden.some(home => within(home, resolved))) continue
+    candidates.push({ entry, normalized, resolved })
+  }
+
+  if (platform === "win32" && !options.probeDriveType && candidates.length > 0) {
+    const letters = candidates.flatMap(({ normalized, resolved }) => [normalized[0].toUpperCase(), resolved[0].toUpperCase()])
+    await queryWindowsDriveTypes(letters, options).catch(() => {})
+  }
+
+  const kept = []
+  for (const { entry, normalized, resolved } of candidates) {
     const localInput = await assertLocalVolume(normalized, options).then(() => true, () => false)
     if (!localInput) continue
     const localResolved = resolved === normalized
@@ -269,7 +288,7 @@ export async function assertSafeBenchPath(env, allowedRoot, options = {}) {
   const delimiter = platform === "win32" ? ";" : ":"
   const pathextKey = Object.keys(env).find(key => key.toLowerCase() === "pathext")
   const pathext = options.pathext ?? (pathextKey ? env[pathextKey] : process.env.PATHEXT)
-  const forbidden = await forbiddenHomeRoots(options.env)
+  const forbidden = await forbiddenHomeRoots(options.env, { accountHomeOnly: options.accountHomeOnly })
   const canonicalAllowed = allowedRoot ? await canonical(path.resolve(allowedRoot)).catch(() => path.resolve(allowedRoot)) : null
   for (const key of pathKeys) {
     const rawPath = env[key]
@@ -381,4 +400,104 @@ export function assertOutsideAccount(env, ...configFolders) {
     if (env[key]) assert(!unsafeRoots.some(home => within(home, path.resolve(env[key]))), `Refused: ${key}=${env[key]} is under the user's home`)
   }
   for (const folder of configFolders) assert(!unsafeRoots.some(home => within(home, path.resolve(folder))), `Refused: CodeNomad config ${folder} is under the user's home`)
+}
+
+function extractConfigArg(argv, env) {
+  let cliConfig
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if ((arg === "--config" || arg === "-c") && i + 1 < argv.length) {
+      cliConfig = argv[i + 1]
+      i += 1
+    } else if (arg.startsWith("--config=")) {
+      cliConfig = arg.slice("--config=".length)
+    } else if (arg.startsWith("-c=")) {
+      cliConfig = arg.slice("-c=".length)
+    }
+  }
+  return cliConfig || env?.CLI_CONFIG
+}
+
+/** Guard for direct or harness launches of `ts-server.mjs`: enforces private profile paths,
+ * private npm fallback prefix, safe configured `server.opencodeBinary`, and sanitized `PATH`. */
+export async function assertPrivateTsServerLaunch(argv = process.argv.slice(2), env = process.env, options = {}) {
+  const platform = options.platform ?? process.platform
+  const forbidden = await forbiddenHomeRoots({}, { accountHomeOnly: true })
+  const assertPrivateLocalPath = async (label, value) => {
+    assert(typeof value === "string" && path.isAbsolute(value), `Refused: TS server ${label} must be an explicit absolute private path`)
+    if (platform === "win32") {
+      assert(isDriveQualifiedWindowsPath(value), `Refused: TS server ${label} must be a drive-qualified local path (${value})`)
+    }
+    const normalized = path.resolve(value)
+    assert(!forbidden.some(home => within(home, normalized)), `Refused: TS server ${label} must be outside the user's home (${value})`)
+    const resolved = await canonical(normalized)
+    if (platform === "win32") {
+      assert(isDriveQualifiedWindowsPath(resolved), `Refused: TS server ${label} resolves to a non-local path (${resolved})`)
+    }
+    assert(!forbidden.some(home => within(home, resolved)), `Refused: TS server ${label} resolves inside the user's home (${resolved})`)
+    await assertLocalVolume(normalized, options)
+    if (resolved !== normalized) await assertLocalVolume(resolved, options)
+    return resolved
+  }
+
+  const configPath = extractConfigArg(argv, env)
+  const resolvedConfig = await assertPrivateLocalPath("config", configPath)
+  const resolvedHome = await assertPrivateLocalPath("HOME", env.HOME)
+  await assertPrivateLocalPath("USERPROFILE", env.USERPROFILE)
+  if (platform === "win32") {
+    await assertPrivateLocalPath("APPDATA", env.APPDATA)
+    await assertPrivateLocalPath("LOCALAPPDATA", env.LOCALAPPDATA)
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (!value) continue
+    if (key.toUpperCase().startsWith("XDG_") || key.toLowerCase() === "npm_config_prefix") {
+      await assertPrivateLocalPath(key, value)
+    }
+  }
+
+  const configuredNpmPrefix = Object.entries(env).find(([key]) => key.toLowerCase() === "npm_config_prefix")?.[1]
+  const npmPrefix = configuredNpmPrefix && path.isAbsolute(configuredNpmPrefix)
+    ? configuredNpmPrefix
+    : (platform === "win32" ? path.join(env.APPDATA, "npm") : path.join(resolvedHome, ".local"))
+  const resolvedNpmPrefix = await assertPrivateLocalPath("npm prefix", npmPrefix)
+  const npmBinDir = platform === "win32" ? resolvedNpmPrefix : path.join(resolvedNpmPrefix, "bin")
+  if (await lstat(npmBinDir).catch(() => null)) {
+    const resolvedNpmBin = await assertPrivateLocalPath("npm bin directory", npmBinDir)
+    const pathextKey = Object.keys(env).find(key => key.toLowerCase() === "pathext")
+    const pathext = options.pathext ?? (pathextKey ? env[pathextKey] : process.env.PATHEXT)
+    assert(
+      !(await directoryExposesDisallowedOpenCode(resolvedNpmBin, {
+        platform,
+        pathext,
+        forbidden,
+        allowedRoot: resolvedNpmPrefix,
+        options,
+      })),
+      `Refused: TS server npm bin exposes escaping OpenCode (${resolvedNpmBin})`,
+    )
+  }
+  const npmExe = path.join(resolvedNpmPrefix, ...(platform === "win32" ? [] : ["lib"]), "node_modules", "@opencode", "cli", "bin", "opencode.exe")
+  if (await lstat(npmExe).catch(() => null)) {
+    await assertPrivateOpenCodeExecutable(npmExe, { ...options, env: {}, accountHomeOnly: true })
+  }
+
+  const configStat = await lstat(resolvedConfig).catch(() => null)
+  const yamlPath = (/\.ya?ml$/i.test(resolvedConfig) || configStat?.isFile())
+    ? resolvedConfig
+    : path.join(resolvedConfig, "config.yaml")
+  const resolvedYaml = await assertPrivateLocalPath("config YAML", yamlPath)
+  if (await lstat(resolvedYaml).catch(() => null)) {
+    const { parse: parseYaml } = await import("yaml")
+    const parsed = parseYaml(await readFile(resolvedYaml, "utf8"))
+    const configuredBinary = parsed?.server?.opencodeBinary
+    if (configuredBinary !== undefined && configuredBinary !== null) {
+      assert(typeof configuredBinary === "string", "Refused: server.opencodeBinary must be a string")
+      const trimmed = configuredBinary.trim()
+      if (trimmed.length > 0 && trimmed !== "opencode" && trimmed !== "opencode2") {
+        await assertPrivateOpenCodeExecutable(trimmed, { ...options, env: {}, accountHomeOnly: true })
+      }
+    }
+  }
+
+  await sanitizeBenchEnvPath(env, { ...options, env: {}, accountHomeOnly: true })
 }

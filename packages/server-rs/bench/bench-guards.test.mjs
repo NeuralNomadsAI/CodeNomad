@@ -13,7 +13,9 @@ import {
   assertPrivateHost,
   assertPrivateOpenCodeExecutable,
   assertPrivateProfile,
+  assertPrivateTsServerLaunch,
   outsideUserHome,
+  resolveSystemPowerShell,
   sanitizeBenchEnvPath,
   sanitizeBenchPath,
 } from "./private-profile.mjs"
@@ -91,6 +93,61 @@ test("every OpenCode bench script refuses home, linked-home and non-local execut
     assert.equal(existsSync(benchOutDir), outExistedBefore, "refused bench scripts must not create out/")
     assert.deepEqual(await snapshotTree(benchOutDir), treeBefore, "refused bench scripts must not modify out/")
 
+    const tsServerScript = path.join(import.meta.dirname, "ts-server.mjs")
+    const tsProfileRoot = path.join(scratch, "ts-profile")
+    await mkdir(tsProfileRoot, { recursive: true })
+    const baseTsEnv = {
+      ...process.env,
+      HOME: tsProfileRoot,
+      USERPROFILE: tsProfileRoot,
+      APPDATA: path.join(tsProfileRoot, "AppData", "Roaming"),
+      LOCALAPPDATA: path.join(tsProfileRoot, "AppData", "Local"),
+      XDG_CONFIG_HOME: path.join(tsProfileRoot, "xdg-config"),
+      XDG_DATA_HOME: path.join(tsProfileRoot, "xdg-data"),
+      XDG_STATE_HOME: path.join(tsProfileRoot, "xdg-state"),
+      XDG_CACHE_HOME: path.join(tsProfileRoot, "xdg-cache"),
+    }
+    delete baseTsEnv.CLI_CONFIG
+    delete baseTsEnv.npm_config_prefix
+    delete baseTsEnv.NPM_CONFIG_PREFIX
+
+    await assert.rejects(
+      execFileAsync(process.execPath, [tsServerScript], {
+        env: { ...process.env, CLI_CONFIG: "" },
+        windowsHide: true,
+        timeout: 30_000,
+      }),
+      error => error.code !== 0 && /explicit absolute private path/.test(String(error.stderr)),
+      "direct ts-server.mjs without private config must refuse",
+    )
+    const safeConfig = path.join(tsProfileRoot, "safe.yaml")
+    await writeFile(safeConfig, "server: {}\n")
+    await assert.rejects(
+      execFileAsync(process.execPath, [tsServerScript, "--config", safeConfig], {
+        env: { ...baseTsEnv, npm_config_prefix: path.join(os.homedir(), ".npm-global") },
+        windowsHide: true,
+        timeout: 30_000,
+      }),
+      error => error.code !== 0 && /outside the user's home/.test(String(error.stderr)),
+      "direct ts-server.mjs with user-home npm_config_prefix must refuse",
+    )
+    for (let idx = 0; idx < cases.length; idx += 1) {
+      const [targetExe, expectedPattern] = cases[idx]
+      const badConfig = path.join(tsProfileRoot, `bad-${idx}.yaml`)
+      await writeFile(badConfig, `server:\n  opencodeBinary: ${JSON.stringify(targetExe)}\n`)
+      await assert.rejects(
+        execFileAsync(process.execPath, [tsServerScript, "--config", badConfig], {
+          env: baseTsEnv,
+          windowsHide: true,
+          timeout: 30_000,
+        }),
+        error => error.code !== 0 && expectedPattern.test(String(error.stderr)),
+        `direct ts-server.mjs must refuse configured opencodeBinary ${targetExe}`,
+      )
+    }
+    assert.equal(existsSync(benchOutDir), outExistedBefore, "refused ts-server.mjs must not create out/")
+    assert.deepEqual(await snapshotTree(benchOutDir), treeBefore, "refused ts-server.mjs must not modify out/")
+
     if (process.platform === "win32") {
       const runAll = path.join(import.meta.dirname, "run-all.ps1")
       for (const [targetExe, expectedPattern] of cases) {
@@ -127,8 +184,11 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
     '/* export * from "./native-fixture-guards.mjs" */',
     'import /* c1 */ { createAttestedFetch } /* c2 */ from /* c3 */ "./native-fixture-http.mjs?v=1#top"',
     'import from from "./native-fixture-http.mjs"',
+    'import as from "./native-fixture-http.mjs"',
     'import * as from from "./native-fixture-guards.mjs"',
+    'import * as as from "./native-fixture-process.mjs"',
     'import def, * as from from "./native-fixture-process.mjs"',
+    'import as, * as from from "./native-fixture-guards.mjs"',
     "import /* side */ './native-fixture-guards.mjs#sec'",
     'export /* re */ { pidAlive } from /* c4 */ "./native-fixture-process.mjs?x=2"',
     'export * /* star */ from "./native-fixture-cli-version.mjs"',
@@ -137,7 +197,11 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
     'const tpl = `from "./native-fixture-http.mjs" ${/from "\\.\\/native-fixture-http\\.mjs"/} ${await import("./native-fixture-guards.mjs")}`',
     'const re = /from "\\.\\/native-fixture-http\\.mjs"/',
     'const ratio = { a: 1 } / 2; const afterDiv = await import("./native-fixture-http.mjs"); const half = 1 / 2',
+    'const fnDiv = function () { return 1 } / 2; const afterFnDiv = await import("./native-fixture-http.mjs"); const halfFn = 1 / 2',
+    'const asyncFnDiv = async function* gen() { yield 1 } / 2; const afterAsyncFnDiv = await import("./native-fixture-guards.mjs"); const halfAsyncFn = 1 / 2',
+    'const clsDiv = class Foo extends Base { } / 2; const afterClsDiv = await import("./native-fixture-process.mjs"); const halfCls = 1 / 2',
     'if (ok) { noop() } /from "\\.\\/native-fixture-http\\.mjs"/.test(s)',
+    'function decl() {} /from "\\.\\/native-fixture-http\\.mjs"/.test(s)',
     'const computed = import("./native-fixture-http.mjs" + suffix)',
     'const member = obj.import("./native-fixture-http.mjs")',
     'const keyObj = { import: "./native-fixture-http.mjs" }',
@@ -149,8 +213,11 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
   assert.ok(rewritten.includes('/* export * from "./native-fixture-guards.mjs" */'))
   assert.ok(rewritten.includes(`from /* c3 */ ${JSON.stringify(`${httpUrl}?v=1#top`)}`))
   assert.ok(rewritten.includes(`import from from ${JSON.stringify(httpUrl)}`))
+  assert.ok(rewritten.includes(`import as from ${JSON.stringify(httpUrl)}`))
   assert.ok(rewritten.includes(`import * as from from ${JSON.stringify(guardsUrl)}`))
+  assert.ok(rewritten.includes(`import * as as from ${JSON.stringify(processUrl)}`))
   assert.ok(rewritten.includes(`import def, * as from from ${JSON.stringify(processUrl)}`))
+  assert.ok(rewritten.includes(`import as, * as from from ${JSON.stringify(guardsUrl)}`))
   assert.ok(rewritten.includes(`import /* side */ ${JSON.stringify(`${guardsUrl}#sec`)}`))
   assert.ok(rewritten.includes(`from /* c4 */ ${JSON.stringify(`${processUrl}?x=2`)}`))
   assert.ok(rewritten.includes(`export * /* star */ from ${JSON.stringify(cliVerUrl)}`))
@@ -159,7 +226,11 @@ test("fixtures.mjs rewrites ESM relative imports accurately and productRuntime()
   assert.ok(rewritten.includes('`from "./native-fixture-http.mjs" ${/from "\\.\\/native-fixture-http\\.mjs"/} ${await import(' + JSON.stringify(guardsUrl) + ')}`'))
   assert.ok(rewritten.includes('const re = /from "\\.\\/native-fixture-http\\.mjs"/'))
   assert.ok(rewritten.includes(`const ratio = { a: 1 } / 2; const afterDiv = await import(${JSON.stringify(httpUrl)}); const half = 1 / 2`))
+  assert.ok(rewritten.includes(`const fnDiv = function () { return 1 } / 2; const afterFnDiv = await import(${JSON.stringify(httpUrl)}); const halfFn = 1 / 2`))
+  assert.ok(rewritten.includes(`const asyncFnDiv = async function* gen() { yield 1 } / 2; const afterAsyncFnDiv = await import(${JSON.stringify(guardsUrl)}); const halfAsyncFn = 1 / 2`))
+  assert.ok(rewritten.includes(`const clsDiv = class Foo extends Base { } / 2; const afterClsDiv = await import(${JSON.stringify(processUrl)}); const halfCls = 1 / 2`))
   assert.ok(rewritten.includes('if (ok) { noop() } /from "\\.\\/native-fixture-http\\.mjs"/.test(s)'))
+  assert.ok(rewritten.includes('function decl() {} /from "\\.\\/native-fixture-http\\.mjs"/.test(s)'))
   assert.ok(rewritten.includes('const computed = import("./native-fixture-http.mjs" + suffix)'))
   assert.ok(rewritten.includes('const member = obj.import("./native-fixture-http.mjs")'))
   assert.ok(rewritten.includes('const keyObj = { import: "./native-fixture-http.mjs" }'))
@@ -418,5 +489,108 @@ test("hardening.mjs and fixtures.mjs strip inherited GIT_* variables before runn
   assert.equal(privateEnv.GIT_CONFIG_GLOBAL, path.join(path.dirname(fixtureFolder), "fixture.gitconfig"))
   for (const key of strippedKeys) {
     assert.equal(Object.hasOwn(privateEnv, key), false, `fixtures: expected ${key} to be stripped`)
+  }
+})
+
+test("Windows drive probing never runs before canonical/home checks and validates SystemRoot", async () => {
+  const scratch = await mkdtemp(path.join(await outsideUserHome(import.meta.dirname), "bench-ps-"))
+  const junction = path.join(scratch, "home-link")
+  const loopA = path.join(scratch, "loop-a")
+  const loopB = path.join(scratch, "loop-b")
+  try {
+    await symlink(os.homedir(), junction, process.platform === "win32" ? "junction" : "dir")
+    let probes = 0
+    const countingProbe = () => { probes += 1; return "Fixed" }
+    await assert.rejects(
+      assertPrivateOpenCodeExecutable(path.join(junction, "opencode.exe"), { probeDriveType: countingProbe }),
+      /resolves inside the user's home/,
+    )
+    assert.equal(probes, 0, "junction to user home must refuse before drive probing")
+
+    let loopCreated = false
+    try {
+      await symlink(loopB, loopA, process.platform === "win32" ? "junction" : "dir")
+      await symlink(loopA, loopB, process.platform === "win32" ? "junction" : "dir")
+      loopCreated = true
+    } catch (error) {
+      if (process.platform !== "win32" || error.code !== "EPERM") throw error
+    }
+    if (loopCreated) {
+      await assert.rejects(
+        assertPrivateOpenCodeExecutable(path.join(loopA, "opencode.exe"), { probeDriveType: countingProbe }),
+        /could not be resolved|ELOOP/i,
+      )
+      assert.equal(probes, 0, "canonical resolution failure must refuse before drive probing")
+    }
+
+    const delimiter = process.platform === "win32" ? ";" : ":"
+    const cleaned = await sanitizeBenchPath([junction, path.join(os.homedir(), "bin")].join(delimiter), {
+      probeDriveType: countingProbe,
+    })
+    assert.equal(cleaned, "")
+    assert.equal(probes, 0, "sanitizeBenchPath must filter user-home and home-junction entries before drive probing")
+
+    if (process.platform === "win32") {
+      const resolved = await resolveSystemPowerShell(process.env)
+      assert.match(resolved, /^[A-Za-z]:\\.*\\powershell\.exe$/i)
+      await assert.rejects(
+        resolveSystemPowerShell({ SystemRoot: "Windows" }),
+        /drive-qualified local Windows path/,
+      )
+      await assert.rejects(
+        resolveSystemPowerShell({ SystemRoot: String.raw`\\evil.invalid\share` }),
+        /drive-qualified local Windows path/,
+      )
+      await assert.rejects(
+        resolveSystemPowerShell({ SystemRoot: path.join(os.homedir(), "Windows") }),
+        /inside the user's home/,
+      )
+      await assert.rejects(
+        resolveSystemPowerShell({ SystemRoot: junction }),
+        /resolves inside the user's home/,
+      )
+    }
+  } finally {
+    await unlink(loopA).catch(() => {})
+    await unlink(loopB).catch(() => {})
+    await unlink(junction).catch(() => {})
+    await rm(scratch, { recursive: true, force: true })
+  }
+})
+
+test("assertPrivateTsServerLaunch validates private profile, configured binary, npm fallback and PATH", async () => {
+  const scratch = await mkdtemp(path.join(await outsideUserHome(import.meta.dirname), "bench-ts-guard-"))
+  const profile = path.join(scratch, "profile")
+  const safeBin = path.join(scratch, "safe-bin")
+  const foreignBin = path.join(scratch, "foreign-bin")
+  const privateExe = path.join(profile, "fake-opencode.cmd")
+  const configYaml = path.join(profile, "ts.yaml")
+  const delimiter = process.platform === "win32" ? ";" : ":"
+  try {
+    await mkdir(profile, { recursive: true })
+    await mkdir(safeBin, { recursive: true })
+    await mkdir(foreignBin, { recursive: true })
+    await writeFile(privateExe, "@echo off\r\nexit /b 0\r\n")
+    await writeFile(path.join(foreignBin, process.platform === "win32" ? "opencode2.cmd" : "opencode2"), "stub")
+    await writeFile(configYaml, `server:\n  opencodeBinary: ${JSON.stringify(privateExe)}\n`)
+    const env = {
+      HOME: profile,
+      USERPROFILE: profile,
+      APPDATA: path.join(profile, "AppData", "Roaming"),
+      LOCALAPPDATA: path.join(profile, "AppData", "Local"),
+      PATH: [os.homedir(), foreignBin, safeBin].join(delimiter),
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    }
+    await assertPrivateTsServerLaunch(["--config", configYaml], env, { probeDriveType: () => "Fixed" })
+    assert.equal(env.PATH, safeBin)
+
+    const badConfig = path.join(profile, "bad.yaml")
+    await writeFile(badConfig, `server:\n  opencodeBinary: ${JSON.stringify(path.join(os.homedir(), "opencode.exe"))}\n`)
+    await assert.rejects(
+      assertPrivateTsServerLaunch(["--config", badConfig], { ...env }, { probeDriveType: () => "Fixed" }),
+      /outside the user's home/,
+    )
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
   }
 })

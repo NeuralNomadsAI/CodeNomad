@@ -4,9 +4,9 @@ import assert from "node:assert/strict"
 import { readFile, realpath } from "node:fs/promises"
 import tls from "node:tls"
 import { fileURLToPath } from "node:url"
-import { sanitizeBenchEnvPath } from "./private-profile.mjs"
+import { assertPrivateTsServerLaunch } from "./private-profile.mjs"
 
-await sanitizeBenchEnvPath(process.env)
+await assertPrivateTsServerLaunch(process.argv.slice(2), process.env)
 const { dist, ensureDist, fromDist } = await import("./fixtures.mjs")
 ensureDist()
 

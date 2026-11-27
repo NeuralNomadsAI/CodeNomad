@@ -186,16 +186,58 @@ function tokenizeEsm(code) {
     const nl = code.indexOf("\n")
     i = nl === -1 ? code.length : nl + 1
   }
-  const opensExprBrace = () => {
-    const prev = tokens.at(-1)
+  const isExprPrecederAt = (idx, allowArrow = false) => {
+    const prev = idx >= 0 ? tokens[idx] : null
     if (!prev) return false
     if (prev.type === "template-head") return true
-    if (prev.type === "ident") return EXPR_BRACE_PRECEDER_KEYWORDS.has(prev.value)
+    if (prev.type === "ident") {
+      if (allowArrow && prev.value === "default" && tokens[idx - 1]?.type === "ident" && tokens[idx - 1].value === "export") {
+        return false
+      }
+      return EXPR_BRACE_PRECEDER_KEYWORDS.has(prev.value)
+    }
     if (prev.type === "punct") {
-      if (prev.value === ">" && tokens.at(-2)?.type === "punct" && tokens.at(-2)?.value === "=") return false
+      if (prev.value === ">" && tokens[idx - 1]?.type === "punct" && tokens[idx - 1]?.value === "=") return allowArrow
       return EXPR_BRACE_PRECEDER_PUNCTS.has(prev.value)
     }
     return false
+  }
+  const isFunctionExprHeader = () => {
+    let idx = tokens.length - 1
+    if (tokens[idx]?.type === "ident" && tokens[idx].value !== "function") idx -= 1
+    if (tokens[idx]?.type === "punct" && tokens[idx].value === "*") idx -= 1
+    if (!(tokens[idx]?.type === "ident" && tokens[idx].value === "function")) return false
+    if (tokens[idx - 1]?.type === "ident" && tokens[idx - 1].value === "async") idx -= 1
+    return isExprPrecederAt(idx - 1, true)
+  }
+  const isClassExprBody = () => {
+    let depth = 0
+    for (let idx = tokens.length - 1; idx >= 0; idx -= 1) {
+      const tok = tokens[idx]
+      if (tok.type === "punct") {
+        if (tok.value === ")" || tok.value === "]" || tok.value === "}") { depth += 1; continue }
+        if (tok.value === "(" || tok.value === "[" || tok.value === "{") {
+          if (depth === 0) return false
+          depth -= 1
+          continue
+        }
+        if (depth === 0 && tok.value === ";") return false
+      }
+      if (tok.type === "template-head" && depth === 0) return false
+      if (depth === 0 && tok.type === "ident" && tok.value === "class") {
+        const before = tokens[idx - 1]
+        if (before?.type === "punct" && (before.value === "." || before.value === "?.")) return false
+        return isExprPrecederAt(idx - 1, true)
+      }
+    }
+    return false
+  }
+  const opensExprBrace = () => {
+    const prev = tokens.at(-1)
+    if (!prev) return false
+    if (prev.type === "punct" && prev.value === ")" && prev.fnExprClose === true) return true
+    if (isExprPrecederAt(tokens.length - 1)) return true
+    return isClassExprBody()
   }
   const canStartRegex = () => {
     const prev = tokens.at(-1)
@@ -318,14 +360,17 @@ function tokenizeEsm(code) {
     }
     if (ch === "(") {
       const prev = tokens.at(-1)
-      parenHeaderStack.push(prev?.type === "ident" && STATEMENT_PAREN_KEYWORDS.has(prev.value))
+      parenHeaderStack.push({
+        headerClose: prev?.type === "ident" && STATEMENT_PAREN_KEYWORDS.has(prev.value),
+        fnExprClose: isFunctionExprHeader(),
+      })
       tokens.push({ type: "punct", value: "(", start: i, end: i + 1 })
       i += 1
       continue
     }
     if (ch === ")") {
-      const headerClose = parenHeaderStack.pop() ?? false
-      tokens.push({ type: "punct", value: ")", start: i, end: i + 1, headerClose })
+      const parenKind = parenHeaderStack.pop() ?? { headerClose: false, fnExprClose: false }
+      tokens.push({ type: "punct", value: ")", start: i, end: i + 1, headerClose: parenKind.headerClose, fnExprClose: parenKind.fnExprClose })
       i += 1
       continue
     }
@@ -364,21 +409,29 @@ function collectEsmSpecifierTokens(tokens) {
         continue
       }
       if (next.type === "punct" && next.value === ".") continue
-      if (next.type === "ident" || (next.type === "punct" && (next.value === "*" || next.value === "{"))) {
-        let braceDepth = 0
-        for (let j = k + 1; j < tokens.length; j++) {
-          const cur = tokens[j]
-          if (cur.type === "punct" && cur.value === "{") { braceDepth += 1; continue }
-          if (cur.type === "punct" && cur.value === "}") { braceDepth -= 1; if (braceDepth < 0) break; continue }
-          if (braceDepth > 0) continue
-          if (j > k + 1 && cur.type === "ident" && cur.value === "from"
-            && !(tokens[j - 1]?.type === "ident" && tokens[j - 1].value === "as")
-            && tokens[j + 1]?.type === "string") {
-            specifiers.push(tokens[j + 1])
-            break
-          }
-          if (cur.type === "punct" && cur.value !== "*" && cur.value !== ",") break
+      let j = k + 1
+      if (tokens[j]?.type === "ident") {
+        j += 1
+        if (tokens[j]?.type === "punct" && tokens[j].value === ",") j += 1
+      }
+      if (tokens[j]?.type === "punct" && tokens[j].value === "*") {
+        if (tokens[j + 1]?.type === "ident" && tokens[j + 1].value === "as" && tokens[j + 2]?.type === "ident") {
+          j += 3
+        } else {
+          continue
         }
+      } else if (tokens[j]?.type === "punct" && tokens[j].value === "{") {
+        let braceDepth = 1
+        j += 1
+        while (j < tokens.length && braceDepth > 0) {
+          if (tokens[j].type === "punct" && tokens[j].value === "{") braceDepth += 1
+          else if (tokens[j].type === "punct" && tokens[j].value === "}") braceDepth -= 1
+          j += 1
+        }
+        if (braceDepth !== 0) continue
+      }
+      if (j > k + 1 && tokens[j]?.type === "ident" && tokens[j].value === "from" && tokens[j + 1]?.type === "string") {
+        specifiers.push(tokens[j + 1])
       }
       continue
     }

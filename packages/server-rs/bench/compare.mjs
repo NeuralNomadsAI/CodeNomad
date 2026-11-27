@@ -583,8 +583,27 @@ try {
   process.exitCode = 1
 } finally {
   const settled = await Promise.allSettled([rustPruning?.close(), missionsPresence?.(), removeRuntime()])
-  await writeJson(`${mode}.json`, result).catch(() => {})
-  console.log(`${mode}: ${result.error ? "FAILED" : "identical"} → ${path.join(out, `${mode}.json`)}`)
-  const failed = settled.find(item => item.status === "rejected")
-  if (failed && !result.error) throw failed.reason
+  const cleanupErrors = settled
+    .filter(item => item.status === "rejected")
+    .map(item => formatError(item.reason))
+  if (cleanupErrors.length) {
+    result.cleanupErrors = [...(result.cleanupErrors ?? []), ...cleanupErrors]
+    if (!result.error) {
+      result.error = `Bench cleanup failed:\n${cleanupErrors.join("\n")}`
+      console.error(result.error)
+      process.exitCode = 1
+    }
+  }
+  let reportError
+  try {
+    await writeJson(`${mode}.json`, result)
+  } catch (error) {
+    reportError = error
+    console.error(formatError(error))
+    process.exitCode = 1
+  }
+  if (!reportError) {
+    console.log(`${mode}: ${result.error ? "FAILED" : "identical"} → ${path.join(out, `${mode}.json`)}`)
+  }
+  if (reportError && !result.error) throw reportError
 }
