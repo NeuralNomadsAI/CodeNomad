@@ -939,14 +939,14 @@ export function createServerApi(ctx: BackendHttp) {
         method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(30_000) })
     },
     /** The directory's programmed Missions. With `calendar`, saves it (`configuration`), pauses, resumes or deletes it first. */
-    missionCalendars(instanceId: string, input: { directory?: string; calendar?: string; action?: "pause" | "resume" | "delete"; configuration?: unknown } = {},
+    missionCalendars(instanceId: string, input: { directory?: string; calendar?: string; action?: "pause" | "resume" | "delete"; configuration?: unknown; paused?: boolean } = {},
       signal?: AbortSignal): Promise<{ calendars: import("../../../server/src/opencode/mission-calendars").MissionCalendarView[] }> {
       const base = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/calendars`
       const query = `?${new URLSearchParams(input.directory === undefined ? {} : { directory: input.directory })}`
       if (!input.calendar) return secondaryRead(signal, () => request(base + query, { signal }))
       const target = `${base}/${encodeURIComponent(input.calendar)}`, live = AbortSignal.timeout(60_000)
       if (input.configuration !== undefined) return request(target, { method: "PUT", signal: live,
-        body: JSON.stringify({ configuration: input.configuration, ...(input.directory === undefined ? {} : { directory: input.directory }) }) })
+        body: JSON.stringify({ configuration: input.configuration, ...(input.paused ? { paused: true } : {}), ...(input.directory === undefined ? {} : { directory: input.directory }) }) })
       return input.action === "delete" ? request(target + query, { method: "DELETE", signal: live })
         : request(`${target}/${input.action}${query}`, { method: "POST", signal: live })
     },

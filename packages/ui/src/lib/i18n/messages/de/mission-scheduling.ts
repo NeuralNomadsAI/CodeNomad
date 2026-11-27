@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Wählen Sie eine verfügbare Projektquelle oder gültige explizite Dateipfade.",
   "missions.scheduling.error.empty": "Dieser Kalender hat keinen zukünftigen Termin.",
   "missions.scheduling.error.capability": "Zeitplanung ist nicht verfügbar. Behalten Sie den Entwurf oder entfernen Sie die Startkriterien.",
+  "missions.scheduling.error.unsupported": "Diese Startkriterien können nicht geplant werden.",
   "missions.scheduleList.activationRefused.layer.project": "Projektkonfiguration",
   "missions.scheduleList.activationRefused.layer.global": "Globale Konfiguration",
   "missions.scheduleList.activationRefused.layer.inherited": "Geerbte Konfiguration",

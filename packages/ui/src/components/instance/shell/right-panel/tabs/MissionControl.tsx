@@ -44,7 +44,7 @@ import { sessionListRestored } from "../../../../../stores/session-list-restorat
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { useMissionCalendars } from "../../../../../stores/mission-calendars"
 import { MissionProgramming } from "../../../../mission-programming"
-import { missionProgramming, missionProgrammingSuccessor } from "../../../../mission-programming-model"
+import { missionProgramming, missionProgrammingDraft, missionProgrammingSuccessor } from "../../../../mission-programming-model"
 import { MissionPanelScope, MissionViewScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
 import { projectScope } from "../../../../../lib/backend-identity"
@@ -565,25 +565,30 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const questions = rowQuestions().get(value.id)
     const others = questions?.partialTasks ? observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId
       && (!questions.coveredActors.has(actor.sessionId) || questions.offPageOwed.has(actor.sessionId))).map(actor => actor.state) ?? [] : []
-    const mark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
+    const launchMark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
+    // Between launches a programmed Mission waits for its next wake, or is paused.
+    const programming = programmingOf(value.id) && missionProgramming(programmingOf(value.id)!, props.t, locale())
+    const mark = programming ? programming.mark(launchMark, value.status !== "active" || value.runState === "prepared") : launchMark
     // Like session rows, input, work and unseen results propagate independently of selection.
     const tasks = questions?.taskStates ?? []
     const childActivity = questions?.tasks.length || tasks.includes("input")
       || others.some(state => state === "permission" || state === "form") ? "permission" as const
       : tasks.includes("active") || others.some(state => state === "running" || state === "queued" || state === "background")
         ? "working" as const : questions?.unseen.length ? "idle" as const : undefined
-    const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
+    const stateText = mark !== launchMark ? props.t(mark === "waiting" ? "missionsPanel.state.waiting" : "missions.scheduleList.state.paused")
+      : props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
     // The read map's count, else the row's (absent when unknown: the chevron stays).
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
     return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
+      ...(programming ? { recurring: true } : {}),
       activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
-        ...(programmingOf(value.id) ? missionProgramming(programmingOf(value.id)!, props.t, locale()).row : []),
+        ...(programming ? programming.row : []),
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
   // The saved Mission ID survives ownership conversion in another window, including
@@ -742,7 +747,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
-        onSaved={(saved, scheduleID) => {
+        onSaved={(saved, scheduleID, missionID) => {
           if (!completionCurrent() || editor() !== action) return
           const instanceId = props.instanceId, current = completionCurrent
           settleMissionEditor(action)
@@ -750,7 +755,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           if (scheduleID) updateView({ selectedScheduled: scheduleID })
           if (!saved && action.mission) forgetMissionView(props.instanceId, action.mission.id)
           void missionStore.refresh(instanceId).then(() => {
-            const id = saved?.id ?? scheduleID
+            const id = saved?.id ?? missionID ?? scheduleID
             if (id && current() && !editor()) selectMission(id)
           })
         }} />
@@ -839,8 +844,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onOpenCoordinator={() => void onOpenActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry} onRevealDetail={() => revealDetail?.()}
-            editDisabled={Boolean(editor()) || selected().status !== "active" || Boolean(programmingOf(id))} deleteDisabled={Boolean(editor())}
-            onEdit={() => openEditor({ kind: "edit", mission: selected() })}
+            editDisabled={Boolean(editor()) || (programmingOf(id) ? !missionProgrammingDraft(programmingOf(id)!) : selected().status !== "active")} deleteDisabled={Boolean(editor())}
+            onEdit={() => {
+              // A programmed Mission is edited whole, in the form that created it.
+              const calendar = programmingOf(id)
+              openEditor(calendar ? { kind: "create", calendar: calendar.id, draft: missionProgrammingDraft(calendar, directory()) } : { kind: "edit", mission: selected() })
+            }}
             onDelete={() => void deleteMission(selected())}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}

@@ -70,6 +70,8 @@ Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir a
 
 ## Zamanlama {#daily-schedules}
 
+Yinelenen bir zamanlaması veya olayı olan görev listede tek satır olarak kalır: her başlatma, aynı koordinatör konuşmasında öncekinin yerini alır ve önceki hâlâ etkinken bekler. Ayrıntısında **Şu durumda başlat**, **Duraklat** veya **Sürdür** ile **İstenen durum**, sonraki uyanma veya denetim, **Başlatılan geçişler** ve **Önceki çalıştırmalar** (son 20 başlatma) görünür. **Otomatik başlat** kapalıyken duraklatılmış olarak oluşturulur. **Seçili görevi düzenle** oluşturma formunu yeniden açar ve sonraki başlatma kaydettiğinizi kullanır. **Seçili görevi sil…** önce zamanlamasını kaldırır.
+
 ### Ölçütler {#native-scheduling}
 
 **i** düğmesi [zamanlama yardımını](missions.md#native-scheduling) açar.

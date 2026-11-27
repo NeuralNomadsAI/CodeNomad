@@ -70,6 +70,8 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 ## Zeitplanung {#daily-schedules}
 
+Eine Mission mit wiederkehrendem Zeitplan oder Ereignis bleibt eine einzige Zeile der Liste: Jeder Start ersetzt den vorherigen in derselben Koordinator-Unterhaltung und wartet, solange der vorherige noch aktiv ist. Ihr Detail zeigt **Starten, wenn**, **Gewünschter Zustand** mit **Pausieren** oder **Fortsetzen**, die nächste Aktivierung oder Prüfung, **Gestartete Durchläufe** und **Frühere Läufe** (die letzten 20 Starts). Ist **Automatisch starten** aus, wird sie pausiert erstellt. **Ausgewählte Mission bearbeiten** öffnet das Erstellungsformular erneut, und der nächste Start verwendet, was Sie speichern. **Ausgewählte Mission löschen…** entfernt zuerst ihre Zeitplanung.
+
 ### Kriterien {#native-scheduling}
 
 Die Schaltfläche **i** öffnet die [Zeitplanungshilfe](missions.md#native-scheduling).

@@ -38,7 +38,7 @@ after(async () => {
 })
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
-async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; available?: boolean; locale?: string; journalGate?: Promise<void>; outsidePage?: boolean } = {}) {
+async function setup(page: Page, options: { seed?: boolean | MissionDocument["configuration"]["launch"]; enabled?: boolean; available?: boolean; locale?: string; journalGate?: Promise<void>; outsidePage?: boolean } = {}) {
   page.setDefaultTimeout(15_000)
   const values = new Map<string, MissionJsonValue>(), posts: Record<string, any>[] = [], activations: Record<string, any>[] = [], reads: string[] = [], errors: string[] = []
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
@@ -47,7 +47,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     profiles, taskMode: "native" as const, profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only" as const, directory: "fixture" }],
     watchedConversationIDs: [], launch: { timing: { kind: "every" as const, intervalMs: 900_000 }, condition: null,
       ends: { maxLaunches: 3, at: null, afterMs: null } } }
-  let doc: MissionDocument | undefined = options.seed ? await store.create("msn_schedule", config, Date.now(), () => true) : undefined
+  let doc: MissionDocument | undefined = options.seed ? await store.create("msn_schedule", options.seed === true ? config : { ...config, launch: options.seed }, Date.now(), () => true) : undefined
   const firstPage = options.outsidePage ? await Promise.all(Array.from({ length: 8 }, (_, i) =>
     store.create(`aaa_${i}`, { ...config, title: `Inventory Mission ${i}` }, Date.now(), () => true))) : []
   let outside = false
@@ -243,18 +243,10 @@ async function capture(page: Page, name: string) {
   if (dir) { await mkdir(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, name), fullPage: true }) }
 }
 
-test("real panel Create → Play → Pause/Resume → Run now → Stop → Delete keeps launch counts and native control routes", async () => {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } }), f = await setup(page)
+test("real panel Play → Pause/Resume → Run now → Stop → Delete keeps launch counts and native control routes", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } })
+  const f = await setup(page, { seed: { when: [{ kind: "cron", expression: "0 * * * *", zone: "UTC" }] } })
   try {
-    await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    const form = page.locator("form.mission-editor")
-    await form.getByLabel("Objective", { exact: true }).fill("Inspect local changes")
-    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
-    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
-    await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
-    await form.getByRole("button", { name: "Create", exact: true }).click()
-    await form.waitFor({ state: "detached" })
-    assert.deepEqual(f.posts.map(post => post.action), ["create"])
     await select(page); await capture(page, "schedule-paused-en.png")
     assert.match(await detail(page).locator("dd").first().innerText(), /^Every N hours · 1$/)
     assert.equal(await detail(page).getByText("Until", { exact: true }).count(), 0)
@@ -273,7 +265,7 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
     await click(page, "Stop", true)
     await page.waitForFunction(() => (document.querySelector('.mission-picker-selection-actions [aria-label="Start"]') as HTMLButtonElement)?.disabled)
     await click(page, "Delete", true); await detail(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts.map(post => post.action), ["create", "play", "pause", "resume", "run-now", "stop", "delete"])
+    assert.deepEqual(f.posts.map(post => post.action), ["play", "pause", "resume", "run-now", "stop", "delete"])
     assert.equal(new Set(f.posts.map(post => post.requestID)).size, f.posts.length)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }

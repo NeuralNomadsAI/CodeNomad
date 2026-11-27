@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "יש לבחור מקור זמין בפרויקט או נתיבי קבצים מפורשים תקינים.",
   "missions.scheduling.error.empty": "ללוח הזה אין מועד עתידי.",
   "missions.scheduling.error.capability": "התזמון אינו זמין. שמרו את הטיוטה או הסירו את קריטריוני ההפעלה.",
+  "missions.scheduling.error.unsupported": "לא ניתן לתזמן את תנאי ההפעלה האלה.",
   "missions.scheduleList.activationRefused.layer.project": "הגדרות הפרויקט",
   "missions.scheduleList.activationRefused.layer.global": "הגדרות כלליות",
   "missions.scheduleList.activationRefused.layer.inherited": "הגדרות בירושה",

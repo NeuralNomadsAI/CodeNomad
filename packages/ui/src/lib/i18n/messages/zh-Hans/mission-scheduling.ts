@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "请选择可用的项目来源或有效的指定文件路径。",
   "missions.scheduling.error.empty": "此日历没有未来时段。",
   "missions.scheduling.error.capability": "计划不可用。请保留草稿或移除启动条件。",
+  "missions.scheduling.error.unsupported": "无法按这些启动条件安排。",
   "missions.scheduleList.activationRefused.layer.project": "项目配置",
   "missions.scheduleList.activationRefused.layer.global": "全局配置",
   "missions.scheduleList.activationRefused.layer.inherited": "继承的配置",

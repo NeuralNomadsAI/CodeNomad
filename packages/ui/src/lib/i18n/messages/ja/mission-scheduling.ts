@@ -179,6 +179,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "利用可能なプロジェクトの対象、または有効な明示的ファイルパスを選択してください。",
   "missions.scheduling.error.empty": "この暦には将来の予定がありません。",
   "missions.scheduling.error.capability": "スケジュールを利用できません。下書きを保持するか、起動条件を削除してください。",
+  "missions.scheduling.error.unsupported": "この起動条件はスケジュールできません。",
   "missions.scheduleList.activationRefused.layer.project": "プロジェクト設定",
   "missions.scheduleList.activationRefused.layer.global": "グローバル設定",
   "missions.scheduleList.activationRefused.layer.inherited": "継承された設定",

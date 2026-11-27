@@ -299,9 +299,9 @@ test("recurring creation shares the draft, prefills its title and picks named co
       return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (new URL(route.request().url()).pathname.endsWith("/capabilities")) return route.fulfill({ json: {
       location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
-    if (route.request().method() === "POST") {
+    if (route.request().method() !== "GET") {
       writes.push(route.request().postDataJSON())
-      return route.fulfill({ status: 503, json: { error: "Recurrence creation unavailable or uncertain" } })
+      return route.fulfill({ status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" } })
     }
     return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1 } })
   })
@@ -355,12 +355,13 @@ test("recurring creation shares the draft, prefills its title and picks named co
       await mkdir(captureDirectory, { recursive: true })
       await page.screenshot({ path: path.join(captureDirectory, "creation-recurring.png"), fullPage: true })
     }
+    const refused = page.waitForResponse(response => response.request().method() === "PUT")
     await form.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.waitForFunction(() => (document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
+    await refused
+    // A refused save says so and leaves the form as it was, to be submitted again.
+    await form.getByRole("alert").filter({ hasText: "could not be saved" }).waitFor()
+    await page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
       && document.querySelector('form.mission-editor button[type=submit]')?.textContent === "Create")
-    // The refused creation is held and reread automatically: the form says so, with no button to press.
-    assert.equal(await form.getByRole("alert").filter({ hasText: "This change is unconfirmed." }).count(), 1)
-    assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     assert.equal(writes.length, 1)
     const configuration = writes[0].configuration as Record<string, unknown>
     assert.equal(configuration.title, "My daily schedule")
