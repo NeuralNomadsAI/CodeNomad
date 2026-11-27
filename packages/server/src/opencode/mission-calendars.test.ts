@@ -13,7 +13,11 @@ function fixture() {
       create: async (input: any) => { calls.push(`session ${input.id}`); sessions.set(input.id, { ...input }); return sessions.get(input.id) },
     },
     experimental: { automation: {
-      list: async ({ sessionID }: { sessionID: string }) => rows.filter(row => row.sessionID === sessionID).map(row => ({ ...row })),
+      list: async ({ sessionID }: { sessionID: string }) => {
+        // OpenCode refuses to list the Automations of a conversation that does not exist.
+        if (!sessions.has(sessionID)) throw Object.assign(new Error(`Session not found: ${sessionID}`), { _tag: "SessionNotFoundError", sessionID })
+        return rows.filter(row => row.sessionID === sessionID).map(row => ({ ...row }))
+      },
       create: async (input: any) => {
         if (++next >= failCreateAt) throw new Error("refused")
         const row = { id: `aut_${next}`, tz: "UTC", status: "active", runCount: 0, ...input }
@@ -68,4 +72,12 @@ test("a refused rule leaves the calendar as it was", async () => {
   f.failCreatesFrom(3)
   await assert.rejects(f.calendars.save("cal_sync", [f.rule("0 10 * * *", "cal_sync"), f.rule("bad", "cal_sync")]), /refused/)
   assert.deepEqual((await f.calendars.list())[0]!.rules.map(rule => rule.automationID), ["aut_1"])
+})
+
+test("a project that never had a calendar lists none, and has none to pause or delete", async () => {
+  const f = fixture()
+  assert.deepEqual(await f.calendars.list(), [])
+  await assert.rejects(f.calendars.pause("cal_sync"), MissionCalendarMissing)
+  await assert.rejects(f.calendars.delete("cal_sync"), MissionCalendarMissing)
+  assert.deepEqual(f.calls, [], "listing creates nothing")
 })
