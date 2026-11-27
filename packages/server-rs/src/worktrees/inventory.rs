@@ -607,31 +607,37 @@ impl Tree {
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
         if let Some(link) = &self.projected_link {
             let (link_path, target, target_layout, target_id) = link.as_ref();
-            let resolved_matches = link_path.to_str().is_some_and(|s| {
-                super::ownership::resolve_media_path_checked(&self.scope, s)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|(p, a)| p == a && p == *target)
-            });
             return dir.starts_with(target)
                 && self.layout.live()
                 && target_layout.live()
-                && resolved_matches
-                && identity(target).ok().as_deref() == Some(target_id.as_str());
+                && identity(target).ok().as_deref() == Some(target_id.as_str())
+                && link_path.to_str().is_some_and(|s| {
+                    super::ownership::resolve_media_path_checked(&self.scope, s)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|(p, a)| p == a && p == *target)
+                });
         }
-        let project_missing = self.nested_missing
-            || std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
         // Exact prefix match prevents cross-workspace matches on case-sensitive NTFS when
         // projected `Projet` is absent while a distinct sibling `projet` exists.
-        let within = dir.starts_with(&self.path) && (!project_missing || dir.starts_with(self.registered()));
-        within
-            && self.layout.live()
-            && self.link_live()
-            && if project_missing {
-                std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-            } else {
-                self.identity.is_some() && identity(&self.path).ok() == self.identity
-            }
+        if !dir.starts_with(&self.path) || !self.layout.live() || !self.link_live() {
+            return false;
+        }
+        let Some((resolved, anchor)) = self
+            .path
+            .to_str()
+            .and_then(|s| super::ownership::resolve_media_path_checked(&self.scope, s).ok().flatten())
+        else {
+            return false;
+        };
+        if resolved != self.path {
+            return false;
+        }
+        if anchor != self.path {
+            dir.starts_with(self.registered())
+        } else {
+            !self.nested_missing && self.identity.is_some() && identity(&self.path).ok() == self.identity
+        }
     }
     pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
         super::ownership::within(&self.path, dir)
@@ -1072,7 +1078,7 @@ async fn catalogue_in_at(
             removable: !opened && check.admin != check.common,
             layout: check,
             projected_link,
-            scope: app.scope.clone(),
+            scope: if scoped { app.scope.clone() } else { PathBuf::new() },
             branch: field("branch refs/heads/"),
             head: field("HEAD ").filter(|s| s.bytes().any(|b| b != b'0')),
             locked: meta.split('\0').any(|s| s == "locked" || s.starts_with("locked ")),
