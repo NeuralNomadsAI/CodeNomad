@@ -15,7 +15,37 @@ const MAX_AST_NODES: usize = 1024;
 const MAX_COMPILE_WORK: usize = 4096;
 const MAX_MATCH_STEPS: usize = 200_000;
 const MAX_CACHE_ENTRIES: usize = 64;
-const MAX_MATCH_CACHE_ENTRIES: usize = 32;
+const MAX_MATCH_CACHE_ENTRIES: usize = 256;
+
+/// Shared work budget across regex evaluations in a single form render/validation pass.
+#[derive(Clone, Debug)]
+pub struct MatchBudget {
+    remaining: usize,
+}
+
+impl Default for MatchBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MatchBudget {
+    pub fn new() -> Self {
+        Self {
+            remaining: MAX_MATCH_STEPS,
+        }
+    }
+
+    fn consume(&mut self, cost: usize) -> bool {
+        if cost > self.remaining {
+            self.remaining = 0;
+            false
+        } else {
+            self.remaining -= cost;
+            true
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompileError {
@@ -44,7 +74,7 @@ fn compile_cached(src: &str) -> Result<Arc<Pattern>, CompileError> {
     compiled
 }
 
-fn match_cached(src: &str, pat: &Pattern, value: &str) -> bool {
+fn match_cached(src: &str, pat: &Pattern, value: &str, budget: &mut MatchBudget) -> bool {
     let cache = MATCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (src.to_string(), value.to_string());
     if let Ok(map) = cache.lock()
@@ -52,8 +82,13 @@ fn match_cached(src: &str, pat: &Pattern, value: &str) -> bool {
     {
         return hit;
     }
-    // Defer to OpenCode (`true`) if matching hits the step budget.
-    let matched = pat.is_match(value).unwrap_or(true);
+    if budget.remaining == 0 {
+        return true;
+    }
+    // Defer to OpenCode (`true`) if matching hits the shared work budget.
+    let Some(matched) = pat.is_match_budgeted(value, budget) else {
+        return true;
+    };
     if let Ok(mut map) = cache.lock() {
         if map.len() >= MAX_MATCH_CACHE_ENTRIES {
             map.clear();
@@ -111,7 +146,11 @@ pub fn valid_string_constraints(field: &Value) -> bool {
     }
 }
 
-pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()> {
+pub fn matches_string_constraints_budgeted(
+    field: &Value,
+    value: &str,
+    budget: &mut MatchBudget,
+) -> Result<bool, ()> {
     if let Some(raw) = field.get("format").filter(|v| !v.is_null()) {
         let fmt = raw.as_str().and_then(StringFormat::parse).ok_or(())?;
         if !fmt.matches(value) {
@@ -123,7 +162,7 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
         if !src.is_empty() {
             match compile_cached(src) {
                 Ok(pat) => {
-                    if !match_cached(src, &pat, value) {
+                    if !match_cached(src, &pat, value, budget) {
                         return Ok(false);
                     }
                 }
@@ -135,12 +174,17 @@ pub fn matches_string_constraints(field: &Value, value: &str) -> Result<bool, ()
     Ok(true)
 }
 
+pub fn is_es_whitespace(c: char) -> bool {
+    u16::try_from(c as u32).is_ok_and(is_space_u16)
+}
+
+pub fn trim_es(value: &str) -> &str {
+    value.trim_matches(is_es_whitespace)
+}
+
 fn is_valid_email(value: &str) -> bool {
-    if value.is_empty()
-        || value
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_ascii_control())
-    {
+    // Match OpenCode's ECMAScript email predicate `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`.
+    if value.is_empty() || value.chars().any(is_es_whitespace) {
         return false;
     }
     let mut parts = value.split('@');
@@ -150,11 +194,12 @@ fn is_valid_email(value: &str) -> bool {
     let Some(domain) = parts.next() else {
         return false;
     };
-    if parts.next().is_some() || local.is_empty() || domain.is_empty() {
+    if parts.next().is_some() || local.is_empty() || domain.len() < 3 {
         return false;
     }
-    let labels: Vec<&str> = domain.split('.').collect();
-    labels.len() >= 2 && labels.iter().all(|label| !label.is_empty())
+    domain
+        .char_indices()
+        .any(|(idx, ch)| ch == '.' && idx > 0 && idx + 1 < domain.len())
 }
 
 fn is_valid_uri(value: &str) -> bool {
@@ -210,67 +255,262 @@ fn is_valid_date(value: &str) -> bool {
     (1..=12).contains(&month) && (1..=days_in_month(year, month)).contains(&day)
 }
 
-fn is_valid_date_time(value: &str) -> bool {
-    if value.len() < 16 || !value.is_ascii() {
-        return false;
-    }
-    if !is_valid_date(&value[0..10]) {
-        return false;
+#[derive(Clone, Copy)]
+struct ParsedLocalDateTime {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    millis: u32,
+}
+
+fn parse_local_date_time_without_zone(value: &str) -> Option<ParsedLocalDateTime> {
+    if value.len() < 16 || !value.is_ascii() || !is_valid_date(&value[0..10]) {
+        return None;
     }
     let b = value.as_bytes();
-    if !matches!(b[10], b'T' | b't') || b[13] != b':' {
-        return false;
+    if !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' {
+        return None;
     }
-    let Some(hour) = parse_ascii_digits(&value[11..13]) else {
-        return false;
-    };
-    let Some(minute) = parse_ascii_digits(&value[14..16]) else {
-        return false;
-    };
+    let year = parse_ascii_digits(&value[0..4])? as i64;
+    let month = parse_ascii_digits(&value[5..7])? as i64;
+    let day = parse_ascii_digits(&value[8..10])? as i64;
+    let hour = parse_ascii_digits(&value[11..13])? as i64;
+    let minute = parse_ascii_digits(&value[14..16])? as i64;
     if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
-        return false;
+        return None;
     }
+    let mut second = 0i64;
+    let mut millis = 0u32;
     let mut rest = &value[16..];
     if let Some(after_colon) = rest.strip_prefix(':') {
         if after_colon.len() < 2 {
-            return false;
+            return None;
         }
-        let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
-            return false;
-        };
+        second = parse_ascii_digits(&after_colon[0..2])? as i64;
         if second > 59 || (hour == 24 && second != 0) {
-            return false;
+            return None;
         }
         rest = &after_colon[2..];
         if let Some(after_dot) = rest.strip_prefix('.') {
             let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
             if frac_len == 0 {
-                return false;
+                return None;
             }
-            if hour == 24 && !after_dot[..frac_len].bytes().all(|d| d == b'0') {
-                return false;
+            let frac = &after_dot[..frac_len];
+            if hour == 24 && !frac.bytes().all(|d| d == b'0') {
+                return None;
             }
+            let mut m = 0u32;
+            for i in 0..3 {
+                let d = frac.as_bytes().get(i).copied().unwrap_or(b'0') - b'0';
+                m = m * 10 + u32::from(d);
+            }
+            millis = m;
             rest = &after_dot[frac_len..];
         }
     }
-    if rest.is_empty() || rest == "Z" || rest == "z" {
-        return true;
+    if !rest.is_empty() {
+        return None;
     }
-    let rb = rest.as_bytes();
-    let (tz_h_str, tz_m_str) = if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':' {
-        (&rest[1..3], &rest[4..6])
-    } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
-        (&rest[1..3], &rest[3..5])
-    } else {
+    Some(ParsedLocalDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * m + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let y = y + i64::from(m <= 2);
+    (y, m as u32, d as u32)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn civil_to_unix_secs(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64) -> i64 {
+    days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
+}
+
+/// Convert an edited timezone-less local date-time (e.g. `2026-11-26T14:30`) to UTC RFC 3339
+/// (`...Z`), matching CodeNomad UI's `normalizeFormStringValue`. Returns `None` when `value` is
+/// not a local timezone-less date-time (explicit offsets, date-only values, or invalid strings).
+pub fn normalize_edited_local_date_time(value: &str) -> Option<String> {
+    let trimmed = trim_es(value);
+    let parsed = parse_local_date_time_without_zone(trimmed)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.millis,
+        );
+        let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(trimmed));
+        if !d.get_time().is_finite() {
+            return None;
+        }
+        d.to_iso_string().as_string()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let target_secs = civil_to_unix_secs(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+        );
+        let mut guess = target_secs;
+        for _ in 0..2 {
+            let (ly, lm, ld, lh, lmin) = codenomad_host_process::local_clock(guess)?;
+            let local_min_secs = civil_to_unix_secs(
+                i64::from(ly),
+                i64::from(lm),
+                i64::from(ld),
+                i64::from(lh),
+                i64::from(lmin),
+                0,
+            );
+            let guess_min_secs = guess - guess.rem_euclid(60);
+            let offset = local_min_secs - guess_min_secs;
+            guess = target_secs - offset;
+        }
+        let days = guess.div_euclid(86_400);
+        let sod = guess.rem_euclid(86_400);
+        let (uy, um, ud) = civil_from_days(days);
+        let uh = sod / 3600;
+        let umin = (sod % 3600) / 60;
+        let usec = sod % 60;
+        if !(0..=9999).contains(&uy) {
+            return None;
+        }
+        Some(format!(
+            "{uy:04}-{um:02}-{ud:02}T{uh:02}:{umin:02}:{usec:02}.{:03}Z",
+            parsed.millis
+        ))
+    }
+}
+
+fn is_valid_date_time(value: &str) -> bool {
+    let s = trim_es(value);
+    if s.is_empty() {
         return false;
-    };
-    let Some(tz_h) = parse_ascii_digits(tz_h_str) else {
-        return false;
-    };
-    let Some(tz_m) = parse_ascii_digits(tz_m_str) else {
-        return false;
-    };
-    tz_h <= 23 && tz_m <= 59
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::new(&wasm_bindgen::JsValue::from_str(s))
+            .get_time()
+            .is_finite()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if !s.is_ascii() {
+            return false;
+        }
+        // OpenCode validates `date-time` via `new Date(value)`: ISO date-only forms
+        // (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) are valid in addition to full date-time strings.
+        if s.len() == 4 && parse_ascii_digits(s).is_some() {
+            return true;
+        }
+        if s.len() == 7
+            && s.as_bytes()[4] == b'-'
+            && parse_ascii_digits(&s[0..4]).is_some()
+            && parse_ascii_digits(&s[5..7]).is_some_and(|m| (1..=12).contains(&m))
+        {
+            return true;
+        }
+        if s.len() == 10 {
+            return is_valid_date(s);
+        }
+        if s.len() < 16 || !is_valid_date(&s[0..10]) {
+            return false;
+        }
+        let b = s.as_bytes();
+        if !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' {
+            return false;
+        }
+        let Some(hour) = parse_ascii_digits(&s[11..13]) else {
+            return false;
+        };
+        let Some(minute) = parse_ascii_digits(&s[14..16]) else {
+            return false;
+        };
+        if hour > 24 || minute > 59 || (hour == 24 && minute != 0) {
+            return false;
+        }
+        let mut rest = &s[16..];
+        if let Some(after_colon) = rest.strip_prefix(':') {
+            if after_colon.len() < 2 {
+                return false;
+            }
+            let Some(second) = parse_ascii_digits(&after_colon[0..2]) else {
+                return false;
+            };
+            if second > 59 || (hour == 24 && second != 0) {
+                return false;
+            }
+            rest = &after_colon[2..];
+            if let Some(after_dot) = rest.strip_prefix('.') {
+                let frac_len = after_dot.bytes().take_while(u8::is_ascii_digit).count();
+                if frac_len == 0 {
+                    return false;
+                }
+                if hour == 24 && !after_dot[..frac_len].bytes().all(|d| d == b'0') {
+                    return false;
+                }
+                rest = &after_dot[frac_len..];
+            }
+        }
+        if rest.is_empty() || rest == "Z" || rest == "z" {
+            return true;
+        }
+        let rb = rest.as_bytes();
+        let (tz_h_str, tz_m_str) = if rb.len() == 6 && matches!(rb[0], b'+' | b'-') && rb[3] == b':'
+        {
+            (&rest[1..3], &rest[4..6])
+        } else if rb.len() == 5 && matches!(rb[0], b'+' | b'-') {
+            (&rest[1..3], &rest[3..5])
+        } else {
+            return false;
+        };
+        let Some(tz_h) = parse_ascii_digits(tz_h_str) else {
+            return false;
+        };
+        let Some(tz_m) = parse_ascii_digits(tz_m_str) else {
+            return false;
+        };
+        tz_h <= 23 && tz_m <= 59
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -836,7 +1076,7 @@ impl Pattern {
         Ok(Self { insts })
     }
 
-    pub fn is_match(&self, text: &str) -> Option<bool> {
+    fn is_match_budgeted(&self, text: &str, budget: &mut MatchBudget) -> Option<bool> {
         let units: Vec<u16> = text.encode_utf16().collect();
         let n = self.insts.len();
         let mut visited = vec![0u32; n];
@@ -844,7 +1084,6 @@ impl Pattern {
         let mut current = Vec::with_capacity(n.min(64));
         let mut next = Vec::with_capacity(n.min(64));
         let mut stack = Vec::with_capacity(n.min(64));
-        let mut steps = 0usize;
         if !self.add_state(
             0,
             0,
@@ -853,7 +1092,7 @@ impl Pattern {
             stamp,
             &mut current,
             &mut stack,
-            &mut steps,
+            budget,
         ) {
             return None;
         }
@@ -873,16 +1112,14 @@ impl Pattern {
             }
             next.clear();
             for &pc in &current {
-                steps = steps.saturating_add(1);
-                if steps > MAX_MATCH_STEPS {
+                if !budget.consume(1) {
                     return None;
                 }
                 let matched = match &self.insts[pc] {
                     Inst::Literal(u) => unit == *u,
                     Inst::Any => !matches!(unit, 0x000A | 0x000D | 0x2028 | 0x2029),
                     Inst::Class { negated, items } => {
-                        steps = steps.saturating_add(items.len());
-                        if steps > MAX_MATCH_STEPS {
+                        if !budget.consume(items.len()) {
                             return None;
                         }
                         let hit = items.iter().any(|item| item.matches(unit));
@@ -899,7 +1136,7 @@ impl Pattern {
                         stamp,
                         &mut next,
                         &mut stack,
-                        &mut steps,
+                        budget,
                     )
                 {
                     return None;
@@ -914,7 +1151,7 @@ impl Pattern {
                 stamp,
                 &mut next,
                 &mut stack,
-                &mut steps,
+                budget,
             ) {
                 return None;
             }
@@ -939,13 +1176,12 @@ impl Pattern {
         stamp: u32,
         out: &mut Vec<usize>,
         stack: &mut Vec<usize>,
-        steps: &mut usize,
+        budget: &mut MatchBudget,
     ) -> bool {
         stack.clear();
         stack.push(start);
         while let Some(pc) = stack.pop() {
-            *steps = steps.saturating_add(1);
-            if *steps > MAX_MATCH_STEPS {
+            if !budget.consume(1) {
                 return false;
             }
             if pc >= self.insts.len() || visited[pc] == stamp {

@@ -88,6 +88,22 @@ pub fn multi_option_key(field_key: &str, value: &str) -> String {
     opaque_option_key("multi", field_key, value)
 }
 
+pub fn field_editor_key(field_key: &str) -> String {
+    format!("field-{field_key}")
+}
+
+pub fn custom_editor_key(field_key: &str) -> String {
+    format!("custom-{field_key}")
+}
+
+pub fn field_container_key(field_key: &str) -> String {
+    format!("container:{}:{field_key}", field_key.len())
+}
+
+pub fn field_error_key(field_key: &str) -> String {
+    format!("error:{}:{field_key}", field_key.len())
+}
+
 pub fn field_group_key(field_key: &str) -> String {
     format!("form-group:{}:{field_key}", field_key.len())
 }
@@ -138,7 +154,10 @@ fn field_kind(field: &Value) -> FieldKind {
 }
 
 fn is_line_editable_custom(value: &str) -> bool {
-    !value.is_empty() && !value.contains(['\n', '\r', ',', '"', '\\']) && value.trim() == value
+    !value.is_empty()
+        && !value.contains(['\n', '\r', ',', '"', '\\'])
+        && string_constraints::trim_es(value) == value
+        && value.trim() == value
 }
 
 fn parse_u64_bound(field: &Value, key: &str) -> Result<Option<u64>, ()> {
@@ -179,7 +198,11 @@ pub fn valid_bounds(field: &Value) -> bool {
     }
 }
 
-fn string_value_satisfies_bounds(field: &Value, raw: &str) -> bool {
+fn string_value_satisfies_bounds(
+    field: &Value,
+    raw: &str,
+    budget: &mut string_constraints::MatchBudget,
+) -> bool {
     let Ok(min_len) = parse_u64_bound(field, "minLength") else {
         return false;
     };
@@ -190,7 +213,8 @@ fn string_value_satisfies_bounds(field: &Value, raw: &str) -> bool {
     n <= 20_000
         && min_len.is_none_or(|m| n >= m)
         && max_len.is_none_or(|m| n <= m)
-        && string_constraints::matches_string_constraints(field, raw).unwrap_or(false)
+        && string_constraints::matches_string_constraints_budgeted(field, raw, budget)
+            .unwrap_or(false)
 }
 
 /// Whether an active field requires a non-empty answer before submission.
@@ -205,12 +229,27 @@ pub fn field_required(field: &Value) -> bool {
 
 /// Whether an active field cannot be satisfied by any valid user action using the exact same
 /// validated bounds enforced by `value()` (malformed bounds, empty/normalized-away required closed
-/// choices, contradictory `minItems`/`maxItems` or `minLength`/`maxLength`, or closed options
-/// exceeding the 20,000 UTF-16 code-unit limit).
+/// choices, contradictory `minItems`/`maxItems` or `minLength`/`maxLength`, oversized multiselect
+/// defaults, or closed options exceeding the 20,000 UTF-16 code-unit limit).
 pub fn field_unanswerable(field: &Value) -> bool {
+    let mut budget = string_constraints::MatchBudget::new();
+    field_unanswerable_budgeted(field, &mut budget)
+}
+
+pub fn field_unanswerable_budgeted(
+    field: &Value,
+    budget: &mut string_constraints::MatchBudget,
+) -> bool {
     if !valid_options_shape(field)
         || !valid_bounds(field)
         || !string_constraints::valid_string_constraints(field)
+    {
+        return true;
+    }
+    if field["type"] == "multiselect"
+        && field["default"]
+            .as_array()
+            .is_some_and(|arr| arr.len() > 32)
     {
         return true;
     }
@@ -222,7 +261,7 @@ pub fn field_unanswerable(field: &Value) -> bool {
             field["required"] == true
                 && !normalized_options(field)
                     .iter()
-                    .any(|opt| string_value_satisfies_bounds(field, opt.value))
+                    .any(|opt| string_value_satisfies_bounds(field, opt.value, budget))
         }
         Some("string") => {
             if field["required"] != true {
@@ -254,11 +293,28 @@ pub fn field_unanswerable(field: &Value) -> bool {
             if field["custom"] == true {
                 min_needed > max_allowed
             } else {
-                let valid_count = normalized_options(field)
+                let options = normalized_options(field);
+                let valid_count = options
                     .iter()
                     .filter(|opt| opt.value.encode_utf16().count() <= 20_000)
                     .count() as u64;
-                min_needed > valid_count.min(max_allowed)
+                if min_needed <= valid_count.min(max_allowed) {
+                    return false;
+                }
+                // An untouched ordered default array (e.g. `["alpha", "alpha"]` with `minItems: 2`)
+                // can satisfy `minItems` without editing checkboxes.
+                let untouched_satisfies = field["default"].as_array().is_some_and(|arr| {
+                    let count = arr.len() as u64;
+                    count >= min_needed
+                        && count <= max_allowed
+                        && arr.iter().all(|entry| {
+                            entry.as_str().is_some_and(|s| {
+                                s.encode_utf16().count() <= 20_000
+                                    && options.iter().any(|opt| opt.value == s)
+                            })
+                        })
+                });
+                !untouched_satisfies
             }
         }
         Some("number") => {
@@ -334,7 +390,7 @@ fn try_decode_quoted_entry(trimmed: &str) -> Option<String> {
 }
 
 fn decode_custom_entry(raw: &str) -> String {
-    let trimmed = raw.trim();
+    let trimmed = string_constraints::trim_es(raw);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -364,7 +420,7 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
         let start = pos;
         let mut i = pos;
         while let Some(ch) = text[i..].chars().next() {
-            if ch != '\n' && ch != '\r' && ch.is_whitespace() {
+            if ch != '\n' && ch != '\r' && string_constraints::is_es_whitespace(ch) {
                 i += ch.len_utf8();
             } else {
                 break;
@@ -420,7 +476,7 @@ fn parse_custom_entries(text: &str) -> Vec<CustomEntry> {
         };
         if i < bytes.len() && bytes[i] == b',' {
             while let Some(ch) = text[full_end..].chars().next() {
-                if ch != '\n' && ch != '\r' && ch.is_whitespace() {
+                if ch != '\n' && ch != '\r' && string_constraints::is_es_whitespace(ch) {
                     full_end += ch.len_utf8();
                 } else {
                     break;
@@ -531,6 +587,7 @@ fn strip_leaked_defaults(
         if field["type"] != "boolean" && next.edit.text == raw {
             next.edit = TextEdit::new("");
             next.edit_baseline.clear();
+            next.explicit_empty_default = false;
         }
         if next.custom.text == raw {
             next.custom = TextEdit::new("");
@@ -540,6 +597,9 @@ fn strip_leaked_defaults(
     if field["type"] == "multiselect" {
         next.preserved_custom.retain(|item| !blocked(item));
         next.preserved_custom_selected.retain(|item| !blocked(item));
+        if let Some(items) = &mut next.untouched_multiselect_default {
+            items.retain(|item| !blocked(item));
+        }
         if !next.custom.text.is_empty()
             && remove_promoted_lines(&mut next.custom, |trimmed| blocked(trimmed))
         {
@@ -590,7 +650,9 @@ pub struct Draft {
     pub selected: BTreeSet<String>,
     pub preserved_custom: Vec<String>,
     pub preserved_custom_selected: BTreeSet<String>,
-    pub explicit_multiselect_default: bool,
+    pub untouched_multiselect_default: Option<Vec<String>>,
+    pub oversized_multiselect_default: bool,
+    pub explicit_empty_default: bool,
     pub hidden_multiselect: Option<Vec<String>>,
     pub hidden_multiselect_invalid: bool,
     pub declared_options: Option<BTreeSet<String>>,
@@ -665,7 +727,9 @@ impl Default for Draft {
             selected: BTreeSet::new(),
             preserved_custom: Vec::new(),
             preserved_custom_selected: BTreeSet::new(),
-            explicit_multiselect_default: false,
+            untouched_multiselect_default: None,
+            oversized_multiselect_default: false,
+            explicit_empty_default: false,
             hidden_multiselect: None,
             hidden_multiselect_invalid: false,
             declared_options: None,
@@ -712,52 +776,65 @@ fn fresh_draft(field: &Value) -> Draft {
         }
         if hidden {
             if let Some(values) = value.as_array() {
-                let allowed = normalized_options(field);
-                let mut items = Vec::with_capacity(values.len());
-                for entry in values {
-                    if let Some(raw) = entry.as_str() {
-                        if allowed.iter().any(|opt| opt.value == raw)
-                            || declared.as_ref().is_some_and(|all| all.contains(raw))
-                        {
-                            d.prior_choice_values.insert(raw.to_string());
+                if values.len() > 32 {
+                    d.oversized_multiselect_default = true;
+                } else {
+                    let allowed = normalized_options(field);
+                    let mut items = Vec::with_capacity(values.len());
+                    for entry in values {
+                        if let Some(raw) = entry.as_str() {
+                            if allowed.iter().any(|opt| opt.value == raw)
+                                || declared.as_ref().is_some_and(|all| all.contains(raw))
+                            {
+                                d.prior_choice_values.insert(raw.to_string());
+                            }
+                            d.prior_hidden_values.insert(raw.to_string());
+                            items.push(raw.to_string());
+                        } else {
+                            d.hidden_multiselect_invalid = true;
                         }
-                        d.prior_hidden_values.insert(raw.to_string());
-                        items.push(raw.to_string());
-                    } else {
-                        d.hidden_multiselect_invalid = true;
                     }
+                    d.hidden_multiselect = Some(items);
                 }
-                d.hidden_multiselect = Some(items);
             } else if !value.is_null() {
                 d.hidden_multiselect_invalid = true;
             }
         } else if let Some(values) = value.as_array() {
-            d.explicit_multiselect_default = true;
-            let allowed = normalized_options(field);
-            let allow_custom = field["custom"] == true;
-            let mut seen = HashSet::new();
-            let mut editable_custom = Vec::new();
-            for raw in values.iter().filter_map(Value::as_str) {
-                let is_allowed = allowed.iter().any(|opt| opt.value == raw);
-                let is_any_declared =
-                    is_allowed || declared.as_ref().is_some_and(|all| all.contains(raw));
-                if is_allowed {
-                    d.selected.insert(raw.to_string());
-                    d.prior_choice_values.insert(raw.to_string());
-                } else if is_any_declared {
-                    // Declared outside the 64-option render cap: never hydrate into visible custom text.
-                    d.prior_choice_values.insert(raw.to_string());
-                } else if allow_custom && seen.insert(raw.to_string()) {
-                    if !is_line_editable_custom(raw) {
-                        d.preserved_custom.push(raw.to_string());
-                        d.preserved_custom_selected.insert(raw.to_string());
-                    } else {
-                        editable_custom.push(raw);
+            if values.len() > 32 {
+                d.oversized_multiselect_default = true;
+            } else {
+                let allowed = normalized_options(field);
+                let allow_custom = field["custom"] == true;
+                let mut seen = HashSet::new();
+                let mut editable_custom = Vec::new();
+                let mut raw_default = Vec::with_capacity(values.len());
+                for raw in values.iter().filter_map(Value::as_str) {
+                    let is_allowed = allowed.iter().any(|opt| opt.value == raw);
+                    let is_any_declared =
+                        is_allowed || declared.as_ref().is_some_and(|all| all.contains(raw));
+                    if is_allowed {
+                        d.selected.insert(raw.to_string());
+                        d.prior_choice_values.insert(raw.to_string());
+                        raw_default.push(raw.to_string());
+                    } else if is_any_declared {
+                        // Declared outside the 64-option render cap: never hydrate into visible custom text.
+                        d.prior_choice_values.insert(raw.to_string());
+                    } else if allow_custom {
+                        raw_default.push(raw.to_string());
+                        if seen.insert(raw.to_string()) {
+                            if !is_line_editable_custom(raw) {
+                                d.preserved_custom.push(raw.to_string());
+                                d.preserved_custom_selected.insert(raw.to_string());
+                            } else {
+                                editable_custom.push(raw);
+                            }
+                        }
                     }
                 }
-            }
-            if !editable_custom.is_empty() {
-                d.custom = TextEdit::new(editable_custom.join("\n"));
+                d.untouched_multiselect_default = Some(raw_default);
+                if !editable_custom.is_empty() {
+                    d.custom = TextEdit::new(editable_custom.join("\n"));
+                }
             }
         }
     } else if field["type"] == "string" && has_declared_options(field) {
@@ -805,6 +882,9 @@ fn fresh_draft(field: &Value) -> Draft {
                 d.hidden_value = Some(raw.to_string());
             } else {
                 d.edit = TextEdit::new(raw);
+                if raw.is_empty() {
+                    d.explicit_empty_default = true;
+                }
             }
         }
     } else if !value.is_null() {
@@ -877,7 +957,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                             draft.selected.clear();
                             draft.preserved_custom.clear();
                             draft.preserved_custom_selected.clear();
-                            draft.explicit_multiselect_default = false;
+                            draft.untouched_multiselect_default = None;
+                            draft.oversized_multiselect_default = false;
                             draft.hidden_multiselect = None;
                             draft.hidden_multiselect_invalid = false;
                             draft.hidden_value = None;
@@ -1002,11 +1083,25 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                         draft.custom_baseline.clear();
                     }
                 }
+                if draft.is_dirty() {
+                    draft.untouched_multiselect_default = None;
+                } else if let Some(raw_items) = &mut draft.untouched_multiselect_default {
+                    let custom_entries: HashSet<String> = parse_custom_entries(&draft.custom.text)
+                        .into_iter()
+                        .map(|e| e.value)
+                        .collect();
+                    raw_items.retain(|item| {
+                        draft.selected.contains(item)
+                            || draft.preserved_custom_selected.contains(item)
+                            || (allow_custom && custom_entries.contains(item))
+                    });
+                }
             } else if kind == FieldKind::StringOptions {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.explicit_multiselect_default = false;
+                draft.untouched_multiselect_default = None;
+                draft.oversized_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 let allowed = normalized_options(field);
@@ -1055,7 +1150,8 @@ pub fn seed(forms: &[Form], drafts: &mut Drafts) {
                 draft.selected.clear();
                 draft.preserved_custom.clear();
                 draft.preserved_custom_selected.clear();
-                draft.explicit_multiselect_default = false;
+                draft.untouched_multiselect_default = None;
+                draft.oversized_multiselect_default = false;
                 draft.hidden_multiselect = None;
                 draft.hidden_multiselect_invalid = false;
                 draft.choice = None;
@@ -1133,6 +1229,15 @@ pub fn supported(form: &Form) -> bool {
     })
 }
 pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationError> {
+    let mut budget = string_constraints::MatchBudget::new();
+    validate_budgeted(field, d, &mut budget)
+}
+
+pub fn validate_budgeted(
+    field: &Value,
+    d: &Draft,
+    budget: &mut string_constraints::MatchBudget,
+) -> Result<Option<Value>, ValidationError> {
     if !valid_options_shape(field)
         || !valid_bounds(field)
         || !string_constraints::valid_string_constraints(field)
@@ -1207,8 +1312,12 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                 {
                     return Err(ValidationError::TooLong { max: m });
                 }
-                if !string_constraints::matches_string_constraints(field, selected_text)
-                    .map_err(|()| ValidationError::Unsupported)?
+                if !string_constraints::matches_string_constraints_budgeted(
+                    field,
+                    selected_text,
+                    budget,
+                )
+                .map_err(|()| ValidationError::Unsupported)?
                 {
                     return Err(ValidationError::InvalidFormat);
                 }
@@ -1216,21 +1325,29 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             }
             let hidden_present =
                 field["hidden"] == true && text.is_empty() && d.hidden_value.is_some();
-            let effective = if hidden_present {
+            let explicit_empty = !d.is_dirty() && d.explicit_empty_default && text.is_empty();
+            let effective_raw = if hidden_present {
                 d.hidden_value.as_deref().unwrap_or("")
             } else {
                 text
             };
-            if effective.is_empty() && !hidden_present {
+            if effective_raw.is_empty() && !hidden_present && !explicit_empty {
                 return if field["required"] == true {
                     Err(ValidationError::Required)
                 } else {
                     Ok(None)
                 };
             }
-            if field["required"] == true && effective.is_empty() {
+            if field["required"] == true && effective_raw.is_empty() {
                 return Err(ValidationError::Required);
             }
+            let normalized_dt = if field["format"] == "date-time" && !hidden_present && d.is_dirty()
+            {
+                string_constraints::normalize_edited_local_date_time(effective_raw)
+            } else {
+                None
+            };
+            let effective = normalized_dt.as_deref().unwrap_or(effective_raw);
             let n = effective.encode_utf16().count() as u64;
             if let Some(m) = min_len
                 && n < m
@@ -1242,7 +1359,7 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             {
                 return Err(ValidationError::TooLong { max: m });
             }
-            if !string_constraints::matches_string_constraints(field, effective)
+            if !string_constraints::matches_string_constraints_budgeted(field, effective, budget)
                 .map_err(|()| ValidationError::Unsupported)?
             {
                 return Err(ValidationError::InvalidFormat);
@@ -1319,6 +1436,9 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             let options = normalized_options(field);
             let is_declared = |entry: &str| options.iter().any(|o| o.value == entry);
             let allow_custom = field["custom"] == true;
+            if d.oversized_multiselect_default {
+                return Err(ValidationError::TooManyItems { max: 32 });
+            }
             if field["hidden"] == true && d.hidden_only {
                 if d.hidden_multiselect_invalid {
                     return Err(ValidationError::Unsupported);
@@ -1364,6 +1484,39 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
                     return Err(ValidationError::Required);
                 }
                 return Ok(Some(json!(hidden_items)));
+            }
+            if !d.is_dirty()
+                && let Some(raw_items) = d.untouched_multiselect_default.as_ref()
+            {
+                let mut ordered_items = Vec::with_capacity(raw_items.len());
+                for item in raw_items {
+                    if item.encode_utf16().count() > 20_000 {
+                        return Err(ValidationError::TooLong { max: 20_000 });
+                    }
+                    if is_declared(item) || allow_custom {
+                        ordered_items.push(item.clone());
+                    } else {
+                        return Err(ValidationError::SelectDeclaredOption);
+                    }
+                }
+                let count = ordered_items.len() as u64;
+                if count > 32 {
+                    return Err(ValidationError::TooManyItems { max: 32 });
+                }
+                if let Some(m) = max_items
+                    && count > m
+                {
+                    return Err(ValidationError::TooManyItems { max: m });
+                }
+                if let Some(m) = min_items
+                    && count < m
+                {
+                    return Err(ValidationError::TooFewItems { min: m });
+                }
+                if field["required"] == true && count == 0 {
+                    return Err(ValidationError::Required);
+                }
+                return Ok(Some(json!(ordered_items)));
             }
             let mut values = d.selected.clone();
             if allow_custom {
@@ -1416,7 +1569,7 @@ pub fn validate(field: &Value, d: &Draft) -> Result<Option<Value>, ValidationErr
             if field["required"] == true && count == 0 {
                 return Err(ValidationError::Required);
             }
-            if count == 0 && !d.is_dirty() && !d.explicit_multiselect_default {
+            if count == 0 && !d.is_dirty() && d.untouched_multiselect_default.is_none() {
                 return Ok(None);
             }
             Ok(Some(json!(values)))
@@ -1441,13 +1594,6 @@ pub fn visible_validation_error_for(err: &ValidationError, d: &Draft) -> Option<
     Some(err.clone())
 }
 
-pub fn visible_validation_error(field: &Value, d: &Draft) -> Option<ValidationError> {
-    let Err(err) = validate(field, d) else {
-        return None;
-    };
-    visible_validation_error_for(&err, d)
-}
-
 pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
     validate(field, d).map_err(|_| ())
 }
@@ -1455,6 +1601,7 @@ pub fn value(field: &Value, d: &Draft) -> Result<Option<Value>, ()> {
 pub fn evaluate_active_fields<'a>(
     form: &'a Form,
     drafts: &Drafts,
+    budget: &mut string_constraints::MatchBudget,
 ) -> Vec<(&'a Value, Result<Option<Value>, ValidationError>)> {
     let mut active_list = Vec::new();
     let mut out = serde_json::Map::new();
@@ -1465,7 +1612,9 @@ pub fn evaluate_active_fields<'a>(
         let result = field["key"]
             .as_str()
             .and_then(|k| drafts.get(&(form.id.clone(), k.into())))
-            .map_or(Err(ValidationError::Unsupported), |d| validate(field, d));
+            .map_or(Err(ValidationError::Unsupported), |d| {
+                validate_budgeted(field, d, budget)
+            });
         if let Ok(Some(v)) = &result
             && let Some(key) = field["key"].as_str()
         {
@@ -1479,6 +1628,7 @@ pub fn active_fields<'a>(
     form: &'a Form,
     drafts: &Drafts,
 ) -> (Vec<&'a Value>, serde_json::Map<String, Value>) {
+    let mut budget = string_constraints::MatchBudget::new();
     let mut active_list = Vec::new();
     let mut out = serde_json::Map::new();
     for field in &form.fields {
@@ -1492,7 +1642,7 @@ pub fn active_fields<'a>(
         let Some(d) = drafts.get(&(form.id.clone(), key.into())) else {
             continue;
         };
-        if let Ok(Some(v)) = value(field, d) {
+        if let Ok(Some(v)) = validate_budgeted(field, d, &mut budget) {
             out.insert(key.into(), v);
         }
     }
@@ -1502,6 +1652,7 @@ pub fn answer(form: &Form, drafts: &Drafts) -> Result<Value, ()> {
     if !supported(form) {
         return Err(());
     }
+    let mut budget = string_constraints::MatchBudget::new();
     let mut out = serde_json::Map::new();
     for field in &form.fields {
         if !active(field, &out) {
@@ -1509,7 +1660,7 @@ pub fn answer(form: &Form, drafts: &Drafts) -> Result<Value, ()> {
         }
         let key = field["key"].as_str().ok_or(())?;
         let d = drafts.get(&(form.id.clone(), key.into())).ok_or(())?;
-        if let Some(value) = value(field, d)? {
+        if let Some(value) = validate_budgeted(field, d, &mut budget).map_err(|_| ())? {
             out.insert(key.into(), value);
         }
     }

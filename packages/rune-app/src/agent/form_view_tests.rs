@@ -787,7 +787,7 @@ fn duplicate_empty_and_blank_label_options_stay_consistent_across_seed_render_an
             );
             assert_eq!(
                 ans["mixed_tags"],
-                json!(["custom-keep", "opt_a", "team-local"])
+                json!(["opt_a", "team-local", "custom-keep"])
             );
         }
 
@@ -1183,7 +1183,7 @@ fn kind_changes_custom_option_authority_multiline_defaults_selection_and_unanswe
             "invalid"
         ));
         assert_eq!(
-            find_node(&conflict_tree, "field-error:7:targets").unwrap()["name"],
+            find_node(&conflict_tree, "error:7:targets").unwrap()["name"],
             "Clear — Other values"
         );
         assert!(has_state(
@@ -1501,14 +1501,14 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             "invalid"
         ));
         assert_eq!(
-            find_node(&id_tree, "field-error:9:multi_env").unwrap()["name"],
+            find_node(&id_tree, "error:9:multi_env").unwrap()["name"],
             "Clear — Other values"
         );
         assert!(has_state(
             find_input(&id_tree, "custom-radio_env"),
             "invalid"
         ));
-        let err_node = find_node(&id_tree, "field-error:9:radio_env")
+        let err_node = find_node(&id_tree, "error:9:radio_env")
             .expect("conflict alert for declared string option in custom input");
         assert_eq!(err_node["role"], "alert");
         assert_eq!(err_node["name"], "Select an option");
@@ -1540,12 +1540,12 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             find_input(&id_resolved, "custom-multi_env"),
             "invalid"
         ));
-        assert!(find_node(&id_resolved, "field-error:9:multi_env").is_none());
+        assert!(find_node(&id_resolved, "error:9:multi_env").is_none());
         assert!(!has_state(
             find_input(&id_resolved, "custom-radio_env"),
             "invalid"
         ));
-        assert!(find_node(&id_resolved, "field-error:9:radio_env").is_none());
+        assert!(find_node(&id_resolved, "error:9:radio_env").is_none());
         assert!(!has_state(
             find_node(&id_resolved, "answer-question").unwrap(),
             "disabled"
@@ -1952,7 +1952,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                 "custom-req_hybrid_multi",
             ),
         ] {
-            let shared_key = format!("field-body:{}:{field_key}", field_key.len());
+            let shared_key = agent_forms::field_container_key(field_key);
             let shared = find_node(&rtree, &shared_key)
                 .expect("shared required parent group for hybrid choice+custom field");
             assert_eq!(shared["role"], "group");
@@ -2289,7 +2289,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                     .is_some_and(|d| d.contains(max_len_expected)),
                 "maxLength violation must reach input description ({locale}): {short_in}"
             );
-            let short_err = find_node(&vtree, "field-error:10:short_text").unwrap();
+            let short_err = find_node(&vtree, "error:10:short_text").unwrap();
             assert_eq!(short_err["role"], "alert");
             assert_eq!(short_err["name"], max_len_expected);
 
@@ -2301,7 +2301,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                     .is_some_and(|d| d.contains(min_items_expected)),
                 "minItems violation must reach checkbox description ({locale}): {tag_a_node}"
             );
-            let tags_err = find_node(&vtree, "field-error:8:min_tags").unwrap();
+            let tags_err = find_node(&vtree, "error:8:min_tags").unwrap();
             assert_eq!(tags_err["role"], "alert");
             assert_eq!(tags_err["name"], min_items_expected);
 
@@ -2321,9 +2321,9 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
                 find_input(&ok_tree, "field-short_text"),
                 "invalid"
             ));
-            assert!(find_node(&ok_tree, "field-error:10:short_text").is_none());
+            assert!(find_node(&ok_tree, "error:10:short_text").is_none());
             assert!(!has_state(find_node(&ok_tree, &tag_a).unwrap(), "invalid"));
-            assert!(find_node(&ok_tree, "field-error:8:min_tags").is_none());
+            assert!(find_node(&ok_tree, "error:8:min_tags").is_none());
             assert!(!has_state(
                 find_node(&ok_tree, "answer-question").unwrap(),
                 "disabled"
@@ -2620,7 +2620,7 @@ fn reduced_tab_order_identical_refresh_provenance_removable_multiline_impossible
             "tabbing into untouched required textbox must not mark it invalid"
         );
         assert!(
-            find_node(&focused_tree, "field-error:5:token").is_none(),
+            find_node(&focused_tree, "error:5:token").is_none(),
             "tabbing into untouched required textbox must not emit an assertive alert"
         );
         // Refresh the same untouched field as hidden with default "fixed" -> Answer enables with "fixed".
@@ -3095,7 +3095,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
             d.get_mut(&("form-r11-constraints".into(), "stamp".into()))
                 .unwrap()
                 .editor()
-                .text = "2026-11-26 12:00".into();
+                .text = "not-a-date-time".into();
         });
         prt.frame(1.0 / 60.0);
         let ptree = prt.accessibility_json();
@@ -3104,7 +3104,7 @@ fn close_guard_descriptions_hidden_reveal_cascades_patterns_empty_choice_and_bla
             "disabled"
         ));
         for k in ["code", "site", "mail", "day", "stamp"] {
-            let err_key = format!("field-error:{}:{k}", k.len());
+            let err_key = format!("error:{}:{k}", k.len());
             assert_eq!(
                 find_node(&ptree, &err_key).expect("inline format/pattern error")["name"],
                 "Invalid"
@@ -3948,7 +3948,12 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
             qans["orgs"],
             json!(["Acme \"West\"", "Doe, \"Jr.\"", "Doe, Jane"])
         );
+    });
+}
 
+#[test]
+fn form_budget_oversized_defaults_opencode_formats_untouched_arrays_and_disjoint_keys() {
+    crate::strings::with_locale("en", || {
         // Round 15 regressions:
         // 1. Worst-case long regex (`a{256}a{256}a{256}a{256}b`) on a 20,000-char default finishes
         // immediately within the match step budget without stalling the UI.
@@ -4151,5 +4156,284 @@ fn bounded_patterns_opencode_parity_inactive_constraints_hidden_roundtrip_opaque
         let nans = agent_forms::answer(&nbsp_form, &ndrafts)
             .expect("quoted entry preceded by NBSP must stay one item under maxItems=2");
         assert_eq!(nans["names"], json!(["Doe, Jane", "red"]));
+
+        // Round 16 regressions:
+        // 1. Form-level regex work budget prevents 32 required 64-option radio fields with heavy
+        // patterns from stalling UI render/validation.
+        let heavy_fields: Vec<serde_json::Value> = (0..32)
+            .map(|fi| {
+                let mut opts: Vec<serde_json::Value> = (0..63)
+                    .map(|oi| {
+                        let val = format!("{}_{fi}_{oi}", "a".repeat(500));
+                        json!({"value": val, "label": format!("Opt {oi}")})
+                    })
+                    .collect();
+                opts.push(json!({"value": format!("{}b", "a".repeat(256)), "label": "Match"}));
+                json!({
+                    "key": format!("f{fi}"),
+                    "title": format!("Field {fi}"),
+                    "type": "string",
+                    "required": true,
+                    "pattern": "a{256}b",
+                    "options": opts
+                })
+            })
+            .collect();
+        let heavy_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-heavy".into(),
+            title: "Heavy regex".into(),
+            fields: heavy_fields,
+        };
+        let t_heavy = std::time::Instant::now();
+        let (state, _rx) = state_with_form(heavy_form);
+        let mut hrt16 = Runtime::new(state, render_form, (420.0, 620.0), Env::new(false, 1.0));
+        hrt16.frame(0.0);
+        assert!(
+            t_heavy.elapsed() < std::time::Duration::from_secs(2),
+            "32x64 regex option scan must share a form-level work budget and stay responsive"
+        );
+
+        // 2. Oversized custom multiselect default (100,000 comma items) does not materialize
+        // unbounded checkbox rows and surfaces the form as unsupported.
+        let huge_defaults: Vec<serde_json::Value> = (0..100_000)
+            .map(|i| json!(format!("item{i:05},")))
+            .collect();
+        let huge_ms_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-huge-ms".into(),
+            title: "Oversized default".into(),
+            fields: vec![json!({
+                "key": "tags",
+                "title": "Tags",
+                "type": "multiselect",
+                "custom": true,
+                "options": [],
+                "default": huge_defaults
+            })],
+        };
+        let t_huge = std::time::Instant::now();
+        let (state, _rx) = state_with_form(huge_ms_form);
+        let mut humrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        humrt.frame(0.0);
+        let humtree = humrt.accessibility_json();
+        assert!(
+            t_huge.elapsed() < std::time::Duration::from_secs(2),
+            "oversized multiselect default must fail fast without allocating 100k checkboxes"
+        );
+        assert!(
+            humrt.state.agent.as_ref().unwrap().drafts[&("form-r16-huge-ms".into(), "tags".into())]
+                .preserved_custom
+                .is_empty(),
+            "oversized multiselect default must not retain unbounded preserved checkboxes"
+        );
+        assert_eq!(
+            find_node(&humtree, "form-unsupported").unwrap()["name"],
+            "Unsupported form"
+        );
+        assert!(has_state(
+            find_node(&humtree, "answer-question").unwrap(),
+            "disabled"
+        ));
+
+        // 3 & 4. Hidden date-time default `2026-11-26` and hidden email default `a@b..c` are
+        // accepted (matching OpenCode); edited local date-time normalizes to UTC while untouched
+        // protocol default is preserved verbatim.
+        let dt_mail_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-dt-mail".into(),
+            title: "Date and email".into(),
+            fields: vec![
+                json!({
+                    "key": "hdt",
+                    "type": "string",
+                    "format": "date-time",
+                    "hidden": true,
+                    "required": true,
+                    "default": "2026-11-26"
+                }),
+                json!({
+                    "key": "hmail",
+                    "type": "string",
+                    "format": "email",
+                    "hidden": true,
+                    "required": true,
+                    "default": "a@b..c"
+                }),
+                json!({
+                    "key": "vdt",
+                    "title": "Schedule",
+                    "type": "string",
+                    "format": "date-time",
+                    "default": "2026-11-26T14:30"
+                }),
+            ],
+        };
+        let mut dm_drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&dt_mail_form), &mut dm_drafts);
+        let untouched_dm = agent_forms::answer(&dt_mail_form, &dm_drafts)
+            .expect("hidden date-only date-time, a@b..c email, and untouched default must pass");
+        assert_eq!(untouched_dm["hdt"], json!("2026-11-26"));
+        assert_eq!(untouched_dm["hmail"], json!("a@b..c"));
+        assert_eq!(untouched_dm["vdt"], json!("2026-11-26T14:30"));
+        dm_drafts
+            .get_mut(&("form-r16-dt-mail".into(), "vdt".into()))
+            .unwrap()
+            .editor()
+            .text = "2026-11-26T15:45".into();
+        let edited_dm = agent_forms::answer(&dt_mail_form, &dm_drafts)
+            .expect("edited local datetime must normalize to UTC and submit");
+        let edited_vdt = edited_dm["vdt"].as_str().unwrap();
+        assert!(
+            edited_vdt.ends_with('Z') && edited_vdt.len() == 24,
+            "edited local date-time must normalize to UTC RFC 3339, got {edited_vdt}"
+        );
+
+        // 5. Untouched visible optional string with explicit `default: ""` activates `when.eq ""`
+        // and submits `""`.
+        let empty_str_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-empty-str".into(),
+            title: "Empty default".into(),
+            fields: vec![
+                json!({"key": "note", "title": "Note", "type": "string", "default": ""}),
+                json!({
+                    "key": "follow",
+                    "title": "Follow-up",
+                    "type": "string",
+                    "required": true,
+                    "default": "yes",
+                    "when": [{"key": "note", "op": "eq", "value": ""}]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(empty_str_form);
+        let mut esrt = Runtime::new(state, render_form, (420.0, 520.0), Env::new(false, 1.0));
+        esrt.frame(0.0);
+        let estree = esrt.accessibility_json();
+        assert!(
+            find_node(&estree, &agent_forms::field_editor_key("follow")).is_some(),
+            "untouched visible optional string default '' must activate when.eq '' dependent"
+        );
+        let esans = agent_forms::answer(
+            &esrt.state.agent.as_ref().unwrap().forms[0],
+            &esrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("untouched explicit empty string default and dependent must submit");
+        assert_eq!(esans, json!({"note": "", "follow": "yes"}));
+
+        // 6. Untouched visible multiselect preserves exact order `["beta", "alpha"]` and
+        // duplicate multiplicity `["alpha", "alpha"]` for `minItems: 2`.
+        let ordered_ms_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-ordered-ms".into(),
+            title: "Ordered multiselect".into(),
+            fields: vec![
+                json!({
+                    "key": "order",
+                    "title": "Order",
+                    "type": "multiselect",
+                    "options": [
+                        {"value": "alpha", "label": "Alpha"},
+                        {"value": "beta", "label": "Beta"}
+                    ],
+                    "default": ["beta", "alpha"]
+                }),
+                json!({
+                    "key": "dups",
+                    "title": "Dups",
+                    "type": "multiselect",
+                    "minItems": 2,
+                    "options": [{"value": "alpha", "label": "Alpha"}],
+                    "default": ["alpha", "alpha"]
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(ordered_ms_form);
+        let mut omrt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        omrt.frame(0.0);
+        let omtree = omrt.accessibility_json();
+        assert!(
+            find_node(&omtree, "form-unsupported").is_none(),
+            "untouched ['alpha','alpha'] default must satisfy minItems=2 without unsupported banner"
+        );
+        let omans = agent_forms::answer(
+            &omrt.state.agent.as_ref().unwrap().forms[0],
+            &omrt.state.agent.as_ref().unwrap().drafts,
+        )
+        .expect("untouched ordered and duplicate multiselect defaults must submit verbatim");
+        assert_eq!(omans["order"], json!(["beta", "alpha"]));
+        assert_eq!(omans["dups"], json!(["alpha", "alpha"]));
+
+        // 7. BOM / U+FEFF before opening quote in custom multiselect keeps quoted name as one item.
+        let mut bom_drafts = agent_forms::Drafts::new();
+        agent_forms::seed(std::slice::from_ref(&nbsp_form), &mut bom_drafts);
+        bom_drafts
+            .get_mut(&("form-r15-nbsp".into(), "names".into()))
+            .unwrap()
+            .custom_editor()
+            .text = "red,\u{FEFF}\"Doe, Jane\"".into();
+        let bom_ans = agent_forms::answer(&nbsp_form, &bom_drafts)
+            .expect("quoted entry preceded by U+FEFF must stay one item under maxItems=2");
+        assert_eq!(bom_ans["names"], json!(["Doe, Jane", "red"]));
+
+        // 8. Disjoint key namespaces: choice field `x` and free-text field `body:1:x` never
+        // collide on sibling keys, and focus lookup returns the exact editor key.
+        let disjoint_form = Form {
+            tool: None,
+            infer_websearch: false,
+            id: "form-r16-disjoint".into(),
+            title: "Disjoint keys".into(),
+            fields: vec![
+                json!({
+                    "key": "x",
+                    "title": "Choice X",
+                    "type": "string",
+                    "options": [{"value": "a", "label": "A"}]
+                }),
+                json!({
+                    "key": "body:1:x",
+                    "title": "Free body",
+                    "type": "string"
+                }),
+            ],
+        };
+        let (state, _rx) = state_with_form(disjoint_form);
+        let mut drt = Runtime::new(state, render_form, (420.0, 560.0), Env::new(false, 1.0));
+        drt.frame(0.0);
+        let dtree = drt.accessibility_json();
+        let editor_key = agent_forms::field_editor_key("body:1:x");
+        let container_key = agent_forms::field_container_key("x");
+        assert_ne!(editor_key, container_key);
+        assert!(
+            find_node(&dtree, &container_key).is_some(),
+            "choice field container must keep its disjoint container key"
+        );
+        assert_eq!(
+            find_input(&dtree, &editor_key)["role"],
+            "multiline-text-input",
+            "free-text editor must keep its exact editor key without colliding with choice container"
+        );
+        drt.update(|s, _| {
+            s.agent
+                .as_mut()
+                .unwrap()
+                .drafts
+                .get_mut(&("form-r16-disjoint".into(), "body:1:x".into()))
+                .unwrap()
+                .edit
+                .focused = true;
+        });
+        assert_eq!(
+            crate::agent::focused_control_key(&drt.state, Some(&editor_key))
+                .map(|(k, _)| k)
+                .as_deref(),
+            Some(editor_key.as_str())
+        );
     });
 }

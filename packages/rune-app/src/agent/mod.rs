@@ -106,10 +106,10 @@ pub(crate) fn focused_field_key(s: &crate::State) -> Option<(String, Option<Stri
                 continue;
             };
             if d.edit.focused {
-                return Some((format!("field-{key}"), Some(region)));
+                return Some((agent_forms::field_editor_key(key), Some(region)));
             }
             if d.custom.focused {
-                return Some((format!("custom-{key}"), Some(region)));
+                return Some((agent_forms::custom_editor_key(key), Some(region)));
             }
         }
     }

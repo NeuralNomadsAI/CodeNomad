@@ -151,10 +151,11 @@ pub fn fields(s: &State, form: &Form) -> El {
     let scope = s.input_scope.clone();
     let locked = a.forms_mutating();
     let supported = agent_forms::supported(form);
-    let evaluated_active = agent_forms::evaluate_active_fields(form, &a.drafts);
+    let mut match_budget = super::string_constraints::MatchBudget::new();
+    let evaluated_active = agent_forms::evaluate_active_fields(form, &a.drafts, &mut match_budget);
     let has_unanswerable_active = evaluated_active
         .iter()
-        .any(|(f, _)| agent_forms::field_unanswerable(f));
+        .any(|(f, _)| agent_forms::field_unanswerable_budgeted(f, &mut match_budget));
     let has_invalid_hidden_active = evaluated_active
         .iter()
         .any(|(f, res)| f["hidden"] == true && res.is_err());
@@ -207,8 +208,8 @@ pub fn fields(s: &State, form: &Form) -> El {
             body = body.child(form_controls::field_description(desc));
         }
         let group_key = agent_forms::field_group_key(key);
-        let container_key = format!("field-body:{}:{key}", key.len());
-        let error_key = format!("field-error:{}:{key}", key.len());
+        let container_key = agent_forms::field_container_key(key);
+        let error_key = agent_forms::field_error_key(key);
         let validation_error = field_result
             .as_ref()
             .err()
@@ -375,7 +376,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         custom_invalid.then_some(error_text.as_deref()).flatten(),
                     ]);
                     children.push(form_controls::form_textarea(
-                        &format!("custom-{key}"),
+                        &agent_forms::custom_editor_key(key),
                         &d.custom,
                         &custom_label,
                         custom_desc.as_deref(),
@@ -402,7 +403,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                 let id = identity.clone();
                 let editor_desc = join_notes(&[field_desc, error_text.as_deref()]);
                 body = body.child(form_controls::form_textarea(
-                    &format!("field-{key}"),
+                    &agent_forms::field_editor_key(key),
                     &d.edit,
                     &field_name,
                     editor_desc.as_deref(),
@@ -463,10 +464,12 @@ pub fn fields(s: &State, form: &Form) -> El {
                     })
                     .collect();
                 if allow_custom {
-                    for (index, raw) in d.preserved_custom.iter().enumerate() {
+                    for (index, raw) in d.preserved_custom.iter().take(32).enumerate() {
                         let checked = d.preserved_custom_selected.contains(raw);
                         let value = raw.clone();
-                        let label = if raw.trim().is_empty() {
+                        let label = if raw.trim().is_empty()
+                            || super::string_constraints::trim_es(raw).is_empty()
+                        {
                             format!("{} {}", t("rune.other_values"), index + 1)
                         } else {
                             raw.clone()
@@ -518,7 +521,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         error_text.as_deref(),
                     ]);
                     children.push(form_controls::form_textarea(
-                        &format!("custom-{key}"),
+                        &agent_forms::custom_editor_key(key),
                         &d.custom,
                         &custom_label,
                         custom_desc.as_deref(),
