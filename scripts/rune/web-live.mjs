@@ -108,13 +108,13 @@ function inRetry2Window(delayMs, delay1Ms){
   return delayMs>=SSE_RETRY2_MIN_MS&&delayMs<=SSE_RETRY2_MAX_MS&&delayMs>delay1Ms
 }
 
-function isNearHandoverProbe(at, probes, targetIndex){
+function isNearHandoverProbe(at, probes, targetIndex, allowPrevInFlight){
   const prev=probes[targetIndex-1]
   const targetAt=probes[targetIndex].receivedAt
   const nextAt=probes[targetIndex+1]?.receivedAt??Infinity
   const latestAt=Math.min(targetAt+HANDOVER_SAME_FRAME_MS,nextAt)
   if(at>latestAt)return false
-  const duringPrevInFlight=at>=prev.receivedAt&&at<=prev.fulfilledAt+HANDOVER_INFLIGHT_SLACK_MS
+  const duringPrevInFlight=allowPrevInFlight&&at>=prev.receivedAt&&at<=prev.fulfilledAt+HANDOVER_INFLIGHT_SLACK_MS
   const nearTarget=at>=targetAt-HANDOVER_PROXIMITY_MS&&at<=latestAt
   return duringPrevInFlight||nearTarget
 }
@@ -130,18 +130,19 @@ function hasMultiplexHandover(probes, handover, targetIndex){
   if(!delayAllowed)return false
   const convSyncs=(handover.conversationSyncTimes||[]).filter(at=>at>=handover.sseOpenedAt)
   const metaSyncs=(handover.launcherMetaTimes||[]).filter(at=>at>=handover.sseOpenedAt)
+  const firstConv=convSyncs.length?Math.min(...convSyncs):null
   const afterPrevGate=at=>targetIndex===1
     ? (delay<SSE_RETRY1_MIN_MS||at>probes[0].fulfilledAt)
     : at>=probes[1].receivedAt
-  const priorConversation=targetIndex===1
-    ? convSyncs.some(at=>delay<SSE_RETRY1_MIN_MS?at<probes[0].receivedAt:at<=probes[0].fulfilledAt)
-    : convSyncs.some(at=>at<probes[1].receivedAt)
-  // Order A: Launcher opened the admitted SSE first (no prior Conversation sync), then active Conversation synced near targetIndex.
-  const conversationSecond=!priorConversation&&handover.sseOpenedAt<=probes[0].receivedAt&&
-    convSyncs.some(at=>afterPrevGate(at)&&isNearHandoverProbe(at,probes,targetIndex))
-  // Order B: Active Conversation already synced on P0, then Launcher attested via /api/meta 200 near targetIndex.
-  const conversationFirst=convSyncs.some(at=>at<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS)&&
-    metaSyncs.some(at=>afterPrevGate(at)&&isNearHandoverProbe(at,probes,targetIndex))
+  const allowPrevInFlight=targetIndex===1?delay<SSE_RETRY1_MIN_MS:true
+  // Order A: Launcher opened the admitted SSE first; only the first Conversation sync counts (repetitions ignored).
+  const conversationSecond=firstConv!==null&&handover.sseOpenedAt<=probes[0].receivedAt&&
+    afterPrevGate(firstConv)&&isNearHandoverProbe(firstConv,probes,targetIndex,allowPrevInFlight)
+  // Order B: Conversation already synced on P0; only the first post-gate Launcher /api/meta 200 counts.
+  const postGateMetas=metaSyncs.filter(afterPrevGate)
+  const firstLauncherMeta=postGateMetas.length?Math.min(...postGateMetas):null
+  const conversationFirst=firstConv!==null&&firstConv<=probes[0].receivedAt+HANDOVER_SAME_FRAME_MS&&
+    firstLauncherMeta!==null&&isNearHandoverProbe(firstLauncherMeta,probes,targetIndex,allowPrevInFlight)
   return conversationSecond||conversationFirst
 }
 
@@ -353,7 +354,7 @@ async function verifySseAuthenticated503Recovery({
           await route.abort().catch(()=>{})
           return
         }
-        if(shouldServeSse503(statusProbes,handover)){
+        const serve503=async()=>{
           transient503s++
           try {
             await route.fulfill({status:503,contentType:'application/json',body:'{}'})
@@ -363,9 +364,11 @@ async function verifySseAuthenticated503Recovery({
             if(injectTransient503)failRoute(err)
             await route.abort().catch(()=>{})
           }
+        }
+        if(shouldServeSse503(statusProbes,handover)){
+          await serve503()
           return
         }
-        handoverFrozen=true
         try {
           const deliver=await releaseRecovered.promise
           if(!deliver||!injectTransient503){
@@ -379,6 +382,11 @@ async function verifySseAuthenticated503Recovery({
           }
           assert.equal(body.authenticated,true)
           assert(!body.pairingRequired)
+          if(shouldServeSse503(statusProbes,handover)){
+            await serve503()
+            return
+          }
+          handoverFrozen=true
           recoveredStatuses++
           await route.fulfill({status,headers,body:text})
           probe.fulfilledAt=performance.now()
