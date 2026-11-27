@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { readLocationRef, sameLocation } from "../../opencode/compatibility/location"
+import { assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "../mission-schedule-input-guard"
 import {
   automationIdSchema,
   projectSessionAutomation,
@@ -93,15 +94,36 @@ async function resolveOwnedSession(
   if (!session) return { kind: "not-found" as const }
   const location = readLocationRef(session.location)
   if (!await manager.ownsLocation(workspaceId, location, client, { signal })) return { kind: "forbidden" as const }
+  const verifyOrdinary = async (target: typeof session, targetLocation: ReturnType<typeof readLocationRef>) => {
+    await assertOrdinaryMissionScheduleSession(client, {
+      id: target.id,
+      location: targetLocation,
+      metadata: target.metadata,
+      model: target.model,
+      title: target.title,
+    }, { signal, current })
+  }
+  try {
+    await verifyOrdinary(session, location)
+  } catch (error) {
+    if (error instanceof MissionScheduleInputError) {
+      return error.statusCode === 403
+        ? { kind: "forbidden" as const, message: error.message }
+        : { kind: "unavailable" as const }
+    }
+    throw error
+  }
   const revalidate = async () => {
     current()
     const latest = await client.session.get({ sessionID }, { signal })
     current()
-    if (!sameLocation(location, readLocationRef(latest.location))
+    const latestLocation = readLocationRef(latest.location)
+    if (!sameLocation(location, latestLocation)
       || latest.projectID !== session.projectID
       || !await manager.ownsLocation(workspaceId, latest.location, client, { signal })) {
       throw new Error("Automation session moved")
     }
+    await verifyOrdinary(latest, latestLocation)
     current()
   }
   return { kind: "ok" as const, connection, location, revalidate }
@@ -124,7 +146,7 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
     try {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(READ_TIMEOUT_MS)])
       const owned = await resolveOwnedSession(deps.workspaceManager, request.params.id, sessionID, signal)
-      if (owned.kind === "forbidden") return reply.code(403).send({ error: "Session does not belong to workspace" })
+      if (owned.kind === "forbidden") return reply.code(403).send({ error: owned.message ?? "Session does not belong to workspace" })
       if (owned.kind === "not-found") return reply.code(404).send({ error: "Session not found" })
       if (owned.kind === "unavailable") return { status: "unavailable" } satisfies SessionAutomationsResponse
 
@@ -156,7 +178,10 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         automations.push(projected.automation)
       }
       return { status: "ok", automations } satisfies SessionAutomationsResponse
-    } catch {
+    } catch (error) {
+      if (error instanceof MissionScheduleInputError && error.statusCode === 403) {
+        return reply.code(403).send({ error: error.message })
+      }
       return { status: "unavailable" } satisfies SessionAutomationsResponse
     } finally {
       reply.raw.removeListener("close", abort)
@@ -183,7 +208,7 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
     try {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(MUTATION_TIMEOUT_MS)])
       const owned = await resolveOwnedSession(deps.workspaceManager, workspaceId, sessionID, signal)
-      if (owned.kind === "forbidden") return reply.code(403).send({ status: "error", error: "Session does not belong to workspace" } satisfies SessionAutomationMutationResponse)
+      if (owned.kind === "forbidden") return reply.code(403).send({ status: "error", error: owned.message ?? "Session does not belong to workspace" } satisfies SessionAutomationMutationResponse)
       if (owned.kind === "not-found") return reply.code(404).send({ status: "error", error: "Session not found" } satisfies SessionAutomationMutationResponse)
       if (owned.kind === "unavailable") return reply.code(503).send({ status: "error", error: "OpenCode is unavailable" } satisfies SessionAutomationMutationResponse)
 
@@ -236,7 +261,10 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
       return updated
         ? ({ status: "ok", automation: updated.automation } satisfies SessionAutomationMutationResponse)
         : ({ status: "ok" } satisfies SessionAutomationMutationResponse)
-    } catch {
+    } catch (error) {
+      if (error instanceof MissionScheduleInputError) {
+        return reply.code(error.statusCode).send({ status: "error", error: error.message } satisfies SessionAutomationMutationResponse)
+      }
       return reply.code(502).send({ status: "error", error: "Could not update the automation" } satisfies SessionAutomationMutationResponse)
     } finally {
       reply.raw.removeListener("close", abort)

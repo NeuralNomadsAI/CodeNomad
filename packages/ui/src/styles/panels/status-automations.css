@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--border-base);
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-canvas);
   color: var(--text-primary);
   font-size: 0.75rem;
   line-height: 1rem;
@@ -31,12 +31,13 @@
   align-items: center;
   gap: var(--space-sm);
   min-width: 0;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -54,13 +55,18 @@
 }
 
 .session-automation-meta {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .session-automation-row .window-icon-button {
+  flex: 0 0 auto;
   width: 24px;
   height: 24px;
 }
@@ -83,7 +89,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

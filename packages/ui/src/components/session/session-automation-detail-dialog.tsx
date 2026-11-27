@@ -16,11 +16,14 @@ function bounded(text: string): string {
   return window.hidden > 0 ? `${window.text}…` : window.text
 }
 
-function formatTriggerRule(automation: SessionAutomation): string {
+function formatTriggerRule(
+  automation: SessionAutomation,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
   const trigger = automation.trigger
-  if (trigger.type === "at") return `at ${trigger.at}`
-  if (trigger.type === "every") return `every ${trigger.every}`
-  if (trigger.type === "cron") return `cron ${trigger.cron}`
+  if (trigger.type === "at") return t("instanceShell.automations.trigger.at", { value: trigger.at })
+  if (trigger.type === "every") return t("instanceShell.automations.trigger.every", { value: trigger.every })
+  if (trigger.type === "cron") return t("instanceShell.automations.trigger.cron", { value: trigger.cron })
   return `${trigger.server} / ${trigger.event}`
 }
 
@@ -36,7 +39,7 @@ export function SessionAutomationDetailDialog(props: SessionAutomationDetailDial
       id={id}
       open={props.open && Boolean(props.automation)}
       title={props.automation ? bounded(props.automation.name) : t("instanceShell.automations.label")}
-      subtitle={props.automation ? formatTriggerRule(props.automation) : undefined}
+      subtitle={props.automation ? formatTriggerRule(props.automation, t) : undefined}
       returnFocus={props.returnFocus}
       onClose={props.onClose}
     >
@@ -59,7 +62,7 @@ export function SessionAutomationDetailDialog(props: SessionAutomationDetailDial
                 <dd class="session-automation-detail-value">{t(`instanceShell.automations.status.${current().status}`)}</dd>
                 <dt class="session-automation-detail-label">{t("instanceShell.automations.detail.trigger")}</dt>
                 <dd class="session-automation-detail-value">
-                  {formatTriggerRule(current())}
+                  {formatTriggerRule(current(), t)}
                   <Show when={current().trigger.type !== "event" && current().tz}>
                     {` (${current().tz})`}
                   </Show>

@@ -75,6 +75,14 @@ export function runSessionAutomationAction(
         throw new Error(result.error || tGlobal("instanceShell.automations.error"))
       }
       ok = true
+      if (action === "delete") {
+        return items => items.filter(item => item.id !== automationId)
+      }
+      const nextStatus = action === "pause" ? "paused" : "active"
+      return items => items.map(item => {
+        if (item.id !== automationId) return item
+        return result.automation ?? { ...item, status: nextStatus, ...(nextStatus === "paused" ? { nextDueAt: undefined } : {}) }
+      })
     } catch (error) {
       showToastNotification({
         category: "sessions",

@@ -66,7 +66,13 @@ export function createSessionAutomationsStore(
     reading.controller.abort()
   }
 
-  const scheduleDueRefresh = (instanceId: string, sessionId: string, entry: Entry, automations: readonly SessionAutomation[]) => {
+  const scheduleDueRefresh = (
+    instanceId: string,
+    sessionId: string,
+    entry: Entry,
+    automations: readonly SessionAutomation[],
+    retryFailure = false,
+  ) => {
     clearDueTimer(entry)
     if (entry.demand === 0 || options.signal?.(instanceId)?.aborted) return
     const nextDue = earliestActiveDueAt(automations)
@@ -76,11 +82,11 @@ export function createSessionAutomationsStore(
     }
     const remaining = nextDue - now()
     let delayMs: number
-    if (remaining > 0) {
+    if (remaining > 0 && !retryFailure) {
       entry.overdueChecks = 0
       delayMs = Math.min(remaining + DUE_GRACE_MS, MAX_DUE_DELAY_MS)
     } else {
-      // Bound retries if an automation stays overdue (e.g. session busy or late run).
+      // Bound retries if an automation stays overdue or its due-time read fails transiently.
       if (entry.overdueChecks >= 3) return
       entry.overdueChecks += 1
       delayMs = OVERDUE_BACKOFF_MS * entry.overdueChecks
@@ -133,6 +139,8 @@ export function createSessionAutomationsStore(
           } else if (shown?.status !== "ok") {
             clearDueTimer(entry)
             publish(stateKey, { status: "unavailable" })
+          } else {
+            scheduleDueRefresh(instanceId, sessionId, entry, shown.automations, true)
           }
         } while (reading.dirty && entries.get(stateKey) === entry && entry.demand > 0)
       } finally {
@@ -197,24 +205,51 @@ export function createSessionAutomationsStore(
       }
       setSnapshots(current => new Map([...current].filter(([stateKey]) => !stateKey.startsWith(prefix))))
     },
-    /** Runs one action for one automation (refusing a concurrent action on the same automation), then refreshes the Session. */
-    async run(instanceId: string, sessionId: string, automationId: string, action: () => Promise<void>): Promise<void> {
+    /** Runs one action for one automation (refusing a concurrent action on the same automation), applies any confirmed update while fencing earlier reads, and refreshes before unlocking. */
+    async run(
+      instanceId: string,
+      sessionId: string,
+      automationId: string,
+      action: () => Promise<((items: readonly SessionAutomation[]) => SessionAutomation[]) | void>,
+    ): Promise<void> {
       const authority = options.signal?.(instanceId)
       if (authority?.aborted) return
       const idKey = busyKey(instanceId, sessionId, automationId)
       if (untrack(busy).has(idKey)) return
       setBusy(current => new Set(current).add(idKey))
       try {
-        await action()
+        const patch = await action()
+        if (patch && !authority?.aborted && authority === options.signal?.(instanceId)) {
+          const stateKey = key(instanceId, sessionId)
+          const entry = entries.get(stateKey)
+          if (entry) {
+            entry.version += 1
+            if (entry.reading) entry.reading.dirty = true
+          }
+          const shown = untrack(snapshots).get(stateKey)
+          if (shown?.status === "ok") {
+            const next = patch(shown.automations)
+            publish(stateKey, { status: "ok", automations: next })
+            if (entry) {
+              entry.overdueChecks = 0
+              scheduleDueRefresh(instanceId, sessionId, entry, next)
+            }
+          }
+        }
       } finally {
-        setBusy(current => {
-          const next = new Set(current)
-          next.delete(idKey)
-          return next
-        })
-        const entry = entries.get(key(instanceId, sessionId))
-        if (entry) entry.overdueChecks = 0
-        if (!authority?.aborted && authority === options.signal?.(instanceId)) void refresh(instanceId, sessionId)
+        try {
+          if (!authority?.aborted && authority === options.signal?.(instanceId)) {
+            const entry = entries.get(key(instanceId, sessionId))
+            if (entry) entry.overdueChecks = 0
+            await refresh(instanceId, sessionId)
+          }
+        } finally {
+          setBusy(current => {
+            const next = new Set(current)
+            next.delete(idKey)
+            return next
+          })
+        }
       }
     },
   }

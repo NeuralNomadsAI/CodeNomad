@@ -228,3 +228,34 @@ test("renders live rows above Tokens, folds Done, opens detail dialog, pauses/re
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("keeps Pause and Delete inside a narrow row even with a long MCP event trigger", async () => {
+  const longEventAuto: SessionAutomation = {
+    id: "aut_long_event",
+    name: "Watch repository pull request events",
+    status: "active",
+    trigger: {
+      type: "event",
+      server: "very-long-mcp-server-identifier-for-notifications",
+      event: "repository.pull_request.review_requested.and_checks_completed",
+    },
+    tz: "UTC",
+    action: { type: "prompt", prompt: "Review updates" },
+    runCount: 4,
+    createdAt: 1,
+    updatedAt: 2,
+  }
+  const { page, errors } = await open({ ses_auto: { status: "ok", automations: [longEventAuto] } })
+  try {
+    await page.setViewportSize({ width: 320, height: 700 })
+    const row = block(page).locator('[data-automation-id="aut_long_event"]')
+    await row.waitFor()
+    const rowBox = await row.boundingBox()
+    const pauseBox = await row.getByRole("button", { name: "Pause automation" }).boundingBox()
+    const deleteBox = await row.getByRole("button", { name: "Delete automation" }).boundingBox()
+    assert.ok(rowBox && pauseBox && deleteBox)
+    assert.ok(pauseBox.x + pauseBox.width <= rowBox.x + rowBox.width + 1, "Pause stays inside row")
+    assert.ok(deleteBox.x + deleteBox.width <= rowBox.x + rowBox.width + 1, "Delete stays inside row")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

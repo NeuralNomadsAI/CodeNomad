@@ -98,9 +98,84 @@ describe("session automations store", () => {
     assert.equal(runs, 1, "concurrent action on same automation is ignored")
 
     gate.resolve()
+    await f.settle()
+    assert.equal(f.store.busy("i", "ses_a", "aut_1"), true, "stays busy until post-action refresh settles")
+    assert.equal(f.reads.length, 2, "refreshes after action settles")
+    f.reads[1]!.resolve({ status: "ok", automations: [automation("aut_1"), automation("aut_2")] })
     await first
     assert.equal(f.store.busy("i", "ses_a", "aut_1"), false)
-    assert.equal(f.reads.length, 2, "refreshes after action settles")
+    release()
+  })
+
+  it("applies confirmed mutation patches immediately and fences pre-mutation in-flight reads", async () => {
+    const f = fixture()
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({ status: "ok", automations: [automation("aut_1"), automation("aut_2")] })
+    await f.settle()
+
+    // Start a read before the mutation runs.
+    const staleRefresh = f.store.refresh("i", "ses_a")
+    assert.equal(f.reads.length, 2)
+
+    const runPromise = f.store.run("i", "ses_a", "aut_1", async () => (items => items.filter(item => item.id !== "aut_1")))
+    await f.settle()
+    // Confirmed deletion is visible immediately, before the stale read settles.
+    const patched = f.store.state("i", "ses_a")
+    assert.equal(patched.status, "ok")
+    assert.deepEqual(patched.automations.map(item => item.id), ["aut_2"])
+
+    // Resolve the pre-mutation read with stale data containing aut_1: it must be fenced.
+    f.reads[1]!.resolve({ status: "ok", automations: [automation("aut_1"), automation("aut_2")] })
+    await f.settle()
+    const afterStale = f.store.state("i", "ses_a")
+    assert.equal(afterStale.status, "ok")
+    assert.deepEqual(afterStale.automations.map(item => item.id), ["aut_2"], "stale read cannot resurrect deleted row")
+    assert.equal(f.reads.length, 3, "starts a post-mutation trailing read")
+
+    // Even if the post-mutation refresh fails transiently, the deleted row stays removed.
+    f.reads[2]!.resolve({ status: "unavailable" })
+    await Promise.all([staleRefresh, runPromise])
+    const finalState = f.store.state("i", "ses_a")
+    assert.equal(finalState.status, "ok")
+    assert.deepEqual(finalState.automations.map(item => item.id), ["aut_2"])
+    assert.equal(f.store.busy("i", "ses_a", "aut_1"), false)
+    release()
+  })
+
+  it("retries transient due-time read failures with bounded backoff while demanded", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    let now = 10_000
+    const f = fixture({ now: () => now })
+    const release = f.store.demand("i", "ses_a")
+    f.reads[0]!.resolve({
+      status: "ok",
+      automations: [automation("aut_active", { status: "active", nextDueAt: 15_000, runCount: 1 })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Due-time refresh fires and fails transiently.
+    now = 16_600
+    t.mock.timers.tick(6_600)
+    assert.equal(f.reads.length, 2)
+    f.reads[1]!.resolve({ status: "unavailable" })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Retry fires after 15s backoff and recovers the finished automation.
+    now = 31_600
+    t.mock.timers.tick(15_000)
+    assert.equal(f.reads.length, 3, "schedules bounded retry after transient failure")
+    f.reads[2]!.resolve({
+      status: "ok",
+      automations: [automation("aut_active", { status: "done", nextDueAt: undefined, runCount: 2 })],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    const recovered = f.store.state("i", "ses_a")
+    assert.equal(recovered.status, "ok")
+    assert.equal(recovered.automations[0]?.status, "done")
+    assert.equal(recovered.automations[0]?.runCount, 2)
     release()
   })
 

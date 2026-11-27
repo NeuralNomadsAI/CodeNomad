@@ -31,6 +31,8 @@ function fixture() {
   const state = {
     owned: true,
     missing: false,
+    carrierOwned: false,
+    carrierError: undefined as unknown,
     session: { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } } as any,
     current: () => {},
     fetch: async (url: URL, init?: RequestInit): Promise<Response> => {
@@ -66,6 +68,12 @@ function fixture() {
   const location = { directory: "/repo/worktree" }
   const client = {
     session: { get: async () => { if (state.missing) throw new Error("not found"); return structuredClone(state.session) } },
+    rpc: () => ({
+      scheduleCarrierRead: async () => {
+        if (state.carrierError !== undefined) throw state.carrierError
+        return { owned: state.carrierOwned }
+      },
+    }),
   }
   registerSessionAutomationsRoutes(app, {
     workspaceManager: {
@@ -196,5 +204,32 @@ test("a moved session or revoked connection publishes unavailable on read and re
     const mutated = await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })
     assert.equal(mutated.statusCode, 502)
     assert.equal(f.calls.length, callsBefore + 1, "does not dispatch pause after revocation")
+  } finally { await f.app.close() }
+})
+
+test("rejects Mission schedule carriers and indeterminate carrier ownership on list and mutations", async () => {
+  const f = fixture()
+  try {
+    f.state.carrierOwned = true
+    assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 403)
+    assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1" })).statusCode, 403)
+    assert.equal(f.calls.length, 0)
+
+    f.state.carrierOwned = false
+    f.state.session = {
+      id: "ses_a",
+      projectID: "proj_1",
+      location: { directory: "/repo/worktree" },
+      metadata: { "codenomad.schedule-carrier": { missionID: "msn_1" } },
+    }
+    assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 403)
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })).statusCode, 403)
+    assert.equal(f.calls.length, 0)
+
+    f.state.session = { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } }
+    f.state.carrierError = new Error("rpc transport down")
+    assert.deepEqual((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).json(), { status: "unavailable" })
+    assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1" })).statusCode, 503)
+    assert.equal(f.calls.length, 0)
   } finally { await f.app.close() }
 })
