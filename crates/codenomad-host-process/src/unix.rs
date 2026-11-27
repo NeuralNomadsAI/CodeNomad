@@ -1,3 +1,8 @@
+#[cfg(target_os = "linux")]
+use crate::unix_signal::is_proc_exiting_stat;
+#[cfg(not(target_os = "linux"))]
+use crate::unix_signal::parse_ps_table;
+use crate::unix_signal::{ProcessRow, group_signal_error_is_harmless};
 #[cfg(not(target_os = "linux"))]
 use std::path::Path;
 #[cfg(not(target_os = "linux"))]
@@ -170,7 +175,15 @@ impl Family {
             };
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
+        let raw = error.raw_os_error();
+        if group_signal_error_is_harmless(
+            raw == Some(libc::ESRCH),
+            raw == Some(libc::EPERM),
+            cfg!(not(target_os = "linux")),
+            self.leader,
+            || self.leader_reused(),
+            process_table,
+        ) {
             match first_err {
                 Some(err) => Err(err),
                 None => Ok(()),
@@ -198,12 +211,17 @@ fn descendants_of(
     let rows = process_table()?;
     let mut by_pid: HashMap<i32, &str> = HashMap::new();
     let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
-    for (pid, ppid, _, start_id) in &rows {
-        if *pid <= 0 || *pid == self_pid {
+    for row in &rows {
+        if row.pid <= 0 || row.pid == self_pid {
             continue;
         }
-        by_pid.insert(*pid, start_id.as_str());
-        children_by_parent.entry(*ppid).or_default().push(*pid);
+        if !row.start_id.is_empty() {
+            by_pid.insert(row.pid, row.start_id.as_str());
+        }
+        children_by_parent
+            .entry(row.ppid)
+            .or_default()
+            .push(row.pid);
     }
     let root_reused = match (leader_start_id, by_pid.get(&root).copied()) {
         (Some(expected), Some(actual)) => actual != expected,
@@ -218,9 +236,9 @@ fn descendants_of(
         seeds.push(self_pid);
     }
     if !root_reused {
-        for (pid, _, pgid, _) in &rows {
-            if *pid > 0 && *pid != self_pid && *pgid == root && *pid != root {
-                seeds.push(*pid);
+        for row in &rows {
+            if row.pid > 0 && row.pid != self_pid && row.pgid == root && row.pid != root {
+                seeds.push(row.pid);
             }
         }
     }
@@ -231,11 +249,14 @@ fn descendants_of(
     #[cfg(target_os = "macos")]
     if let Some(marker) = tree_marker {
         let mut scratch = vec![0u8; macos_argmax()];
-        for (pid, _, _, _) in &rows {
-            if *pid > 0 && *pid != self_pid && *pid != root && !known_descendants.contains_key(pid)
+        for row in &rows {
+            if row.pid > 0
+                && row.pid != self_pid
+                && row.pid != root
+                && !known_descendants.contains_key(&row.pid)
             {
-                match process_has_env_entry(*pid, marker, &mut scratch) {
-                    Ok(true) => seeds.push(*pid),
+                match process_has_env_entry(row.pid, marker, &mut scratch) {
+                    Ok(true) => seeds.push(row.pid),
                     Ok(false) => {}
                     // Record incomplete scan without discarding already-verified descendants.
                     Err(()) => complete = false,
@@ -297,7 +318,7 @@ fn start_id_of(pid: i32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
+fn process_table() -> Option<Vec<ProcessRow>> {
     let mut rows = Vec::new();
     let entries = std::fs::read_dir("/proc").ok()?;
     for entry in entries.flatten() {
@@ -312,6 +333,9 @@ fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
             continue;
         };
         let fields: Vec<&str> = stat[rparen + 1..].split_whitespace().collect();
+        let Some(state) = fields.first().copied() else {
+            continue;
+        };
         let Some(ppid) = fields.get(1).and_then(|v| v.parse::<i32>().ok()) else {
             continue;
         };
@@ -321,71 +345,25 @@ fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
         let Some(start_id) = fields.get(19) else {
             continue;
         };
-        rows.push((pid, ppid, pgid, (*start_id).to_owned()));
+        rows.push(ProcessRow {
+            pid,
+            ppid,
+            pgid,
+            exiting: is_proc_exiting_stat(state),
+            start_id: (*start_id).to_owned(),
+        });
     }
     Some(rows)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn parse_ps_table(raw: &str, ps_pid: i32) -> Option<Vec<(i32, i32, i32, String)>> {
-    let mut non_empty = 0usize;
-    let mut rows = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        non_empty += 1;
-        let Some(pid_str) = trimmed.split_whitespace().next() else {
-            continue;
-        };
-        let Ok(pid) = pid_str.parse::<i32>() else {
-            continue;
-        };
-        if pid == ps_pid {
-            continue;
-        }
-        let Some(rest) = trimmed.strip_prefix(pid_str).map(str::trim_start) else {
-            continue;
-        };
-        let Some(ppid_str) = rest.split_whitespace().next() else {
-            continue;
-        };
-        let Ok(ppid) = ppid_str.parse::<i32>() else {
-            continue;
-        };
-        let Some(rest) = rest.strip_prefix(ppid_str).map(str::trim_start) else {
-            continue;
-        };
-        let Some(pgid_str) = rest.split_whitespace().next() else {
-            continue;
-        };
-        let Ok(pgid) = pgid_str.parse::<i32>() else {
-            continue;
-        };
-        let Some(start_id) = rest
-            .strip_prefix(pgid_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-        rows.push((pid, ppid, pgid, start_id.to_owned()));
-    }
-    if non_empty > 0 && rows.is_empty() {
-        return None;
-    }
-    Some(rows)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
+fn process_table() -> Option<Vec<ProcessRow>> {
     let ps = ["/bin/ps", "/usr/bin/ps"]
         .into_iter()
         .find(|p| Path::new(p).is_file())?;
     let ps_child = Command::new(ps)
         .env("LC_ALL", "C")
-        .args(["-ax", "-o", "pid=,ppid=,pgid=,lstart="])
+        .args(["-ax", "-o", "pid=,ppid=,pgid=,stat=,lstart="])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

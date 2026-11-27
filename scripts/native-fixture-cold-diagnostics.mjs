@@ -90,7 +90,7 @@ export async function collectColdFailure(input) {
 }
 
 function ownedFile(root, file, limit, tail = false) {
-  const base = realpathSync(root), resolved = realpathSync(file), relative = path.relative(base, resolved)
+  const base = realpathSync.native(root), resolved = realpathSync.native(file), relative = path.relative(base, resolved)
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw Error("private-path-refused")
   const fd = openSync(resolved, "r")
   try {
@@ -159,7 +159,7 @@ function logs(input) {
   const output = { sharedIncarnations: true, files: [], truncated: false }, dir = path.join(input.root, "xdg-data", "opencode", "log")
   let listing, remaining = LOGS
   try {
-    const relative = path.relative(realpathSync(input.root), realpathSync(dir))
+    const relative = path.relative(realpathSync.native(input.root), realpathSync.native(dir))
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw Error()
     listing = opendirSync(dir)
     for (let index = 0; index < 17; index++) {
@@ -187,7 +187,7 @@ function sql(input) {
   const textColumn = (name, limit = 240) => `CASE WHEN length(CAST("${name}" AS BLOB))<=${limit} THEN "${name}" END AS "${name}"`
   const id = value => typeof value === "string" && value.length > 0 && value.length <= 240
   try {
-    const resolved = realpathSync(input.databaseFile), relative = path.relative(realpathSync(input.root), resolved)
+    const resolved = realpathSync.native(input.databaseFile), relative = path.relative(realpathSync.native(input.root), resolved)
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return failure("sql-path-refused")
     db = new DatabaseSync(resolved, { readOnly: true, timeout: 100 })
     db.exec("PRAGMA query_only=ON; BEGIN")
@@ -253,7 +253,7 @@ if (process.argv[2] === "--cold-diagnostic-child") process.once("message", async
   try {
     // Leave a safe bounded marker even if subsequent native work must be killed.
     if (input.diagnostic) try {
-      diagnosticFd = openSync(path.join(realpathSync(input.root), "failure-diagnostic.json"), "wx")
+      diagnosticFd = openSync(path.join(realpathSync.native(input.root), "failure-diagnostic.json"), "wx")
       writeFileSync(diagnosticFd, JSON.stringify({ stage: input.stage, failureAt: input.failureAt, observedAt: Date.now(),
         error: input.ownerAvailable ? "cold-failure-diagnostic-unavailable" : "owned-child-unavailable" }))
     } catch { /* Artifact writes remain best-effort. */ }
