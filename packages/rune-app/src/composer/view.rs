@@ -630,8 +630,6 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             send(s, tx, false);
         }
         true
-    } else if event.key == Key::Enter {
-        true
     } else if !s.composer.picker.open() {
         super::menu::jump_key(s, event, tx)
     } else {

@@ -161,7 +161,13 @@ fn prompt_send_and_newline_honor_submit_on_enter_and_overrides_in_normal_mode() 
         Some(format!("{} (F9)", t("promptInput.send.ariaLabel")).as_str())
     );
 
+    // Old Mod+Enter newline and plain Enter send shortcuts no longer trigger once remapped.
+    send_key(&mut rt, Key::Enter, primary_mods(false));
     send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(rx.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "custom");
+
+    // Unmatched Shift+Enter (and macOS Option+Return) still falls through to the multiline editor.
     send_key(
         &mut rt,
         Key::Enter,
@@ -170,22 +176,22 @@ fn prompt_send_and_newline_honor_submit_on_enter_and_overrides_in_normal_mode() 
             ..Mods::default()
         },
     );
-    send_key(&mut rt, Key::Enter, primary_mods(false));
     assert!(rx.try_recv().is_err());
-    assert_eq!(rt.state.draft.text, "custom");
+    assert_eq!(rt.state.draft.text, "custom\n");
 
     send_key(&mut rt, Key::Function(8), Mods::default());
     assert!(rx.try_recv().is_err());
-    assert_eq!(rt.state.draft.text, "custom\n");
+    assert_eq!(rt.state.draft.text, "custom\n\n");
 
     send_key(&mut rt, Key::Text("end".into()), Mods::default());
     send_key(&mut rt, Key::Function(9), Mods::default());
     assert_eq!(
         settle_sent(&mut rt, rx.try_recv().expect("send on F9")),
-        "custom\nend"
+        "custom\n\nend"
     );
 
-    // Disabled overrides ([]): neither defaults nor former custom keys fire.
+    // Disabled overrides ([]): neither defaults nor former custom shortcuts fire; unmatched
+    // native line-break chords (Shift+Enter / macOS Option+Return) still reach the editor.
     rt.update(|s, tx| {
         crate::settings::fixture_shortcuts(
             s,
@@ -206,6 +212,12 @@ fn prompt_send_and_newline_honor_submit_on_enter_and_overrides_in_normal_mode() 
     assert_eq!(send_help.as_deref(), Some(t("promptInput.send.ariaLabel")));
 
     send_key(&mut rt, Key::Enter, Mods::default());
+    send_key(&mut rt, Key::Enter, primary_mods(false));
+    send_key(&mut rt, Key::Function(8), Mods::default());
+    send_key(&mut rt, Key::Function(9), Mods::default());
+    assert!(rx.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "disabled");
+
     send_key(
         &mut rt,
         Key::Enter,
@@ -214,11 +226,8 @@ fn prompt_send_and_newline_honor_submit_on_enter_and_overrides_in_normal_mode() 
             ..Mods::default()
         },
     );
-    send_key(&mut rt, Key::Enter, primary_mods(false));
-    send_key(&mut rt, Key::Function(8), Mods::default());
-    send_key(&mut rt, Key::Function(9), Mods::default());
     assert!(rx.try_recv().is_err());
-    assert_eq!(rt.state.draft.text, "disabled");
+    assert_eq!(rt.state.draft.text, "disabled\n");
 }
 
 #[test]
@@ -283,6 +292,10 @@ fn prompt_alternate_send_honors_custom_and_disabled_overrides_and_menu_label() {
         None
     );
 
+    send_key(&mut rt, Key::Function(10), Mods::default());
+    assert!(rx.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "blocked");
+
     send_key(&mut rt, Key::Enter, primary_mods(true));
     #[cfg(not(target_os = "macos"))]
     send_key(
@@ -293,9 +306,8 @@ fn prompt_alternate_send_honors_custom_and_disabled_overrides_and_menu_label() {
             ..Mods::default()
         },
     );
-    send_key(&mut rt, Key::Function(10), Mods::default());
     assert!(rx.try_recv().is_err());
-    assert_eq!(rt.state.draft.text, "blocked");
+    assert_eq!(rt.state.draft.text.trim(), "blocked");
 }
 
 #[test]
@@ -500,7 +512,7 @@ fn composer_shortcut_guards_preserve_picker_ime_device_busy_repeat_and_shell_mod
     });
     rt.frame(0.0);
 
-    // 1. Open slash picker blocks remapped send, alternate-send, newline and recall.
+    // 1. Open slash picker blocks remapped send, alternate-send and newline.
     send_key(&mut rt, Key::Text("/he".into()), Mods::default());
     assert!(rt.state.composer.picker.open());
     send_key(&mut rt, Key::Function(9), Mods::default());
