@@ -429,10 +429,17 @@ fn collect_gitlinks(
     }
 }
 
-/// Returns the subset of `candidates` tracked as Git submodules (mode `160000`)
-/// in the index or in `HEAD`. Exact path matching ensures parent folders of a
-/// nested submodule are never admitted as gitlinks.
-async fn gitlink_paths(dir: &Path, candidates: &[String]) -> Result<std::collections::HashSet<String>, Error> {
+/// Returns the subset of `candidates` tracked as Git submodules (mode `160000`).
+/// Staging only checks the index (`ls-files --stage`) so a directory removed from
+/// the index and turned into ordinary files cannot be staged recursively even if
+/// `HEAD` still holds a `160000` entry at that path. Unstaging (`include_head = true`)
+/// also checks `HEAD` (`ls-tree -d HEAD`) so `git restore --staged` can restore a
+/// removed submodule entry. Exact path matching keeps parent folders refused.
+async fn gitlink_paths(
+    dir: &Path,
+    candidates: &[String],
+    include_head: bool,
+) -> Result<std::collections::HashSet<String>, Error> {
     let mut found = std::collections::HashSet::new();
     for chunk in candidates.chunks(64) {
         let allowed: std::collections::HashSet<&str> = chunk.iter().map(String::as_str).collect();
@@ -452,6 +459,9 @@ async fn gitlink_paths(dir: &Path, candidates: &[String]) -> Result<std::collect
         }
         collect_gitlinks(&String::from_utf8_lossy(&index_bytes), &allowed, &mut found);
 
+        if !include_head {
+            continue;
+        }
         let missing: Vec<&str> = chunk.iter().map(String::as_str).filter(|p| !found.contains(*p)).collect();
         if missing.is_empty() {
             continue;
@@ -497,7 +507,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     .await
     .map_err(|_| bad("Selected path is unavailable"))??;
     if !dir_candidates.is_empty() {
-        let gitlinks = gitlink_paths(&w.path, &dir_candidates).await?;
+        let gitlinks = gitlink_paths(&w.path, &dir_candidates, !stage).await?;
         if dir_candidates.iter().any(|p| !gitlinks.contains(p)) {
             return Err(bad("Staging requires individual files"));
         }
@@ -1504,9 +1514,25 @@ mod tests {
         assert_eq!(index_oid("vendor/submod"), nested_v1);
         assert!(raw_git(&repo_dir, &["diff", "--cached", "--name-only"]).is_empty());
 
-        // 5. Gitlink removed from index but still present in HEAD (160000) can be unstaged back from HEAD.
+        // 5. Gitlink removed from index and turned into an ordinary directory (no `.git`) is refused
+        //    on `stage` even while `HEAD` still holds 160000, while `unstage` still restores the HEAD gitlink.
         raw_git(&repo_dir, &["rm", "--cached", "-f", "--quiet", "--", "vendor/submod"]);
         assert!(raw_git(&repo_dir, &["ls-files", "--stage", "--", "vendor/submod"]).is_empty());
+        std::fs::remove_dir_all(sub_nested.join(".git")).unwrap();
+        std::fs::write(sub_nested.join("ordinary.txt"), "plain-file\n").unwrap();
+        let converted_err = stage(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            Json(Paths { paths: vec!["note.txt".into(), "vendor/submod".into()] }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(converted_err.0, Status::BAD_REQUEST);
+        assert_eq!(converted_err.1.0["error"], "Staging requires individual files");
+        assert!(
+            raw_git(&repo_dir, &["ls-files", "--stage", "--", "vendor/submod"]).is_empty(),
+            "converted ordinary directory must not be recursively staged"
+        );
         assert_eq!(
             unstage(
                 State(app.clone()),

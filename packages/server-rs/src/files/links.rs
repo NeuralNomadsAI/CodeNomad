@@ -129,7 +129,7 @@ pub fn read(base: &Path, relative: &str, max: usize) -> Result<Option<Vec<u8>>, 
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NONBLOCK);
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
     }
     let Ok(file) = opts.open(&path) else { return Ok(None) };
     let Ok(file_meta) = file.metadata() else { return Ok(None) };
