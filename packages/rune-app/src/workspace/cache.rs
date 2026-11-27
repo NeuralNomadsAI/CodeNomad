@@ -408,6 +408,11 @@ impl Cache {
                 .as_ref()
                 .is_some_and(agent::Ui::navigation_blocked)
     }
+    pub(super) fn has_unsaved_form_drafts(&self) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(agent::Ui::has_unsaved_form_drafts)
+    }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
     }

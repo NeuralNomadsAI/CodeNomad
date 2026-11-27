@@ -1105,6 +1105,10 @@ fn keep_then_close_aborts_detach_when_in_memory_draft_arrives_in_flight() {
             status: "200 OK",
             body: r#"{"ok":true}"#.into(),
         },
+        MockReply {
+            status: "404 Not Found",
+            body: r#"{"error":"temporary_not_found"}"#.into(),
+        },
     ]);
     let mut rt = connected_runtime(server.backend.clone());
     open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
@@ -1155,9 +1159,8 @@ fn keep_then_close_aborts_detach_when_in_memory_draft_arrives_in_flight() {
         "temporary marker must still be cleared after keep succeeds"
     );
     assert_eq!(
-        rt.state.draft.text.len(),
-        32_769,
-        "in-flight oversized draft must be preserved intact"
+        rt.state.draft.text, oversized,
+        "in-flight oversized draft text must be preserved verbatim"
     );
 
     // 2. Local device attachment added while POST /keep is in flight
@@ -1213,9 +1216,101 @@ fn keep_then_close_aborts_detach_when_in_memory_draft_arrives_in_flight() {
         !workspace::active_workspace(&rt.state).unwrap().1.temporary,
         "temporary marker must still be cleared after keep succeeds"
     );
+    assert!(
+        rt.state
+            .composer
+            .draft
+            .attachments
+            .iter()
+            .any(|att| matches!(
+                att,
+                crate::composer::draft::Attachment::Device { name, bytes, .. }
+                    if name == "local.bin" && bytes.as_ref() == b"keep-device-bytes"
+            )),
+        "in-flight local device attachment bytes must be preserved verbatim"
+    );
+
+    // 3. 404 temporary_not_found during Keep while device picker is busy must not detach or cancel it
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-dead-busy",
+        "/tmp/cn-dead-busy",
+        true,
+        vec![Session {
+            id: "s-dead".into(),
+            title: "Dead".into(),
+        }],
+    );
+    let dead_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, tx| {
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-dead-busy".into();
+                b.session = "s-dead".into();
+                b
+            })
+            .unwrap();
+        let _ = workspace::bound(s, &bound_backend);
+        s.screen.show_chat();
+        s.phase = crate::Phase::Ready;
+        s.composer.picker.set_attachments_supported(true);
+        strings::with_locale("en", || {
+            open_dialog(s, &dead_key, Some(format!("t-{dead_key}")), tx);
+            choose_keep(s, tx);
+        });
+        assert!(s.temporary.keeping.is_some());
+        assert!(crate::composer::device::available(s));
+        s.composer.device.choosing = true;
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
     assert_eq!(
-        rt.state.composer.draft.inline_usage().0,
-        1,
-        "in-flight local device attachment bytes must be preserved intact"
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        dead_key,
+        "404 temporary_not_found must not detach while device attachment picker is busy"
+    );
+    assert!(
+        rt.state.composer.device.choosing,
+        "active device picker must remain untouched"
+    );
+
+    // 4. Retained workspace.stopped after agent.workspace_stopped sets scope_missing must still
+    //    preserve unsent agent form / rejection drafts instead of detaching the tab.
+    rt.update(|s, tx| {
+        s.composer.device.choosing = false;
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-dead-busy".into();
+                b.session = "s-dead".into();
+                b
+            })
+            .unwrap();
+        let mut agent = crate::agent::Ui::new(crate::agent::start(bound_backend, s.wake.clone()));
+        agent
+            .reasons
+            .insert("perm-1".into(), rune::edit::TextEdit::new("unsent reason"));
+        assert!(agent.workspace_stopped("ws-temp-dead-busy"));
+        assert!(agent.is_scope_missing());
+        assert!(!agent.navigation_blocked());
+        s.agent = Some(agent);
+        assert!(
+            !workspace::detach_stopped_temporary(s, "ws-temp-dead-busy", true, true, tx),
+            "retained workspace.stopped must not detach a tab with unsent form/rejection drafts"
+        );
+    });
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), dead_key);
+    assert_eq!(
+        rt.state
+            .agent
+            .as_ref()
+            .and_then(|a| a.reasons.get("perm-1"))
+            .map(|e| e.text.as_str()),
+        Some("unsent reason")
     );
 }

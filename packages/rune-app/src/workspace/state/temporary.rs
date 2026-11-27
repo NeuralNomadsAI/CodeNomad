@@ -523,6 +523,31 @@ pub(crate) fn reconcile_temporary_folders(s: &mut State, folders: &[String]) -> 
     changed
 }
 
+fn has_unsaved_temporary_state(s: &State, index: usize) -> bool {
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    let Some(item) = ui.entries.get(index) else {
+        return false;
+    };
+    let active = ui.active == index;
+    let active_device_state = active
+        && (s.composer.device.busy() || crate::composer::recall::fresh(s).1.inline_usage().0 != 0);
+    let form_drafts = if active {
+        s.agent
+            .as_ref()
+            .is_some_and(crate::agent::Ui::has_unsaved_form_drafts)
+    } else {
+        item.cache
+            .as_ref()
+            .is_some_and(super::Cache::has_unsaved_form_drafts)
+    };
+    active_device_state
+        || form_drafts
+        || close_blocked(s, index)
+        || item.has_in_memory_only_drafts()
+}
+
 pub(crate) fn close_after_keep(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
     capture(s);
     if busy(s) {
@@ -532,18 +557,7 @@ pub(crate) fn close_after_keep(s: &mut State, tab_key: &str, tx: &mut Tx) -> boo
         .workspace
         .as_ref()
         .and_then(|ui| ui.entries.iter().position(|item| item.key == tab_key))
-        .is_none_or(|index| {
-            let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
-            let active_device_state =
-                active && (s.composer.device.busy() || s.composer.draft.inline_usage().0 != 0);
-            active_device_state
-                || close_blocked(s, index)
-                || s.workspace.as_ref().is_some_and(|ui| {
-                    ui.entries
-                        .get(index)
-                        .is_some_and(super::Entry::has_in_memory_only_drafts)
-                })
-        });
+        .is_none_or(|index| has_unsaved_temporary_state(s, index));
     if blocked {
         return false;
     }
@@ -557,14 +571,7 @@ pub(crate) fn detach_dead_temporary(s: &mut State, tab_key: &str, tx: &mut Tx) -
         .workspace
         .as_ref()
         .and_then(|ui| ui.entries.iter().position(|item| item.key == tab_key))
-        .is_none_or(|index| {
-            close_blocked(s, index)
-                || s.workspace.as_ref().is_some_and(|ui| {
-                    ui.entries
-                        .get(index)
-                        .is_some_and(super::Entry::has_in_memory_only_drafts)
-                })
-        });
+        .is_none_or(|index| has_unsaved_temporary_state(s, index));
     if blocked {
         return false;
     }
@@ -602,8 +609,7 @@ pub(crate) fn detach_stopped_temporary(
                     }
                     // When the server retained the folder on disk, never forcefully drop a tab
                     // carrying in-memory-only drafts/attachments, unsaved file edits, or pending forms.
-                    if keep_drafts && (close_blocked(s, *index) || item.has_in_memory_only_drafts())
-                    {
+                    if keep_drafts && has_unsaved_temporary_state(s, *index) {
                         return false;
                     }
                     true
