@@ -232,10 +232,15 @@ impl Reader {
         })
     }
 
-    pub(crate) fn sync_undo_contains(&self, id: &str) -> bool {
-        self.sync_undo
-            .as_ref()
-            .is_some_and(|undo| undo.messages.iter().any(|row| row.id == id))
+    pub(crate) fn sync_undo_contains(
+        &self,
+        id: &str,
+        queue_items: &[codenomad_client::inbox::QueuedPrompt],
+    ) -> bool {
+        self.sync_undo.as_ref().is_some_and(|undo| {
+            undo.messages.iter().any(|row| row.id == id)
+                || (!undo.history_detached && queue_items.iter().any(|item| item.id == id))
+        })
     }
 
     pub(crate) fn can_undo_sync(&self, wants_older: bool, wants_newer: bool) -> bool {
@@ -804,6 +809,7 @@ pub(crate) enum Reconcile {
 }
 
 pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
+    let awaiting_replay = s.transcript_display.reading().awaiting_wheel_replay();
     let keep_probe = s.transcript_display.reading().keeps_sync_undo_alive();
     let keep_gesture = s
         .transcript_display
@@ -816,7 +822,7 @@ pub(crate) fn expire_sync_undo(s: &mut State, clock: f64) {
         if undo.last_clock == Some(clock) {
             return;
         }
-        if conversation_visible && (reader.pending_scroll || keep_gesture) {
+        if conversation_visible && (reader.pending_scroll || keep_gesture || awaiting_replay) {
             undo.last_clock = Some(clock);
             return;
         }
@@ -6575,6 +6581,395 @@ mod resume_tests {
                 Bookmark::Message { .. }
             ),
             "switching away after off-bottom replay in shortened viewport must save reading position, not Latest: {:?}",
+            rt.state.reader.as_ref().unwrap().bookmark
+        );
+    }
+
+    #[test]
+    fn unphased_resize_replay_keeps_sync_undo_for_upward_reversal() {
+        let long_sentence = "Wrapped transcript content that expands vertically when the viewport narrows significantly. ";
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rures-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(4)),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("rures-15", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_30", 15..30),
+                        older: Some(serde_json::json!("older-rures")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + 40.0, h_rect[1] + h_rect[3] / 2.0);
+        // Frame A: unphased downward wheel arms ReplayDeltas while keeping SyncUndo.
+        rt.wheel_event(rune::WheelEvent::new(0.0, -40.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        // Frame B: resize on replay delivery frame rearms resize replay; pending_scroll settles.
+        rt.set_viewport((480.0, 390.0), 1.0);
+        rt.frame(0.016);
+        assert!(
+            rt.state.reader.as_ref().unwrap().has_sync_undo(),
+            "SyncUndo must survive first replay delivery while resize replay is pending"
+        );
+
+        // Frame C: unphased upward reversal while resize replay is pending must still roll back
+        // the older-only trim and request an older target above rures-15.
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.state.messages.len(),
+            30,
+            "upward reversal during pending resize replay must roll back older-only trim"
+        );
+        let target = lane.demand.current().target;
+        match target {
+            Some(Target::Around(ref id)) => {
+                let idx: usize = id.strip_prefix("rures-").unwrap().parse().unwrap();
+                assert!(
+                    idx < 15,
+                    "rolled-back upward reversal must advance target above rures-15, got {id}"
+                );
+            }
+            other => panic!("expected Target::Around above rures-15, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_blur_clears_vertical_wheel_lock_for_unphased_shift_wheel() {
+        let wide_code = format!(
+            "```text\n{}\n```",
+            "blur_horizontal_segment_0123456789 ".repeat(14)
+        );
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    let body = if i == 20 {
+                        format!("{prefix} {i:02}\n{wide_code}")
+                    } else {
+                        format!("{prefix} {i:02} line one\nline two")
+                    };
+                    crate::Message {
+                        usage: None,
+                        id: format!("rblur-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body,
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full30", 0..30);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (320.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            crate::transcript_state::Display::toggle_code(s, "body-rblur-20", 0);
+            tx.instant();
+            tx.scroll_key_to("rblur-20", 0.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim18_30", 18..30),
+                        older: Some(serde_json::json!("older-rblur")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 390.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+        assert_eq!(rt.state.messages.len(), 12);
+
+        let find_code_el = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|e| {
+                    e.text
+                        .as_deref()
+                        .is_some_and(|t| t.contains("blur_horizontal_segment_"))
+                        && e.visible[2] > 0.0
+                        && e.visible[3] > 0.0
+                })
+                .expect("visible horizontally overflowing code block in rblur-20")
+        };
+        let code_before = find_code_el(&rt);
+        assert!(
+            code_before.rect[2] > code_before.visible[2] + 20.0,
+            "unwrapped code block must overflow horizontally: rect={:?} visible={:?}",
+            code_before.rect,
+            code_before.visible
+        );
+        let (cx, cy) = (
+            code_before.visible[0] + code_before.visible[2] / 2.0,
+            code_before.visible[1] + code_before.visible[3] / 2.0,
+        );
+
+        // Start a phased downward gesture while SyncUndo is armed, then blur BEFORE Ended.
+        rt.wheel_event(
+            rune::WheelEvent::new(0.0, -20.0)
+                .at(cx, cy)
+                .phase(rune_theme_codenomad::timeline::GesturePhase::Began),
+        );
+        rt.frame(0.016);
+        rt.window_focus(false);
+        rt.frame(0.02);
+        rt.window_focus(true);
+        rt.frame(0.02);
+
+        // Re-locate the code block after the 20 px downward scroll and send an unphased (Moved)
+        // Shift+wheel within 1 second.
+        let code_before_shift = find_code_el(&rt);
+        let (sx, sy) = (
+            code_before_shift.visible[0] + code_before_shift.visible[2] / 2.0,
+            code_before_shift.visible[1] + code_before_shift.visible[3] / 2.0,
+        );
+        let mut ev = rune::WheelEvent::new(0.0, -240.0)
+            .at(sx, sy)
+            .phase(rune_theme_codenomad::timeline::GesturePhase::Moved);
+        ev.mods.shift = true;
+        ev.precise = false;
+        rt.wheel_event(ev);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.state.messages.len(),
+            12,
+            "Shift+wheel after blur must stay horizontal and not roll back trimmed rows"
+        );
+        let code_after = find_code_el(&rt);
+        assert!(
+            (code_after.rect[0] - code_before_shift.rect[0]).abs() > 10.0,
+            "unphased Shift+wheel after window blur must horizontally scroll the code block: before_x={}, after_x={}",
+            code_before_shift.rect[0],
+            code_after.rect[0]
+        );
+    }
+
+    #[test]
+    fn shortening_viewport_on_replay_delivery_frame_preserves_queued_prompt_anchor() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("rqan-{i:02}"),
+                        role: "assistant".into(),
+                        completed: true,
+                        body: format!("{prefix} {i:02} line one\nline two\nline three"),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let tall_queued_text = (0..32)
+            .map(|i| format!("Queued prompt line {i:02} kept attached at bottom of transcript"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let queued_item = codenomad_client::inbox::QueuedPrompt {
+            id: "rqan-queued".into(),
+            delivery: codenomad_client::prompt::Delivery::Queue,
+            text: tall_queued_text,
+            parts: vec![],
+            created: Some(1),
+            editable: true,
+        };
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = make_rows("Full25", 0..25);
+        s.transcript_display
+            .queue
+            .fixture_set(None, vec![queued_item]);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (844.0, 460.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (_, _, old_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        assert!(old_max > 200.0);
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_to_y("history", old_max - 40.0);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, _| suspend(s));
+        assert!(
+            matches!(
+                &rt.state.reader.as_ref().unwrap().bookmark,
+                Bookmark::Message { id, .. } if id == "rqan-queued"
+            ),
+            "expected queued prompt bookmark before resume, got {:?}",
+            rt.state.reader.as_ref().unwrap().bookmark
+        );
+
+        rt.set_viewport((320.0, 460.0), 1.0);
+        for _ in 0..5 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| resume(s, tx));
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim15_25", 15..25),
+                        older: Some(serde_json::json!("older-rqan")),
+                        newer: None,
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.set_viewport((844.0, 460.0), 1.0);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_pending_scroll());
+        assert!(rt.state.reader.as_ref().unwrap().has_sync_undo());
+
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // 60 px downward hits old max (40 px left at 460 px), then shortening by 100 px should
+        // re-replay from the queued prompt anchor and land 80 px above the new bottom (not 100 px).
+        rt.wheel_event(rune::WheelEvent::new(0.0, -60.0).at(wx, wy));
+        rt.frame(0.016);
+        assert!(
+            rt.state
+                .transcript_display
+                .reading()
+                .has_pending_restore_probe()
+        );
+
+        rt.set_viewport((844.0, 360.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let (_, final_offset, final_max) = rt.state.transcript_display.reading().scroll_snapshot();
+        let distance_from_bottom = final_max - final_offset;
+        assert!(
+            (distance_from_bottom - 80.0).abs() <= 3.0,
+            "queued-prompt replay after shortening viewport must land 80 px above new bottom (not 100 px), got {distance_from_bottom} (offset={final_offset}, max={final_max})"
+        );
+        rt.update(|s, _| suspend(s));
+        assert!(
+            matches!(
+                &rt.state.reader.as_ref().unwrap().bookmark,
+                Bookmark::Message { id, .. } if id == "rqan-queued"
+            ),
+            "switching away after queued-prompt replay must keep queued prompt bookmark, got {:?}",
             rt.state.reader.as_ref().unwrap().bookmark
         );
     }

@@ -268,7 +268,7 @@ impl Reading {
         self.sync_undo_gesture_moved = false;
     }
 
-    fn end_wheel_gesture(&mut self) {
+    pub(crate) fn end_wheel_gesture(&mut self) {
         self.phased_wheel_active = false;
         self.phased_vertical_claimed_clock = None;
         self.sync_undo_gesture_clock = None;
@@ -1164,6 +1164,21 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
     })
 }
 
+fn replay_anchor_present(s: &State, anchor: &Bookmark) -> bool {
+    match anchor {
+        Bookmark::Latest => !s.history_detached,
+        Bookmark::Message { id, .. } => {
+            s.messages.iter().any(|row| row.id == *id)
+                || (!s.history_detached
+                    && s.transcript_display
+                        .queue
+                        .items()
+                        .iter()
+                        .any(|item| item.id == *id))
+        }
+    }
+}
+
 fn effective_wheel_delta_for(ev: &rune::WheelEvent, shift_turns_wheel: bool) -> (f32, f32) {
     if ev.mods.shift
         && !ev.mods.ctrl
@@ -1280,12 +1295,9 @@ fn handle_reading_wheel(
                     .frame_restore
                     .as_ref()
                     .is_some_and(|fr| match &fr.target {
-                        FrameRestoreTarget::ReplayDeltas { anchor, .. } => match anchor {
-                            Bookmark::Latest => !s.history_detached,
-                            Bookmark::Message { id, .. } => {
-                                s.messages.iter().any(|row| row.id == *id)
-                            }
-                        },
+                        FrameRestoreTarget::ReplayDeltas { anchor, .. } => {
+                            replay_anchor_present(s, anchor)
+                        }
                         _ => false,
                     })
             } else {
@@ -1610,10 +1622,9 @@ fn handle_reading_wheel(
                         .reader
                         .as_ref()
                         .is_some_and(|reader| !reader.can_undo_sync(false, true)),
-                    Bookmark::Message { id, .. } => s
-                        .reader
-                        .as_ref()
-                        .is_some_and(|reader| reader.sync_undo_contains(id)),
+                    Bookmark::Message { id, .. } => s.reader.as_ref().is_some_and(|reader| {
+                        reader.sync_undo_contains(id, s.transcript_display.queue.items())
+                    }),
                 })
                 .unwrap_or(bookmark)
         } else {
@@ -1961,10 +1972,7 @@ pub(crate) fn preserve_on_resize(
             .frame_restore
             .as_ref()
             .is_some_and(|fr| match &fr.target {
-                FrameRestoreTarget::ReplayDeltas { anchor, .. } => match anchor {
-                    Bookmark::Latest => !s.history_detached,
-                    Bookmark::Message { id, .. } => s.messages.iter().any(|row| row.id == *id),
-                },
+                FrameRestoreTarget::ReplayDeltas { anchor, .. } => replay_anchor_present(s, anchor),
                 _ => false,
             });
         if anchor_present {
