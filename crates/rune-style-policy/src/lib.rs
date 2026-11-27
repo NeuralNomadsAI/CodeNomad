@@ -491,6 +491,7 @@ mod tests {
         for source in [
             "android_main!(main); fn main() {}",
             "other::android_main!(main); fn main() {}",
+            "rune::android_main!(element.padding(8.)); fn main() {}",
         ] {
             assert!(!check(source).unwrap().is_empty(), "accepted {source}");
         }

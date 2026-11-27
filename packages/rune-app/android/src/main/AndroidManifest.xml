@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="CodeNomad">
+    <application
+        android:allowBackup="false"
+        android:label="CodeNomad">
         <activity
             android:name="ly.anoma.rune.RuneActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
@@ -18,6 +20,7 @@
         <provider
             android:name="ly.anoma.rune.RuneClipboardProvider"
             android:authorities="${applicationId}.rune.clipboard"
-            android:exported="true" />
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>
