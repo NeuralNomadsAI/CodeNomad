@@ -17,21 +17,16 @@ function Fixture() {
   const [draft, change] = createSignal(query.get("zone") === "system" ? newMissionSchedulingDraft() : newMissionSchedulingDraft("UTC"))
   const [policy, setPolicy] = createSignal<MissionLaunchPolicy>()
   const [started, setStarted] = createSignal(false)
-  const [capability, setCapability] = createSignal<"available" | "activatable" | "missing" | "loading">("available")
-  const [sources, setSources] = createSignal({
-    "schedule-success": [{ id: "msn_schedule", label: "Daily checks" }],
-    "mission-completed": [{ id: "msn_oneoff", label: "Deliver feature" }],
-    "branch-commits": [{ id: "refs/heads/dev", label: "dev" }],
-    "conversation-message": [{ id: "ses_followed", label: "Followed conversation" }],
-  })
+  const [sources, setSources] = createSignal({ "branch-commits": [{ id: "refs/heads/dev", label: "dev" }],
+    "conversation-message": [{ id: "ses_followed", label: "Followed conversation" }] })
   ;(window as any).schedulingFixture = { change: (patch: object) => change(value => ({ ...value, ...patch })),
-    draft, policy, started: setStarted, capability: setCapability, sources: setSources,
+    draft, policy, started: setStarted, sources: setSources,
     row: (kind: MissionCriterionKind, patch: object = {}) => ({ ...newMissionCriterion(kind), ...patch }),
     load: (policy: MissionLaunchPolicy) => change(decodeMissionSchedulingPolicy(policy, "/fixture", "UTC")) }
   return <main class="mission-editor window-shell" style={{ width: "min(420px, 100%)", margin: "auto", color: "var(--text-primary)" }}>
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}
       repository={{ repository: { provider: "github", host: "github.com", repository: "acme/repo" }, loading: false, failed: false, retry() {} }}
-      capability={capability()} started={started()}
+      started={started()}
       onChange={change} onPolicy={setPolicy} /></div>
   </main>
 }

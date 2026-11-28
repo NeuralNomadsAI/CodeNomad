@@ -326,7 +326,6 @@ export const missionMessages = {
   "missions.control.report.late": "דווח לאחר הסרת המשימה או עצירת המשלחת",
   "missions.control.history.before": "לפני",
   "missions.control.history.after": "אחרי",
-  "missions.recurrence.instructionsTooLong": "יש להגביל הוראות התחלה חוזרת ל־{limit} תווים.",
   "missions.recurrence.sourceInputTooLong": "ההוראות והקשר השיחות במעקב חייבים להיכנס ל־{limit} תווים. קצרו את ההוראות או הסירו שיחות ממעקב.",
   "missions.recurrence.sourceLocationUnavailable": "רעננו את מיקום המקורות.",
   "missions.cleanup.error.revisionConflict": "המשימה השתנתה. יש לבטל ולבחור בה שוב לפני המחיקה.",

@@ -1,10 +1,9 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { MissionMutationError } from "../lib/mission-mutation"
-import { backendEvents as serverEvents } from "../lib/server-events"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
@@ -17,9 +16,9 @@ import { rereadMissionHoldWhileActive } from "../lib/mission-held-reread"
 /** What an edit loads again from its Mission. */
 export type MissionEditorLoaded = { title: string; objective: string; notes?: string; template: MissionPanelMap["template"]; profiles?: MissionProfiles
   taskMode: "native" | "independent"; coordinatorGoal?: boolean }
-/** The form's launch criteria and whether this service can program them, and the edit of a started Mission's objective and notes. */
+/** The form's launch criteria, and the edit of a started Mission's objective and notes. */
 export function createMissionEditorScheduling(props: {
-  instanceId: string; directory?: string; action: MissionEditorAction; draft?: Readonly<MissionEditorDraft>
+  instanceId: string; action: MissionEditorAction; draft?: Readonly<MissionEditorDraft>
   /** Scalar view identity; with the client and native generation, it owns the shown reads. */
   scope: () => string; owner: () => string; active: () => boolean; captureView: () => (() => boolean)
   onLoad: (loaded: MissionEditorLoaded) => void
@@ -31,9 +30,6 @@ export function createMissionEditorScheduling(props: {
   const [previousDraft, setPreviousDraft] = createSignal(props.draft?.previousDraft)
   const [ready, setReady] = createSignal(true), [failed, setFailed] = createSignal(false)
   const [conflict, setConflict] = createSignal(false), [reading, setReading] = createSignal(false)
-  const [refresh, setRefresh] = createSignal(0)
-  const [capability, setCapability] = createSignal<"loading" | "missing" | "activatable" | "available">("loading")
-  const [directory, setDirectory] = createSignal<string>()
   // Only a changed view, client or native generation is another owner: other
   // publications (task revisions, transcript releases) never reread or reset.
   const owner = createMemo(() => ({ key: props.owner(), client: instances().get(props.instanceId)?.client,
@@ -46,28 +42,6 @@ export function createMissionEditorScheduling(props: {
     const origin = owner()
     return () => !origin.signal.aborted && !controller.signal.aborted && owner() === origin && props.active()
   }
-  // One capability read at a time, with at most one trailing read; the same
-  // owner keeps its last display while it revalidates.
-  let capabilityRead: { controller: AbortController; trailing: boolean } | undefined
-  const [capabilityReading, setCapabilityReading] = createSignal(false)
-  const readCapability = () => untrack(() => {
-    if (!props.active()) return
-    if (capabilityRead) { capabilityRead.trailing = true; return }
-    const controller = new AbortController(), read = capabilityRead = { controller, trailing: false }
-    const owned = captureOwner(controller), current = () => capabilityRead === read && owned()
-    setCapabilityReading(true)
-    void backendOf(props.instanceId).api.fetchMissionScheduleCapability(props.instanceId, props.directory,
-      AbortSignal.any([owner().signal, controller.signal, AbortSignal.timeout(10_000)])).then(value => {
-      if (!current()) return
-      if (value.location?.directory) setDirectory(value.location.directory)
-      setCapability(value.api?.available ? value.enabled ? "available" : value.activation?.available ? "activatable" : "missing" : "missing")
-    }).catch(() => { if (current()) setCapability("missing") }).finally(() => {
-      if (capabilityRead !== read) return
-      capabilityRead = undefined; setCapabilityReading(false)
-      if (read.trailing && owned()) readCapability()
-    })
-  })
-  const stopCapability = () => { capabilityRead?.controller.abort(); capabilityRead = undefined; setCapabilityReading(false) }
   let reconcileRead: AbortController | undefined
   const stopReconcile = () => { reconcileRead?.abort(); reconcileRead = undefined }
   let previousOwner: ReturnType<typeof owner> | undefined
@@ -76,26 +50,12 @@ export function createMissionEditorScheduling(props: {
     const value = owner(), active = visible()
     untrack(() => {
       const changed = Boolean(previousOwner && value !== previousOwner)
-      if (changed) setCapability("loading")
       previousOwner = value
-      stopCapability(); stopReconcile(); if (active) readCapability()
+      stopReconcile()
       if (active && changed && held()?.state === "uncertain") void reconcile()
     })
   })
-  createEffect(on(refresh, readCapability, { defer: true }))
-  // A config event does not say which layer changed: every visible editor of the
-  // instance revalidates its capability, as do native and backend reconnections.
-  const stopEvents = [
-    serverEvents.on("instance.event", event => {
-      if (event.type === "instance.event" && event.instanceId === props.instanceId
-        && (event.event.type === "config.updated" || event.event.type === "plugin.updated")) readCapability()
-    }),
-    serverEvents.on("instance.eventStatus", event => {
-      if (event.type === "instance.eventStatus" && event.instanceId === props.instanceId && event.status === "connected") readCapability()
-    }),
-    serverEvents.forInstance(() => props.instanceId).onOpen(readCapability),
-  ]
-  onCleanup(() => { stopEvents.forEach(stop => stop()); stopCapability(); stopReconcile() })
+  onCleanup(stopReconcile)
   const held = () => missionScheduleEditorHold(props.scope())
   const comparison = () => {
     const { titleOverride, objective, notes, template, profiles, taskMode, watched, scheduling } = props.captureDraft()
@@ -185,6 +145,5 @@ export function createMissionEditorScheduling(props: {
     finally { if (reconcileRead === controller) reconcileRead = undefined }
   }
   rereadMissionHoldWhileActive(() => held()?.state === "uncertain", props.active, reconcile)
-  return { journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory, revalidating: capabilityReading,
-    held, saveJournalEdit, reconcile, reload, retryRead: () => setRefresh(value => value + 1) }
+  return { journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, held, saveJournalEdit, reconcile, reload }
 }

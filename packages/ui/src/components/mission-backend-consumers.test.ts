@@ -8,7 +8,6 @@ import { isMissionPickerSource } from "./mission-scheduling-data"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
 import { backgroundReads } from "../lib/background-read-queue"
-import { recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
 import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Run production consumer bodies/effects, with transport and view owners injected.
@@ -105,9 +104,9 @@ test("editor creation dispatch is remote; stale completion preserves the current
   env.replace(); read.resolve({ mission: {} }); await pending
 })
 
-for (const kind of ["schedule-success", "mission-completed", "branch-commits"] as const) {
+for (const kind of ["branch-commits"] as const) {
   test(`editor source ${kind} uses remote API and rejects late source rows`, async () => {
-    const read = deferred(), env = fixture({ fetchMissionSchedules: () => read.promise, fetchLocalGitBranches: () => read.promise })
+    const read = deferred(), env = fixture({ fetchLocalGitBranches: () => read.promise })
     let dispose!: () => void
     const timers = new Map<number, () => void>()
     let timerId = 0
@@ -119,7 +118,7 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
       kinds: () => [kind], selected: () => [], active: () => true, captureView: () => () => true }) })
     for (const [key, timer] of timers) { timers.delete(key); timer() }
     reader.loading(); assert.equal(env.owners.length, 1)
-    env.revoke(); read.resolve({ projectID: "p", schedules: [{ id: "source", kind: "schedule", configuration: { title: "source" } }], branches: ["refs/heads/dev"] })
+    env.revoke(); read.resolve({ branches: ["refs/heads/dev"] })
     await flush(); assert.deepEqual(reader.sources(), {}); dispose()
   })
 }
@@ -171,9 +170,9 @@ test("editor GitHub and coordinator payload reaches only its owning programmed M
       props: { instanceId: owner, directory: "/repo", action, onSaved: () => {} }, locked: () => false, isActive: () => true, setFieldError: () => {},
       structuralLocked: () => false, compareError: () => undefined, immediateCreationFollowed: () => false, mode: () => "recurring",
       coordinatorSessionID, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID, mode: () => "recurring",
-        watchedIDs, schedule: { scheduling: () => ({ criteria: [{ kind: "github-issue" }] }) },
+        schedule: { scheduling: () => ({ criteria: [{ kind: "github-issue" }] }) },
         sourceChoices: { sources: () => ({ "coordinator-session": [{ id: "ses_same" }] }) } }),
-      textLocked: () => false, policy, policyReady: () => true, recurrenceStartText, calendarID: "cal", startOnCreation: () => false, removeReplaced: async () => {},
+      textLocked: () => false, policy, policyReady: () => true, calendarID: "cal", startOnCreation: () => false, removeReplaced: async () => {},
       objective: () => "objective", notes: () => "notes", template: () => "custom", taskMode: () => "native",
       uncertainRecurrence: () => undefined, missionCreationHold: () => undefined, identity: () => owner,
       copyMissionProfiles: (value: any) => structuredClone(value), effectiveProfiles: () => ({ coordinator: { agent: "worker", model: { providerID: "p", id: "m" } }, roles: {} }),
@@ -367,18 +366,4 @@ test("lifecycle reconcile authorizes only its exact request after its own read",
   const reconcile = production("./mission-lifecycle-controls.tsx", "reconcile", scope)
   const pending = reconcile(read.promise); env.revoke(); read.resolve(undefined); assert.equal(await pending, false)
   env.replace(); assert.equal(await reconcile(Promise.resolve()), true)
-})
-
-test("schedule editor passive readCapability reaches its distinct remote read", async () => {
-  const calls: string[] = [], capability: string[] = []
-  const scope = scheduleScope({
-    fetchMissionScheduleCapability: async () => { calls.push("capability"); return { api: { available: true }, enabled: true } },
-  })
-  Object.assign(scope, { capabilityRead: undefined, captureOwner: () => () => true,
-    owner: () => ({ signal: new AbortController().signal }), setCapabilityReading: () => {},
-    setDirectory: () => {}, setCapability: (value: string) => capability.push(value),
-  })
-  production("./mission-editor-schedule.ts", "readCapability", scope)(); await flush()
-  assert.deepEqual(calls, ["capability"])
-  assert.deepEqual(capability, ["available"])
 })

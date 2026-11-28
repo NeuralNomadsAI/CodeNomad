@@ -36,7 +36,7 @@ async function createDocument() {
     taskMode: "native", watchedConversationIDs: [], roots: [{ mode: "directory-only", directory: "/fixture" }], profileID: "profile", executionHost: "local",
     launch: { when: [{ kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }] } }, Date.now(), () => true)
 }
-async function setup(page: Page, available = true, locale = "en", theme = "dark", taskCount = 0) {
+async function setup(page: Page, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
   const errors: string[] = [], posts: Array<Record<string, any>> = [], deletions: Array<Record<string, any>> = [], reads: URL[] = []
   let doc = await createDocument(), lose = false, proof = true, contentProof = true, original: Record<string, any> | undefined
@@ -50,6 +50,7 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
   await page.route("**/api/workspaces/fixture/repository-source?*", route => route.fulfill({ json: {
     status: "ok", repository: { provider: "github", host: "github.com", repository: "acme/repo" } } }))
   await events.route(page)
@@ -85,9 +86,6 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     reads.push(link)
     const content = missionContentFixture(request.url(), request.method(), contentProof ? [journal] : [])
     if (content) return route.fulfill({ json: content })
-    if (pathname.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" },
-      api: available ? { available: true } : { available: false, reason: "missing-api" }, enabled: available,
-      origin: null, activation: { available: false, reason: "missing-api", targets: [] } } })
     if (pathname.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/msn_fixture")) {
       const [mission] = panelMissions([proof ? journal : { ...journal, history: [] }])
@@ -123,7 +121,6 @@ const ready = (page: Page) => page.waitForFunction(() => !(document.querySelecto
 test("followed conversations can be added, corrected and removed before immediate creation; remount retains sources", async () => {
   const page = await browser.newPage(), f = await setup(page)
   const roots = ["ses_one", "ses_two"].map((id, index) => ({ id, title: `Context ${index + 1}`, projectID: "project", location: { directory: "/fixture" } }))
-  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
   await page.route("**/workspaces/fixture/instance/api/session**", route => {
     const id = new URL(route.request().url()).pathname.split("/").at(-1)
     return route.fulfill({ json: id === "session" ? { data: roots, cursor: {} } : { data: roots.find(row => row.id === id) } })
@@ -161,7 +158,6 @@ test("followed conversations can be added, corrected and removed before immediat
 test("a lost immediate creation reply keeps followed IDs read-only across remount without a second write", async () => {
   const page = await browser.newPage(), f = await setup(page)
   const source = { id: "ses_context", title: "Original context", projectID: "project", location: { directory: "/fixture" } }
-  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
   await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json:
     new URL(route.request().url()).pathname.endsWith("/session") ? { data: [source], cursor: {} } : { data: source } }))
   try {
@@ -250,13 +246,7 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
       : Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })),
       cursor: request.searchParams.get("search") === "Later" || request.searchParams.has("cursor") ? {} : { next: "next_conversations" } } })
   })
-  let sourcePages = 0
-  await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
-    sourcePages++
-    const after = new URL(route.request().url()).searchParams.get("after")
-    return route.fulfill({ json: { version: 1, projectID: "project", ...(after ? {} : { next: "source_page_2" }),
-      schedules: after ? [{ ...missionScheduleView(f.doc).document, id: "msn_source", kind: "one-time" }] : [] } })
-  })
+  await branches(page)
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("React to the selected source")
@@ -267,15 +257,14 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
       assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
       assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).count(), 0)
     }
-    await kind.selectOption("mission-completed")
+    await kind.selectOption("repository-activity")
     const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
     assert.equal(await source.evaluate(element => Boolean(element.closest('[role="group"][aria-label="Criterion 1"]'))), true)
     assert.equal(await form(page).getByRole("alert").count(), 0, "an empty new source is not a premature global error")
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
     assert.equal(await form(page).getByRole("button", { name: "Load more sources", exact: true }).count(), 0)
-    await selectMissionSource(page, 1, "msn_source")
+    await selectMissionSource(page, 1, "refs/heads/main")
     await ready(page)
-    assert.equal(sourcePages, 2, "the open picker follows its empty filtered page, not a global button")
     await kind.selectOption("conversation-message")
     assert.equal(await source.getAttribute("data-source-id"), "", "changing kind clears the previous criterion's source")
     await source.click()
@@ -461,7 +450,7 @@ test("late source replies stay fenced after a type change or inactive editor, wh
 })
 
 for (const [locale, width] of [["en", 620], ["fr", 320], ["he", 320]] as const) test(`the source popup fits ${locale} at ${width}px with long conversation names`, async () => {
-  const page = await browser.newPage({ viewport: { width, height: 1000 } }), f = await setup(page, true, locale, locale === "en" ? "dark" : "light")
+  const page = await browser.newPage({ viewport: { width, height: 1000 } }), f = await setup(page, locale, locale === "en" ? "dark" : "light")
   const title = locale === "fr" ? "Conversation de référence avec un titre très long pour vérifier le sélecteur dans un panneau étroit"
     : locale === "he" ? "שיחת מקור עם כותרת ארוכה במיוחד לבדיקת הבחירה בחלון צר ובכיוון מימין לשמאל" : "Reference conversation with a deliberately long title for the source selector"
   await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: { data: [{ id: "ses_long", title }], cursor: {} } }))
@@ -761,7 +750,7 @@ test("a programmed Mission whose answer was lost is saved again under the same i
 for (const taskCount of [0, 75]) test(`a journal edit with ${taskCount} tasks and a lost ACK keeps the original request until its exact history receipt is read`, async () => {
   const page = await browser.newPage()
   await page.clock.install({ time: Date.now() })
-  const f = await setup(page, true, "en", "dark", taskCount)
+  const f = await setup(page, "en", "dark", taskCount)
   try {
     await page.evaluate(() => window.schedulingEditor.journal()); await ready(page)
     await form(page).getByLabel(objective, { exact: true }).fill("Original journal edit")
@@ -851,19 +840,6 @@ test("journal conflict reload prefills from descriptor-pinned content when the d
   } finally { await page.close() }
 })
 
-test("missing capability keeps criterion-free creation available and disables adding criteria", async () => {
-  const page = await browser.newPage(), f = await setup(page, false)
-  try {
-    await page.evaluate(() => window.schedulingEditor.create())
-    await form(page).getByLabel(objective, { exact: true }).fill("Immediate remains available")
-    await ready(page)
-    assert.equal(await form(page).getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
-    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), false)
-    assert.match(await form(page).locator(".mission-scheduling").innerText(), /Scheduling is unavailable on this connection/)
-    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
 test("create rejects impossible cron and a calendar with no eligible slot", async () => {
   const page = await browser.newPage(), f = await setup(page)
   try {
@@ -884,43 +860,35 @@ test("create rejects impossible cron and a calendar with no eligible slot", asyn
   } finally { await page.close() }
 })
 
-test("the real editor selects all five explicit project sources in their own pickers and avoids rereading sources while typing", async () => {
+test("the real editor selects a local branch and a conversation in their own pickers and avoids rereading sources while typing", async () => {
   const page = await browser.newPage(), f = await setup(page)
-  let schedulePages = 0
-  await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
-    schedulePages++
-    const more = new URL(route.request().url()).searchParams.get("after")
-    return route.fulfill({ json: { version: 1, projectID: "project", ...(more ? {} : { next: "msn_after" }),
-      schedules: more ? [{ ...missionScheduleView(f.doc).document, id: "msn_schedule", kind: "schedule" },
-        { ...missionScheduleView(f.doc).document, id: "msn_once", kind: "one-time" }] : [] } })
-  })
+  let sourceReads = 0
   await page.route("**/api/workspaces/fixture/worktrees", route => route.fulfill({ json: { worktrees: [{ branch: "dev" }] } }))
-  await page.route("**/api/workspaces/fixture/git-branches?*", route => route.fulfill({ json: { branches: ["refs/heads/dev", "refs/heads/not-checked-out"] } }))
-  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
-    data: [{ id: "ses_reference", title: "Reference conversation" }], cursor: {} } }))
+  await page.route("**/api/workspaces/fixture/git-branches?*", route => { sourceReads++; return route.fulfill({ json: { branches: ["refs/heads/dev", "refs/heads/not-checked-out"] } }) })
+  await page.route("**/workspaces/fixture/instance/api/session**", route => { sourceReads++; return route.fulfill({ json: {
+    data: [{ id: "ses_reference", title: "Reference conversation" }], cursor: {} } }) })
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Check explicit sources")
     await ready(page)
     const condition = form(page).getByLabel("Criterion 1 type", { exact: true })
-    for (const [kind, id] of [["schedule-success", "msn_schedule"], ["mission-completed", "msn_once"],
-      ["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
+    for (const [kind, id] of [["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
       await condition.selectOption(kind === "branch-commits" ? "repository-activity" : kind)
       await selectMissionSource(page, 1, id); await ready(page)
     }
-    assert.equal(schedulePages, 4, "each open schedule source picker follows its own continuation")
     await condition.selectOption("files-changed")
     await form(page).getByLabel("Criterion 1 file paths", { exact: true }).fill("src/input.ts")
     await ready(page)
+    const reads = sourceReads
     await form(page).getByLabel("Title", { exact: true }).fill("Typing does not refresh sources")
     await page.waitForTimeout(150)
-    assert.equal(schedulePages, 4); assert.deepEqual(f.errors, [])
+    assert.equal(sourceReads, reads); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
 for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale} with native controls, scheduling and role labels`, async () => {
   const page = await browser.newPage({ viewport: { width: 320, height: 1000 }, timezoneId: "Europe/Paris" })
-  const f = await setup(page, true, locale, "light")
+  const f = await setup(page, locale, "light")
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).locator("textarea").first().fill(locale === "fr" ? "Vérifier les sources du projet" : "בדיקת מקורות הפרויקט")
@@ -941,7 +909,7 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
 
 const branches = (page: Page) => page.route("**/api/workspaces/fixture/git-branches?*", route => route.fulfill({ json: { branches: ["refs/heads/main", "refs/heads/dev"] } }))
 for (const provider of ["github", "gitlab", "gitea"] as const) test(`repository activity: ${provider} detection → event → optional filters, without provider navigation`, async () => {
-  const page = await browser.newPage({ viewport: { width: 620, height: 1200 } }), f = await setup(page, true, "fr")
+  const page = await browser.newPage({ viewport: { width: 620, height: 1200 } }), f = await setup(page, "fr")
   const repository = { provider, host: provider === "github" ? "github.com" : provider === "gitlab" ? "gitlab.com" : "codeberg.org",
     repository: provider === "gitlab" ? "equipe/groupe/projet" : "equipe/projet" }
   let detections = 0
@@ -1023,7 +991,7 @@ test("repository detection failures retry on demand; Git stays usable without a 
   } finally { await page.close() }
 })
 
-test("launch criteria journey: an event, a schedule, else, if, or, the approved chain and a drag", async () => {
+test("launch criteria journey: a schedule, an event, if, or, a chain and a drag that keeps schedules first", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1400 } }), f = await setup(page)
   await branches(page)
   await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: { data: [{ id: "ses_reference", title: "Reference conversation" }], cursor: {} } }))
@@ -1046,37 +1014,37 @@ test("launch criteria journey: an event, a schedule, else, if, or, the approved 
     await choose(1, "branch-commits", "refs/heads/main")
     assert.equal(await form(page).getByRole("button", { name: "Move criterion 1", exact: true }).isDisabled(), true)
     await shot("01-event-only.png")
-    await addCriterion(page); await time(2, "18:00")
-    assert.deepEqual(await connectors(), ["else"], "commits, else 18:00")
-    await shot("03-commits-else-18h.png")
-    // A real pointer drag of 18:00 above the commits card; the connector follows the projected order.
+    // A card that becomes a schedule takes its place above the event.
+    await addCriterion(page); await type(2).selectOption("daily"); await time(1, "18:00")
+    assert.deepEqual(await connectors(), ["if"], "18:00 if commits")
+    await shot("04-18h-if-commits.png")
+    // A real pointer drag of the commits card above 18:00 leaves the schedule first.
     const grip = (await form(page).getByRole("button", { name: "Move criterion 2", exact: true }).boundingBox())!
     const target = (await form(page).getByRole("group", { name: "Criterion 1", exact: true }).boundingBox())!
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down()
     for (let step = 1; step <= 12; step++) await page.mouse.move(grip.x + grip.width / 2, grip.y + (target.y + target.height * 0.25 - grip.y) * step / 12)
     await form(page).locator(".mission-criterion-drop").waitFor()
-    assert.deepEqual(await connectors(), ["if"], "while dragging, commits already reads as the condition of 18:00")
+    assert.deepEqual(await connectors(), ["if"], "while dragging, commits stays the condition of 18:00")
     await capture(page, "07-dragging.png")
     await page.mouse.up()
     assert.equal(await type(1).inputValue(), "daily")
     assert.deepEqual(await connectors(), ["if"], "18:00 if commits")
-    await shot("04-18h-if-commits.png")
     await form(page).getByRole("button", { name: "Remove criterion 1", exact: true }).click()
     await addCriterion(page); await type(2).selectOption("files-changed")
     await form(page).getByLabel("Criterion 2 file paths", { exact: true }).fill("package.json")
     assert.deepEqual(await connectors(), ["or"], "commits or files")
     await shot("05-two-events-or.png")
-    // The approved chain: commits, else 18:00 if new messages, else 20:00.
-    await type(2).selectOption("daily"); await time(2, "18:00")
-    await addCriterion(page); await choose(3, "conversation-message", "ses_reference")
-    await addCriterion(page); await time(4, "20:00")
-    assert.deepEqual(await connectors(), ["else", "if", "else"])
-    await shot("06-approved-chain.png")
+    // The chain: 18:00 or 20:00, if commits, files or new messages.
+    await addCriterion(page); await type(3).selectOption("daily"); await time(1, "18:00")
+    await addCriterion(page); await type(4).selectOption("daily"); await time(2, "20:00")
+    await addCriterion(page); await choose(5, "conversation-message", "ses_reference")
+    assert.deepEqual(await connectors(), ["or", "if", "or", "or"])
+    await shot("06-chain.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" },
-      { kind: "cron", expression: "0 18 * * *", zone: "Europe/Paris" }, { kind: "conversation-message", conversationID: "ses_reference" },
-      { kind: "cron", expression: "0 20 * * *", zone: "Europe/Paris" }] })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "0 18 * * *", zone: "Europe/Paris" },
+      { kind: "cron", expression: "0 20 * * *", zone: "Europe/Paris" }, { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" },
+      { kind: "files-changed", paths: ["package.json"] }, { kind: "conversation-message", conversationID: "ses_reference" }] })
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

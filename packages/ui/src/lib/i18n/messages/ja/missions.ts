@@ -326,7 +326,6 @@ export const missionMessages = {
   "missions.control.report.late": "タスクの廃止またはミッションの停止後に報告されました",
   "missions.control.history.before": "変更前",
   "missions.control.history.after": "変更後",
-  "missions.recurrence.instructionsTooLong": "定期開始の指示は {limit} 文字以内にしてください。",
   "missions.recurrence.sourceInputTooLong": "指示と追跡会話のコンテキストは {limit} 文字以内にしてください。指示を短くするか追跡会話を削除してください。",
   "missions.recurrence.sourceLocationUnavailable": "ソースの場所を更新してください。",
   "missions.cleanup.error.revisionConflict": "ミッションが変更されました。キャンセルして選択し直してから削除してください。",
