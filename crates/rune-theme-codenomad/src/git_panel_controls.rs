@@ -1,3 +1,4 @@
+pub use crate::window_control::CLOSE;
 use crate::{
     Space, field_kit, kit,
     layout::{self, Layout, dark},
@@ -6,7 +7,7 @@ pub use rune::Icon as Glyph;
 use rune::{El, Phase, Tx, edit::TextEdit, row, text};
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SegmentedControl, Select,
-    SelectAppearance, State,
+    SelectAppearance,
 };
 
 pub enum ButtonLook {
@@ -34,6 +35,16 @@ pub fn button<S: 'static>(
     button.build(&kit(dark()))
 }
 
+fn apply_active_toggle(k: &mut rune_kit::Kit, dark: bool) {
+    let t = crate::tokens(dark);
+    let active_bg = t.color("icon-toggle-active-bg");
+    let active_hover = active_bg.alpha(0.15);
+    k.c.bg_button_neutral = active_bg;
+    k.c.hover = active_hover;
+    k.c.pressed = active_hover;
+    k.c.text_base = t.color("text-primary");
+}
+
 pub fn icon_button<S: 'static>(
     glyph: &'static Glyph,
     name: impl Into<String>,
@@ -43,42 +54,58 @@ pub fn icon_button<S: 'static>(
 ) -> El {
     let name = name.into();
     let dark = dark();
-    let state = if disabled {
-        State::Disabled
-    } else {
-        State::Rest
-    };
     let button = IconButton::new(glyph)
         .control_size(ControlSize::Small)
         .label(name.clone())
         .help(name)
-        .state(state)
+        .disabled(disabled)
         .on_press_tx(press);
-    match active {
-        Some(is_active) => {
-            let t = crate::tokens(dark);
-            let mut k = kit(dark).clone();
-            if is_active {
-                let active_bg = t.color("icon-toggle-active-bg");
-                let active_hover = active_bg.alpha(0.15);
-                k.c.bg_button_neutral = active_bg;
-                k.c.hover = active_hover;
-                k.c.pressed = active_hover;
-                k.c.text_base = t.color("text-primary");
-            } else {
-                k.c.bg_button_neutral = t.color("surface-canvas");
-                k.c.hover = t.color("surface-hover");
-                k.c.pressed = t.color("surface-hover");
-                k.c.text_base = t.color("icon-button-color");
-            }
-            button
-                .variant(IconButtonVariant::Neutral)
-                .build(&k)
-                .checked(is_active)
-        }
-        None => button
+    let built = if active == Some(true) && !disabled {
+        let mut k = kit(dark).clone();
+        k.elevation.button_neutral = Vec::new();
+        apply_active_toggle(&mut k, dark);
+        button.variant(IconButtonVariant::Neutral).build(&k)
+    } else {
+        button
             .variant(IconButtonVariant::GhostMuted)
-            .build(&kit(dark)),
+            .build(&kit(dark))
+    };
+    match active {
+        Some(active) => built.checked(active),
+        None => built,
+    }
+}
+
+pub fn toolbar_icon_button<S: 'static>(
+    glyph: &'static Glyph,
+    name: impl Into<String>,
+    disabled: bool,
+    active: Option<bool>,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let name = name.into();
+    let dark = dark();
+    let mut k = kit(dark).clone();
+    if active == Some(true) && !disabled {
+        apply_active_toggle(&mut k, dark);
+    } else {
+        let t = crate::tokens(dark);
+        k.c.bg_button_neutral = t.color("surface-canvas");
+        k.c.hover = t.color("surface-hover");
+        k.c.pressed = t.color("surface-hover");
+        k.c.text_base = t.color("icon-button-color");
+    }
+    let button = IconButton::new(glyph)
+        .variant(IconButtonVariant::Neutral)
+        .control_size(ControlSize::Small)
+        .label(name.clone())
+        .help(name)
+        .disabled(disabled)
+        .on_press_tx(press)
+        .build(&k);
+    match active {
+        Some(active) => button.checked(active),
+        None => button,
     }
 }
 

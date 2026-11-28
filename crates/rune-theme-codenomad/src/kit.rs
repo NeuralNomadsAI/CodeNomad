@@ -191,13 +191,14 @@ pub(crate) fn build_from(
         std_text: c("text-primary"),
     };
     let shadow = |name| css::box_shadows(shadow_css(name), |color| color);
-    let mut elevation = Elevation::default().with_input(Vec::new());
-    elevation.button_neutral = vec![rune::Shadow {
+    let border = vec![rune::Shadow {
         spread: 1.0,
         color: c("border-base"),
         inset: true,
         ..rune::Shadow::default()
     }];
+    let mut elevation = Elevation::default().with_input(border.clone());
+    elevation.button_neutral = border;
     elevation.raised = shadow("panel-shadow");
     elevation.floating = shadow("popover-shadow");
     elevation.overlay = shadow("panel-shadow-strong");
