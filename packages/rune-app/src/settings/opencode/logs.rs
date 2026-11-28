@@ -226,10 +226,12 @@ fn bounded_tail(source: &str) -> (&str, bool) {
         start += 1;
     }
     if let Some(offset) = source[start..].find('\n') {
-        (&source[start + offset + 1..], true)
-    } else {
-        (&source[start..], true)
+        let after = &source[start + offset + 1..];
+        if !after.is_empty() {
+            return (after, true);
+        }
     }
+    (&source[start..], true)
 }
 
 #[cfg(test)]
@@ -247,5 +249,32 @@ mod tests {
         assert!(truncated);
         assert!(tail.len() <= MAX_DISPLAY_BYTES);
         assert_eq!(tail, "tail-entry\n");
+    }
+
+    #[test]
+    fn bounded_tail_falls_back_to_utf8_boundary_for_single_oversized_line_with_newline() {
+        let mut ascii_line = "a".repeat(MAX_DISPLAY_BYTES + 64);
+        ascii_line.push('\n');
+        let (tail, truncated) = bounded_tail(&ascii_line);
+        assert!(truncated);
+        assert!(!tail.is_empty());
+        assert_eq!(tail.len(), MAX_DISPLAY_BYTES);
+        assert!(tail.ends_with('\n'));
+
+        // Multi-byte UTF-8 single line > 128 KiB ending with '\n' must stay non-empty and valid.
+        let mut utf8_line = "é".repeat(MAX_DISPLAY_BYTES);
+        utf8_line.push('\n');
+        let (utf8_tail, utf8_truncated) = bounded_tail(&utf8_line);
+        assert!(utf8_truncated);
+        assert!(!utf8_tail.is_empty());
+        assert!(utf8_tail.len() <= MAX_DISPLAY_BYTES);
+        assert!(utf8_tail.ends_with('\n'));
+
+        // Single line > 128 KiB without any newline falls back to the same UTF-8 boundary.
+        let no_newline = "é".repeat(MAX_DISPLAY_BYTES);
+        let (no_nl_tail, no_nl_truncated) = bounded_tail(&no_newline);
+        assert!(no_nl_truncated);
+        assert!(!no_nl_tail.is_empty());
+        assert!(no_nl_tail.len() <= MAX_DISPLAY_BYTES);
     }
 }
