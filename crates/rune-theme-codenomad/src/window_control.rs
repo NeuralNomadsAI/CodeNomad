@@ -3,7 +3,7 @@ use crate::tokens;
 use rune::{El, Icon, icon, row};
 
 // Lucide X, the source used by components/window-close-button.tsx.
-pub(crate) static CLOSE: Icon = Icon {
+pub static CLOSE: Icon = Icon {
     name: "lucide-x",
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></g>"#,
