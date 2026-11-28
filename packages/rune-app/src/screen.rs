@@ -3,20 +3,20 @@ use rune::edit::TextEdit;
 use std::rc::Rc;
 
 pub enum Screen {
-    Launcher(Launcher),
-    Chat { launcher: Option<Launcher> },
+    Launcher(Box<Launcher>),
+    Chat { launcher: Option<Box<Launcher>> },
 }
 impl Screen {
     pub fn launcher(&self) -> Option<&Launcher> {
         match self {
             Self::Launcher(l) => Some(l),
-            Self::Chat { launcher } => launcher.as_ref(),
+            Self::Chat { launcher } => launcher.as_deref(),
         }
     }
     pub fn launcher_mut(&mut self) -> Option<&mut Launcher> {
         match self {
             Self::Launcher(l) => Some(l),
-            Self::Chat { launcher } => launcher.as_mut(),
+            Self::Chat { launcher } => launcher.as_deref_mut(),
         }
     }
     pub fn is_launcher(&self) -> bool {
@@ -146,13 +146,23 @@ impl State {
             Editor::Form(id) => self
                 .agent
                 .as_mut()
+                .filter(|a| !a.forms_mutating())
                 .and_then(|a| a.drafts.get_mut(&id))
                 .map(|d| d.editor()),
             Editor::Custom(id) => self
                 .agent
                 .as_mut()
-                .and_then(|a| a.drafts.get_mut(&id))
-                .map(|d| d.custom_editor()),
+                .filter(|a| !a.forms_mutating())
+                .and_then(|a| {
+                    a.reconcile_custom_focus();
+                    a.drafts
+                        .get_mut(&id)
+                        .filter(|d| !d.oversized_multiselect_default)
+                        .map(|d| {
+                            d.custom_was_focused = true;
+                            d.custom_editor()
+                        })
+                }),
         };
         edit.unwrap_or(&mut self.rejected_edit)
     }

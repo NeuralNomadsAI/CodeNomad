@@ -54,6 +54,9 @@ const URL_ROOTED = /^[\\/]{2}/
 // A separator-less candidate needs a real file shape: a stem of at least two
 // characters, in any script, and a short ASCII extension.
 const PLAIN_FILE_NAME = /^[\p{L}\p{M}\p{Nd}._~+=@%\-]{2,}\.[A-Za-z0-9]{1,8}$/u
+// Pure ASCII digit runs separated by slashes (`27/11/2026`, `989/1000`, `7/10`)
+// are dates or ratios, never bare source paths.
+const NUMERIC_RATIO = /^\d+(?:[\\/]\d+)+$/
 // Non-ASCII letters, marks and digits: prose glue at a token's edge,
 // file-name content inside it. Every non-ASCII character in a token is one of
 // these; CJK punctuation never enters a token.
@@ -69,6 +72,7 @@ const LITERAL_PATH = (href: string) => href.replace(/\\/g, "/").replace(/^(?:\.\
 const gated = (href: string): boolean => {
   if (!href || href.includes("@")) return false
   if (DRIVE_WITH_DOUBLE_SEPARATOR.test(href)) return false
+  if (NUMERIC_RATIO.test(href)) return false
   const hasSeparator = href.includes("/") || href.includes("\\")
   if (!hasSeparator && !PLAIN_FILE_NAME.test(href)) return false
   const path = projectLinkPath(href)
@@ -146,7 +150,7 @@ const INLINE_PATH = /^(?:(?:[A-Za-z]:)?[\\/])?[\p{L}\p{M}\p{Nd}._~+=-]+(?:[\\/][
 const INLINE_FILE_NAME = /^[^\\/]{2,}\.[A-Za-z0-9]{1,8}$/u
 
 export function inlineCodeCandidates(text: string): InlineCodeCandidate[] {
-  if (!INLINE_PATH.test(text)) return []
+  if (!INLINE_PATH.test(text) || NUMERIC_RATIO.test(text)) return []
   if (!/[\\/]/.test(text) && !INLINE_FILE_NAME.test(text)) return []
   return [{ start: 0, end: text.length, href: text }]
 }

@@ -325,7 +325,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
             : commandKind === "schedule" ? await controlAgentMissionSchedule({
              workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
               bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
-              scheduleCapability: deps.scheduleCapability,
+              scheduleCapability: deps.scheduleCapability, permissionModes: deps.permissionModes,
            }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)

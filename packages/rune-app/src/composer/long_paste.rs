@@ -101,17 +101,36 @@ fn compact(s: &mut State, text: &str) -> bool {
 }
 
 pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<Range<usize>>)> {
+    let max_bytes = codenomad_client::prompt::MAX_BODY_BYTES;
+    if !tokens(&text).any(|(_, id)| {
+        parts.iter().any(
+            |part| matches!(part, Attachment::Pasted { id: candidate, .. } if *candidate == id),
+        )
+    }) {
+        return (text.len() <= max_bytes).then_some((text, Vec::new()));
+    }
+    expand_bounded(&text, parts, max_bytes)
+}
+
+pub(super) fn expand_bounded(
+    text: &str,
+    parts: &[Attachment],
+    max_bytes: usize,
+) -> Option<(String, Vec<Range<usize>>)> {
     let mut result = String::new();
     let mut offset = 0;
     let mut spans = Vec::new();
-    for (range, id) in tokens(&text) {
+    for (range, id) in tokens(text) {
         let Some(Attachment::Pasted { text: pasted, .. }) = parts.iter().find(
             |part| matches!(part, Attachment::Pasted { id: candidate, .. } if *candidate == id),
         ) else {
             continue;
         };
-        if result.len() + (range.start - offset) + pasted.len()
-            > codenomad_client::prompt::MAX_BODY_BYTES
+        if result
+            .len()
+            .saturating_add(range.start - offset)
+            .saturating_add(pasted.len())
+            > max_bytes
         {
             return None;
         }
@@ -121,9 +140,9 @@ pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<
         offset = range.end;
     }
     if offset == 0 {
-        return Some((text, spans));
+        return (text.len() <= max_bytes).then(|| (text.to_owned(), spans));
     }
-    if result.len() + (text.len() - offset) > codenomad_client::prompt::MAX_BODY_BYTES {
+    if result.len().saturating_add(text.len() - offset) > max_bytes {
         return None;
     }
     result.push_str(&text[offset..]);

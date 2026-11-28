@@ -685,10 +685,30 @@ fn suspend_and_reenter_keeps_in_flight_mutation_lock_and_reconciles() {
         rt.state.panel.request_catalog_install("godot");
         assert!(rt.state.panel.confirm.is_none());
 
-        install_req.reply(200, json!({ "ok": true })).await;
+        install_req
+            .reply(
+                200,
+                json!({
+                    "scope": "global",
+                    "spec": "@neuralnomads/opencode-godot-link@latest",
+                    "reloadPending": true
+                }),
+            )
+            .await;
         settle_next(&mut rt, 0.35).await;
         assert!(!rt.state.panel.busy());
         assert!(rt.state.panel.stale);
+        assert_eq!(
+            rt.state
+                .panel
+                .notice
+                .as_ref()
+                .map(|notice| (notice.error, notice.text.as_str())),
+            Some((
+                false,
+                with_locale("en", || t("integrations.message.installRequested")),
+            ))
+        );
         let reconcile = http.accept().await;
         assert!(
             reconcile
@@ -837,28 +857,21 @@ fn failed_hosts_detail_read_clears_cached_offers() {
             .reply(200, sample_catalog("/repo", "ok", 1))
             .await;
         settle_next(&mut rt, 0.05).await;
-        for _ in 0..2 {
-            let req = http.accept().await;
-            if req.header.contains("/binding?") {
-                req.reply(200, json!({ "state": "none" })).await;
-            } else {
-                req.reply(200, json!({ "offers": [] })).await;
-            }
-        }
-        settle_next(&mut rt, 0.1).await;
-        assert_eq!(rt.state.panel.offers.get("blender").map(Vec::len), Some(0));
 
-        rt.state.panel.refresh();
-        poll_frame(&mut rt, 0.15);
-        http.accept()
-            .await
-            .reply(200, session_json("ses_1", "/repo"))
-            .await;
-        http.accept()
-            .await
-            .reply(200, sample_catalog("/repo", "ok", 1))
-            .await;
-        settle_next(&mut rt, 0.2).await;
+        // Seed a cached offer after start_detail_reads without calling refresh(),
+        // so only DetailReply::Offers(Err(_)) from the 500 /hosts response can clear it.
+        rt.state.panel.offers.insert(
+            "blender".into(),
+            vec![codenomad_client::settings::integrations::HostOffer {
+                offer_id: "offer_cached".into(),
+                label: "Blender — cached.blend".into(),
+                document: Some("cached.blend".into()),
+                app_version: None,
+                protocol_ok: true,
+            }],
+        );
+        assert_eq!(rt.state.panel.offers.get("blender").map(Vec::len), Some(1));
+
         for _ in 0..2 {
             let req = http.accept().await;
             if req.header.contains("/binding?") {
@@ -867,7 +880,7 @@ fn failed_hosts_detail_read_clears_cached_offers() {
                 req.reply(500, json!({ "error": "boom" })).await;
             }
         }
-        settle_next(&mut rt, 0.25).await;
+        settle_next(&mut rt, 0.1).await;
         assert!(rt.state.panel.offers.get("blender").is_none());
 
         rt.state.panel.request_attach("blender", None);
@@ -885,11 +898,124 @@ fn failed_hosts_detail_read_clears_cached_offers() {
                 }),
             )
             .await;
-        settle_next(&mut rt, 0.3).await;
+        settle_next(&mut rt, 0.15).await;
         let attach = http.accept().await;
         assert!(attach.header.starts_with(
             "POST /api/workspaces/owned/integrations/blender/attach?directory=%2Frepo "
         ));
         attach.reply(200, json!({ "outcome": "attached" })).await;
+    });
+}
+
+#[test]
+fn sse_drop_keeps_in_flight_mutation_lock_and_reconciles() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let target = Target::fixture(http.backend.clone(), "owned", Some("ses_1"));
+        let mut rt = make_runtime(target);
+        poll_frame(&mut rt, 0.0);
+
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.05).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.1).await;
+
+        rt.state.panel.request_catalog_install("godot");
+        assert!(rt.state.panel.confirm.is_some());
+        rt.state.panel.decide_confirm(true);
+        let install_req = http.accept().await;
+        assert!(rt.state.panel.busy());
+
+        // SSE disconnect + reconnect bumps authority on the same workspace and server:
+        // the in-flight POST lock must remain held until the server answers.
+        rt.state.target.as_mut().unwrap().transport(false);
+        poll_frame(&mut rt, 0.15);
+        assert!(rt.state.panel.busy());
+
+        rt.state.target.as_mut().unwrap().transport(true);
+        poll_frame(&mut rt, 0.2);
+        http.accept()
+            .await
+            .reply(200, session_json("ses_1", "/repo"))
+            .await;
+        http.accept()
+            .await
+            .reply(200, sample_catalog("/repo", "ok", 0))
+            .await;
+        settle_next(&mut rt, 0.25).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.3).await;
+
+        assert!(rt.state.panel.busy());
+        rt.state.panel.request_catalog_install("godot");
+        assert!(rt.state.panel.confirm.is_none());
+
+        install_req
+            .reply(
+                200,
+                json!({
+                    "scope": "global",
+                    "spec": "@neuralnomads/opencode-godot-link@latest",
+                    "reloadPending": true
+                }),
+            )
+            .await;
+        settle_next(&mut rt, 0.35).await;
+        assert!(!rt.state.panel.busy());
+        assert!(rt.state.panel.stale);
+        assert_eq!(
+            rt.state
+                .panel
+                .notice
+                .as_ref()
+                .map(|notice| (notice.error, notice.text.as_str())),
+            Some((
+                false,
+                with_locale("en", || t("integrations.message.installRequested")),
+            ))
+        );
+
+        let reconcile = http.accept().await;
+        assert!(
+            reconcile
+                .header
+                .starts_with("GET /api/workspaces/owned/integrations?directory=%2Frepo "),
+            "{}",
+            reconcile.header
+        );
+        reconcile.reply(200, sample_catalog("/repo", "ok", 0)).await;
+        settle_next(&mut rt, 0.4).await;
+        http.accept()
+            .await
+            .reply(200, json!({ "state": "none" }))
+            .await;
+        settle_next(&mut rt, 0.45).await;
+        assert!(rt.state.panel.fresh());
+
+        // Switching to a different workspace must drop a foreign in-flight mutation lock.
+        rt.state.panel.request_catalog_install("godot");
+        rt.state.panel.decide_confirm(true);
+        let _foreign_req = http.accept().await;
+        assert!(rt.state.panel.busy());
+        rt.state.target = Some(Target::fixture(
+            http.backend.clone(),
+            "other",
+            Some("ses_2"),
+        ));
+        poll_frame(&mut rt, 0.5);
+        assert!(!rt.state.panel.busy());
     });
 }

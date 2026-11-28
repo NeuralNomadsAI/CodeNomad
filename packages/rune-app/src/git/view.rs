@@ -96,13 +96,16 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
     };
     for lane in mode_lanes {
         if let Some(error) = &ui.requests.slot(*lane).error {
-            panel = panel.child(theme::note(error, "alert"));
+            panel = panel.child(theme::note(error.localized(), "alert"));
         }
     }
     if ui.mode != Mode::Workspace
         && let Some((ok, message)) = &ui.mutation_message
     {
-        panel = panel.child(theme::note(message, if *ok { "status" } else { "alert" }));
+        panel = panel.child(theme::note(
+            message.localized(),
+            if *ok { "status" } else { "alert" },
+        ));
     }
     let body = if ui.mode == Mode::Workspace {
         workspace

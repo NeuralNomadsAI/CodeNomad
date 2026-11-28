@@ -818,3 +818,30 @@ fn stationary_pointer_over_scrolling_list_does_not_override_keyboard_selection()
         Some(first_key.as_str())
     );
 }
+
+#[test]
+fn search_field_uses_search_input_mode_and_disables_autofill() {
+    assert_eq!(view::QUERY_INPUT_MODE, rune::InputMode::Search);
+    assert_eq!(view::QUERY_INPUT_MODE.as_html(), "search");
+    assert_eq!(view::QUERY_AUTOFILL, rune::Autofill::Off);
+    assert_eq!(view::QUERY_AUTOFILL.as_html(), "off");
+
+    let mut rt = runtime(workspace_state(2));
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    assert!(focused_path_contains(&rt, FIELD));
+
+    let elements = rt.elements();
+    let input = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some(FIELD))
+        .expect("palette search field");
+    assert_eq!(input.role, "textbox");
+
+    send_key(&mut rt, Key::Text("rename".into()), Mods::default());
+    assert_eq!(rt.state.command_palette.query.text, "rename");
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(item_key("rename-instance").as_str())
+    );
+}

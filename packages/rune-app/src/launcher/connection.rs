@@ -244,6 +244,19 @@ pub fn refresh_projects(s: &mut State) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
+    if l.server_id.is_none() {
+        if l.pending || l.authentication_required || l.managed_renewal.is_some() {
+            return;
+        }
+        if let Some(backend) = l.connection.clone() {
+            l.job("rune.list_error", async move {
+                let server_id = backend.attest_server().await?;
+                let projects = backend.projects().await?;
+                Ok(Reply::Connected(backend, projects, server_id))
+            });
+        }
+        return;
+    }
     start_projects_refresh(l);
 }
 

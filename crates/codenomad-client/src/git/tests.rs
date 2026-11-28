@@ -254,16 +254,25 @@ fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
         let entries = [
             (
                 200,
-                json!({"isGitRepo":true,"worktrees":[{"slug":"root","directory":"D:/repo"}]}),
+                json!({"isGitRepo":true,"worktrees":[{"slug":"root","directory":"D:/repo"}]})
+                    .to_string(),
             ),
-            (200, json!({"ok":false})),
+            (200, json!({"ok":false}).to_string()),
             (
                 422,
-                json!({"error":"  pre-commit hook rejected  ","code":"hook_failed"}),
+                json!({"error":"  pre-commit hook rejected  ","code":"hook_failed"}).to_string(),
             ),
-            (500, json!({"error":"   "})),
+            (500, json!({"error":"   "}).to_string()),
+            (
+                409,
+                json!({"error":"   ","message":"  Repository locked  "}).to_string(),
+            ),
+            (200, json!({"padding":"x".repeat(65 * 1024)}).to_string()),
+            (200, "{not-valid-json".to_owned()),
+            (200, json!({"padding":"x".repeat(65 * 1024)}).to_string()),
+            (200, "{not-valid-json".to_owned()),
         ];
-        for (status, response) in entries {
+        for (status, body) in entries {
             let (mut socket, _) = listener.accept().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(2)))
@@ -285,13 +294,11 @@ fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
                 let mut body = vec![0; length];
                 request.read_exact(&mut body).unwrap();
             }
-            let body = response.to_string();
-            write!(
+            let _ = write!(
                 socket,
                 "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
-            )
-            .unwrap();
+            );
         }
     });
 
@@ -328,6 +335,35 @@ fn client_git_errors_are_typed_and_refusals_preserve_structured_messages() {
             let blank = blank_err.downcast_ref::<Refusal>().unwrap();
             assert_eq!(blank.status, 500);
             assert_eq!(blank.message(), None);
+
+            let fallback_err = backend.git_commit("root", "hello").await.unwrap_err();
+            let fallback = fallback_err.downcast_ref::<Refusal>().unwrap();
+            assert_eq!(fallback.status, 409);
+            assert_eq!(fallback.message(), Some("Repository locked"));
+
+            let oversized_read = backend.workspace_checkout("root").await.unwrap_err();
+            assert_eq!(
+                oversized_read.downcast_ref::<GitError>(),
+                Some(&GitError::OversizedContent)
+            );
+
+            let invalid_read = backend.workspace_checkout("root").await.unwrap_err();
+            assert_eq!(
+                invalid_read.downcast_ref::<GitError>(),
+                Some(&GitError::UnexpectedResponse)
+            );
+
+            let oversized_mutation = backend.git_commit("root", "hello").await.unwrap_err();
+            assert_eq!(
+                oversized_mutation.downcast_ref::<GitError>(),
+                Some(&GitError::UnconfirmedMutation)
+            );
+
+            let invalid_mutation = backend.git_commit("root", "hello").await.unwrap_err();
+            assert_eq!(
+                invalid_mutation.downcast_ref::<GitError>(),
+                Some(&GitError::UnconfirmedMutation)
+            );
 
             let empty_msg = backend.git_commit("root", "   ").await.unwrap_err();
             assert_eq!(

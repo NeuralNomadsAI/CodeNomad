@@ -856,3 +856,87 @@ fn pagination_controls_and_hidden_panel_keep_reader_alive() {
         );
     });
 }
+
+#[test]
+fn mission_reader_markdown_links_share_transcript_external_filter() {
+    let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    let wake: Wake = Arc::new(|| {});
+    let panel = Panel::new(backend, Some("project".into()), Reads::default(), wake);
+
+    const CASES: &[(&str, Option<&str>)] = &[
+        ("https://example.org/spec", Some("https://example.org/spec")),
+        (
+            "http://127.0.0.1:8123/view?a=1#top",
+            Some("http://127.0.0.1:8123/view?a=1#top"),
+        ),
+        (
+            "https://[::1]:8080/?filter[]=open",
+            Some("https://[::1]:8080/?filter%5B%5D=open"),
+        ),
+        ("mailto:team@example.org", Some("mailto:team@example.org")),
+        ("javascript:alert(1)", None),
+        ("data:text/html,payload", None),
+        ("file:///etc/passwd", None),
+        ("file:///C:/secret.txt", None),
+        ("http://alice:demo@example.org/", None),
+        ("http://@example.org/", None),
+        ("https://.example.org/", None),
+        ("https://a..b.org/", None),
+        ("https://example.org/%00", None),
+        ("https://example.org/%ZZ", None),
+        ("mailto:", None),
+        ("mailto://evil.example/team", None),
+        ("mailto:team@example.org%00", None),
+    ];
+
+    let markdown = CASES
+        .iter()
+        .enumerate()
+        .map(|(i, (href, _))| format!("[link-{i}](<{href}>)"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    struct Harness {
+        panel: Panel,
+        markdown: String,
+    }
+
+    let mut rt = Runtime::new(
+        Harness { panel, markdown },
+        |h, _| {
+            crate::strings::with_locale("en", || {
+                let scoped = super::view::Scoped::new(
+                    |h: &mut Harness| Some(&mut h.panel),
+                    h.panel.scope.clone(),
+                );
+                super::sections::local_section(
+                    &h.panel,
+                    &scoped,
+                    "links",
+                    "missions.control.summary",
+                    &h.markdown,
+                    false,
+                    true,
+                )
+            })
+        },
+        (960.0, 720.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    assert!(rt.take_url_requests().is_empty());
+
+    for (href, expected) in CASES {
+        let node = rt
+            .elements()
+            .into_iter()
+            .find(|node| node.role == "link" && node.key.as_deref() == Some(*href))
+            .unwrap_or_else(|| panic!("missing rendered mission link {href:?}"));
+        let [x, y, w, h] = node.rect;
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.frame(0.02);
+        let expected_urls: Vec<String> = expected.map(str::to_owned).into_iter().collect();
+        assert_eq!(rt.take_url_requests(), expected_urls, "href={href:?}");
+    }
+}

@@ -189,6 +189,103 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
+fn linear_luminance(c: rune::Color) -> f32 {
+    0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+fn contrast_ratio(fg: rune::Color, bg: rune::Color) -> f32 {
+    let over = rune::Color {
+        r: fg.r * fg.a + bg.r * (1.0 - fg.a),
+        g: fg.g * fg.a + bg.g * (1.0 - fg.a),
+        b: fg.b * fg.a + bg.b * (1.0 - fg.a),
+        a: 1.0,
+    };
+    let l1 = linear_luminance(over);
+    let l2 = linear_luminance(bg);
+    (l1.max(l2) + 0.05) / (l1.min(l2) + 0.05)
+}
+fn readable_on(bg: rune::Color, candidates: &[rune::Color]) -> rune::Color {
+    if let Some(&color) = candidates
+        .iter()
+        .find(|&&color| contrast_ratio(color, bg) >= 4.5)
+    {
+        return color;
+    }
+    candidates
+        .iter()
+        .copied()
+        .max_by(|a, b| {
+            contrast_ratio(*a, bg)
+                .partial_cmp(&contrast_ratio(*b, bg))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(rune::Color::WHITE)
+}
+fn shell_send_colors(t: &crate::Tokens) -> (rune::Color, rune::Color) {
+    let fill = t.color("status-success");
+    let ink = readable_on(
+        fill,
+        &[
+            t.color("text-inverted"),
+            t.color("text-primary"),
+            rune::Color::WHITE,
+            rune::Color::BLACK,
+        ],
+    );
+    (fill, ink)
+}
+fn shell_status_ink(t: &crate::Tokens) -> rune::Color {
+    let field = t.color("surface-field");
+    readable_on(
+        field,
+        &[
+            t.color("status-success"),
+            t.color("text-secondary"),
+            t.color("text-primary"),
+            rune::Color::BLACK,
+            rune::Color::WHITE,
+        ],
+    )
+}
+const SHELL_PROMPT: rune::Icon = rune::Icon {
+    name: "shell-prompt",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 4-5 4"/><path d="M13 16h6"/></g>"#,
+};
+pub fn shell_send_button_tx<S: 'static>(
+    label: &str,
+    aria_label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let mut theme = kit(dark()).clone();
+    let (fill, ink) = shell_send_colors(t);
+    theme.c.bg_icon_button_contrast = fill;
+    theme.c.bg_contrast = fill;
+    theme.c.contrast_hover = fill;
+    theme.c.contrast_pressed = fill;
+    theme.c.bg_accent = fill;
+    theme.c.submit_highlight = rune::Color::TRANSPARENT;
+    theme.c.submit_hover = fill;
+    theme.c.submit_fg = ink;
+    theme.c.submit_icon = ink;
+    theme.c.text_contrast = ink;
+    theme.c.icon_contrast = ink;
+    let action = Rc::new(press);
+    let press = action.clone();
+    let button = rune_kit::Button::new(label)
+        .icon(&SHELL_PROMPT)
+        .variant(rune_kit::ButtonVariant::Submit)
+        .disabled(disabled)
+        .on_press_tx(move |s, tx| press(s, tx))
+        .build(&theme)
+        .label(aria_label);
+    if disabled {
+        button
+    } else {
+        button.on_key(enter_action(action))
+    }
+}
 fn caret_pin(key: &'static str, top: f32, height: f32) -> El {
     let top = if top.is_finite() { top.max(0.0) } else { 0.0 };
     let height = if height.is_finite() {
@@ -206,6 +303,29 @@ pub fn composer_field(
     on_scroll: impl Fn(f32, f32) + 'static,
     inner_caret_pin: Option<(f32, f32)>,
     stack_caret_pin: Option<(f32, f32)>,
+) -> El {
+    composer_field_with_status(
+        editor,
+        bounds,
+        focused,
+        on_scroll,
+        inner_caret_pin,
+        stack_caret_pin,
+        false,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn composer_field_with_status(
+    editor: El,
+    bounds: crate::interruption::SessionLayout,
+    focused: bool,
+    on_scroll: impl Fn(f32, f32) + 'static,
+    inner_caret_pin: Option<(f32, f32)>,
+    stack_caret_pin: Option<(f32, f32)>,
+    shell_mode: bool,
+    shell_status: Option<&str>,
 ) -> El {
     let t = tokens(dark());
     let minimum = if bounds.composer_min.is_finite() {
@@ -225,17 +345,38 @@ pub fn composer_field(
     if let Some((top, height)) = inner_caret_pin {
         field = field.child(caret_pin("composer-caret-pin", top, height));
     }
-    let mut field = rune::col()
+    let mut box_el = rune::col()
         .w_full()
         .child(field)
         .fill(t.color("surface-field"));
     if let Some((top, height)) = stack_caret_pin {
-        field = field.child(caret_pin("stack-caret-pin", top, height));
+        box_el = box_el.child(caret_pin("stack-caret-pin", top, height));
     }
-    if focused {
-        field.outline(1.0, -1.0, t.color("focus-ring-color"))
+    if !bounds.scroll_stack
+        && let Some(status) = shell_status
+    {
+        let sm = t.space(Space::Sm).px();
+        let xs = t.space(Space::Xs).px();
+        box_el = box_el.child(
+            rune::row()
+                .key("composer-shell-status")
+                .role("note")
+                .pin(Some(sm), None, Some(sm), Some(xs))
+                .child(
+                    rune::text(status)
+                        .font(t.text(TextRole::Small))
+                        .color(shell_status_ink(t)),
+                ),
+        );
+    }
+    if shell_mode && focused {
+        box_el.outline(2.0, -2.0, t.color("status-success-ring"))
+    } else if shell_mode {
+        box_el.outline(1.0, -1.0, t.color("status-success-ring"))
+    } else if focused {
+        box_el.outline(1.0, -1.0, t.color("focus-ring-color"))
     } else {
-        field
+        box_el
     }
 }
 pub fn caret_rect<S>(cx: &rune::Cx<S>, key: &str) -> Option<[f32; 4]> {
@@ -427,25 +568,57 @@ mod tests {
     }
     #[test]
     fn the_safe_area_keeps_the_application_inside_a_phones_insets() {
-        fn view(_: &(), cx: &mut rune::Cx<()>) -> El {
+        // What the body and the surface under it measure: the shell sizes its overlays by the
+        // first, and the second is what the system's bars sit on.
+        #[derive(Default)]
+        struct Measured {
+            body: [f32; 4],
+            surface: [f32; 4],
+        }
+        fn view(_: &Measured, cx: &mut rune::Cx<Measured>) -> El {
             render(cx, |cx| {
-                safe_area(cx, rune::el().key("body").w_full().h_full())
+                let body = rune::el()
+                    .key("body")
+                    .w_full()
+                    .h_full()
+                    .on_layout_tx(|s: &mut Measured, bounds, _| s.body = bounds);
+                safe_area(cx, body).on_layout_tx(|s: &mut Measured, bounds, _| s.surface = bounds)
             })
         }
-        let mut rt = rune::Runtime::new((), view, (200.0, 400.0), rune::Env::default());
-        rt.frame(0.0);
-        assert_eq!(
-            rt.find("body"),
-            Some((100.0, 200.0)),
-            "no insets: the whole window"
+        let window = [0.0, 0.0, 200.0, 400.0];
+        let mut rt = rune::Runtime::new(
+            Measured::default(),
+            view,
+            (200.0, 400.0),
+            rune::Env::default(),
         );
+        // A layout is reported on the frame after it.
+        let mut at = 0.0;
+        let mut settle = |rt: &mut rune::Runtime<Measured>| {
+            for _ in 0..3 {
+                rt.frame(at);
+                at += 16.0;
+            }
+        };
+        settle(&mut rt);
+        assert_eq!(rt.state.body, window, "no insets: the whole window");
         // A keyboard opening or a rotation changes them while the application runs.
         rt.set_safe_area([10.0, 4.0, 30.0, 6.0]);
-        rt.frame(16.0);
+        settle(&mut rt);
         assert_eq!(
-            rt.find("body"),
-            Some((101.0, 190.0)),
+            rt.state.body,
+            [6.0, 10.0, 190.0, 360.0],
             "inside top, right, bottom and left"
+        );
+        assert_eq!(
+            rt.state.surface, window,
+            "the surface still reaches the edges"
+        );
+        rt.set_safe_area([0.0; 4]);
+        settle(&mut rt);
+        assert_eq!(
+            rt.state.body, window,
+            "the keyboard closed: the whole window again"
         );
     }
     #[test]
@@ -736,6 +909,41 @@ mod tests {
                 assert!(look.matches(rt.popup_menu().unwrap()));
                 rt.resolve_popup(None).unwrap();
             }
+        }
+    }
+    #[test]
+    fn shell_send_and_status_meet_wcag_contrast_in_every_palette() {
+        let check = |label: &str, dark: bool| {
+            let t = tokens(dark);
+            let (fill, ink) = shell_send_colors(t);
+            let send_ratio = contrast_ratio(ink, fill);
+            assert!(
+                send_ratio >= 4.5,
+                "{label}: shell send button contrast {send_ratio:.2} < 4.5"
+            );
+            let field = t.color("surface-field");
+            let status_ratio = contrast_ratio(shell_status_ink(t), field);
+            assert!(
+                status_ratio >= 4.5,
+                "{label}: shell status contrast {status_ratio:.2} < 4.5"
+            );
+        };
+        for dark in [false, true] {
+            check(
+                if dark {
+                    "default-dark"
+                } else {
+                    "default-light"
+                },
+                dark,
+            );
+            let high = crate::palettes::increased_contrast(None, dark).unwrap();
+            crate::palettes::with_palette(Some(high), || check("default-hc", dark));
+        }
+        for palette in crate::palettes::built_in() {
+            crate::palettes::with_palette(Some(palette), || check(palette.id, palette.dark));
+            let high = crate::palettes::increased_contrast(Some(palette), palette.dark).unwrap();
+            crate::palettes::with_palette(Some(high), || check(palette.id, palette.dark));
         }
     }
     #[test]

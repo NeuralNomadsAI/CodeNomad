@@ -64,8 +64,8 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         );
         assert!(crate::poll_chat(&mut root, 4));
         super::super::poll(&mut root, &mut rune::Tx::default());
-        let (mut config, mut state) = (false, false);
-        for _ in 0..5 {
+        let (mut config, mut state, mut global) = (false, false, false);
+        for _ in 0..7 {
             let read = request(&listener).await;
             let data = match read.first.as_str() {
                 "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
@@ -86,11 +86,21 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
                 {
                     json!({"data":[]})
                 }
+                "GET /api/workspaces/direct-project/worktrees HTTP/1.1" => {
+                    json!({"worktrees":[{"directory":"/private"}]})
+                }
+                other
+                    if other
+                        .starts_with("GET /api/workspaces/direct-project/pending-requests?") =>
+                {
+                    global = true;
+                    json!({"supported":true,"directories":[]})
+                }
                 other => panic!("unexpected direct chat request: {other}"),
             };
             read.reply(200, data).await;
         }
-        assert!(config && state);
+        assert!(config && state && global);
         wait_until(|| {
             super::super::poll(&mut root, &mut rune::Tx::default());
             let prefs = root.settings.shared.borrow();

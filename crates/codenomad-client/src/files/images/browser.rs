@@ -45,6 +45,7 @@ pub(super) async fn read(url: Url, maximum: usize) -> Result<Vec<u8>> {
     let init = RequestInit::new();
     init.set_credentials(RequestCredentials::Omit);
     init.set_referrer_policy(ReferrerPolicy::NoReferrer);
+    Reflect::set(&init, &"cache".into(), &"no-store".into()).map_err(browser_error)?;
     init.set_signal(Some(&abort.controller.signal()));
     let request = Request::new_with_str_and_init(url.as_str(), &init).map_err(browser_error)?;
     let response: Response = JsFuture::from(abort.window.fetch_with_request(&request))

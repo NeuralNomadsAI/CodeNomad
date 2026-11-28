@@ -180,6 +180,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "此日历没有未来时段。",
   "missions.scheduling.error.capability": "计划不可用。请保留草稿或移除启动条件。",
   "missions.scheduling.error.unsupported": "无法按这些启动条件安排。",
+  "missions.scheduling.error.coordinatorProfile": "现有对话未使用协调者的代理、模型和思考。请使它们一致，或使用新会话。",
   "missions.scheduleList.activationRefused.layer.project": "项目配置",
   "missions.scheduleList.activationRefused.layer.global": "全局配置",
   "missions.scheduleList.activationRefused.layer.inherited": "继承的配置",

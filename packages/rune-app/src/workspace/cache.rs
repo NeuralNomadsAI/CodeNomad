@@ -8,13 +8,13 @@ use rune::edit::TextEdit;
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
-    attachments: crate::chat::attachments::Reader,
-    git: crate::git::Binding,
-    transcript_display: crate::transcript_state::Display,
+    attachments: Box<crate::chat::attachments::Reader>,
+    git: Box<crate::git::Binding>,
+    transcript_display: Box<crate::transcript_state::Display>,
     title: String,
     messages: Vec<crate::history::Row>,
     draft: TextEdit,
-    composer: crate::composer::Owner,
+    composer: Box<crate::composer::Owner>,
     incoming: Option<Receiver<Event>>,
     conversation_client_id: Option<String>,
     conversation_stream_connected: bool,
@@ -29,9 +29,9 @@ pub(super) struct Cache {
     stream_offline: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
-    status_permissions: crate::shell::status_permissions::Permissions,
-    status_services: crate::shell::status_services::Services,
-    status_usage: crate::shell::status_usage::Panel,
+    status_permissions: Box<crate::shell::status_permissions::Permissions>,
+    status_services: Box<crate::shell::status_services::Services>,
+    status_usage: Box<crate::shell::status_usage::Panel>,
 }
 impl Cache {
     #[cfg(test)]

@@ -230,6 +230,7 @@ pub(super) struct Manager {
     pub expanded: bool,
     scope: Option<(String, String, Option<String>)>,
     authority: u64,
+    seen_location: Option<u64>,
     seen: Option<u64>,
     snapshot_rev: Option<u64>,
     refresh_nonce: u64,
@@ -266,6 +267,7 @@ impl Default for Manager {
             expanded: true,
             scope: None,
             authority: 0,
+            seen_location: None,
             seen: None,
             snapshot_rev: None,
             refresh_nonce: 0,
@@ -706,6 +708,11 @@ impl Manager {
         self.flight.is_some() || self.load_error.is_some() || self.snapshot_rev != self.seen
     }
 
+    #[cfg(test)]
+    pub(super) fn settled(&self) -> bool {
+        self.flight.is_none() && (self.snapshot.is_some() || self.load_error.is_some())
+    }
+
     pub(super) fn queue_account_action(&mut self, action: AccountAction) {
         if self.any_account_busy() || self.modal_open() || self.location_stale() {
             return;
@@ -910,7 +917,8 @@ impl Manager {
         let backend = target.backend();
         if self.scope.as_ref().is_none_or(|(client, ws, ses)| {
             client != &backend.client_id || ws != workspace || ses.as_deref() != session
-        }) || self.authority != target.authority()
+        }) || self.authority != target.provider_authority()
+            || self.seen_location != Some(target.location_epoch())
         {
             self.cancel_remote_attempt();
             self.cancel_account_flight();
@@ -921,7 +929,8 @@ impl Manager {
                     workspace.to_owned(),
                     session.map(str::to_owned),
                 )),
-                authority: target.authority(),
+                authority: target.provider_authority(),
+                seen_location: Some(target.location_epoch()),
                 clock: now,
                 ..Self::default()
             };
