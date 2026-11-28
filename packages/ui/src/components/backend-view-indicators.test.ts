@@ -99,18 +99,18 @@ for (const name of ["reload", "reconcile"] as const) {
     test(`editor schedule ${name}: revoked ${outcome} releases its serial read`, async () => {
       const backend = attachment(), requests = [deferred(), deferred()]
       let reading = false, reads = 0, writes = 0
-      const hold = { payload: JSON.stringify({ action: "configure", missionID: "m", directory: "/repo", requestID: "r" }), state: "uncertain" }
+      const hold = { payload: JSON.stringify({ missionID: "m", requestID: "r", expectedRevision: 1, objective: "objective", notes: "" }), state: "uncertain" }
       const ownerValue = { signal: backend.captureBackendOperation("i").signal }
-      const scope = { props: { instanceId: "i", directory: "/repo", action: { scheduleID: "m" }, active: () => true, scope: () => "s" },
-        held: () => name === "reload" ? undefined : hold, reading: () => reading, target: "m", unified: true,
+      const scope = { props: { instanceId: "i", directory: "/repo", action: {}, active: () => true, scope: () => "s" },
+        held: () => name === "reload" ? undefined : hold, reading: () => reading, target: "m",
         capture: () => backend.captureBackendOperation("i").current,
         owner: () => ownerValue,
         captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
-        reconcileRead: undefined, partialMissionScheduleReceipt: () => undefined,
+        reconcileRead: undefined,
         setReading: (value: boolean) => { reading = value }, setFailed: () => {}, setReady: () => {},
         serverApi: {
-          fetchMissionSchedule: () => requests[reads++].promise,
-          saveMissionSchedule: () => { writes++; return {} },
+          fetchMission: () => requests[reads++].promise,
+          editMission: () => { writes++; return {} },
         },
       }
       const run = method("./mission-editor-schedule.ts", name, scope)
@@ -120,7 +120,7 @@ for (const name of ["reload", "reconcile"] as const) {
       backend.revoke(); backend.replace()
       await run() // No successor is admitted while this same view's read owns the serial slot.
       assert.equal(reads, 1)
-      if (outcome === "success") requests[0].resolve({ document: { id: "m" } })
+      if (outcome === "success") requests[0].resolve({ available: true, mission: { id: "m", history: [] } })
       else requests[0].reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
       await first
       assert.equal(reading, false); assert.equal(writes, 0)
@@ -222,7 +222,7 @@ for (const kind of ["create", "edit", "delete"] as const) {
         props: { instanceId: "i", directory: "/repo", action, onSaved: () => { throw new Error("stale publication") } },
         locked: () => pending, isActive: () => true, setFieldError: () => {}, structuralLocked: () => true,
         immediateCreationFollowed: () => false, mode: () => "immediate", textLocked: () => false,
-        startOnCreation: () => false,
+        startOnCreation: () => false, coordinatorGoal: () => false,
         captureStart: () => async () => assert.fail("stale creation must not start"),
         captureView: () => backend.captureBackendOperation("i").current, objective: () => "draft", notes: () => "notes",
         template: () => "custom", identity: () => "view", taskMode: () => undefined, effectiveProfiles: () => undefined, watchedIDs: () => [],
@@ -231,7 +231,7 @@ for (const kind of ["create", "edit", "delete"] as const) {
         missionCreationPayloadIdentity: JSON.stringify, releaseMissionCreation: () => {}, retainUncertainMissionCreation: () => {},
         retainSubmittedMissionModel: () => {}, setShownRequestId: () => {}, setAdopted: () => {}, setDeleteAttempted: () => {},
         isDefinitiveCreationRejection: () => false, missionStore: { demandedInstanceIds: () => [] },
-        schedule: { unified: false, journal: () => ({}), saveJournalEdit: dispatch },
+        schedule: { journal: () => ({}), saveJournalEdit: dispatch }, conversation: undefined, replaces: undefined, removeReplaced: async () => {},
         serverApi: { createMission: dispatch, deleteMission: dispatch },
         setPending: (value: boolean) => { pending = value }, setError: () => { errors++ },
       }

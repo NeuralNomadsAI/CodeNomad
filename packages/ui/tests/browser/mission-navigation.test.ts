@@ -86,12 +86,10 @@ async function reportSetupFailure(record: { droppedPackets: number; failures: un
     })])
   } finally { clearTimeout(timer); abort.abort() }
 }
-async function setup(missing = false, holdSchedule = false) {
+async function setup(missing = false) {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], networkErrors: string[] = [], requests: string[] = []
   const missionReads = collectMissionReadFailures(page, url)
-  const cancelledRecurrenceReads = missionReads.cancelled
   const held = gate(), reached = gate(), completed = gate()
-  const scheduleHeld = gate(), scheduleReached = gate()
   const traffic = Object.fromEntries(["document", "lucide", "api", "optimized", "other"].map(category =>
     [category, { started: 0, current: 0, peak: 0, finished: 0, failed: 0 }]))
   const failures: { at: number; origin: string; path: string; type: string; error: string }[] = []
@@ -127,10 +125,6 @@ async function setup(missing = false, holdSchedule = false) {
     if (pathname.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" },
       capability: { minimum: 0 }, effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
-    if (pathname.endsWith("/missions/A/schedule") && holdSchedule) {
-      scheduleReached.release(); await scheduleHeld.promise
-      await route.fulfill({ json: {} }); return
-    }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       reached.release(); await held.promise
@@ -165,7 +159,7 @@ async function setup(missing = false, holdSchedule = false) {
     finally { held.release(); try { await page.close() } catch { /* Preserve original error even if cleanup fails. */ } failedSetupHeld = undefined }
     throw error
   }
-  return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads, scheduleHeld, scheduleReached, missionReads }
+  return { page, held, reached, completed, errors, networkErrors, requests, missionReads }
 }
 async function read(page: Page, id: string) {
   // The overview reader belongs to the selected Mission's toolbar ("Summary" eye).
@@ -196,7 +190,7 @@ test("same-URL schedule network aborts and missing, unknown or reused identities
     assert.equal(missionReads.cancelled.filter(read => read.failure.startsWith(endpoint + " ")).length, 0)
     assert.equal(missionReads.raw.filter(read => read.startsWith(endpoint + " ")).length, 4)
     t.diagnostic(JSON.stringify({ sameURLFailures: networkErrors, raw: missionReads.raw, correlatedCancellations: missionReads.cancelled }))
-  } finally { state.held.release(); state.scheduleHeld.release(); await page.close() }
+  } finally { state.held.release(); await page.close() }
 })
 async function actor(page: Page, id: string) {
   await clickMissionAction(page, "Open conversation", `Objective ${id}`)
@@ -209,13 +203,11 @@ async function settled(page: Page) {
 type Change = "reader" | "actor" | "selection" | "instance" | "instance-aba" | "directory-aba" | "project-aba" | "inactive-aba" | "remount" | "editor"
 for (const origin of ["actor", "reader"] as const) for (const change of ["reader", "actor", "selection", "instance", "instance-aba", "directory-aba", "project-aba", "inactive-aba", "remount", "editor"] as const) {
   test(`deferred ${origin} A respects newer ${change}`, async t => {
-    const holdSchedule = origin === "actor" && (change === "instance-aba" || change === "remount")
-    const state = await setup(false, holdSchedule), { page, held, reached, completed, errors, networkErrors, requests } = state
+    const state = await setup(), { page, held, reached, completed, errors, networkErrors, requests } = state
     try {
       if (origin === "reader") await page.evaluate(() => window.missionNavigation.clearActive())
       await (origin === "actor" ? actor(page, "A") : read(page, "A"))
       await reached.promise
-      if (holdSchedule) await state.scheduleReached.promise
       if (change.startsWith("instance")) {
         await page.evaluate(() => window.missionNavigation.instance("replacement"))
         if (change.endsWith("aba")) await page.evaluate(() => window.missionNavigation.instance("fixture"))
@@ -228,7 +220,6 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       } else if (change === "remount") {
         await page.evaluate(() => window.missionNavigation.mount(false)); await page.evaluate(() => window.missionNavigation.mount(true))
       }
-      state.scheduleHeld.release()
       if (change === "selection") await selectMission(page, "Objective B")
       else if (change === "actor") {
         // Let B's newer navigation land before capturing the state the stale A must keep.
@@ -243,10 +234,9 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       held.release(); await completed.promise; await settled(page)
       const after = await page.evaluate(() => window.missionNavigation.snapshot())
       await state.missionReads.drain()
-      if (holdSchedule) assert.ok(state.cancelledRecurrenceReads.some(read => read.failure.includes("/missions/A/schedule?")), "the exact held point read has its own aborted-signal/AbortError receipt")
       t.diagnostic(JSON.stringify({ raw: state.missionReads.raw, correlatedCancellations: state.missionReads.cancelled, failures: networkErrors }))
       if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) {
-        await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, cancelledRecurrenceReads: state.cancelledRecurrenceReads, requests }, null, 2))
+        await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, requests }, null, 2))
         await page.screenshot({ path: path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
       }
       assert.deepEqual(after, before, "stale navigation must not activate, clear/install readers or reveal")
@@ -254,7 +244,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       assert.equal(await page.getByRole("alert").count(), 0)
       assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
       assert.ok(requests.every(request => request.startsWith("GET ")), "navigation is read-only")
-    } finally { held.release(); state.scheduleHeld.release(); await page.close() }
+    } finally { held.release(); await page.close() }
   })
 }
 

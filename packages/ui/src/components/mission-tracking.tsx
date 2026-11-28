@@ -4,7 +4,7 @@ import type { MissionActivityProjection, MissionPanelMap, MissionPanelTask } fro
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
 import { MissionPanelPaging } from "./mission-panel-paging"
-import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { missionQuestions } from "./mission-questions"
 
 /** Selected one-time Mission or exact admitted passage: the dependency task tree,
@@ -16,7 +16,6 @@ export function MissionTracking(props: {
   selected: (task: MissionPanelTask) => boolean; onSelect: (task: MissionPanelTask) => void
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>
 }) {
-  const missionStore = useMissionPanelStore()
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
   // Native lifecycle invalidations (session.execution.*, inbox, Shell, Form and
   // permission events) regenerate the activity projection: its generation paces

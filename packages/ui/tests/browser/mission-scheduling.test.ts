@@ -280,18 +280,16 @@ for (const locale of ["fr", "he"]) test(`repository activity fits at 320px with 
   } finally { await page.close() }
 })
 
-test("H9 locks explain why; missing capability keeps a criterion-free Mission available", async () => {
+test("a started Mission's criteria are locked with the reason; missing capability keeps a criterion-free Mission available", async () => {
   const { page, errors } = await setup()
   try {
     await rows(page, [["daily"], ["files-changed", { files: "a.ts" }]])
-    for (const lock of ["uncertain", "passage", "launched-once", "terminal", "deleted"]) {
-      await page.evaluate(lock => (window as any).schedulingFixture.lock(lock), lock)
-      assert.equal(await label(page, "Criterion 1 type").isDisabled(), true)
-      assert.equal(await handle(page, 2).isDisabled(), true)
-      assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
-      assert.ok((await page.getByRole("status").innerText()).length > 30)
-    }
-    await page.evaluate(() => { (window as any).schedulingFixture.lock(null); (window as any).schedulingFixture.capability("missing") })
+    await page.evaluate(() => (window as any).schedulingFixture.started(true))
+    assert.equal(await label(page, "Criterion 1 type").isDisabled(), true)
+    assert.equal(await handle(page, 2).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
+    assert.ok((await page.getByRole("status").innerText()).length > 30)
+    await page.evaluate(() => { (window as any).schedulingFixture.started(false); (window as any).schedulingFixture.capability("missing") })
     assert.equal(await policy(page), undefined)
     assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
@@ -416,9 +414,9 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
     assert.deepEqual(await policy(page), retired)
     assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).count(), 0)
     assert.match(await page.locator(".mission-scheduling pre").innerText(), /5400000/)
-    await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
+    await page.evaluate(() => (window as any).schedulingFixture.started(true))
     assert.equal(await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).isDisabled(), true)
-    await page.evaluate(() => (window as any).schedulingFixture.lock(null))
+    await page.evaluate(() => (window as any).schedulingFixture.started(false))
     await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).click()
     assert.deepEqual(await policy(page), { when: [{ kind: "now" }] })
     assert.deepEqual(errors, [])
@@ -465,8 +463,8 @@ test("scheduling help opens the localized guide by keyboard without reading the 
       assert.match(opened[0], new RegExp(`/${locale}/missions\\.html#native-scheduling$`))
       await page.screenshot({ path: path.join(captures, `runtime-info-${locale}.png`) })
       assert.deepEqual(supervision, [], "help never reads the login-start setting")
-      await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
-      assert.equal(await info.isVisible(), true, "a lock keeps help available")
+      await page.evaluate(() => (window as any).schedulingFixture.started(true))
+      assert.equal(await info.isVisible(), true, "a started Mission keeps help available")
       await info.focus(); await page.keyboard.press("Enter")
       await page.waitForFunction(() => (window as any).schedulingOpens.length === 2)
       assert.deepEqual(errors, [])

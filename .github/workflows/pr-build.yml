@@ -617,7 +617,6 @@ jobs:
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
-          packages/ui/src/components/mission-editor-schedule.test.ts
           packages/ui/src/components/mission-execution.test.ts
           packages/ui/src/components/mission-native-execution-locales.test.ts
           packages/ui/src/components/mission-native-execution.test.ts
@@ -704,10 +703,7 @@ jobs:
           packages/ui/src/components/backend-view-indicators.test.ts
           packages/ui/src/lib/backend-panel-deadline.test.ts
           packages/ui/src/lib/backend-panel-extensions-routing.test.ts
-          packages/ui/tests/contracts/mission-current-body-attachment.test.ts
-          packages/ui/tests/contracts/mission-current-body-lifetime.test.ts
           packages/ui/src/stores/app-session-workspace-hydration.test.ts
-          packages/ui/src/stores/mission-schedules.test.ts
           packages/ui/src/components/backend-view-lifetime.test.ts
           packages/ui/src/lib/backend-view-io.test.ts
           packages/ui/src/components/panel-extensions/extension-manager-lifetime.test.ts

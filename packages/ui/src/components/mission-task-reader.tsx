@@ -4,33 +4,28 @@ import type { MissionReport, MissionTaskExecutionMode } from "../../../server/sr
 import { missionReportExcerpt } from "../../../server/src/missions/mission-panel-map"
 import { missionOwnBody } from "../lib/mission-bodies"
 import { useI18n } from "../lib/i18n"
-import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
+import { updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionExecution } from "./mission-execution"
 import { MissionNativeExecution, MissionReportNotification } from "./mission-native-execution"
 import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
 import { missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
-import type { MissionPassageSection } from "./mission-passage-section"
 import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { MissionBodyPending, missionReaderBody, useReaderValue } from "./mission-reader-body"
 import { openMissionTask } from "./mission-task-open"
 import { MissionReportArtifact, MissionReportProse, useReportBodies } from "./mission-report-prose"
-import { useMissionPanelStore } from "./mission-panel-scope"
-import { MissionPanelPaging } from "./mission-panel-paging"
 import { createMissionDisclosure } from "./mission-disclosure"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
   instanceId: string; scope: string; mission: MissionPanelMap; task: MissionPanelTask
   identity: string; activity?: MissionActorActivity["state"]
-  recurrence?: MissionReaderTarget["recurrence"]
 }) {
   const { t } = useI18n()
-  const store = useMissionPanelStore()
   const byKey = (key: string) => props.mission.tasks.find(task => task.key === key)
   // A one-time mission's compact map holds a page of its tasks: one not held is read by key.
-  const paged = () => Boolean(props.mission.taskPage) && (!props.recurrence || Boolean(props.mission.panelPassage))
-  const navigate = (key: string) => void openMissionTask(props.instanceId, props.scope, () => props.mission, key, props.recurrence, store)
+  const paged = () => Boolean(props.mission.taskPage)
+  const navigate = (key: string) => void openMissionTask(props.instanceId, props.scope, () => props.mission, key)
   const link = (key: string, label: string) => <button type="button" class="mission-task-link" disabled={!byKey(key) && !paged()}
     onClick={() => navigate(key)}>{t(label, { tasks: byKey(key)?.title ?? key, task: byKey(key)?.title ?? key })}</button>
   const latest = createMemo<MissionPanelReport | undefined>(() => missionTaskReport(props.mission, props.task))
@@ -38,8 +33,8 @@ export function MissionTaskReader(props: {
   const [allHistory, setAllHistory] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:history`)
   const loadedReports = () => missionReports(props.mission).filter(report => report.taskKey === props.task.key).length
   const omittedHistory = () => paged() ? Math.max(0, (props.task.reportCount ?? 0) - loadedReports()) : 0
-  const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime: () => !props.recurrence || Boolean(props.mission.panelPassage),
-    active: allHistory, selector: () => allHistory() && !props.mission.panelPassage ? { kind: "task", taskKey: props.task.key, field: "reports" } : undefined })
+  const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission,
+    active: allHistory, selector: () => allHistory() ? { kind: "task", taskKey: props.task.key, field: "reports" } : undefined })
   const history = createMemo((): MissionPanelReport[] => {
     const whole = allHistory() && wholeHistory.settled() ? wholeHistory.value() : undefined
     return whole ? [...whole].filter(report => report.id !== latest()?.id).sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))
@@ -56,26 +51,17 @@ export function MissionTaskReader(props: {
   // Once a task is done, the tasks it unblocked need no pointer.
   const unblocks = createMemo(() => props.task.status === "completed" ? []
     : props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key) && task.status !== "withdrawn" && !task.replacedByTaskKey))
-  // A one-time mission's bodies come from the content route, a disclosure's only while open; a passage's from its own map.
-  const oneTime = () => !props.recurrence || Boolean(props.mission.panelPassage)
   const briefSelector = (): MissionContentSelector => ({ kind: "task", taskKey: props.task.key, field: "brief" })
   const [briefOpen, setBriefOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:brief`)
   const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:technical`)
   // An independent mode's explanation (never empty), read whole with its mode.
   const independent = () => props.task.executionMode?.kind === "independent"
-  const executionMode = useReaderValue<MissionTaskExecutionMode>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime,
+  const executionMode = useReaderValue<MissionTaskExecutionMode>({ instanceId: () => props.instanceId, mission: () => props.mission,
     active: technicalOpen, selector: () => independent() ? { kind: "task", taskKey: props.task.key, field: "executionMode" } : undefined })
   const explanation = (mode: MissionTaskExecutionMode | undefined) => mode?.kind === "independent" ? mode.explanation : ""
   // The coordinator's readout shows only for a task completed without its own report.
-  const readoutBodies = useReportBodies({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime,
+  const readoutBodies = useReportBodies({ instanceId: () => props.instanceId, mission: () => props.mission,
     report: () => !latest() && props.task.status === "completed" ? readout() : undefined })
-  const source = (section: MissionPassageSection["section"], report?: MissionPanelReport): MissionPassageSection | undefined => {
-    const owner = props.recurrence
-    return owner && !props.mission.panelPassage ? { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
-      missionID: props.mission.id, revision: props.mission.revision, kind: report ? "report" : "task",
-      itemId: report?.id ?? props.task.id, section } : undefined
-  }
-  const reportSource = (label: string, report: MissionPanelReport) => source(label.split(".").at(-1) as MissionPassageSection["section"], report)
   return <div class="mission-task-reader" data-task-id={props.task.id}>
     <Show when={latest()} fallback={<Show when={props.task.status === "completed"} fallback={<>
       <Show when={props.task.status === "blocked" || props.task.status === "needs-input"}>
@@ -87,11 +73,11 @@ export function MissionTaskReader(props: {
       <p>{t("missionsPanel.task.done")}</p>
       <Show when={readout()}>{report => <MissionReaderSection label="missionsPanel.task.readout" text={readoutBodies.summary().text}
         body={readoutBodies.summary().body} read={readoutBodies.summary().read}
-        identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={reportSource("missions.control.summary", report())} />}</Show>
+        identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} />}</Show>
     </Show>}>{report => <>
       <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
-      <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()}
-        identity={`${props.identity}:${report().id}`} source={label => reportSource(label, report())} />
+      <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()}
+        identity={`${props.identity}:${report().id}`} />
     </>}</Show>
     <div class="mission-task-dependencies">
       <For each={props.task.blockedBy}>{key => link(key, "missions.control.task.blockedBy")}</For>
@@ -105,11 +91,7 @@ export function MissionTaskReader(props: {
         <h3>{t("missions.progress.previousResults")}</h3>
         <Show when={!allHistory() && omittedHistory()}>{count => <p class="mission-task-omitted">
           <span>{t(`missionsPanel.task.historyOmitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</span>{" "}
-           <button type="button" class="window-text-button" onClick={() => {
-             setAllHistory(true)
-             if (props.mission.panelPassage) void store.more(props.instanceId, `field:${props.mission.id}:reports`)
-           }}>{t("missionsPanel.task.showAllHistory")}</button></p>}</Show>
-        <Show when={allHistory() && props.mission.panelPassage}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:reports`} /></Show>
+          <button type="button" class="window-text-button" onClick={() => setAllHistory(true)}>{t("missionsPanel.task.showAllHistory")}</button></p>}</Show>
         <Show when={allHistory() && !wholeHistory.settled()}>
           <MissionBodyPending failed={wholeHistory.failed()} onRetry={wholeHistory.retry} /></Show>
         <For each={history().map(report => report.id)}>{id => {
@@ -124,12 +106,12 @@ export function MissionTaskReader(props: {
             </summary>
             <Show when={open()}>
               <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
-              <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()}
-                identity={`${props.identity}:history:${id}`} source={label => reportSource(label, report())} />
+              <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()}
+                identity={`${props.identity}:history:${id}`} />
               <details open={details()} onToggle={event => setDetails(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
                 <MissionReportNotification report={report()} />
-                <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()} active={details()}
-                  identity={`${props.identity}:history:${id}`} source={source("artifact", report())} />
+                <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} active={details()}
+                  identity={`${props.identity}:history:${id}`} />
               </details>
             </Show>
           </details>
@@ -138,14 +120,14 @@ export function MissionTaskReader(props: {
     </Show>
     <details open={briefOpen()} onToggle={event => setBriefOpen(event.currentTarget.open)}><summary>{t("missions.control.brief")}</summary>
     <MissionReaderSection label="missions.control.brief" text={missionOwnBody<string>(props.mission, briefSelector())}
-      body={missionReaderBody(props.instanceId, props.mission, oneTime(), briefSelector())}
-      active={briefOpen()} identity={props.identity} instanceId={props.instanceId} source={source("brief")} />
+      body={missionReaderBody(props.instanceId, props.mission, briefSelector())}
+      active={briefOpen()} identity={props.identity} instanceId={props.instanceId} />
     </details>
     <details open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
     <Show when={independent()}>
       <MissionReaderSection label="missions.control.notes" text={executionMode.settled() ? explanation(executionMode.value()) : ""}
         read={executionMode.read()}
-        identity={props.identity} instanceId={props.instanceId} source={source("notes")} />
+        identity={props.identity} instanceId={props.instanceId} />
     </Show>
     <article aria-label={t("missions.control.task.details")}>
       <h3>{t("missions.control.task.details")}</h3>
@@ -168,8 +150,8 @@ export function MissionTaskReader(props: {
         <Show when={report().late}><p>{t("missions.control.report.late")}</p></Show>
         <MissionReportNotification report={report()} />
       </article>
-      <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()} active={technicalOpen()}
-        identity={`${props.identity}:${report().id}`} source={source("artifact", report())} />
+      <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} active={technicalOpen()}
+        identity={`${props.identity}:${report().id}`} />
     </>}</Show>
     </details>
   </div>
