@@ -140,26 +140,48 @@ pub fn announce(local: &str, remote: Option<&str>) {
 }
 
 /// `installShutdownStdinHandler`: whole lines only; `codenomad:shutdown` stops once, other lines
-/// may be native responses or managed-session renewals. End of input changes nothing.
+/// may be native responses or managed-session renewals. Under a native desktop parent
+/// (`CODENOMAD_NATIVE_PARENT=1`), EOF on stdin also cancels `stop` so an orphaned server exits
+/// cleanly if the parent dies abruptly (e.g. SIGKILL on Unix); standalone/detached launches ignore
+/// EOF as before.
 pub fn read_stdin(stop: CancellationToken, app: crate::Shared) {
+    let shutdown_on_eof = native_parent::available();
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
-        let mut buffer = Vec::new();
-        loop {
-            buffer.clear();
-            match input.read_until(b'\n', &mut buffer) {
-                Ok(_) if buffer.last() == Some(&b'\n') => {}
-                _ => return,
-            }
-            let text = String::from_utf8_lossy(&buffer);
-            let text = text.trim_end_matches('\n').trim_end_matches('\r');
-            if text.trim() == SHUTDOWN_COMMAND {
-                stop.cancel();
-            } else if !native_parent::handle_line(text) && !stop.is_cancelled() && native_parent::available() {
+        read_stdin_loop(&mut input, &stop, shutdown_on_eof, |text| {
+            if !native_parent::handle_line(text) && !stop.is_cancelled() && native_parent::available() {
                 crate::auth::managed::handle_control_if(text, &app.auth, || !stop.is_cancelled(), line);
             }
-        }
+        });
     });
+}
+
+fn read_stdin_loop<R: BufRead, F: FnMut(&str)>(
+    input: &mut R,
+    stop: &CancellationToken,
+    shutdown_on_eof: bool,
+    mut on_other: F,
+) {
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match input.read_until(b'\n', &mut buffer) {
+            Ok(_) if buffer.last() == Some(&b'\n') => {}
+            _ => {
+                if shutdown_on_eof {
+                    stop.cancel();
+                }
+                return;
+            }
+        }
+        let text = String::from_utf8_lossy(&buffer);
+        let text = text.trim_end_matches('\n').trim_end_matches('\r');
+        if text.trim() == SHUTDOWN_COMMAND {
+            stop.cancel();
+        } else {
+            on_other(text);
+        }
+    }
 }
 
 /// `CODENOMAD_SHUTDOWN_STATUS:complete` and exit 0, or `:incomplete` and the process stays for the
@@ -225,5 +247,35 @@ mod tests {
             .is_err_and(|err| err.is_panic());
             assert!(panicked, "expected non-loopback bind {ip} to be refused locally when CI is unset");
         }
+    }
+
+    #[test]
+    fn stdin_eof_cancels_stop_when_native_parent_is_active() {
+        let stop = CancellationToken::new();
+        let mut input = io::Cursor::new(b"");
+        let mut seen = Vec::new();
+        read_stdin_loop(&mut input, &stop, true, |line| seen.push(line.to_string()));
+        assert!(stop.is_cancelled(), "EOF under native parent must trigger graceful shutdown");
+        assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn stdin_eof_does_not_cancel_stop_without_native_parent() {
+        let stop = CancellationToken::new();
+        let mut input = io::Cursor::new(b"unrelated\npartial-without-newline");
+        let mut seen = Vec::new();
+        read_stdin_loop(&mut input, &stop, false, |line| seen.push(line.to_string()));
+        assert!(!stop.is_cancelled(), "EOF without native parent must leave detached server running");
+        assert_eq!(seen, vec!["unrelated"]);
+    }
+
+    #[test]
+    fn stdin_shutdown_command_cancels_stop_and_forwards_other_lines() {
+        let stop = CancellationToken::new();
+        let mut input = io::Cursor::new(b"hello\r\ncodenomad:shutdown\nworld\n");
+        let mut seen = Vec::new();
+        read_stdin_loop(&mut input, &stop, false, |line| seen.push(line.to_string()));
+        assert!(stop.is_cancelled());
+        assert_eq!(seen, vec!["hello", "world"]);
     }
 }

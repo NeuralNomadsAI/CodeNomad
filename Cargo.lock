@@ -672,6 +672,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-desktop-updater"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "codenomad-windows-install",
+ "reqwest",
+ "ring",
+ "semver",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "codenomad-host-process"
 version = "0.1.0"
 dependencies = [
@@ -686,6 +700,7 @@ dependencies = [
  "async-lock",
  "base64 0.22.1",
  "codenomad-client",
+ "codenomad-desktop-updater",
  "codenomad-host-process",
  "codenomad-windows-install",
  "codenomad-windows-notifications",

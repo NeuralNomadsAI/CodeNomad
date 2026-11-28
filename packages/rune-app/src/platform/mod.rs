@@ -30,6 +30,8 @@ pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod updater;
 use std::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 mod boot;

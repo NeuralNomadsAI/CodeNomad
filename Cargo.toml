@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["packages/rune-app", "crates/codenomad-client", "crates/rune-theme-codenomad", "crates/codenomad-host-process", "crates/codenomad-windows-notifications", "crates/codenomad-windows-install", "crates/codenomad-rune-setup", "crates/rune-style-policy"]
+members = ["packages/rune-app", "crates/codenomad-client", "crates/rune-theme-codenomad", "crates/codenomad-host-process", "crates/codenomad-windows-notifications", "crates/codenomad-windows-install", "crates/codenomad-desktop-updater", "crates/codenomad-rune-setup", "crates/rune-style-policy"]
 exclude = ["packages/server-rs"]
 
 [workspace.package]

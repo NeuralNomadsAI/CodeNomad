@@ -44,6 +44,7 @@ icu_locale_core = "2.4.0"
 sys-locale = "0.3.2"
 codenomad-host-process = { path = "../../crates/codenomad-host-process" }
 rune = { workspace = true, features = ["native-file-dialog"] }
+codenomad-desktop-updater = { path = "../../crates/codenomad-desktop-updater" }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "cookies"] }
 
