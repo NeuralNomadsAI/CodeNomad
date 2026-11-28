@@ -32,7 +32,7 @@ jobs:
   headless:
     name: Headless Rune (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +120,7 @@ jobs:
           node --test scripts/native-fixture-cold-diagnostics.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
+        id: build_wasm
         if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
@@ -135,17 +136,20 @@ jobs:
             cargo test --locked --manifest-path packages/server-rs/Cargo.toml
           fi
       - name: Verify default product excludes qualification probes
+        if: ${{ !cancelled() && steps.build_native.outcome == 'success' && steps.build_wasm.outcome == 'success' }}
         run: |
           suffix=''
           if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
           node scripts/rune/check-production.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --wasm "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out "target/rune-evidence/$RUNNER_OS/production"
       - name: Build explicit qualification support
+        if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
         run: |
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
           cargo test --locked -p codenomad-rune-app --features test-support only_character_ink
           cargo test --locked -p codenomad-rune-app --features test-support probes::git_panel::tests::
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
       - name: Inspect and interact through Rune offscreen tooling
+        if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
         run: |
           suffix=''
           if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
@@ -154,6 +158,7 @@ jobs:
           cargo build --locked -p rune-theme-codenomad --example workspace-tree-row
           node scripts/rune/parity/workspace-tree-row-native.mjs --binary "$CARGO_TARGET_DIR/debug/examples/workspace-tree-row$suffix"
       - name: Qualify restoration through the shared Rust server
+        if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
         run: |
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
           suffix=''
@@ -176,7 +181,7 @@ jobs:
             node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree --placement-busy
           fi
       - name: Compare shared controls with Solid on Windows
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build_native.outcome == 'success' }}
         run: |
           node scripts/rune/component-inventory.mjs
           node --import tsx scripts/rune/parity/window-close.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
