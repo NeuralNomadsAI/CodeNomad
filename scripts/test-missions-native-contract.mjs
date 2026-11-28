@@ -136,7 +136,7 @@ try {
   const offered = requests.find(request => request.tools.some(name => /^mission[._]/.test(name)))?.tools.filter(name => /^mission[._]/.test(name))
   receipt.offeredTools = offered
   assert.deepEqual(offered?.map(name => name.replace(/^mission[._]/, "")).sort(),
-    ["briefing", "configure", "control", "delegate", "delete", "inspect", "interrupt", "prepare", "program", "report", "revise", "schedule", "settings"])
+    ["briefing", "configure", "control", "delegate", "delete", "inspect", "interrupt", "prepare", "program", "report", "revise", "settings"])
   const started = await missions.snapshot({}, { location })
   assert.equal(started.missions.length, 1, "The native tool call recorded exactly one mission")
   assert.equal(started.missions[0].coordinatorSessionId, coordinator.id)

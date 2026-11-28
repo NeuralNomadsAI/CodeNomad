@@ -280,7 +280,6 @@ export function MissionEditor(props: {
     && watchedIDs().every(id => /^[A-Za-z0-9_.:-]{1,240}$/.test(id))
   const sourceLocationReady = () => !watchedIDs().length || directory() !== undefined
   const coordinatorReady = () => coordinatorSessionID() === undefined || mode() === "recurring"
-    && !schedule.scheduling().criteria.some(row => row.kind === "conversation-message" && row.source === coordinatorSessionID())
     && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: directory() ? [{ directory: directory()! }] : [] })

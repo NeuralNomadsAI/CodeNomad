@@ -45,7 +45,7 @@ export function registerSessionCleanupRoute(app: FastifyInstance, deps: Deps) {
         || !await manager.ownsLocation(id, session.location, client, { signal, strict: true })) return skipped
       const identity = await manager.getWorktreeIdentityForPath(id, session.location.directory)
       if (!identity || !(releaseWorktree = deps.worktreeDeletionFence.enter([identity]))) return skipped
-      await assertOrdinaryMissionScheduleSession(client, session, { signal, current })
+      assertOrdinaryMissionScheduleSession(session)
       const children = await client.session.list({ parentID: sessionId, project: session.projectID, limit: 1 }, options)
       if (!isEmptyPage(children)) return skipped
       const latest = await client.session.get({ sessionID: sessionId }, options)

@@ -25,9 +25,9 @@ function fixture(options: { owned?: boolean; cursor?: string | null; output?: un
     },
     getWorktreeIdentityForPath: async () => "/repo",
     ...brokerConnection({
-      session: { get: async () => ({ id: "s", location: { directory: "/repo" } }) },
+      session: { get: async () => ({ id: "s", location: { directory: "/repo" }, ...(options.carrier ? { title: "Mission schedule carrier" } : {}) }) },
       location: { get: async ({ location }: any) => location },
-      rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: options.carrier === true }) }), {
+      rpc: Object.assign(() => ({}), {
         call: async (input: unknown) => { calls.push(input); return { output: options.output ?? { ...page, cursor: options.cursor ?? null } } },
       }),
     } as any),
@@ -108,7 +108,7 @@ test("batch pruning preserves deletion fences and validates per-message receipts
   } finally { await app.close() }
 })
 
-test("ordinary batch pruning refuses an unmarked carrier before the first native content write", async () => {
+test("ordinary batch pruning refuses a carrier before the first native content write", async () => {
   const { app, calls } = fixture({ carrier: true })
   const payload = { sessionID: "s", candidates: [{ messageID: "m", revision: "a".repeat(64), toolCount: 1, reasoningCount: 0 }] }
   try {

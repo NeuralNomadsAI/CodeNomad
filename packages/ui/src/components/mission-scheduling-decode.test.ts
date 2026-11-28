@@ -8,9 +8,9 @@ import { missionCardConnectors, missionScheduleShortcuts, missionSchedulingPolic
 const decode = (policy: MissionLaunchPolicy) => decodeMissionSchedulingPolicy(policy, "/project", "UTC")
 const legacy = (timing: MissionLegacyLaunchPolicy["timing"], condition: MissionLegacyLaunchPolicy["condition"] = null,
   ends: Partial<MissionLegacyLaunchPolicy["ends"]> = {}): MissionLaunchPolicy => missionLaunchPolicySchema.parse({ timing, condition, ends: { at: null, afterMs: null, maxLaunches: null, ...ends } })
-const events = [{ kind: "branch-commits", directory: "/project", ref: "refs/heads/dev" },
-  { kind: "conversation-message", conversationID: "ses_followed" }, { kind: "files-changed", paths: ["a.ts", "b.ts"] }] as const
-const retired = [{ kind: "schedule-success", missionID: "msn_source" }, { kind: "mission-completed", missionID: "msn_source" }] as const
+const events = [{ kind: "branch-commits", directory: "/project", ref: "refs/heads/dev" }, { kind: "files-changed", paths: ["a.ts", "b.ts"] }] as const
+const retired = [{ kind: "schedule-success", missionID: "msn_source" }, { kind: "mission-completed", missionID: "msn_source" },
+  { kind: "conversation-message", conversationID: "ses_followed" }] as const
 
 test("repository events retain provider, nested path, event and optional author across edits", () => {
   for (const provider of ["github", "gitlab", "gitea"] as const) for (const event of ["pull-request-created", "pull-request-merged", "issue-created"] as const) {
@@ -37,7 +37,7 @@ test("every shortcut and local event decodes back into its row and roundtrips th
   const original = missionLaunchPolicySchema.parse({ when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, ...events] })
   const decoded = decode(original)
   assert.deepEqual(decoded.criteria.map(row => row.kind), ["daily", ...events.map(event => event.kind)], "stored order")
-  assert.deepEqual(missionCardConnectors(decoded.criteria), ["if", "or", "or"])
+  assert.deepEqual(missionCardConnectors(decoded.criteria), ["if", "or"])
   assert.deepEqual(missionSchedulingPolicy(decoded, "/project"), original)
 })
 

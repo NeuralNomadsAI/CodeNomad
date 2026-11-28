@@ -245,7 +245,7 @@ export class TemporaryWorkspaces {
       if (sessions.some((session) => Object.prototype.hasOwnProperty.call(active, session.id))) {
         throw new TemporaryWorkspaceError("temporary_running", "A conversation is still running in this temporary instance", 409)
       }
-      for (const session of sessions) await assertOrdinaryMissionScheduleSession(client, session)
+      for (const session of sessions) assertOrdinaryMissionScheduleSession(session)
       for (const session of deepestFirst(sessions)) {
         try {
           await client.session.remove({ sessionID: session.id })

@@ -278,9 +278,7 @@ try {
     [["msn_legacy_e2e", "Legacy E2E", false, false, ["aut_legacy"]]])
   await native.retireLegacySchedule({ id: "msn_legacy_e2e" }, callOpts)
   assert.deepEqual((await native.legacySchedules({}, callOpts)).schedules, [])
-  // The recurring engine reads its own storage as before: the schedule is one it deleted.
-  assert.equal(JSON.stringify(await native.scheduleList({ limit: 8 }, callOpts)).includes("msn_legacy_e2e"), false)
-  console.log("PASS 8 (a schedule the recurring engine left is read and deleted without that engine)")
+  console.log("PASS 8 (a schedule the recurring engine left is read and deleted)")
   await rm(lease)
   await calendars().save("cal_prepared", [rule("cal_prepared", { objective: OBJECTIVE, title: "Prepared E2E", template: "custom", prepared: prepared.id,
     when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] })])

@@ -14,7 +14,7 @@ Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak 
 
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
-Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyin. Konuşması değişmez; varsayılan olarak yeni bir koordinatör konuşması oluşturulur. İlgili CodeNomad arka ucunu kullanılabilir tutun. **Otomatik başlat**, yeni Görevin ilk başlatılmasına izin verir; kurtarma özgün sonucu okur. Ajanlar, düzenleyicide oluşturduklarınız dahil projenin tüm zamanlamalarını listeleyebilir, inceleyebilir, başlatabilir, duraklatabilir, durdurabilir, sürdürebilir, şimdi çalıştırabilir, kontrol edebilir, düzenleyebilir ve silebilir. Aynı revizyon ve kabul kontrolleri uygulanır; zamanlamanın açıkça kapatılması korunur. Doğrulanmamış işlem, salt okunur durum sorgusu için özgün isteğini saklar.
+Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyin. Konuşması değişmez; varsayılan olarak yeni bir koordinatör konuşması oluşturulur. İlgili CodeNomad arka ucunu kullanılabilir tutun. **Otomatik başlat**, yeni Görevin ilk başlatılmasına izin verir; kurtarma özgün sonucu okur. Ajanlar, düzenleyicide oluşturduklarınız dahil projenin zamanlanmış Görevlerini listeleyebilir, kaydedebilir, duraklatabilir, sürdürebilir ve silebilir. Doğrulanmamış işlem, salt okunur durum sorgusu için özgün isteğini saklar.
 
 ### Yapılandırma {#saved-briefs}
 
@@ -88,7 +88,7 @@ Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırma
 
 Kontroller OpenCode makinesindeki `gh`, `glab` veya `tea` kullanır, CodeNomad kapalıyken de çalışır; herkese açık depolar anonim okunabilir. Kendi sunucunuz için o sunucuya bağlı CLI gerekir. **github.com**, oturum açmış `gh` ile hesap bildirimleri ve Dependabot uyarıları da sunar; [bildirim](https://docs.github.com/en/rest/activity/notifications) veya [uyarı okuma](https://docs.github.com/en/rest/dependabot/alerts) erişimi gerekir. Okunma durumu korunur; düzeltilen veya kapatılan uyarılar da kapsanır. **GitHub deposu** boş kayıtlı bildirimler hesabı kapsar. İlk başlatma referansı belirler.
 
-Olaylar; yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
+Olaylar; yerel commitleri veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Ölçüt türünü değiştirmek kaynağını temizler.
 
 **veya**, bitişik zamanları veya olayları birleştirir. **eğer**, zamanlardan sonraki olayları koşul yapar: son başarılı geçişten beri biri değişmiş olmalıdır.
 

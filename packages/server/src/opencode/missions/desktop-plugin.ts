@@ -9,7 +9,6 @@ import { MissionJournalIndex } from "../../missions/journal-index"
 import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
-import { boundedMissionList } from "../../missions/inspect-view"
 import type { MissionControl } from "../../missions/control"
 import type { NativeJournalRange } from "./native-journal-range"
 import type { NativeCoordinatorGoalRuntime } from "./native-coordinator-goal"
@@ -18,15 +17,10 @@ import { missionActorResumeInput } from "../../missions/native-actor-lifecycle"
 import { missionIsRunning } from "../../missions/lifecycle-model"
 import { stableToken } from "../../missions/receipt-identity"
 
-export interface NativeDocumentBusiness {
-  select(sessionID: string): Promise<MissionBusinessRoute | undefined>
-  prepare(sessionID: string): Promise<boolean>
-}
-
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
 export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
-  documentBusiness?: NativeDocumentBusiness, range?: NativeJournalRange | (() => NativeJournalRange | undefined),
+  range?: NativeJournalRange | (() => NativeJournalRange | undefined),
   coordinatorGoal?: NativeCoordinatorGoalRuntime): Plugin.Plugin {
   return {
     id: "codenomad.missions",
@@ -60,35 +54,11 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         return { nativeAcknowledgement: { missionID: mission.id, operationID: operation.id, sessionID: input.sessionID,
           action: "start", disposition: "start-admitted", admission } }
       }
-      const disposeBusiness = await setupMissionsBusiness(ctx, async (sessionID, name, raw) => {
-        const author = ordinary && { ...ordinary, readSessionID: sessionID }
-        // Separate preparations always belong to the project journal, including
-        // when their actual author executes inside an isolated passage journal.
-        const input = raw as { list?: boolean; missionID?: string; configurations?: true | string; content?: { kind?: string } }
-         if (name === "prepare" || name === "schedule" || name === "inspect" && (input.configurations !== undefined || input.content?.kind === "configuration")) return author
-        const own = author && name === "inspect" && (input.list || input.missionID)
-          ? await author.control.listMissions(sessionID) : undefined
-         if (author && own?.some(mission => mission.missionID === input.missionID)) return author
-        const selected = await documentBusiness?.select(sessionID)
-        if (selected && author && own && input.list) {
-          return { ...selected, preparationAvailable: true, listMissions: async (offset, operationID) => {
-            const use = (control: MissionBusinessRoute["control"]) => control.inspectTool(selected.readSessionID, { list: true }, operationID, undefined)
-            // The isolated passage owns exactly one mission, so its list fits whole.
-            const source = await (selected.execute ? selected.execute(use) : use(selected.control)) as { missions: Awaited<ReturnType<MissionControl["listMissions"]>> }
-            selected.current(); author.current()
-            const missions = [...new Map([...source.missions, ...own].map(mission => [mission.missionID, mission])).values()]
-            return boundedMissionList(missions.sort((a, b) => b.createdAt - a.createdAt), offset)
-          } }
-        }
-        return selected ? { ...selected, preparationAvailable: Boolean(author) } : author
-       }, (sessionID, input) => sendMissionInput(sessionID, "schedule", input),
+      const disposeBusiness = await setupMissionsBusiness(ctx, async sessionID => ordinary && { ...ordinary, readSessionID: sessionID },
+        (sessionID, input) => sendMissionInput(sessionID, "schedule", input),
           (sessionID, input) => sendMissionInput(sessionID, "project-read", input),
            (sessionID, input) => sendMissionInput(sessionID, "project-control", input),
            (sessionID, input) => sendMissionInput(sessionID, "settings", input))
-      const promptHook = await ctx.session.hook("prompt", async event => {
-        await documentBusiness?.prepare(event.sessionID)
-      })
-        .catch(async error => { await disposeBusiness(); throw error })
       let presence: Awaited<ReturnType<typeof followPresence>>
       try { presence = await followPresence(presenceDirectory, async () => {
         try {
@@ -130,7 +100,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         if (!retained) await mark(false)
         return retained
       }, undefined, () => runs > 0 || resumable) }
-      catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
+      catch (error) { await disposeBusiness(); index.dispose(); throw error }
       // A calendar run registers Missions for each step that needs them, with or without a backend.
       const calendar = await registerMissionCalendarTool(ctx, async work => {
         runs++
@@ -139,8 +109,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           if (!core) throw new Error("mission-calendar-unavailable")
           return await work()
         } finally { runs-- }
-      }).catch(async error => { await disposeBusiness(); await promptHook.dispose(); await presence(); index.dispose(); throw error })
-      return async () => { ordinary = core = undefined; await calendar.dispose(); await disposeBusiness(); await promptHook.dispose();
+      }).catch(async error => { await disposeBusiness(); await presence(); index.dispose(); throw error })
+      return async () => { ordinary = core = undefined; await calendar.dispose(); await disposeBusiness();
         await presence(); index.dispose() }
     },
   }

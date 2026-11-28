@@ -300,7 +300,7 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           # Shipped Missions bundle: loading, model-visible tools through the
-          # ordinary prompt loop, journal RPC and recurrence capability.
+          # ordinary prompt loop and journal RPC.
           node scripts/test-missions-native-contract.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-missions-native-family-control.mjs $cli
@@ -311,11 +311,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # The retained Missions bundle must admit cold scheduled passages with the backend closed.
-          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
-          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
-          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the

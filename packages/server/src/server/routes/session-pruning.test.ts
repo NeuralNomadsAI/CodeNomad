@@ -16,8 +16,8 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
     ...brokerIdentities("/owned/worktree"),
     getWorktrees: async () => ({ isGitRepo: false, worktrees: [] }),
     ...brokerConnection({
-      session: { get: async () => ({ id: "s", location: { directory: "/owned/worktree", workspaceID: options.workspaceID } }) },
-      rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: options.carrier === true }) }), { call: async (input: unknown, opts: any) => {
+      session: { get: async () => ({ id: "s", location: { directory: "/owned/worktree", workspaceID: options.workspaceID }, ...(options.carrier ? { title: "Mission schedule carrier" } : {}) }) },
+      rpc: Object.assign(() => ({}), { call: async (input: unknown, opts: any) => {
         assert(opts.signal instanceof AbortSignal)
         calls.push(input)
         requestOptions.push(opts)
@@ -50,7 +50,7 @@ test("rejects unowned sessions before any RPC", async () => {
   } finally { await app.close() }
 })
 
-test("ordinary content pruning cannot modify an unmarked carrier; its read-only preview stays available", async () => {
+test("ordinary content pruning cannot modify a carrier; its read-only preview stays available", async () => {
   const { app, calls } = fixture({ carrier: true })
   try {
     const response = await app.inject({ method: "POST", url, payload })
