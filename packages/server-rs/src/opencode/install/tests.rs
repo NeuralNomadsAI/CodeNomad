@@ -60,7 +60,7 @@ fn errors_carry_the_reference_status() {
     assert_eq!(Error::failed("x").status(), Status::BAD_GATEWAY);
     assert_eq!(Error::new("legacy_partially_removed", "x").status(), Status::BAD_GATEWAY);
     assert_eq!(Error::new("legacy_removed_install_failed", "x").status(), Status::BAD_GATEWAY);
-    assert!(newer("2.10.0", "2.9.9") && !newer("2.3.2", "2.3.2"));
+    assert!(newer("2.10.0", "2.9.9") && !newer("2.4.2", "2.4.2"));
     assert!(layout::cmd_shim_matches(layout::cmd("node_modules\\@opencode\\cli\\bin\\opencode.exe").as_bytes()));
     assert!(!layout::cmd_shim_matches(b"@echo off\r\nother.exe %*\r\n"));
 }
