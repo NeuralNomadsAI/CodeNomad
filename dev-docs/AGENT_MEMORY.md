@@ -311,7 +311,8 @@ against current reality. Cleanup errors carry no memory content into logs.
 
 The English instruction string always includes the recording rules, even when
 both lists are empty: corrections/preferences, successful unusual approaches,
-costly facts absent from code/docs, one fact per entry, saving before the final
+costly facts absent from code/docs, never a one-off approval, a fixed incident or
+work in progress, one fact per entry, saving before the final
 response with a one-sentence acknowledgement, and reference-only designation of
 an external memory. It directs the agent to read before acting and verify file
 and command claims. Title/type pairs travel as escaped JSON, with Unicode control
