@@ -110,6 +110,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Replace with a new scheduling policy",
   "missions.scheduling.error.retained": "Keep the stored policy unchanged or explicitly replace it before editing scheduling.",
   "missions.scheduling.title": "Scheduling",
+  "missions.scheduling.stop": "Stop scheduling permanently",
+  "missions.scheduling.stopConfirm": "Stop this scheduling permanently? No further launch will start. The mission stays in the list.",
   "missions.scheduling.when": "Launch when",
   "missions.scheduling.connector.else": "else",
   "missions.scheduling.connector.if": "if",
@@ -184,4 +186,5 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "This calendar has no future slot.",
   "missions.scheduling.error.capability": "Scheduling is unavailable. Keep the draft or remove the launch criteria.",
   "missions.scheduling.error.unsupported": "These launch criteria cannot be scheduled.",
+  "missions.scheduling.error.coordinatorProfile": "The existing conversation does not use the coordinator's agent, model and thinking. Make them match, or use a new session.",
 }

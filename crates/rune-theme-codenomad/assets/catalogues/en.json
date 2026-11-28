@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Move criterion {number}",
   "missions.scheduling.error.author": "Enter a valid author.",
   "missions.scheduling.error.capability": "Scheduling is unavailable. Keep the draft or remove the launch criteria.",
+  "missions.scheduling.error.coordinatorProfile": "The existing conversation does not use the coordinator's agent, model and thinking. Make them match, or use a new session.",
   "missions.scheduling.error.count": "Too many criteria: at most eight schedules (seven with separately checked events) and eight events.",
   "missions.scheduling.error.cron": "Enter a valid native cron expression with one second position per minute.",
   "missions.scheduling.error.days": "Choose at least one weekday.",

@@ -74,7 +74,7 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 ## Scheduling {#daily-schedules}
 
-A Mission with a repeating schedule or an event stays one row in the list: each launch replaces the previous one in the same coordinator conversation, and waits while the previous launch is still active. Its detail shows **Launch when**, **Desired state** with **Pause** or **Resume**, the next wake or check, **Launched passages** and **Past runs** (the last 20 launches). With **Start automatically** off, it is created paused. **Edit selected mission** reopens the creation form, and the next launch uses what you save. **Delete selected mission…** removes its scheduling first.
+A Mission with a repeating schedule or an event stays one row in the list: each launch replaces the previous one in the same coordinator conversation, and waits while the previous launch is still active. Its detail shows **Launch when**, **Desired state**, the next wake or check, **Launched passages** and **Past runs** (the last 20 launches). With **Start automatically** off, it is created paused. **Edit selected mission** reopens the creation form, and the next launch uses what you save. **Delete selected mission…** removes its scheduling first. ⏸ in the toolbar pauses it whole, the launch under way and its scheduling, and ▶ resumes both. ■ stops the launch under way; once nothing runs, it stops the scheduling permanently and leaves the Mission in the list.
 
 ### Criteria {#native-scheduling}
 
@@ -104,7 +104,7 @@ Events at the beginning can launch a passage on each new occurrence; trigger eve
 
 ### Counts and history {#scheduling-limits}
 
-**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**.
+**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**. The conversation must use the coordinator's agent, model and thinking: saving refuses it otherwise, and a launch that finds them changed uses another session.
 
 You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
 
@@ -134,10 +134,10 @@ The flag shows the Mission's state; its chevron carries its tasks' attention sta
 | --- | --- |
 | Red | An open question or permission needs your answer. Select the asking Mission or task to open the interruption dock. |
 | Yellow | Native work was observed running. |
-| Orange pause symbol | Paused. |
+| Orange pause symbol | Paused: nothing continues or launches until you resume it. |
 | Orange warning triangle | Interrupted, with an action to continue. |
 | Green | A Mission, task or successful scheduled run awaits review in this window. |
-| Accent icon with a small static neutral line below | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
+| Accent hourglass | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
 | Accent icon alone | Prepared Mission or a task that has not started. |
 | Neutral | Reviewed completion, stopped schedule or **State unconfirmed**; read the status text. |
 

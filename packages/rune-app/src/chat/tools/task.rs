@@ -172,11 +172,8 @@ pub(super) fn body(
             if !shown_value.trim().is_empty() {
                 let pane_key = format!("{key}-task-{section}");
                 let clip_key = format!("{pane_key}-pane");
-                result = result.child(super::super::document::clipped_tool_pane(
-                    s,
-                    &clip_key,
-                    true,
-                    || {
+                result = result.child(crate::chat::reading::inner_scroller(
+                    super::super::document::clipped_tool_pane(s, &clip_key, true, || {
                         super::super::document::prose_pane_search(
                             s,
                             message,
@@ -188,7 +185,8 @@ pub(super) fn body(
                             conversation,
                             section_query,
                         )
-                    },
+                    }),
+                    false,
                 ));
             }
             if truncated && expanded_full.is_none() {

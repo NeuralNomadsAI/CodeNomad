@@ -88,6 +88,22 @@ pub(super) fn is_account_mutation(route: &str, method: &Method) -> bool {
     is_credential_mutation(route, method) || is_integration_connect_mutation(route, method)
 }
 
+pub(super) fn is_mcp_toggle(route: &str, method: &Method) -> bool {
+    *method == Method::POST
+        && route
+            .strip_prefix("/api/experimental/mcp/")
+            .and_then(|rest| rest.strip_suffix("/connect").or_else(|| rest.strip_suffix("/disconnect")))
+            .is_some_and(valid_segment)
+}
+
+pub(super) fn is_plugin_package_action(route: &str, method: &Method) -> bool {
+    *method == Method::POST && matches!(route, "/api/plugin/check" | "/api/plugin/update")
+}
+
+pub(super) fn is_workspace_location_mutation(route: &str, method: &Method) -> bool {
+    is_mcp_toggle(route, method) || is_plugin_package_action(route, method)
+}
+
 pub(super) fn is_account_no_store_route(route: &str, method: &Method) -> bool {
     is_account_mutation(route, method)
         || (*method == Method::GET
@@ -115,7 +131,7 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
         }
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
     }
-    if is_account_mutation(route, method) {
+    if is_account_mutation(route, method) || is_workspace_location_mutation(route, method) {
         return true;
     }
     if session_segment.is_some_and(|seg| matches!(seg, "" | "active" | "global")) {
@@ -124,7 +140,7 @@ pub(super) fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/command", "/agent", "/model", "/fork", "/background", "/revert/stage"]
+            && ["/prompt", "/command", "/shell", "/agent", "/model", "/fork", "/background", "/revert/stage"]
                 .iter()
                 .any(|suffix| route.ends_with(suffix)))
         || (matches!(*method, Method::PATCH | Method::DELETE)

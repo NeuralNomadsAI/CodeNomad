@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "הזזת קריטריון {number}",
   "missions.scheduling.error.author": "יש להזין מחבר תקין.",
   "missions.scheduling.error.capability": "התזמון אינו זמין. שמרו את הטיוטה או הסירו את קריטריוני ההפעלה.",
+  "missions.scheduling.error.coordinatorProfile": "השיחה הקיימת אינה משתמשת בסוכן, במודל ובחשיבה של המתאם. יש להתאים ביניהם או להשתמש בהפעלה חדשה.",
   "missions.scheduling.error.count": "יותר מדי קריטריונים: לכל היותר שמונה תזמונים (שבעה עם אירועים שנבדקים בנפרד) ושמונה אירועים.",
   "missions.scheduling.error.cron": "יש להזין ביטוי cron מקורי תקין עם מיקום שנייה אחד בדקה.",
   "missions.scheduling.error.days": "יש לבחור לפחות יום אחד בשבוע.",

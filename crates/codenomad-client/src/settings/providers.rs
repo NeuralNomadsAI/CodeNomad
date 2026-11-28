@@ -31,6 +31,21 @@ pub(crate) fn provider_change(frame: &Value) -> Option<&str> {
     valid_id(id).then_some(id)
 }
 
+pub(crate) fn mission_catalog_change(frame: &Value) -> Option<&str> {
+    let id = match frame["type"].as_str()? {
+        "instance.event"
+            if matches!(
+                frame["event"]["type"].as_str()?,
+                "agent.updated" | "plugin.updated" | "models-dev.refreshed"
+            ) =>
+        {
+            frame["instanceId"].as_str()?
+        }
+        _ => return None,
+    };
+    valid_id(id).then_some(id)
+}
+
 pub(crate) async fn route_unavailable(
     response: reqwest::Response,
 ) -> Result<Option<reqwest::Response>> {

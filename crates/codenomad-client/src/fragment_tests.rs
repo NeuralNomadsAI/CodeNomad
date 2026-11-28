@@ -188,17 +188,6 @@ fn absent_ordinals_keep_the_sdk_latest_fragment_contract_and_bounds_are_atomic()
     assert!(
         content::apply_text(
             &mut live,
-            &TextEvent::End {
-                ordinal: Some(0),
-                text: "x".repeat(256 * 1024 + 1)
-            }
-        )
-        .is_err()
-    );
-    assert_eq!(live, prior);
-    assert!(
-        content::apply_text(
-            &mut live,
             &TextEvent::Start {
                 ordinal: Some(usize::MAX)
             }
@@ -206,4 +195,202 @@ fn absent_ordinals_keep_the_sdk_latest_fragment_contract_and_bounds_are_atomic()
         .is_err()
     );
     assert_eq!(live, prior);
+    assert_eq!(
+        content::apply_text(
+            &mut live,
+            &TextEvent::End {
+                ordinal: Some(0),
+                text: "x".repeat(256 * 1024 + 1)
+            }
+        )
+        .unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(live.body.len(), 256 * 1024);
+    assert!(
+        matches!(&live.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial && t.text.len() == 256 * 1024)
+    );
+}
+
+#[test]
+fn live_delta_crossing_256k_bounds_on_utf8_boundary_marks_partial_and_drops_trailing_deltas() {
+    let mut live = row(json!([]));
+    assert_eq!(
+        content::apply_text(&mut live, &event("started", 0, "")).unwrap(),
+        TextFit::Applied
+    );
+    // Leave exactly 2 bytes before the 256 KiB ceiling so a 4-byte emoji cannot fit.
+    let prefix = "a".repeat(256 * 1024 - 2);
+    assert_eq!(
+        content::apply_text(&mut live, &event("delta", 0, &prefix)).unwrap(),
+        TextFit::Applied
+    );
+    assert_eq!(
+        content::apply_text(&mut live, &event("delta", 0, "🦀é!")).unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(live.body, prefix);
+    assert!(
+        matches!(&live.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial && t.text == prefix)
+    );
+    // A subsequent 1-byte ASCII delta must NOT stitch past the dropped multi-byte char.
+    assert_eq!(
+        content::apply_text(&mut live, &event("delta", 0, "!")).unwrap(),
+        TextFit::Drop
+    );
+    assert_eq!(live.body, prefix);
+    assert!(matches!(&live.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial));
+
+    // A mid-stream history page carrying the exact truncated prefix must preserve `bounded`
+    // so a following short delta still drops instead of stitching past the omitted codepoint.
+    let mut page_equal = std::sync::Arc::new(
+        history::decode_message(&json!({
+            "id": "assistant",
+            "type": "assistant",
+            "time": {"created": 1},
+            "content": [{"type": "text", "text": prefix}]
+        }))
+        .unwrap(),
+    );
+    content::merge_page(
+        &[live.clone().into()],
+        std::slice::from_mut(&mut page_equal),
+    )
+    .unwrap();
+    let mut merged = (*page_equal).clone();
+    assert_eq!(
+        content::apply_text(&mut merged, &event("delta", 0, "!")).unwrap(),
+        TextFit::Drop
+    );
+    assert_eq!(merged.body, prefix);
+    assert!(matches!(&merged.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial));
+
+    // A partial UTF-8 prefix of a delta that crosses 256 KiB keeps complete codepoints only.
+    let mut partial_fit = row(json!([]));
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("started", 0, "")).unwrap(),
+        TextFit::Applied
+    );
+    let prefix3 = "b".repeat(256 * 1024 - 3);
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("delta", 0, &prefix3)).unwrap(),
+        TextFit::Applied
+    );
+    // "é" (2 bytes) fits in 3 bytes; "🦀" (4 bytes) does not fit in the remaining 1 byte.
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("delta", 0, "é🦀tail")).unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(partial_fit.body, format!("{prefix3}é"));
+    assert_eq!(partial_fit.body.len(), 256 * 1024 - 1);
+    assert!(
+        matches!(&partial_fit.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial)
+    );
+
+    // Starting a second fragment when 1 byte remains fits the "\n" separator (exact 256 KiB),
+    // its first delta hits the zero-room ceiling without error, and a third fragment starts exhausted.
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("started", 1, "")).unwrap(),
+        TextFit::Applied
+    );
+    assert_eq!(partial_fit.body.len(), 256 * 1024);
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("delta", 1, "overflow")).unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("delta", 1, "more")).unwrap(),
+        TextFit::Drop
+    );
+    assert_eq!(
+        content::apply_text(&mut partial_fit, &event("started", 2, "")).unwrap(),
+        TextFit::Settlement
+    );
+    assert!(matches!(
+        &partial_fit.parts[..],
+        [Part::Text(a), Part::Text(b), Part::Text(c)]
+            if a.provenance == TextProvenance::Partial
+                && b.provenance == TextProvenance::Partial
+                && b.text.is_empty()
+                && c.provenance == TextProvenance::Partial
+                && c.text.is_empty()
+    ));
+}
+
+#[test]
+fn oversized_live_end_bounds_utf8_with_partial_provenance_while_history_stays_fail_closed() {
+    let mut live = row(json!([]));
+    assert_eq!(
+        content::apply_text(&mut live, &event("started", 0, "")).unwrap(),
+        TextFit::Applied
+    );
+    // 256 KiB - 1 bytes of 'a', then a 4-byte emoji + tail: floor_char_boundary keeps 256 KiB - 1.
+    let oversized_end = format!("{}🦀tail", "a".repeat(256 * 1024 - 1));
+    assert_eq!(
+        content::apply_text(&mut live, &event("ended", 0, &oversized_end)).unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(live.body.len(), 256 * 1024 - 1);
+    assert!(live.body.chars().all(|c| c == 'a'));
+    assert!(matches!(&live.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial));
+
+    // Completed history page reconciles the full text (within history::MAX_BYTES) as Closed.
+    let mut authoritative = std::sync::Arc::new(
+        history::decode_message(&json!({
+            "id": "assistant",
+            "type": "assistant",
+            "time": {"created": 1, "completed": 2},
+            "content": [{"type": "text", "text": oversized_end}]
+        }))
+        .unwrap(),
+    );
+    content::merge_page(&[live.into()], std::slice::from_mut(&mut authoritative)).unwrap();
+    assert_eq!(authoritative.body, oversized_end);
+    assert!(
+        matches!(&authoritative.parts[0], Part::Text(t) if t.provenance == TextProvenance::Closed)
+    );
+
+    // An oversized End matching an already-Closed history fragment does not shrink or reopen it.
+    let mut closed_row = (*authoritative).clone();
+    assert_eq!(
+        content::apply_text(&mut closed_row, &event("ended", 0, &oversized_end)).unwrap(),
+        TextFit::Applied
+    );
+    assert_eq!(closed_row.body, oversized_end);
+    assert!(
+        matches!(&closed_row.parts[0], Part::Text(t) if t.provenance == TextProvenance::Closed)
+    );
+
+    // An oversized End extending a >256 KiB Partial history prefix does not shrink what is already shown.
+    let mut partial_history = history::decode_message(&json!({
+        "id": "assistant",
+        "type": "assistant",
+        "time": {"created": 1},
+        "content": [{"type": "text", "text": oversized_end}]
+    }))
+    .unwrap();
+    let extended_end = format!("{oversized_end}more");
+    assert_eq!(
+        content::apply_text(&mut partial_history, &event("ended", 0, &extended_end)).unwrap(),
+        TextFit::Settlement
+    );
+    assert_eq!(partial_history.body, oversized_end);
+    assert!(
+        matches!(&partial_history.parts[0], Part::Text(t) if t.provenance == TextProvenance::Partial)
+    );
+
+    // History decode_message and history::check remain strictly fail-closed above MAX_BYTES (8 MiB).
+    let huge = "x".repeat(history::MAX_BYTES + 1);
+    assert!(
+        history::decode_message(&json!({
+            "id": "huge",
+            "type": "assistant",
+            "time": {"created": 1, "completed": 2},
+            "content": [{"type": "text", "text": huge}]
+        }))
+        .is_err()
+    );
+    let mut overflow_row = row(json!([]));
+    overflow_row.body = huge;
+    assert!(history::check(&[std::sync::Arc::new(overflow_row)]).is_err());
 }

@@ -314,7 +314,9 @@ pub(crate) fn set_focus_for_test(s: &mut State, focused: bool) {
 
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
-    if focused {
+    if !focused {
+        s.transcript_display.reading_mut().end_wheel_gesture();
+    } else {
         codenomad_client::stream::probe_stale();
     }
 }

@@ -400,6 +400,18 @@ fn ui_renders_calendars_pre_first_launch_history_and_inline_editor() {
     );
 
     // Open inline editor and verify controls + add criterion.
+    let detail_elements = rt.elements();
+    for key in ["mission-calendar-edit", "mission-calendar-delete"] {
+        let btn = detail_elements
+            .iter()
+            .find(|el| el.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}"));
+        assert!(
+            btn.rect[2] <= 36.0 && btn.rect[3] <= 36.0,
+            "{key} must be a compact icon button: {:?}",
+            btn.rect
+        );
+    }
     let (ex, ey) = rt.find("mission-calendar-edit").unwrap();
     rt.pointer_down(ex, ey);
     rt.pointer_up(ex, ey);
@@ -409,6 +421,16 @@ fn ui_renders_calendars_pre_first_launch_history_and_inline_editor() {
     assert!(rt.find("mission-calendar-edit-title").is_some());
     assert!(rt.find("mission-calendar-edit-goal").is_some());
     assert!(rt.find("mission-calendar-save").is_some());
+    let remove_btn = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some("mission-calendar-criterion-remove-0"))
+        .expect("criterion remove icon button");
+    assert!(
+        remove_btn.rect[2] <= 36.0 && remove_btn.rect[3] <= 36.0,
+        "criterion remove action must be a compact icon button: {:?}",
+        remove_btn.rect
+    );
 }
 
 #[test]

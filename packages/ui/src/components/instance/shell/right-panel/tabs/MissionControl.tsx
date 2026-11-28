@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
+import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, untrack, type Component, type JSX } from "solid-js"
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
@@ -189,6 +189,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     refresh: () => `${recurrenceRefresh()}|${rows().map(row => `${row.id}:${row.status}:${row.runState}`).join()}` })
   const programmingOf = (id: string | undefined) => calendars.rows().find(calendar => calendar.missionID === id)
   const [programmingFailed, setProgrammingFailed] = createSignal(false)
+  // Reading the programmed Missions takes over the schedules the recurring engine left: what is listed beside them is read again,
+  // once they are first read and whenever they change.
+  const [takenOver, setTakenOver] = createSignal(0)
+  createEffect(on(() => `${calendars.available()}|${calendars.rows().map(calendar => `${calendar.id}:${calendar.missionID}`).join()}`, () => {
+    if (!calendars.available()) return
+    setTakenOver(value => value + 1); void missionStore.refresh(props.instanceId)
+  }, { defer: true }))
   // The selection follows a programmed Mission to the launch that replaced the selected one.
   let followed = calendars.rows()
   createEffect(() => {
@@ -584,8 +591,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // The read map's count, else the row's (absent when unknown: the chevron stays).
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
-      ...(programming ? { recurring: true } : {}),
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity,
+      // A programmed Mission always unfolds: its programming is there before any task.
+      leaf: taskCount === 0 && !programming, ...(programming ? { recurring: true } : {}),
       activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
         ...(programming ? programming.row : []),
@@ -621,14 +629,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         if (!close) props.onRevealConversation?.()
       } }
     },
-    get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() },
+    get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() + takenOver() },
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
-    calendars, onConverted: id => {
-      // The schedule became a programmed Mission: its row is now that Mission's.
-      const next = calendars.rows().find(calendar => calendar.id === id)?.missionID
-      if (selectedScheduled() === id) { if (next) selectMission(next); else updateView({ selectedScheduled: undefined, selectedTask: undefined }) }
-      void missionStore.refresh(props.instanceId)
-    },
     onDeleted: id => { if (selectedScheduled() === id) updateView({ selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
       const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = origin.instanceId
@@ -822,7 +824,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             }
           }
         }}
-        expandable={key => key.startsWith("mission:")}
+        expandable={key => key.startsWith("mission:") && !programmingOf(key.slice("mission:".length))}
         preview={key => <MissionTaskPreview instanceId={props.instanceId} missionId={key.slice("mission:".length)} activity={state().activity}
           active={treeShown()}
           selected={(value, task) => isSelectedTask(value.id, task.id)}
@@ -857,11 +859,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
               openEditor(calendar ? { kind: "create", calendar: calendar.id, draft: missionProgrammingDraft(calendar, directory()) } : { kind: "edit", mission: selected() })
             }}
             onDelete={() => void deleteMission(selected())}
+            programming={programmingOf(id) && { paused: programmingOf(id)!.paused, between: selected().status !== "active" || selected().runState === "prepared",
+              act: action => { setProgrammingFailed(false); return calendars.act(programmingOf(id)!.id, { action }).catch(() => { setProgrammingFailed(true) }) } }}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
             onOpenTask={sessionId => void onOpenActor(sessionId)} />
-          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} disabled={Boolean(editor())} failed={programmingFailed()}
-            onAct={action => calendars.act(calendar().id, { action })} />}</Show>
+          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} failed={programmingFailed()} />}</Show>
           {tracking()}
         </section>
       }}</Show>

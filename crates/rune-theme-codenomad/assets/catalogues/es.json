@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Mover el criterio {number}",
   "missions.scheduling.error.author": "Introduce un autor válido.",
   "missions.scheduling.error.capability": "La programación no está disponible. Conserve el borrador o quite los criterios de lanzamiento.",
+  "missions.scheduling.error.coordinatorProfile": "La conversación existente no usa el agente, el modelo y el razonamiento del coordinador. Hazlos coincidir o usa una sesión nueva.",
   "missions.scheduling.error.count": "Demasiados criterios: como máximo ocho horarios (siete con eventos comprobados aparte) y ocho eventos.",
   "missions.scheduling.error.cron": "Introduzca un cron nativo válido con una posición de segundo por minuto.",
   "missions.scheduling.error.days": "Elija al menos un día de la semana.",

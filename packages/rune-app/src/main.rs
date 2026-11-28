@@ -284,10 +284,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     chat::reader::expire_sync_undo(s, tx.clock());
     let gesture = timeline::poll_edge(s, tx);
-    let conversation_visible = !s.screen.is_launcher()
-        && !git::has_preview(s)
-        && !files::has_preview(s)
-        && !workspace::mission_has_reader(s);
+    let conversation_visible = timeline::conversation_shown(s);
     let defer_reader_sync = conversation_visible && !s.messages.is_empty();
     let chat = !timeline::input_precedes_admission(s, tx)
         && chat::events::poll_chat_for_window(s, 64, defer_reader_sync, tx.clock());
@@ -321,8 +318,14 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if wait_rail_layout {
         tx.wake_after(std::time::Duration::ZERO);
     }
+    let queue_changed = chat::queue::poll(s, tx);
+    let flushed_replay = conversation_visible && chat::reading::flush_wheel_replay(s, tx);
+    let rearmed_replay =
+        conversation_visible && chat::reading::rearm_replay_on_layout_change(s, tx);
     let restored = !wait_manual_probe
         && !wait_rail_layout
+        && !flushed_replay
+        && !rearmed_replay
         && conversation_visible
         && (!s
             .reader
@@ -330,7 +333,13 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             .is_some_and(chat::reader::Reader::awaits_history_width)
             || history_width > 0.0)
         && chat::reader::renderer_ready(s, tx);
-    let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
+    let mut changed = gesture
+        | chat
+        | queue_changed
+        | flushed_replay
+        | rearmed_replay
+        | restored
+        | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     platform::web_form_cap::sync(agent::focused_form_editor_utf16(s));
     changed |= platform::titlebar::poll(s);
@@ -345,7 +354,6 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
-    changed |= chat::queue::poll(s, tx);
     changed |= shell::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);

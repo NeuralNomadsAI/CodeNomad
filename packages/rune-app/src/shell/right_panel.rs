@@ -42,30 +42,39 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
         },
     )
     .key("right-panel-tabs");
-    col()
-        .full_width()
-        .full_height()
-        .child(shell::header(floating, true, touch, [picker]))
-        .child(match chosen {
-            RightPanelTab::Files => {
-                crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()
-            }
-            RightPanelTab::Missions => workspace::mission_panel(s).remaining(),
-            RightPanelTab::Status => col()
-                .remaining()
-                .scroll(rune::ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(
+    crate::chat::reading::track_other_scroller_hover(
+        col()
+            .full_width()
+            .full_height()
+            .child(shell::header(floating, true, touch, [picker]))
+            .child(match chosen {
+                RightPanelTab::Files => {
+                    crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()
+                }
+                RightPanelTab::Missions => workspace::mission_panel(s).remaining(),
+                RightPanelTab::Status => {
+                    let status_scroll = s.tool_diff_preferences.right_panel_status_scroll.clone();
                     col()
-                        .full_width()
-                        .pad(Space::Md)
-                        .separate(Space::Sm)
-                        .child(text(connection(s)))
-                        .children(crate::chat::usage::session(s))
-                        .children(super::status_permissions::view(s))
-                        .children(super::status_usage::section(s))
-                        .children(super::status_services::view(s)),
-                ),
-        })
+                        .remaining()
+                        .scroll(rune::ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .on_scroll_offset(move |at| {
+                            status_scroll.set((at.offset[1], at.max[1]));
+                        })
+                        .child(
+                            col()
+                                .full_width()
+                                .pad(Space::Md)
+                                .separate(Space::Sm)
+                                .child(text(connection(s)))
+                                .children(crate::chat::usage::session(s))
+                                .children(super::status_permissions::view(s))
+                                .children(super::status_usage::section(s))
+                                .children(super::status_services::view(s)),
+                        )
+                }
+            }),
+        crate::chat::reading::HOVER_RIGHT_PANEL,
+    )
 }

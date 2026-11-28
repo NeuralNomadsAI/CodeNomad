@@ -8,12 +8,12 @@ type Fake = { id: string; status: "active" | "completed" | "failed"; runState: "
 
 function fixture() {
   const missions = new Map<string, Fake>(), values = new Map<string, MissionJsonValue>(), calls: string[] = [], unusable = new Set<string>()
-  let failStart = false, failDelete = false, conversations = 0, clock = 1_000
+  let failStart = false, failDelete = false, failCreate = false, conversations = 0, clock = 1_000
   const control = {
     create: async (input: { requestID: string; prepared?: boolean; coordinatorSessionID?: string }) => {
       calls.push(`create ${input.requestID} ${input.coordinatorSessionID ?? "new"}`)
       assert.equal(input.prepared, true)
-      if (input.coordinatorSessionID && unusable.has(input.coordinatorSessionID)) throw new Error("Coordinator unavailable")
+      if (failCreate || input.coordinatorSessionID && unusable.has(input.coordinatorSessionID)) throw new Error("Coordinator unavailable")
       const id = `msn_${input.requestID}`
       if (!missions.has(id)) missions.set(id, { id, status: "active", runState: "prepared", revision: 1,
         coordinatorSessionId: input.coordinatorSessionID ?? `ses_${++conversations}` })
@@ -43,7 +43,7 @@ function fixture() {
   const run = (number: number, news?: MissionCalendarNews, automationID = "aut_a", mission: Record<string, unknown> = {}, prepared?: string) =>
     runMissionCalendar(control, storage, "key", { automationID, run: number }, { objective: "Review", template: "custom", ...mission }, { news, prepared, now: () => clock += 1_000 })
   const prepare = (id: string, coordinatorSessionId = "ses_prepared") => { missions.set(id, { id, status: "active", runState: "prepared", revision: 1, coordinatorSessionId }) }
-  return { missions, calls, run, unusable, prepare, failStarts: (value: boolean) => { failStart = value }, failDeletes: (value: boolean) => { failDelete = value },
+  return { missions, calls, run, unusable, prepare, failStarts: (value: boolean) => { failStart = value }, failDeletes: (value: boolean) => { failDelete = value }, failCreates: (value: boolean) => { failCreate = value },
     end: (id: string, status: Fake["status"] = "completed") => { missions.get(id)!.status = status } }
 }
 const launched = (missionID: string, history: unknown[] = [], coordinatorSessionID = "ses_1") => ({ outcome: "launched", missionID, status: "active", coordinatorSessionID, history, launches: history.length + 1 })
@@ -110,19 +110,45 @@ test("events gate the launch, and their news waits for the active launch", async
   assert.equal((await f.run(7, news)).outcome, "idle")
   assert.equal(f.calls.length, asked, "an ended launch without news is kept and not asked about again")
   assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_5"])
+  // Events that cannot be read are no failed run: nothing changes, and the commit that landed meanwhile launches once they are read.
+  head = "d"
+  const unreadable: MissionCalendarNews = async () => { throw new Error("Network unreachable") }
+  assert.deepEqual([(await f.run(8, unreadable)).outcome, (await f.run(9, unreadable)).outcome, f.calls.length], ["unread", "unread", asked])
+  assert.equal((await f.run(10, news)).missionID, "msn_calendar_aut_a_10")
 })
 
-test("the conversation of the first launch is kept, replaced when it can no longer coordinate, and required when named", async () => {
+test("a launch coordinates in the conversation the programming names, else the one its launches use, else a new one", async () => {
   const f = fixture()
   await f.run(1)
   f.end("msn_calendar_aut_a_1")
   f.unusable.add("ses_1")
   assert.deepEqual(await f.run(2), launched("msn_calendar_aut_a_2", [{ at: 2_000, outcome: "completed" }], "ses_2"))
   f.end("msn_calendar_aut_a_2")
+  // The named conversation cannot coordinate: the launch stays in the conversation the previous ones used.
   f.unusable.add("ses_named")
-  await assert.rejects(f.run(3, undefined, "aut_a", { coordinatorSessionID: "ses_named" }), /Coordinator unavailable/)
+  f.calls.length = 0
+  assert.equal((await f.run(3, undefined, "aut_a", { coordinatorSessionID: "ses_named" })).coordinatorSessionID, "ses_2")
+  assert.deepEqual(f.calls.filter(call => call.startsWith("create")), ["create calendar_aut_a_3 ses_named", "create calendar_aut_a_3 ses_2"])
+  f.end("msn_calendar_aut_a_3")
+  f.unusable.add("ses_2")
+  assert.equal((await f.run(4, undefined, "aut_a", { coordinatorSessionID: "ses_named" })).coordinatorSessionID, "ses_3")
+  f.end("msn_calendar_aut_a_4")
   f.unusable.delete("ses_named")
-  assert.equal((await f.run(3, undefined, "aut_a", { coordinatorSessionID: "ses_named" })).coordinatorSessionID, "ses_named")
+  assert.equal((await f.run(5, undefined, "aut_a", { coordinatorSessionID: "ses_named" })).coordinatorSessionID, "ses_named")
+})
+
+test("a launch nothing can create leaves the programmed Mission as it was", async () => {
+  const f = fixture()
+  await f.run(1)
+  f.end("msn_calendar_aut_a_1")
+  f.failCreates(true)
+  await assert.rejects(f.run(2), /Coordinator unavailable/)
+  await assert.rejects(f.run(3), /Coordinator unavailable/)
+  assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_1"], "the previous launch is still there")
+  assert.equal(f.calls.some(call => call.startsWith("delete")), false)
+  f.failCreates(false)
+  assert.deepEqual(await f.run(4), launched("msn_calendar_aut_a_4", [{ at: 2_000, outcome: "completed" }]))
+  assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_4"])
 })
 
 test("a removal that fails never holds the launch and is tried again by the next one", async () => {
@@ -188,7 +214,8 @@ test("a prepared Mission a person started, removed or replaced by an edit is fol
   const started = fixture()
   started.prepare("msn_prepared")
   started.missions.get("msn_prepared")!.runState = "running"
-  assert.deepEqual([(await started.run(1, undefined, "aut_a", {}, "msn_prepared")).outcome, started.missions.size], ["waiting", 1])
+  const byHand = await started.run(1, undefined, "aut_a", {}, "msn_prepared")
+  assert.deepEqual([byHand.outcome, byHand.launches, started.missions.size], ["waiting", 1, 1], "a launch started by hand counts")
   const removed = fixture()
   assert.equal((await removed.run(1, undefined, "aut_a", {}, "msn_gone")).missionID, "msn_calendar_aut_a_1")
   const edited = fixture()

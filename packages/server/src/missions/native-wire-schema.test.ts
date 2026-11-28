@@ -8,6 +8,7 @@ import { parseExecutionMode } from "./task-execution-mode"
 import { parseNativeBinding } from "./native-report-provenance"
 import { MISSION_BRIEFING_RESPONSES_MAX, missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { scheduleToolWire } from "./schedule-tool"
+import { missionProgramWire } from "./program-tool"
 import { projectReadWire } from "./project-read-tool"
 import { projectControlWire, projectConfigureWire, projectDeleteWire } from "./project-control-tool"
 import { missionSettingsInput, missionSettingsWire } from "./settings-tool"
@@ -35,13 +36,14 @@ test("Missions native RPC schemas avoid unsupported not and pattern keywords", (
   }
   visit(CODENOMAD_MISSIONS_RPC)
   visit(scheduleToolWire, "mission.schedule")
+  visit(missionProgramWire, "mission.program")
   visit(missionSettingsWire, "mission.settings")
   visit(projectReadWire, "mission.inspect.project")
   for (const wire of [projectControlWire, projectConfigureWire, projectDeleteWire]) visit(wire, "mission.project-controls")
 })
 
 test("every Missions RPC schema converts through the native schema representation", () => {
-  for (const schema of [projectControlWire, projectConfigureWire, projectDeleteWire, missionSettingsWire])
+  for (const schema of [projectControlWire, projectConfigureWire, projectDeleteWire, missionSettingsWire, missionProgramWire])
     assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({ dialect: "draft-2020-12", schema, definitions: {} }))
   assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
     dialect: "draft-2020-12", schema: scheduleToolWire, definitions: {},

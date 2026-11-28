@@ -557,10 +557,19 @@ fn render_body(
                 } else {
                     TOOL_LIMIT
                 };
-                block = block.child(markdown::tool_pane(
-                    window(s, input_key, &[&input], limit, |shown, units| {
-                        markdown::search_code(shown, "json", units <= HIGHLIGHT_LIMIT, true, query)
-                    }),
+                block = block.child(crate::chat::reading::inner_scroller(
+                    markdown::tool_pane(
+                        window(s, input_key, &[&input], limit, |shown, units| {
+                            markdown::search_code(
+                                shown,
+                                "json",
+                                units <= HIGHLIGHT_LIMIT,
+                                true,
+                                query,
+                            )
+                        }),
+                        false,
+                    ),
                     false,
                 ));
             } else {
@@ -636,17 +645,20 @@ fn render_body(
                     }
                 } else {
                     let clip_key = format!("{output_key}-pane");
-                    block = block.child(document::clipped_tool_pane(s, &clip_key, false, || {
-                        document::prose_search(
-                            s,
-                            message,
-                            key,
-                            output_key,
-                            parts[0],
-                            owner_conversation,
-                            query,
-                        )
-                    }));
+                    block = block.child(crate::chat::reading::inner_scroller(
+                        document::clipped_tool_pane(s, &clip_key, false, || {
+                            document::prose_search(
+                                s,
+                                message,
+                                key,
+                                output_key,
+                                parts[0],
+                                owner_conversation,
+                                query,
+                            )
+                        }),
+                        false,
+                    ));
                 }
             } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
@@ -668,19 +680,22 @@ fn render_body(
                     }
                 } else {
                     let clip_key = format!("{output_key}-pane");
-                    block = block.child(document::clipped_tool_pane(s, &clip_key, false, || {
-                        document::prose_pane_search(
-                            s,
-                            message,
-                            key,
-                            output_key,
-                            parts[0],
-                            tool.status == "running",
-                            TOOL_LIMIT,
-                            owner_conversation,
-                            query,
-                        )
-                    }));
+                    block = block.child(crate::chat::reading::inner_scroller(
+                        document::clipped_tool_pane(s, &clip_key, false, || {
+                            document::prose_pane_search(
+                                s,
+                                message,
+                                key,
+                                output_key,
+                                parts[0],
+                                tool.status == "running",
+                                TOOL_LIMIT,
+                                owner_conversation,
+                                query,
+                            )
+                        }),
+                        false,
+                    ));
                 }
             } else if (has_output || is_tool_truncated) && !specialized_task {
                 let structured_out = if expanded_tool_output.is_some() {
@@ -738,33 +753,36 @@ fn render_body(
                                         .child(wrap_control(s, &wrap_key, wrap))
                                         .child(text(lang).text_role(TextRole::Label))
                                 }))
-                                .child(markdown::tool_pane(
-                                    window(
-                                        s,
-                                        output_key.clone(),
-                                        &parts,
-                                        document::search_limit_for(s, key, query),
-                                        |shown, units| {
-                                            if !probe
-                                                && tool.status == "running"
-                                                && shell::matches(tool)
-                                            {
-                                                s.transcript_display
-                                                    .live_ansi(key, shown, wrap, query)
-                                            } else if terminal {
-                                                ansi::search_code(shown, wrap, query)
-                                            } else {
-                                                markdown::search_code(
-                                                    shown,
-                                                    lang,
-                                                    highlight && units <= HIGHLIGHT_LIMIT,
-                                                    wrap,
-                                                    query,
-                                                )
-                                            }
-                                        },
+                                .child(crate::chat::reading::inner_scroller(
+                                    markdown::tool_pane(
+                                        window(
+                                            s,
+                                            output_key.clone(),
+                                            &parts,
+                                            document::search_limit_for(s, key, query),
+                                            |shown, units| {
+                                                if !probe
+                                                    && tool.status == "running"
+                                                    && shell::matches(tool)
+                                                {
+                                                    s.transcript_display
+                                                        .live_ansi(key, shown, wrap, query)
+                                                } else if terminal {
+                                                    ansi::search_code(shown, wrap, query)
+                                                } else {
+                                                    markdown::search_code(
+                                                        shown,
+                                                        lang,
+                                                        highlight && units <= HIGHLIGHT_LIMIT,
+                                                        wrap,
+                                                        query,
+                                                    )
+                                                }
+                                            },
+                                        ),
+                                        matches!(tool.name.as_str(), "edit" | "write"),
                                     ),
-                                    matches!(tool.name.as_str(), "edit" | "write"),
+                                    !wrap,
                                 ))
                         };
                         block = block.child(if let Some(results) = result_list {
@@ -871,19 +889,22 @@ fn render_error(
                     .child(text(t("toolCall.error.label")))
                     .child(copy(s, message, key, &tool.id, Section::Error, ancestors)),
             )
-            .child(markdown::tool_pane(
-                window(
-                    s,
-                    format!("{key}-error"),
-                    &[error],
-                    document::search_limit_for(s, key, query),
-                    |shown, _| {
-                        rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
-                            .full_width()
-                            .wrap()
-                            .content_direction()
-                            .selectable(true)
-                    },
+            .child(crate::chat::reading::inner_scroller(
+                markdown::tool_pane(
+                    window(
+                        s,
+                        format!("{key}-error"),
+                        &[error],
+                        document::search_limit_for(s, key, query),
+                        |shown, _| {
+                            rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
+                                .full_width()
+                                .wrap()
+                                .content_direction()
+                                .selectable(true)
+                        },
+                    ),
+                    false,
                 ),
                 false,
             ))

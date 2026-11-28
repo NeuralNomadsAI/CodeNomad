@@ -156,6 +156,18 @@ pub(super) async fn dispatch_marked(
         return Ok(());
     }
     if value["type"] == "instance.event"
+        && let Some(id) = crate::settings::mission_catalog_change(&value)
+        && id == b.workspace
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::MissionCatalogChanged {
+                workspace_id: id.into(),
+            },
+        ))
+        .await?;
+    }
+    if value["type"] == "instance.event"
         && let Some((id, session_id)) = crate::settings::integrations::session_stream_event(&value)
         && id == b.workspace
     {

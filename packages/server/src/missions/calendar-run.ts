@@ -70,8 +70,8 @@ export const missionCalendarNews = (events: readonly MissionCalendarEvent[], roo
   return { checkpoints: reads.map(read => read.checkpoint), changed: reads.some(read => read.changed) }
 }
 
-/** What a run did. `missionID` is the programmed Mission's current launch, whatever the run did. */
-export type MissionCalendarResult = { outcome: "launched" | "waiting" | "idle"; missionID?: string; status?: string
+/** What a run did; `unread` when its events could not be read. `missionID` is the programmed Mission's current launch, whatever the run did. */
+export type MissionCalendarResult = { outcome: "launched" | "waiting" | "idle" | "unread"; missionID?: string; status?: string
   coordinatorSessionID?: string; history: Array<z.infer<typeof launchSchema>>; launches: number }
 /** What a run needs of Missions: `MissionControl` itself, or its registered RPC. */
 export type MissionCalendarControl = Pick<MissionControl, "create" | "lifecycle" | "mission" | "delete">
@@ -81,9 +81,12 @@ type Launch = Omit<MissionCreateInput, "requestID" | "prepared">
 
 /** One occurrence of a programmed Mission. To its user it is one Mission launched again:
  * each launch is a new one-time Mission that replaces the previous one, in the same
- * coordinator conversation. Nothing launches while the previous launch is still active,
+ * coordinator conversation: the one the programming names, else the one its launches use,
+ * else a new one, whichever first can coordinate. The previous Mission goes only once the
+ * new one exists. Nothing launches while the previous launch is still active,
  * or when the events (`news`) brought nothing new since the last launch; an active
- * launch leaves the events unread, so their news waits for it. Repeating a run changes
+ * launch leaves the events unread, so their news waits for it. Events that cannot be read
+ * now change nothing and are read by the next run. Repeating a run changes
  * nothing, and the runs of one programmed Mission follow one another. `prepared` names
  * the Mission created with the programming: the first launch starts it instead of creating one. */
 export function runMissionCalendar(control: MissionCalendarControl, storage: Storage, key: string, occurrence: Occurrence,
@@ -124,7 +127,9 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
     launched = { ...launched, outcome: previous?.status ?? "removed" }
   }
   if (news) {
-    const read = await news(checkpoints ?? [])
+    // A network or forge that does not answer is no failed run: OpenCode pauses an Automation after three.
+    const read = await news(checkpoints ?? []).catch(() => undefined)
+    if (!read) return answer("unread")
     checkpoints = read.checkpoints
     if (!read.changed) { await save(); return answer("idle") }
   }
@@ -137,9 +142,10 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
       await save()
       return answer("launched", (await start(waiting)).status)
     }
-    // A person started, ended or removed it: an ordinary previous launch from here.
+    // A person started, ended or removed it: an ordinary previous launch from here, counted when it ran.
     const { placeholder: _placeholder, ...ordinary } = launched
     launched = waiting ? ordinary : undefined
+    if (waiting) launches++
   }
   if (launched) {
     // Asked again at the moment of replacing: a person may have resumed a launch seen ended.
@@ -150,13 +156,26 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
       await save()
       return answer("waiting", (await start(previous)).status)
     }
-    // The new launch replaces the previous one: its date and outcome stay, its Mission goes.
-    history = [...history, { at: launched.at, outcome: previous?.status ?? launched.outcome ?? "removed" }].slice(-MISSION_CALENDAR_HISTORY)
-    retiring = [...retiring, launched.missionID].slice(-8)
-    launched = undefined
-    await save()
+    launched = { ...launched, outcome: previous?.status ?? launched.outcome ?? "removed" }
   }
-  for (const missionID of [...retiring]) {
+  const requestID = `calendar_${occurrence.automationID}_${occurrence.run}`
+  const { coordinatorSessionID: named, ...launch } = mission
+  let created: MissionPanelMap | MissionMap | undefined
+  for (const session of [...new Set([named, coordinatorSessionID].filter(Boolean)), undefined]) {
+    try { created = (await control.create({ ...launch, ...(session ? { coordinatorSessionID: session } : {}), prepared: true, requestID })).mission; break }
+    // A conversation that cannot coordinate leaves the launch to the next one; a launch nothing can create leaves the programmed Mission as it was.
+    catch (error) { if (!session) throw error }
+  }
+  // The new launch replaces the previous one: its date and outcome stay, its Mission goes.
+  if (launched) {
+    history = [...history, { at: launched.at, outcome: launched.outcome ?? "removed" }].slice(-MISSION_CALENDAR_HISTORY)
+    retiring = [...retiring, launched.missionID].slice(-8)
+  }
+  coordinatorSessionID = created!.coordinatorSessionId
+  launched = { ...occurrence, missionID: created!.id, at: now() }
+  launches++
+  await save()
+  for (const missionID of retiring.filter(id => id !== created!.id)) {
     const retired = (await control.mission(missionID)).mission
     // A removal that fails is tried again by the next launch; it never holds this one.
     if (retired?.status === "active") continue
@@ -164,14 +183,6 @@ async function runOccurrence(control: MissionCalendarControl, storage: Storage, 
       deleteManagedSessions: false }).then(() => { retiring = retiring.filter(id => id !== missionID) }, () => undefined)
     else retiring = retiring.filter(id => id !== missionID)
   }
-  const requestID = `calendar_${occurrence.automationID}_${occurrence.run}`
-  const create = (session?: string) => control.create({ ...mission, ...(session ? { coordinatorSessionID: session } : {}), prepared: true, requestID })
-  // A conversation the criteria name is required; the remembered one is replaced when it can no longer coordinate.
-  const created = (mission.coordinatorSessionID || !coordinatorSessionID ? await create(mission.coordinatorSessionID)
-    : await create(coordinatorSessionID).catch(() => create())).mission
-  coordinatorSessionID = created.coordinatorSessionId
-  launched = { ...occurrence, missionID: created.id, at: now() }
-  launches++
   await save()
-  return answer("launched", (await start(created)).status)
+  return answer("launched", (await start(created!)).status)
 }

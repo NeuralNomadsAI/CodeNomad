@@ -9,7 +9,6 @@ import type {} from "./fixtures/mission-navigation"
 import { clickMissionAction, missionDetail, missionEntryStatus, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
-import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -37,8 +36,8 @@ const programming = (missionID: string, extra: Partial<MissionCalendarView> = {}
 async function setup() {
   const page = await browser.newPage({ locale: "en-GB", viewport: { width: 1280, height: 900 } })
   page.setDefaultTimeout(15000)
-  const state = { missions: [mission("A", "Daily review"), mission("B", "Other work")], calendars: [programming("A")], schedules: [] as any[], refuse: false }
-  const writes: string[] = [], saved: any[] = [], deleted: any[] = []
+  const state = { missions: [mission("A", "Daily review"), mission("B", "Other work")], calendars: [programming("A")] }
+  const writes: string[] = [], saved: any[] = []
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
@@ -47,11 +46,10 @@ async function setup() {
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     const calendar = /\/missions\/calendars(?:\/([^/]+)(?:\/(pause|resume))?)?$/.exec(pathname)
     if (pathname.endsWith("/missions/scheduled/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: state.schedules } })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (calendar) {
       if (method === "PUT") {
         const body = request.postDataJSON(); saved.push(body)
-        if (state.refuse) return route.fulfill({ status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" } })
         // A programming saved for the first time comes with the Mission prepared for its first launch.
         if (!state.calendars.some(item => item.id === calendar[1])) {
           state.missions = [...state.missions, mission("P", body.configuration.title, "prepared")]
@@ -62,7 +60,6 @@ async function setup() {
       else if (calendar[2]) state.calendars = state.calendars.map(item => ({ ...item, paused: calendar[2] === "pause" }))
       return route.fulfill({ json: { calendars: state.calendars } })
     }
-    if (method === "POST" && pathname.endsWith("/schedule")) { deleted.push(request.postDataJSON()); state.schedules = []; return route.fulfill({ json: { document: null, pending: false, deleted: true } }) }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(state.missions),
       generatedAt: NOW, discardedEvents: 0, activity: { generatedAt: NOW, missions: [] } } })
     const read = missionReadFixture(pathname, method, state.missions) ?? missionContentFixture(request.url(), method, state.missions)
@@ -71,7 +68,7 @@ async function setup() {
     if (pathname.endsWith("/provider")) return route.fulfill({ json: { all: [], connected: [], default: {} } })
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
-  return { page, state, writes, saved, deleted, open: () => page.goto(url, { timeout: 60000 }) }
+  return { page, state, writes, saved, open: () => page.goto(url, { timeout: 60000 }) }
 }
 const facts = async (page: Page) => (await missionDetail(page).locator(".mission-schedule-facts").innerText()).replace(/\s+/g, " ")
 
@@ -84,13 +81,17 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     assert.doesNotMatch(await missionEntryStatus(page, "Other work"), /Next wake/)
     const icon = (key: string) => page.locator(`.mission-row[data-mission-key="mission:${key}"] .mission-row-flag`)
     assert.deepEqual([await icon("A").getAttribute("class"), await icon("B").getAttribute("class")].map(value => /lucide-repeat/.test(value ?? "")), [true, false])
-    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC Desired state Running Pause Next wake Nov 28, 2026, 9:00 AM Launched passages 2/)
+    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC Desired state Running Next wake Nov 28, 2026, 9:00 AM Launched passages 2/)
     assert.match(await missionDetail(page).locator(".mission-past-runs").innerText(), /Nov 26, 2026, 9:00 AM · Completed/)
 
-    await missionDetail(page).getByRole("button", { name: "Scheduling · Pause" }).click()
-    await missionDetail(page).getByRole("button", { name: "Scheduling · Resume" }).waitFor()
-    assert.match(await facts(page), /Paused Resume Next wake None/)
-    assert.deepEqual(writes, ["POST /missions/calendars/cal_review/pause"])
+    // A launch is under way: Pause holds the programmed Mission whole, its programming first, then the launch.
+    assert.equal(await missionDetail(page).getByRole("button").filter({ hasText: /^(Pause|Resume)$/ }).count(), 0)
+    const paused = page.waitForResponse(response => /\/missions\/A\/control$/.test(new URL(response.url()).pathname))
+    await clickMissionAction(page, "Pause mission")
+    await paused
+    await missionDetail(page).getByText("Paused", { exact: true }).waitFor()
+    assert.match(await facts(page), /Desired state Paused Next wake None/)
+    assert.deepEqual(writes, ["POST /missions/calendars/cal_review/pause", "POST /missions/A/control"])
 
     // The next launch replaces the Mission: the selection follows it.
     state.missions = [mission("C", "Daily review"), mission("B", "Other work")]
@@ -103,7 +104,7 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     state.missions = [{ ...mission("C", "Daily review"), status: "completed" } as MissionMap, mission("B", "Other work")]
     state.calendars = [programming("C")]
     await missionRefresh(page).click()
-    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark[data-mark="waiting"]').waitFor()
+    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark[data-mark="waiting"] .lucide-hourglass').waitFor()
     assert.match(await missionEntryStatus(page, "Daily review"), /^Waiting for scheduled run · Every day/)
     state.missions = [mission("C", "Daily review"), mission("B", "Other work")]
     await missionRefresh(page).click()
@@ -132,45 +133,58 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
   } finally { await page.close() }
 })
 
-test("a schedule the panel finds becomes a programmed Mission: saved paused under its identity, then deleted", async () => {
-  const { page, state, writes, saved, deleted, open } = await setup()
+test("a programmed Mission without tasks unfolds from its chevron like any other", async () => {
+  const { page, state, open } = await setup()
   try {
-    const launch = { when: [{ kind: "cron", expression: "0 7 * * *", zone: "UTC" }] }
-    const schedule = (await pausedMissionScheduleReceipt({ requestID: "req_old", expectedRevision: 0, action: "create",
-      configuration: { title: "Old schedule", objective: "Review overnight changes", template: "custom", taskMode: "native",
-        profiles: { coordinator: profile, roles: { specialist: profile } }, watchedConversationIDs: [], launch } })).document!
-    state.missions = [mission("B", "Other work")]; state.calendars = []; state.schedules = [{ ...schedule, control: null }]
+    state.missions = [{ ...mission("A", "Daily review", "prepared"), tasks: [] } as MissionMap, { ...mission("B", "Other work"), tasks: [] } as MissionMap]
     await open()
-    await page.locator('.mission-row[data-mission-key="mission:P"]').waitFor()
-    await page.locator('.mission-row[data-mission-key^="scheduled:"]').waitFor({ state: "detached" })
-    assert.deepEqual(writes, ["PUT /missions/calendars/msn_created", "POST /missions/msn_created/schedule"])
-    assert.deepEqual([saved[0].paused, saved[0].configuration.title, saved[0].configuration.launch, "roots" in saved[0].configuration], [true, "Old schedule", launch, false])
-    assert.deepEqual([deleted[0].action, deleted[0].expectedRevision, deleted[0].deleteManagedSessions], ["delete", schedule.revision, false])
-    assert.match(await missionEntryStatus(page, "Old schedule"), /Every day · 07:00 · UTC · Paused/)
+    const chevron = (key: string) => page.locator(`.mission-row[data-mission-key="mission:${key}"] .session-item-expander:not(.session-item-expander--spacer)`)
+    await chevron("A").waitFor()
+    assert.equal(await chevron("B").count(), 0, "an ordinary Mission without tasks has none")
+    // The chevron selects it and shows its programming; folding hides it again.
+    await chevron("A").click()
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-select[aria-current=true]').waitFor()
+    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC/)
+    await chevron("A").click()
+    await missionDetail(page).locator(".mission-schedule-facts").waitFor({ state: "hidden" })
   } finally { await page.close() }
 })
 
-test("a schedule whose save is refused is kept, and tried again once it is edited", async () => {
-  const { page, state, writes, saved, open } = await setup()
+test("a paused programmed Mission between launches reads as paused, and Play resumes its programming", async () => {
+  const { page, state, writes, open } = await setup()
   try {
-    const schedule = (await pausedMissionScheduleReceipt({ requestID: "req_old", expectedRevision: 0, action: "create",
-      configuration: { title: "Old schedule", objective: "Review overnight changes", template: "custom", taskMode: "native",
-        profiles: { coordinator: profile, roles: { specialist: profile } }, watchedConversationIDs: [], launch: { when: [{ kind: "cron", expression: "0 7 * * *", zone: "UTC" }] } } })).document!
-    state.missions = [mission("B", "Other work")]; state.calendars = []; state.schedules = [{ ...schedule, control: null }]; state.refuse = true
-    const refused = page.waitForResponse(response => response.request().method() === "PUT")
+    state.missions = [mission("A", "Daily review", "prepared"), mission("B", "Other work")]
+    state.calendars = [programming("A", { paused: true, last: undefined })]
     await open()
-    await refused
-    await page.locator('.mission-row[data-mission-key^="scheduled:"]').waitFor()
-    assert.deepEqual(writes, ["PUT /missions/calendars/msn_created"], "refused: the schedule is not deleted")
-    await missionRefresh(page).click()
-    await page.waitForTimeout(500)
-    assert.equal(saved.length, 1, "an unchanged schedule is not tried again")
-    // The person edits the schedule: its new configuration is tried.
-    state.refuse = false
-    state.schedules = [{ ...state.schedules[0], revision: state.schedules[0].revision + 1, configuration: { ...state.schedules[0].configuration, objective: "Review overnight changes, briefly" } }]
-    await missionRefresh(page).click()
-    await page.locator('.mission-row[data-mission-key="mission:P"]').waitFor()
-    assert.deepEqual([saved.length, saved[1].configuration.objective], [2, "Review overnight changes, briefly"])
-    assert.equal(writes.at(-1), "POST /missions/msn_created/schedule")
+    await selectMission(page, "Daily review")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="paused"]').waitFor()
+    assert.match(await missionEntryStatus(page, "Daily review"), /^Paused · Every day/)
+    // Play resumes the programming; it starts no launch by hand.
+    await clickMissionAction(page, "Scheduling · Resume")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="waiting"]').waitFor()
+    await clickMissionAction(page, "Scheduling · Pause")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="paused"]').waitFor()
+    assert.deepEqual(writes, ["POST /missions/calendars/cal_review/resume", "POST /missions/calendars/cal_review/pause"])
+    // Stop ends the programming for good, once confirmed: the Mission stays, as an ordinary one.
+    await clickMissionAction(page, "Stop scheduling permanently")
+    await page.getByRole("dialog").getByRole("button", { name: "Stop scheduling permanently", exact: true }).click()
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark:not([data-mark="paused"])').waitFor()
+    assert.equal(writes.at(-1), "DELETE /missions/calendars/cal_review")
+    assert.doesNotMatch(await missionEntryStatus(page, "Daily review"), /Every day/)
+  } finally { await page.close() }
+})
+
+test("Play on a paused launch resumes the programmed Mission whole: the launch, then its programming", async () => {
+  const { page, state, writes, open } = await setup()
+  try {
+    state.missions = [{ ...mission("A", "Daily review"), runState: "paused" } as MissionMap, mission("B", "Other work")]
+    state.calendars = [programming("A", { paused: true })]
+    await open()
+    await selectMission(page, "Daily review")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="paused"]').waitFor()
+    const resumed = page.waitForResponse(response => /\/resume$/.test(new URL(response.url()).pathname))
+    await clickMissionAction(page, "Resume mission")
+    await resumed
+    assert.deepEqual(writes, ["POST /missions/A/control", "POST /missions/calendars/cal_review/resume"])
   } finally { await page.close() }
 })

@@ -285,16 +285,12 @@ impl Backend {
             .ok()?
             .iter()
             .any(|form| form.id == id),
-            Some((false, id)) => permissions(
-                &self
-                    .control_get_within(&format!("{path}/permission"), remaining)
-                    .await
-                    .ok()?,
-                &self.session,
-            )
-            .ok()?
-            .iter()
-            .any(|permission| permission.id == id),
+            Some((false, id)) => self
+                .control_get_permissions_within(&format!("{path}/permission"), remaining)
+                .await
+                .ok()?
+                .iter()
+                .any(|permission| permission.id == id),
             None => self.session_inactive_at_within(&directory, remaining).await,
         };
         present.then(|| {
@@ -314,6 +310,25 @@ impl Backend {
             "{}workspaces/{}/instance/api/{path}",
             self.base, self.workspace
         )
+    }
+    async fn control_get_permissions_within(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<Vec<Permission>> {
+        if timeout.is_zero() {
+            return Err("control read timed out".into());
+        }
+        crate::agent_permissions::read_permissions(
+            self.client
+                .get(self.control_url(path))
+                .timeout(timeout)
+                .send()
+                .await?
+                .error_for_status()?,
+            &self.session,
+        )
+        .await
     }
     async fn control_get_within(&self, path: &str, timeout: Duration) -> Result<Value> {
         if timeout.is_zero() {
@@ -451,10 +466,12 @@ impl Backend {
         self.decode_session_snapshot(&session, None, None, None)
     }
     pub async fn permissions_snapshot(&self) -> Option<Vec<Permission>> {
-        self.control_get(&format!("session/{}/permission", self.session))
-            .await
-            .and_then(|v| permissions(&v, &self.session))
-            .ok()
+        self.control_get_permissions_within(
+            &format!("session/{}/permission", self.session),
+            CONTROL_READ_BUDGET,
+        )
+        .await
+        .ok()
     }
     pub async fn forms_snapshot(&self) -> Option<FormsSnapshot> {
         let deadline = crate::runtime::Instant::now() + CONTROL_READ_BUDGET;
@@ -882,14 +899,17 @@ impl Backend {
         match action {
             Action::Model(reference) => self.apply_model(reference).await.map(|_| ()),
             Action::Permission(id, decision, message) => {
-                let pending = permissions(
-                    &self.control_get(&format!("{path}/permission")).await?,
-                    &self.session,
-                )?;
-                if !pending.iter().any(|p| p.id == *id) {
+                let pending = self
+                    .control_get_permissions_within(
+                        &format!("{path}/permission"),
+                        CONTROL_READ_BUDGET,
+                    )
+                    .await?;
+                let Some(permission) = pending.iter().find(|p| p.id == *id) else {
                     return Err("permission is no longer pending".into());
-                }
+                };
                 if !matches!(decision.as_str(), "once" | "always" | "reject")
+                    || (!permission.supported && decision != "reject")
                     || message.encode_utf16().count() > 4096
                 {
                     return Err("invalid permission reply".into());
@@ -1046,46 +1066,7 @@ fn rows(value: &Value) -> Result<&Vec<Value>> {
         .ok_or_else(|| "pending request bound reached".into())
 }
 pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
-    let mut out = vec![];
-    let mut seen = std::collections::HashSet::new();
-    for row in rows(value)? {
-        if row["sessionID"] != session {
-            return Err("foreign permission".into());
-        }
-        let id = string(&row["id"], 256)?;
-        if !valid_id(&id) || !seen.insert(id.clone()) {
-            return Err("invalid permission identity".into());
-        }
-        let resources = row["resources"]
-            .as_array()
-            .ok_or("invalid permission resources")?;
-        out.push(Permission {
-            id,
-            action: string(&row["action"], 4096)?,
-            resources: resources
-                .iter()
-                .take(64)
-                .map(|v| string(v, 4096))
-                .collect::<Result<Vec<_>>>()?,
-            message: row["message"]
-                .as_str()
-                .unwrap_or_default()
-                .chars()
-                .take(4096)
-                .collect(),
-            supported: resources.len() <= 64,
-            tool: target(
-                &row["source"]["messageID"],
-                row.get("partID")
-                    .or_else(|| row.get("partId"))
-                    .or_else(|| row["metadata"].get("partID"))
-                    .or_else(|| row["metadata"].get("partId"))
-                    .unwrap_or(&row["source"]["id"]),
-            )
-            .or_else(|| tool_source(row)),
-        });
-    }
-    Ok(out)
+    crate::agent_permissions::parse_value(value, session)
 }
 fn parse_form_location(value: &Value, fallback_dir: Option<&str>) -> Option<FormLocation> {
     let valid_dir = |s: &str| !s.trim().is_empty() && !s.contains('\0') && s.len() <= 4096;
@@ -1547,6 +1528,347 @@ mod tests {
                 .all(|line| !line.contains("/permission") && !line.contains("/form")),
             "Action::Model must not read unrelated permission or form endpoints: {requests:?}"
         );
+    }
+
+    #[test]
+    fn permissions_truncate_oversized_fields_at_utf8_boundaries_and_keep_siblings_usable() {
+        // Place 3-byte ('漢') and 4-byte ('🚀') characters straddling the 4096-byte boundary.
+        let long_action = format!("{}{}", "a".repeat(4094), "🚀tail");
+        let long_resource = format!("{}{}", "b".repeat(4095), "漢tail");
+        let long_message = format!("{}{}", "é".repeat(2047), "🚀extra");
+        let many_resources: Vec<Value> = (0..80).map(|i| json!(format!("file_{i}.rs"))).collect();
+
+        let payload = json!({
+            "data": [
+                42,
+                {"id": "", "sessionID": "ses_1", "action": "bash", "resources": []},
+                {"id": "../bad", "sessionID": "ses_1", "action": "bash", "resources": []},
+                {"id": "perm_valid", "sessionID": "ses_1", "action": "bash", "resources": ["git status"], "message": "ok"},
+                {"id": "perm_dup", "sessionID": "ses_1", "action": "read", "resources": ["a.txt"]},
+                {"id": "perm_dup", "sessionID": "ses_1", "action": "bash", "resources": ["rm -rf /"]},
+                {"id": "perm_action", "sessionID": "ses_1", "action": long_action, "resources": ["cmd"]},
+                {"id": "perm_res_bytes", "sessionID": "ses_1", "action": "bash", "resources": [long_resource]},
+                {"id": "perm_res_count", "sessionID": "ses_1", "action": "read", "resources": many_resources},
+                {"id": "perm_msg", "sessionID": "ses_1", "action": "bash", "resources": ["ls"], "message": long_message},
+                {"id": "perm_bad_fields", "sessionID": "ses_1", "action": 123, "resources": "not-array", "message": false},
+                {"id": "perm_mixed_res", "sessionID": "ses_1", "action": "edit", "resources": ["a.rs", 99, "b.rs"]}
+            ]
+        });
+
+        let parsed = permissions(&payload, "ses_1")
+            .expect("oversized or malformed entries must not fail list");
+        let ids: Vec<&str> = parsed.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "perm_valid",
+                "perm_dup",
+                "perm_action",
+                "perm_res_bytes",
+                "perm_res_count",
+                "perm_msg",
+                "perm_bad_fields",
+                "perm_mixed_res",
+            ]
+        );
+
+        assert!(parsed[0].supported);
+        assert_eq!(parsed[0].action, "bash");
+        assert_eq!(parsed[0].resources, vec!["git status"]);
+        assert_eq!(parsed[0].message, "ok");
+
+        // Duplicate permission ID must demote the kept entry so approvals are refused while reject works.
+        assert!(!parsed[1].supported);
+
+        // 4094 'a' + '🚀' (4 bytes) -> must cut cleanly at 4094 bytes without splitting '🚀'.
+        assert!(!parsed[2].supported);
+        assert_eq!(parsed[2].action.len(), 4094);
+        assert!(parsed[2].action.chars().all(|c| c == 'a'));
+
+        // 4095 'b' + '漢' (3 bytes) -> must cut cleanly at 4095 bytes without splitting '漢'.
+        assert!(!parsed[3].supported);
+        assert_eq!(parsed[3].resources.len(), 1);
+        assert_eq!(parsed[3].resources[0].len(), 4095);
+
+        // > 64 resources -> capped at 64, marked unsupported for approval.
+        assert!(!parsed[4].supported);
+        assert_eq!(parsed[4].resources.len(), 64);
+        assert_eq!(parsed[4].resources[0], "file_0.rs");
+        assert_eq!(parsed[4].resources[63], "file_63.rs");
+
+        // 2047 * 2 = 4094 bytes of 'é' + '🚀' (4 bytes) -> cut at 4094 bytes.
+        assert!(!parsed[5].supported);
+        assert_eq!(parsed[5].message.len(), 4094);
+        assert!(parsed[5].message.chars().all(|c| c == 'é'));
+
+        // Malformed action/resources/message fields on an owned id stay bounded so user can reject.
+        assert!(!parsed[6].supported);
+        assert!(parsed[6].action.is_empty());
+        assert!(parsed[6].resources.is_empty());
+        assert!(parsed[6].message.is_empty());
+
+        // Non-string resource elements are skipped and mark permission unsupported for approval.
+        assert!(!parsed[7].supported);
+        assert_eq!(parsed[7].resources, vec!["a.rs", "b.rs"]);
+
+        // Foreign, missing, null, or numeric sessionID must fail closed, even past index 128.
+        for bad_session in [
+            json!({"id":"p_other","sessionID":"other","action":"bash","resources":[]}),
+            json!({"id":"p_missing","action":"bash","resources":[]}),
+            json!({"id":"p_null","sessionID":null,"action":"bash","resources":[]}),
+            json!({"id":"p_num","sessionID":123,"action":"bash","resources":[]}),
+        ] {
+            assert!(permissions(&json!({"data":[bad_session]}), "ses_1").is_err());
+        }
+        let mut over_128: Vec<Value> = (0..140)
+            .map(|i| json!({"id": format!("p_{i}"), "sessionID": "ses_1", "action": "read", "resources": []}))
+            .collect();
+        over_128.push(json!({"id": "p_foreign_tail", "sessionID": "other", "action": "bash", "resources": []}));
+        assert!(permissions(&json!({"data": over_128}), "ses_1").is_err());
+
+        // > 128 malformed entries before a valid entry must not hide the valid entry.
+        let mut malformed_prefix: Vec<Value> = (0..135)
+            .map(|_| json!({"id": "../bad", "sessionID": "ses_1", "action": "bash", "resources": []}))
+            .collect();
+        malformed_prefix.push(json!({"id": "p_after_malformed", "sessionID": "ses_1", "action": "read", "resources": ["ok.rs"]}));
+        let recovered = permissions(&json!({"data": malformed_prefix}), "ses_1").unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, "p_after_malformed");
+        assert!(recovered[0].supported);
+    }
+
+    #[test]
+    fn large_permission_response_above_16mib_streams_and_remains_rejectable() {
+        let posts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let posts_srv = posts.clone();
+        let big_diff = "d".repeat(18 * 1024 * 1024);
+        let list_body = json!({
+            "data": [
+                {
+                    "id": "perm_huge_meta",
+                    "sessionID": "ses_big",
+                    "action": "edit",
+                    "resources": ["src/large.rs"],
+                    "source": {"type": "tool", "messageID": "msg_1", "id": "call_1"},
+                    "metadata": {"diff": big_diff, "partID": "prt_meta"}
+                },
+                {
+                    "id": "perm_sibling",
+                    "sessionID": "ses_big",
+                    "action": "bash",
+                    "resources": ["git status"]
+                }
+            ]
+        })
+        .to_string();
+        assert!(list_body.len() > 16 * 1024 * 1024);
+        let server = TestServer::spawn(move |line, _| {
+            if line.starts_with("POST ") {
+                posts_srv.lock().unwrap().push(line.clone());
+                r#"{"ok":true}"#.into()
+            } else {
+                list_body.clone()
+            }
+        });
+        let backend = test_backend(server.addr, "ses_big");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let snapshot = rt
+            .block_on(backend.permissions_snapshot())
+            .expect("> 16 MiB permission payload must stream without bricking the dock");
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].id, "perm_huge_meta");
+        assert!(snapshot[0].supported);
+        assert_eq!(
+            snapshot[0].tool,
+            Some(ToolSource {
+                message: "msg_1".into(),
+                call: "prt_meta".into(),
+            })
+        );
+        assert_eq!(snapshot[1].id, "perm_sibling");
+        rt.block_on(backend.agent_action(&Action::Permission(
+            "perm_huge_meta".into(),
+            "reject".into(),
+            "too large".into(),
+        )))
+        .expect("reject must succeed on > 16 MiB permission response");
+        assert_eq!(posts.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn permission_stream_enforces_hard_cap_and_128_entry_limit() {
+        // > 128 valid permissions keep the first 128, while still scanning past 128 for duplicates.
+        let mut many: Vec<Value> = (0..135)
+            .map(|i| {
+                json!({
+                    "id": format!("perm_{i}"),
+                    "sessionID": "ses_cap",
+                    "action": "read",
+                    "resources": [format!("f_{i}.rs")]
+                })
+            })
+            .collect();
+        many.push(json!({
+            "id": "perm_3",
+            "sessionID": "ses_cap",
+            "action": "bash",
+            "resources": ["rm -rf /"]
+        }));
+        let parsed = permissions(&json!({"data": many}), "ses_cap").unwrap();
+        assert_eq!(parsed.len(), 128);
+        assert!(parsed[0].supported);
+        assert!(
+            !parsed[3].supported,
+            "duplicate id past 128 must still demote kept permission"
+        );
+
+        // Hard stream cap rejects cleanly without hanging; mid-stream foreign sessionID fails closed.
+        let oversized = json!({
+            "data": [{
+                "id": "perm_1",
+                "sessionID": "ses_cap",
+                "action": "edit",
+                "resources": ["a.rs"],
+                "metadata": {"diff": "x".repeat(4096)}
+            }]
+        })
+        .to_string();
+        let foreign_stream = json!({
+            "data": [
+                {
+                    "id": "perm_1",
+                    "sessionID": "ses_cap",
+                    "action": "edit",
+                    "resources": ["a.rs"],
+                    "metadata": {"diff": "x".repeat(2048)}
+                },
+                {
+                    "id": "perm_2",
+                    "sessionID": "ses_other",
+                    "action": "edit",
+                    "resources": ["b.rs"]
+                }
+            ]
+        })
+        .to_string();
+        let server = TestServer::spawn(move |line, _| {
+            if line.contains("/foreign") {
+                foreign_stream.clone()
+            } else {
+                oversized.clone()
+            }
+        });
+        let backend = test_backend(server.addr, "ses_cap");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let cap_err = rt.block_on(async {
+            let resp = backend
+                .client
+                .get(format!("http://{}/cap", server.addr))
+                .send()
+                .await
+                .unwrap();
+            crate::agent_permissions::read_permissions_with_limits(resp, "ses_cap", 256, 1024).await
+        });
+        assert!(
+            cap_err
+                .err()
+                .expect("stream cap should reject")
+                .to_string()
+                .contains("oversized")
+        );
+
+        let foreign_err = rt.block_on(async {
+            let resp = backend
+                .client
+                .get(format!("http://{}/foreign", server.addr))
+                .send()
+                .await
+                .unwrap();
+            crate::agent_permissions::read_permissions_with_limits(resp, "ses_cap", 256, 65_536)
+                .await
+        });
+        assert!(
+            foreign_err
+                .err()
+                .expect("foreign sessionID mid-stream should reject")
+                .to_string()
+                .contains("foreign permission")
+        );
+    }
+
+    #[test]
+    fn bounded_permission_allows_reject_and_never_blocks_valid_sibling_replies() {
+        let posts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let posts_srv = posts.clone();
+        let oversized = format!("{}{}", "x".repeat(4095), "🚀");
+        let list_body = json!({
+            "data": [
+                {"id": "perm_valid", "sessionID": "ses_p", "action": "bash", "resources": ["git status"]},
+                {"id": "perm_over", "sessionID": "ses_p", "action": "bash", "resources": [oversized]},
+                {"id": "bad/../id", "sessionID": "ses_p", "action": "bash", "resources": []}
+            ]
+        })
+        .to_string();
+        let server = TestServer::spawn(move |line, _| {
+            if line.starts_with("POST ") {
+                posts_srv.lock().unwrap().push(line.clone());
+                r#"{"ok":true}"#.into()
+            } else {
+                list_body.clone()
+            }
+        });
+        let backend = test_backend(server.addr, "ses_p");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        // Approving a bounded/truncated permission must fail without posting.
+        assert!(
+            rt.block_on(backend.agent_action(&Action::Permission(
+                "perm_over".into(),
+                "once".into(),
+                String::new(),
+            )))
+            .is_err()
+        );
+        assert!(
+            rt.block_on(backend.agent_action(&Action::Permission(
+                "perm_over".into(),
+                "always".into(),
+                String::new(),
+            )))
+            .is_err()
+        );
+        assert!(posts.lock().unwrap().is_empty());
+
+        // Rejecting the bounded permission must succeed.
+        rt.block_on(backend.agent_action(&Action::Permission(
+            "perm_over".into(),
+            "reject".into(),
+            "too large".into(),
+        )))
+        .expect("reject on bounded permission must succeed");
+
+        // Approving a valid sibling in the same list must also succeed.
+        rt.block_on(backend.agent_action(&Action::Permission(
+            "perm_valid".into(),
+            "once".into(),
+            String::new(),
+        )))
+        .expect("valid sibling permission must remain actionable");
+
+        let sent = posts.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].contains("/session/ses_p/permission/perm_over/reply"));
+        assert!(sent[1].contains("/session/ses_p/permission/perm_valid/reply"));
     }
 
     #[test]

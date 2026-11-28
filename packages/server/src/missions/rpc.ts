@@ -414,6 +414,19 @@ export const CODENOMAD_MISSIONS_RPC = {
         refused: { type: "string", enum: ["mission-not-found", "order-changed"] },
       }, required: ["version", "projectID", "missionID"], additionalProperties: false },
     },
+    // Schedules of the recurring engine still stored, and the removal of one a programmed Mission took over.
+    legacySchedules: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: { type: "object", properties: { schedules: { type: "array", maxItems: 64, items: { type: "object", properties: {
+        id: { type: "string" }, configuration: {}, running: { type: "boolean" }, busy: { type: "boolean" },
+        automations: { type: "array", maxItems: 64, items: { type: "string" } }, carriers: { type: "array", maxItems: 64, items: { type: "string" } },
+      }, required: ["id", "configuration", "running", "busy", "automations", "carriers"], additionalProperties: false } } },
+      required: ["schedules"], additionalProperties: false },
+    },
+    retireLegacySchedule: {
+      input: { type: "object", properties: { id: { type: "string", minLength: 3, maxLength: 100 } }, required: ["id"], additionalProperties: false },
+      output: { type: "object", properties: { retired: { type: "boolean", const: true } }, required: ["retired"], additionalProperties: false },
+    },
     create: {
       errors: missionMutationErrors,
       input: creationInput,

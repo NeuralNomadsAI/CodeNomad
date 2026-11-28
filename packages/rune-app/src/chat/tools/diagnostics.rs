@@ -346,8 +346,11 @@ fn render_entries(s: &State, key: &str, flat: &[(&str, &Value, &str)], limit: us
                     },
                 ))
         });
-    markdown::tool_pane(
-        col().full_width().separate(Space::Sm).children(rendered),
+    crate::chat::reading::inner_scroller(
+        markdown::tool_pane(
+            col().full_width().separate(Space::Sm).children(rendered),
+            false,
+        ),
         false,
     )
 }

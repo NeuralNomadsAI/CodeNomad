@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Ölçüt {number} taşı",
   "missions.scheduling.error.author": "Geçerli bir yazar girin.",
   "missions.scheduling.error.capability": "Zamanlama kullanılamıyor. Taslağı koruyun veya başlatma ölçütlerini kaldırın.",
+  "missions.scheduling.error.coordinatorProfile": "Mevcut konuşma, koordinatörün aracısını, modelini ve düşünmesini kullanmıyor. Bunları eşleştirin veya yeni bir oturum kullanın.",
   "missions.scheduling.error.count": "Çok fazla ölçüt: en fazla sekiz zamanlama (olaylar ayrıca denetleniyorsa yedi) ve sekiz olay.",
   "missions.scheduling.error.cron": "Dakika başına tek saniye konumlu geçerli bir yerel cron ifadesi girin.",
   "missions.scheduling.error.days": "En az bir hafta günü seçin.",
