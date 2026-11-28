@@ -269,7 +269,7 @@ impl Calendars {
                 self.unavailable = true;
                 self.failed = false;
                 if kind == OpKind::Mutate {
-                    self.feedback = Some("missions.recurrence.unavailable");
+                    self.feedback = Some("missions.scheduling.capability.missing");
                 }
             }
             Ok(CalendarOutcome::Unsupported(reason)) => {
@@ -279,7 +279,7 @@ impl Calendars {
                 self.feedback = Some("missions.control.mutation.error");
             }
             Ok(CalendarOutcome::Missing) => {
-                self.feedback = Some("missions.scheduleList.conflict");
+                self.feedback = Some("missions.control.mutation.conflict");
                 self.delete_confirm = None;
                 self.editor = None;
             }

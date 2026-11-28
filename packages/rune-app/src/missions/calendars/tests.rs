@@ -847,7 +847,7 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
         assert!(!mutated);
         assert_eq!(
             panel.calendars.feedback,
-            Some("missions.scheduleList.conflict")
+            Some("missions.control.mutation.conflict")
         );
         assert!(
             panel.calendars.busy_read(),
