@@ -11,14 +11,11 @@ export const missionCalendarOwnerSlotSchema = z.object({ role: z.enum(["principa
   ambiguous: z.array(nativeDocumentID).max(16),
 }).strict().refine(item => (item.creation === "adopted") === (item.scheduleID !== null)
   && (item.role !== "reconciliation" || item.slot === 0))
-export type MissionCalendarOwnerSlot = z.infer<typeof missionCalendarOwnerSlotSchema>
 const retired = z.object({ descriptor: missionCalendarOwnerSlotSchema, highWater: documentCounter,
   scheduleRemoved: z.boolean(), sessionRemoved: z.boolean(), indexRemoved: z.boolean() }).strict()
-export type MissionCalendarRetired = z.infer<typeof retired>
 export const missionPassageTextIntentSchema = z.object({ passageID: nativeDocumentID, missionID: nativeDocumentID,
   coordinatorSessionID: nativeDocumentID, expectedJournalRevision: documentCounter.positive(), createdAt: documentTimestamp,
   configuration: missionConfigurationSchema }).strict()
-export type MissionPassageTextIntent = z.infer<typeof missionPassageTextIntentSchema>
 const operation = z.object({ requestID: z.string().min(1).max(128), expectedRevision: documentCounter, fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   action: z.enum(["play", "resume", "pause", "stop", "configure", "delete", "check", "reconcile"]), pending: z.boolean(), startedAt: documentTimestamp,
   textEdit: missionPassageTextIntentSchema.optional(),
@@ -39,4 +36,3 @@ export const missionCalendarOwnerSchema = z.object({ version: z.literal(1),
   && new Set(owner.slots.map(item => `${item.role}:${item.slot}`)).size === owner.slots.length
   && new Set(owner.retired.map(item => item.descriptor.sessionID)).size === owner.retired.length
   && owner.slots.filter(item => item.role === "principal").length <= 8)
-export type MissionCalendarOwnerState = z.infer<typeof missionCalendarOwnerSchema>
