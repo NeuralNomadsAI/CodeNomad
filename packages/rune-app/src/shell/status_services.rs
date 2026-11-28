@@ -10,6 +10,8 @@ mod plugins_cards;
 mod plugins_view;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod visual_tests;
 
 #[derive(Default)]
 pub(crate) struct Services {
