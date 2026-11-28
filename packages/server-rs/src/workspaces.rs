@@ -29,6 +29,7 @@ use crate::{
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/workspaces", get(list).post(create))
+        .route("/api/workspaces/clone", post(crate::workspace_clone::clone))
         .route("/api/workspaces/{id}", get(detail).delete(delete))
         .route("/api/workspaces/creation/cancel", post(cancel))
         .route("/api/workspaces/{id}/creation/release", post(release))
