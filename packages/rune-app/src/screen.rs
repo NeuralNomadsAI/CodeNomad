@@ -3,20 +3,20 @@ use rune::edit::TextEdit;
 use std::rc::Rc;
 
 pub enum Screen {
-    Launcher(Launcher),
-    Chat { launcher: Option<Launcher> },
+    Launcher(Box<Launcher>),
+    Chat { launcher: Option<Box<Launcher>> },
 }
 impl Screen {
     pub fn launcher(&self) -> Option<&Launcher> {
         match self {
             Self::Launcher(l) => Some(l),
-            Self::Chat { launcher } => launcher.as_ref(),
+            Self::Chat { launcher } => launcher.as_deref(),
         }
     }
     pub fn launcher_mut(&mut self) -> Option<&mut Launcher> {
         match self {
             Self::Launcher(l) => Some(l),
-            Self::Chat { launcher } => launcher.as_mut(),
+            Self::Chat { launcher } => launcher.as_deref_mut(),
         }
     }
     pub fn is_launcher(&self) -> bool {

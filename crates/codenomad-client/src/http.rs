@@ -767,6 +767,19 @@ pub fn random_uuid_v4() -> Result<String> {
         bytes[15],
     ))
 }
+/// Parse a `file:` URL with the WHATWG URL parser, returning any non-localhost host and raw path.
+pub fn file_url_parts(raw: &str) -> Option<(Option<String>, String)> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if url.scheme() != "file" {
+        return None;
+    }
+    let host = url
+        .host_str()
+        .filter(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+        .map(str::to_owned);
+    Some((host, url.path().to_owned()))
+}
+
 /// Parse an external link without accepting credentials or active schemes.
 pub fn external_http_url(raw: &str) -> Option<(String, String)> {
     let url = credential_free_http_url(raw)?;

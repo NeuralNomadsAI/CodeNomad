@@ -62,7 +62,7 @@ fn rig(base: &str, typed: &str) -> rune::Runtime<State> {
     let mut l = Launcher::fixture();
     l.connection = Some(Backend::unauthenticated(base).unwrap());
     l.folder = TextEdit::new(typed);
-    s.screen = crate::Screen::Launcher(l);
+    s.screen = crate::Screen::Launcher(Box::new(l));
     let mut rt = rune::Runtime::new(s, english, (1000.0, 800.0), rune::Env::new(false, 1.0));
     rt.frame(0.0);
     rt

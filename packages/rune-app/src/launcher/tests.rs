@@ -311,7 +311,7 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
             id: "existing".into(),
             title: "Existing history".into(),
         }];
-        state.screen = crate::Screen::Launcher(launcher);
+        state.screen = crate::Screen::Launcher(Box::new(launcher));
         let mut runtime =
             rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
         for _ in 0..8 {
@@ -348,8 +348,10 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
 fn bootstrap_failure_reaches_the_rendered_launcher() {
     let (out, input) = bounded(1);
     let mut state = crate::init();
-    state.screen =
-        crate::Screen::Launcher(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        std::sync::Arc::new(|| {}),
+        Some(input),
+    )));
     out.try_send(Err("private backend startup detail".into()))
         .unwrap();
     let mut runtime = rune::Runtime::new(
@@ -374,7 +376,7 @@ fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded()
     let mut launcher = Launcher::fixture();
     launcher.address = TextEdit::new("");
     launcher.password = TextEdit::new("");
-    state.screen = crate::Screen::Launcher(launcher);
+    state.screen = crate::Screen::Launcher(Box::new(launcher));
     let mut rt = rune::Runtime::new(
         state,
         crate::view,
@@ -1808,7 +1810,10 @@ fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
 
     let (boot_tx, boot_rx) = bounded(1);
     let mut state = crate::init();
-    state.screen = crate::Screen::Launcher(Launcher::with_boot(Arc::new(|| {}), Some(boot_rx)));
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        Arc::new(|| {}),
+        Some(boot_rx),
+    )));
     state.workspace = Some(crate::workspace::Ui::new());
     crate::workspace::connected(&mut state);
     assert!(
@@ -1977,7 +1982,10 @@ fn unreadable_state_on_boot_is_never_overwritten_when_initial_listing_fails() {
 
     let (boot_tx, boot_rx) = bounded(1);
     let mut state = crate::init();
-    state.screen = crate::Screen::Launcher(Launcher::with_boot(Arc::new(|| {}), Some(boot_rx)));
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        Arc::new(|| {}),
+        Some(boot_rx),
+    )));
     state.workspace = Some(crate::workspace::Ui::new());
     crate::workspace::connected(&mut state);
     assert!(!crate::workspace::input_ready(&state));

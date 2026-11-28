@@ -9,7 +9,7 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
     backend.session = "first".into();
     launcher.connection = Some(backend.clone());
     state.screen = crate::Screen::Chat {
-        launcher: Some(launcher),
+        launcher: Some(Box::new(launcher)),
     };
     let mut ui = Ui::new();
     ui.ready = true;

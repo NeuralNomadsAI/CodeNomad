@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn capped_error_free_refresh_clears_linked_creation_uncertain() {
         let mut s = crate::init();
-        s.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        s.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         let deleted = Session {
             id: "existing".into(),
             title: "Existing".into(),

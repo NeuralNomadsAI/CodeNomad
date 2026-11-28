@@ -3523,7 +3523,7 @@ mod tests {
         let mut ui = Ui::new();
         ui.fixture_ready();
         rt.state.workspace = Some(ui);
-        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        rt.state.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         let project = crate::catalog::Project {
             id: "ws".into(),
             path: "/repo".into(),
@@ -3928,7 +3928,7 @@ mod tests {
         // On discard refusal (e.g. HTTP 409), restore_stashed must resync the restored tab so
         // ordinary snapshots never resurrect stale A either.
         rt.state.workspace = Some(ui);
-        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        rt.state.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         rt.update(|s, tx| {
             let _ = super::super::restore_stashed(s, stashed, false, tx);
         });
@@ -3962,7 +3962,7 @@ mod tests {
         let mut ui = Ui::new();
         ui.fixture_ready();
         rt.state.workspace = Some(ui);
-        rt.state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        rt.state.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         let project = crate::catalog::Project {
             id: "ws-close-sync".into(),
             path: "/repo/close-sync".into(),

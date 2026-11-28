@@ -795,7 +795,9 @@ fn missing_session_recovers_text_attachments_and_overflow_into_local_drafts() {
     let mut s = init();
     let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(backend(""));
-    s.screen = crate::Screen::Chat { launcher: Some(l) };
+    s.screen = crate::Screen::Chat {
+        launcher: Some(Box::new(l)),
+    };
     let mut ui = Ui::new();
     ui.ready = true;
     let mut saved = workspace("ses_gone_1", "first draft");
@@ -1141,7 +1143,9 @@ fn deferred_active_chat_deletion_recovers_on_leave_and_direct_recovered_adopt_pr
     let mut s = init();
     let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(backend(""));
-    s.screen = crate::Screen::Chat { launcher: Some(l) };
+    s.screen = crate::Screen::Chat {
+        launcher: Some(Box::new(l)),
+    };
     let mut ui = Ui::new();
     ui.ready = true;
     ui.entries[0] = entry(

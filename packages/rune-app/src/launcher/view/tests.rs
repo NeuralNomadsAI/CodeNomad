@@ -112,7 +112,7 @@ fn web_focus_keyboard_actions_keep_their_screen_scope_and_tx() {
 
 fn launcher_state() -> State {
     let mut s = crate::init();
-    s.screen = crate::Screen::Launcher(launcher::Launcher::fixture());
+    s.screen = crate::Screen::Launcher(Box::new(launcher::Launcher::fixture()));
     s
 }
 

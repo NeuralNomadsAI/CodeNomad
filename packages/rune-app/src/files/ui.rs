@@ -22,17 +22,17 @@ pub struct Row {
 }
 pub struct Ui {
     pub reader_close: crate::window_control::WindowCloseState,
-    pub(super) pictures: super::markdown_images::Pictures,
-    pub presentation: super::presentation::Presentation,
-    pub document: Editor,
-    pub reader: Reader,
-    pub tree: Tree,
+    pub(super) pictures: Box<super::markdown_images::Pictures>,
+    pub presentation: Box<super::presentation::Presentation>,
+    pub document: Box<Editor>,
+    pub reader: Box<Reader>,
+    pub tree: Box<Tree>,
     pub rows: Vec<Row>,
     pub panel: bool,
     pub(super) shell_managed: bool,
     pub(super) tree_scroll: rune_theme_codenomad::git_panel::ScrollBookmark,
     pub(super) local: bool,
-    pub(super) actions: super::view::Actions,
+    pub(super) actions: Box<super::view::Actions>,
     pub host_width: Option<f32>,
     pub(super) reader_width: Option<f32>,
     pub(super) backend: Backend,
@@ -113,16 +113,16 @@ impl Ui {
         let (out, incoming) = bounded(16);
         Self {
             reader_close: Default::default(),
-            pictures: super::markdown_images::Pictures::new(wake.clone()),
-            presentation: super::presentation::Presentation::new(wake.clone()),
-            document: Editor::new(
+            pictures: Box::new(super::markdown_images::Pictures::new(wake.clone())),
+            presentation: Box::new(super::presentation::Presentation::new(wake.clone())),
+            document: Box::new(Editor::new(
                 backend.clone(),
                 Store::default(),
                 backend.workspace.clone(),
                 wake.clone(),
-            ),
-            reader: Reader::new(backend.clone(), reads.clone(), wake.clone()),
-            tree: Tree::new(directory),
+            )),
+            reader: Box::new(Reader::new(backend.clone(), reads.clone(), wake.clone())),
+            tree: Box::new(Tree::new(directory)),
             rows: vec![],
             panel: false,
             shell_managed: false,
@@ -488,7 +488,12 @@ impl Ui {
         self.reader.close();
     }
     pub fn with_documents(mut self, store: Store, instance: String) -> Self {
-        self.document = Editor::new(self.backend.clone(), store, instance, self.wake.clone());
+        self.document = Box::new(Editor::new(
+            self.backend.clone(),
+            store,
+            instance,
+            self.wake.clone(),
+        ));
         self
     }
     pub(super) fn with_draft_project(mut self, project: crate::catalog::Project) -> Self {

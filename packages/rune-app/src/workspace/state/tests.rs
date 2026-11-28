@@ -46,7 +46,9 @@ fn draft_state() -> State {
     let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(backend(""));
     l.server_id = Some("trial-server".into());
-    s.screen = crate::Screen::Chat { launcher: Some(l) };
+    s.screen = crate::Screen::Chat {
+        launcher: Some(Box::new(l)),
+    };
     s.workspace = Some(ui);
     opened(
         &mut s,
