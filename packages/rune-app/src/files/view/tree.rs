@@ -1,7 +1,7 @@
 use crate::{State, components::button_tx, screen, strings::t};
-use rune::{El, text};
+use rune::El;
 use rune_theme_codenomad::{
-    Space, document_reader as theme,
+    Space, document_reader as theme, git_panel,
     layout::{self, Layout},
     workspace_tree,
 };
@@ -99,6 +99,7 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
                 },
             )
             .key(format!("file-row-{path}"))
+            .help(&path)
             .tab_index(if tab_stop == Some(path.as_str()) {
                 0
             } else {
@@ -125,11 +126,10 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
     }
     let mut status = Vec::new();
     if let Some((success, message)) = &ui.actions.notice {
-        status.push(
-            text(message)
-                .role(if *success { "status" } else { "alert" })
-                .pad(Space::Md),
-        );
+        status.push(git_panel::note(
+            message,
+            if *success { "status" } else { "alert" },
+        ));
     }
     let directory = ui.tree.directory();
     let name = codenomad_client::server_path_basename(directory);
@@ -145,25 +145,22 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
             }
         }));
         let press = retry.clone();
-        status.push(text(message).role("alert"));
+        status.push(git_panel::note(message, "alert"));
         let control = button_tx(
             &format!("file-retry-{path}"),
             t("instanceShell.rightPanel.actions.refresh"),
             ui.stopped,
             move |s, tx| press(s, tx),
         );
-        status.push(if ui.stopped {
+        let control = if ui.stopped {
             control
         } else {
             super::activate_enter(control, move |s, tx| retry(s, tx))
-        });
+        };
+        status.push(layout::action_row().pad(Space::Md).child(control));
     }
     if ui.tree.busy(".") {
-        status.push(
-            text(t("instanceInfo.loading"))
-                .role("status")
-                .pad(Space::Md),
-        );
+        status.push(git_panel::note(t("instanceInfo.loading"), "status"));
     }
     let contents = workspace_tree::workspace_body(
         workspace_tree::root(dark, name, directory).key("file-tree-root"),
@@ -173,11 +170,20 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
     let surface = rune::col()
         .full_width()
         .remaining()
-        .reading_surface()
         .key("files-panel")
+        .children(
+            (ui.shell_managed && !super::actions::has_session(s)).then(|| {
+                git_panel::note(t("instanceShell.gitChanges.noSessionSelected"), "status")
+            }),
+        )
         .child(
             ui.tree_scroll
                 .apply::<State>(theme::viewport(contents, true), "workspace-tree-scroll"),
         );
+    let surface = if ui.shell_managed {
+        surface
+    } else {
+        surface.reading_surface()
+    };
     workspace_tree::with_actions(surface, overlays).key(format!("workspace-checkout-{directory}"))
 }

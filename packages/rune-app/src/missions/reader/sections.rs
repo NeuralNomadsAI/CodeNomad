@@ -6,7 +6,8 @@ use codenomad_client::missions::{
 };
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, git_panel as theme,
+    Space, catalogue,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout},
     markdown,
 };
@@ -187,27 +188,31 @@ fn section_toolbar<S: 'static>(
         );
         bar = bar
             .child(
-                layout::button(
+                theme::button(
                     t("missionsPanel.pages.previous"),
+                    Flat,
                     page == 0,
-                    move |s: &mut S| {
+                    move |s: &mut S, tx| {
                         if let Some(p) = prev_owner.get(s) {
                             p.reader.set_page(&prev_id, page.saturating_sub(1));
                             p.wake();
+                            tx.instant();
                         }
                     },
                 )
                 .key(format!("mission-reader-prev-{section_id}")),
             )
-            .child(text(page_text).text_role(TextRole::Small))
+            .child(theme::count(page_text))
             .child(
-                layout::button(
+                theme::button(
                     t("missionsPanel.pages.next"),
+                    Flat,
                     page + 1 >= total,
-                    move |s: &mut S| {
+                    move |s: &mut S, tx| {
                         if let Some(p) = next_owner.get(s) {
                             p.reader.set_page(&next_id, (page + 1).min(total - 1));
                             p.wake();
+                            tx.instant();
                         }
                     },
                 )
@@ -291,13 +296,21 @@ pub(super) fn body_status_note<S: 'static>(
                     "alert",
                 ))
                 .child(
-                    layout::button(t("missionsPanel.reader.retry"), false, move |s: &mut S| {
-                        if let Some(p) = owner.get(s) {
-                            p.reader.retry(&key);
-                            p.wake();
-                        }
-                    })
-                    .key(format!("mission-reader-body-retry-{section_id}")),
+                    layout::action_row().child(
+                        theme::button(
+                            t("missionsPanel.reader.retry"),
+                            Flat,
+                            false,
+                            move |s: &mut S, tx| {
+                                if let Some(p) = owner.get(s) {
+                                    p.reader.retry(&key);
+                                    p.wake();
+                                    tx.instant();
+                                }
+                            },
+                        )
+                        .key(format!("mission-reader-body-retry-{section_id}")),
+                    ),
                 )
         }
     }

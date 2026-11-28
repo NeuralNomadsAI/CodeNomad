@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "अनुपलब्ध स्रोत: {source}",
   "missions.scheduling.sourcesUnavailable": "स्रोतहरू पढ्न सकिएन।",
   "missions.scheduling.startOnCreation": "स्वतः सुरु गर्नुहोस्",
+  "missions.scheduling.stop": "समयतालिका स्थायी रूपमा रोक्नुहोस्",
+  "missions.scheduling.stopConfirm": "यो समयतालिका स्थायी रूपमा रोक्ने? अब कुनै सुरुआत हुने छैन। मिसन सूचीमा रहन्छ।",
   "missions.scheduling.title": "समयतालिका",
   "missions.scheduling.uncertain": "यो परिवर्तन पुष्टि भएको छैन।",
   "missions.scheduling.uncertainOther": "यस सञ्झ्यालको अर्को परिवर्तन पुष्टि भएको छैन।",

@@ -18,7 +18,7 @@ function fixture() {
   const connection = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "secret-must-not-persist" } },
     assertCurrent() { assert.ok(current, "stale connection") }, client: {
     config: { get: async () => [{ type: "directory", path: root }] },
-    session: { stats: async (input: any) => { calls.push(input); if (defer) await new Promise<void>(resolve => { defer = resolve }); return stats(input.from, input.to) } },
+    experimental: { session: { stats: async (input: any) => { calls.push(input); if (defer) await new Promise<void>(resolve => { defer = resolve }); return stats(input.from, input.to) } } },
   } }
   const manager: any = { get: () => present ? record : undefined, getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => distro, getServicePathStyle: () => "posix" }
@@ -153,7 +153,7 @@ test("P2 abandoned periods cannot reset restoration, including reversed connecti
       let first = true
       f.manager.getSharedServiceConnection = async () => { if (first) { first = false; await held }; return f.connection }
     } else {
-      f.connection.client.session.stats = async input => { if ((input.to - input.from) / 86400000 === 30) await held; return stats(input.from, input.to) }
+      f.connection.client.experimental.session.stats = async input => { if ((input.to - input.from) / 86400000 === 30) await held; return stats(input.from, input.to) }
     }
     const service = new ServiceUsage(f.manager, settings), to = 365 * 86400000
     const abandoned = service.read("window-a", { from: to - 30 * 86400000, to, timezone: "UTC" })

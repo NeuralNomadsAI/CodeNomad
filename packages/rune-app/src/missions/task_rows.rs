@@ -7,10 +7,11 @@ use codenomad_client::{
     history::valid_id,
     missions::{Task, TaskStatus},
 };
-use rune::{El, Tx, col, row, text};
+use rune::{El, Tx, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, git_panel as theme,
+    TextRole, attachment, catalogue, git_panel as theme,
     layout::{self, Layout},
+    shell,
 };
 use std::{
     borrow::Cow,
@@ -177,34 +178,43 @@ impl TaskRows {
             TaskStatus::Failed => "missions.control.task.status.failed",
             TaskStatus::Withdrawn => "missions.control.task.status.superseded",
         });
-        let header = if let Some(open) = on_open {
-            let active = open_task_id == Some(task.id.as_str());
+        let active = on_open.is_some() && open_task_id == Some(task.id.as_str());
+        let mut header = theme::file_row(active).child(text(title).wrap_anywhere().remaining());
+        if let Some(open) = on_open {
             let id = task.id.clone();
             let key = task.key.clone();
             let open = open.clone();
-            row()
-                .full_width()
-                .child(text(title).wrap_anywhere().remaining())
-                .child(
-                    theme::icon_button(
-                        &theme::EYE,
-                        format!("{} · {title}", t("missions.control.task.details")),
-                        false,
-                        Some(active),
-                        move |s: &mut S, tx| open(s, id.clone(), key.clone(), tx),
-                    )
-                    .key(format!("mission-task-eye-{}", task.id)),
+            header = header.child(
+                theme::icon_button(
+                    &theme::EYE,
+                    format!("{} · {title}", t("missions.control.task.details")),
+                    false,
+                    Some(active),
+                    move |s: &mut S, tx| open(s, id.clone(), key.clone(), tx),
                 )
-        } else {
-            row().full_width().child(text(title).wrap_anywhere())
-        };
-        let mut row = col()
-            .full_width()
-            .pad(Space::Sm)
+                .key(format!("mission-task-eye-{}", task.id)),
+            );
+        }
+        if let Some((session_id, open)) = action {
+            header = header.child(
+                theme::icon_button(
+                    &shell::icons::CONVERSATION,
+                    t("missionsPanel.task.openConversation"),
+                    false,
+                    None,
+                    move |s: &mut S, tx| {
+                        open(s, session_id.clone(), tx);
+                        tx.instant();
+                    },
+                )
+                .key(format!("mission-task-open-{}", task.id)),
+            );
+        }
+        let mut row = theme::tools()
             .role("listitem")
             .label(title)
             .child(header)
-            .child(text(state).text_role(TextRole::Small));
+            .child(attachment::status_badge(state));
         if !task.blocked_by.is_empty() {
             let dependencies = task
                 .blocked_by
@@ -225,19 +235,6 @@ impl TaskRows {
                 .wrap_anywhere(),
             );
         }
-        if let Some((session_id, open)) = action {
-            row = row.child(
-                layout::button_tx(
-                    t("missionsPanel.task.openConversation"),
-                    false,
-                    move |s: &mut S, tx| {
-                        open(s, session_id.clone(), tx);
-                        tx.instant();
-                    },
-                )
-                .key(format!("mission-task-open-{}", task.id)),
-            );
-        }
         row
     }
 }
@@ -253,7 +250,7 @@ fn title(task: &Task) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rune::{Env, Runtime, ScrollSpec};
+    use rune::{Env, Runtime, ScrollSpec, col};
     use serde_json::json;
 
     #[test]
@@ -434,6 +431,30 @@ mod tests {
         let (ox, oy) = rt.find("mission-task-open-tsk-worker").unwrap();
         assert!(rt.find("mission-task-eye-tsk-coord").is_some());
         assert!(rt.find("mission-task-open-tsk-coord").is_none());
+        let elements = rt.elements();
+        let eye_el = elements
+            .iter()
+            .find(|el| el.key.as_deref() == Some("mission-task-eye-tsk-worker"))
+            .unwrap();
+        let open_el = elements
+            .iter()
+            .find(|el| el.key.as_deref() == Some("mission-task-open-tsk-worker"))
+            .unwrap();
+        assert!(
+            open_el.rect[2] <= 36.0 && open_el.rect[3] <= 36.0,
+            "task open conversation action must be a compact icon button: {:?}",
+            open_el.rect
+        );
+        assert!(
+            (eye_el.rect[1] - open_el.rect[1]).abs() <= 4.0 && eye_el.rect[0] < open_el.rect[0],
+            "task conversation icon must sit inline after the reader eye icon: eye={:?} open={:?}",
+            eye_el.rect,
+            open_el.rect
+        );
+        assert!(
+            elements.iter().any(|el| el.role == "status"),
+            "task row must render its status as a badge"
+        );
 
         rt.pointer_down(ex, ey);
         rt.pointer_up(ex, ey);

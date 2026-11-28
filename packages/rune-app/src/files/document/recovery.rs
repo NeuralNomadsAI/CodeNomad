@@ -1,6 +1,6 @@
 use rune::{Cx, El, ScrollSpec, col, row, text};
 use rune_theme_codenomad::{
-    Space,
+    Space, git_panel,
     layout::{self, Layout},
 };
 
@@ -27,14 +27,14 @@ fn view(drafts: &Drafts, cx: &mut Cx<Drafts>) -> El {
             .reading_surface()
             .pad(Space::Lg)
             .separate(Space::Md)
-            .child(
-                text(t(if drafts.is_empty() {
+            .child(git_panel::note(
+                t(if drafts.is_empty() {
                     "rune.save_error"
                 } else {
                     "filesPanel.draftLimit"
-                }))
-                .role("alert"),
-            )
+                }),
+                "alert",
+            ))
             .child(
                 col()
                     .full_width()

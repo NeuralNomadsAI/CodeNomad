@@ -19,7 +19,8 @@ use codenomad_client::missions::{
 };
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, git_panel as theme,
+    Space, TextRole, attachment, catalogue,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout, dark},
 };
 use std::collections::HashSet;
@@ -79,8 +80,12 @@ pub(crate) fn view<S: 'static>(
             col()
                 .remaining()
                 .separate(Space::Xs)
-                .child(theme::clipped(&heading, TextRole::Body).role("heading"))
-                .child(theme::clipped(&subtitle, TextRole::Label)),
+                .child(
+                    theme::clipped(&heading, TextRole::Body)
+                        .role("heading")
+                        .help(&heading),
+                )
+                .child(theme::clipped(&subtitle, TextRole::Label).help(&subtitle)),
         )
         .child(close_btn);
 
@@ -105,17 +110,21 @@ pub(crate) fn view<S: 'static>(
                     content = content
                         .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
                         .child(
-                            layout::button(
-                                t("missionsPanel.reader.retry"),
-                                false,
-                                move |s: &mut S| {
-                                    if let Some(p) = retry_owner.get(s) {
-                                        p.reader.clear_lookup_error();
-                                        p.wake();
-                                    }
-                                },
-                            )
-                            .key("mission-reader-detail-retry"),
+                            layout::action_row().child(
+                                theme::button(
+                                    t("missionsPanel.reader.retry"),
+                                    Flat,
+                                    false,
+                                    move |s: &mut S, tx| {
+                                        if let Some(p) = retry_owner.get(s) {
+                                            p.reader.clear_lookup_error();
+                                            p.wake();
+                                            tx.instant();
+                                        }
+                                    },
+                                )
+                                .key("mission-reader-detail-retry"),
+                            ),
                         );
                 } else if panel.detail.busy()
                     || (!panel.detail.failed
@@ -128,17 +137,21 @@ pub(crate) fn view<S: 'static>(
                     content = content
                         .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
                         .child(
-                            layout::button(
-                                t("missionsPanel.reader.retry"),
-                                false,
-                                move |s: &mut S| {
-                                    if let Some(p) = retry_owner.get(s) {
-                                        p.detail.retry();
-                                        p.wake();
-                                    }
-                                },
-                            )
-                            .key("mission-reader-detail-retry"),
+                            layout::action_row().child(
+                                theme::button(
+                                    t("missionsPanel.reader.retry"),
+                                    Flat,
+                                    false,
+                                    move |s: &mut S, tx| {
+                                        if let Some(p) = retry_owner.get(s) {
+                                            p.detail.retry();
+                                            p.wake();
+                                            tx.instant();
+                                        }
+                                    },
+                                )
+                                .key("mission-reader-detail-retry"),
+                            ),
                         );
                 } else {
                     content =
@@ -163,13 +176,21 @@ pub(crate) fn view<S: 'static>(
         content = content
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
             .child(
-                layout::button(t("missionsPanel.reader.retry"), false, move |s: &mut S| {
-                    if let Some(p) = retry_owner.get(s) {
-                        p.detail.retry();
-                        p.wake();
-                    }
-                })
-                .key("mission-reader-detail-retry"),
+                layout::action_row().child(
+                    theme::button(
+                        t("missionsPanel.reader.retry"),
+                        Flat,
+                        false,
+                        move |s: &mut S, tx| {
+                            if let Some(p) = retry_owner.get(s) {
+                                p.detail.retry();
+                                p.wake();
+                                tx.instant();
+                            }
+                        },
+                    )
+                    .key("mission-reader-detail-retry"),
+                ),
             );
     } else {
         content = content.child(theme::note(t("missions.control.loading"), "status"));
@@ -887,9 +908,13 @@ fn render_report<S: 'static>(
         ReportOutcome::Blocked => "missions.control.report.outcome.blocked",
         ReportOutcome::Failed => "missions.control.report.outcome.failed",
     });
-    body = body.child(text(outcome).text_role(TextRole::Small));
+    body = body.child(layout::action_row().child(attachment::status_badge(outcome)));
     if report.is_late() {
-        body = body.child(text(t("missions.control.report.late")).text_role(TextRole::Small));
+        body = body.child(
+            text(t("missions.control.report.late"))
+                .text_role(TextRole::Small)
+                .wrap_anywhere(),
+        );
     }
     let summary_section = format!("{prefix}-summary");
     if report.body("summary").is_some_and(|b| b.characters > 0) {

@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Durch eine neue Zeitplanung ersetzen",
   "missions.scheduling.error.retained": "Behalten Sie die gespeicherte Regel unverändert oder ersetzen Sie sie ausdrücklich, bevor Sie die Zeitplanung bearbeiten.",
   "missions.scheduling.title": "Zeitplanung",
+  "missions.scheduling.stop": "Zeitplanung endgültig stoppen",
+  "missions.scheduling.stopConfirm": "Diese Zeitplanung dauerhaft stoppen? Es startet kein weiterer Durchlauf. Die Mission bleibt in der Liste.",
   "missions.scheduling.when": "Starten, wenn",
   "missions.scheduling.connector.else": "sonst",
   "missions.scheduling.connector.if": "wenn",

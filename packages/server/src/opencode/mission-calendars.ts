@@ -8,7 +8,7 @@ import { locationRequestOptions } from "./compatibility/location"
 
 type Client = { experimental: Pick<OpenCodeClient["experimental"], "automation">; session: Pick<OpenCodeClient["session"], "get" | "create"> }
 /** What a programmed Mission's last run did, from its Automation's state: its current launch, the conversation every launch uses, and its past launches. */
-export type MissionCalendarLast = { outcome: "launched" | "waiting" | "idle"; missionID?: string; status?: string; coordinatorSessionID?: string
+export type MissionCalendarLast = { outcome: "launched" | "waiting" | "idle" | "unread"; missionID?: string; status?: string; coordinatorSessionID?: string
   history: Array<{ at: number; outcome: string }>; launches: number }
 export type MissionCalendarView = {
   id: string; title: string; paused: boolean
@@ -29,7 +29,7 @@ function last(info: AutomationInfo): MissionCalendarLast | undefined {
   if (typeof text !== "string") return undefined
   try {
     const value = JSON.parse(text) as Record<string, unknown>, text240 = (item: unknown) => typeof item === "string" && item.length <= 240 ? item : undefined
-    if (value.outcome !== "launched" && value.outcome !== "waiting" && value.outcome !== "idle") return undefined
+    if (value.outcome !== "launched" && value.outcome !== "waiting" && value.outcome !== "idle" && value.outcome !== "unread") return undefined
     const history = Array.isArray(value.history) ? value.history.flatMap(item => item && typeof item === "object" && Number.isSafeInteger((item as { at?: unknown }).at)
       && text240((item as { outcome?: unknown }).outcome) ? [{ at: (item as { at: number }).at, outcome: (item as { outcome: string }).outcome }] : []).slice(-20) : []
     const missionID = text240(value.missionID), status = text240(value.status), coordinatorSessionID = text240(value.coordinatorSessionID)

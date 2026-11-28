@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Yeni bir zamanlama ilkesiyle değiştir",
   "missions.scheduling.error.retained": "Zamanlamayı düzenlemeden önce kayıtlı ilkeyi aynen koruyun veya açıkça değiştirin.",
   "missions.scheduling.title": "Zamanlama",
+  "missions.scheduling.stop": "Zamanlamayı kalıcı olarak durdur",
+  "missions.scheduling.stopConfirm": "Bu zamanlama kalıcı olarak durdurulsun mu? Başka başlatma yapılmayacak. Görev listede kalır.",
   "missions.scheduling.when": "Şu durumda başlat",
   "missions.scheduling.connector.else": "aksi halde",
   "missions.scheduling.connector.if": "eğer",

@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "替换为新的调度策略",
   "missions.scheduling.error.retained": "请保持已保存的策略不变，或明确替换后再编辑调度。",
   "missions.scheduling.title": "计划",
+  "missions.scheduling.stop": "永久停止计划",
+  "missions.scheduling.stopConfirm": "永久停止此计划？之后不会再启动。任务保留在列表中。",
   "missions.scheduling.when": "启动条件",
   "missions.scheduling.connector.else": "否则",
   "missions.scheduling.connector.if": "如果",

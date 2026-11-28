@@ -8226,11 +8226,11 @@ mod resume_tests {
                         format!("{prefix} {i:02} line one\nline two\nline three")
                     };
                     let parts = if last {
-                        vec![crate::content::Part::Text(crate::content::Text {
-                            part_index: Some(0),
-                            text: body.clone(),
-                            provenance: crate::content::TextProvenance::Live,
-                        })]
+                        vec![crate::content::Part::Text(crate::content::Text::new(
+                            Some(0),
+                            body.clone(),
+                            crate::content::TextProvenance::Live,
+                        ))]
                     } else {
                         vec![]
                     };
@@ -8373,11 +8373,11 @@ mod resume_tests {
                         format!("{prefix} {i:02} line one\nline two\nline three")
                     };
                     let parts = if last {
-                        vec![crate::content::Part::Text(crate::content::Text {
-                            part_index: Some(0),
-                            text: body.clone(),
-                            provenance: crate::content::TextProvenance::Live,
-                        })]
+                        vec![crate::content::Part::Text(crate::content::Text::new(
+                            Some(0),
+                            body.clone(),
+                            crate::content::TextProvenance::Live,
+                        ))]
                     } else {
                         vec![]
                     };
@@ -9117,11 +9117,11 @@ mod resume_tests {
                         format!("{prefix} {i:02} line one\nline two\nline three")
                     };
                     let parts = if last {
-                        vec![crate::content::Part::Text(crate::content::Text {
-                            part_index: Some(0),
-                            text: body.clone(),
-                            provenance: crate::content::TextProvenance::Partial,
-                        })]
+                        vec![crate::content::Part::Text(crate::content::Text::new(
+                            Some(0),
+                            body.clone(),
+                            crate::content::TextProvenance::Partial,
+                        ))]
                     } else {
                         vec![]
                     };

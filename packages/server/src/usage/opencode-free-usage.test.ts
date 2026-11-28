@@ -8,6 +8,7 @@ const signal = () => AbortSignal.timeout(3000)
 function fixture() {
   const state = { key: "synthetic-one" }
   const connection = { client: {
+    experimental: { session: { stats: async () => { assert.fail("free quota must never read local stats") } } },
     session: { stats: async () => { assert.fail("free quota must never read local stats") } },
     credential: { list: async () => [{ active: true, integrationID: "opencode", value: { type: "key", key: state.key } }] },
   } } as unknown as ServiceConnection

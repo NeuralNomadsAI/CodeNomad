@@ -189,12 +189,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     refresh: () => `${recurrenceRefresh()}|${rows().map(row => `${row.id}:${row.status}:${row.runState}`).join()}` })
   const programmingOf = (id: string | undefined) => calendars.rows().find(calendar => calendar.missionID === id)
   const [programmingFailed, setProgrammingFailed] = createSignal(false)
-  // Reading the programmed Missions takes over the schedules the recurring engine left: what is listed beside them is read again,
-  // once they are first read and whenever they change.
+  // Reading the programmed Missions takes over the schedules the recurring engine left: those are read again when the programmed
+  // Missions change. The Mission list is read again only for a programmed Mission it lacks: any other read would cut its paging short.
   const [takenOver, setTakenOver] = createSignal(0)
-  createEffect(on(() => `${calendars.available()}|${calendars.rows().map(calendar => `${calendar.id}:${calendar.missionID}`).join()}`, () => {
-    if (!calendars.available()) return
-    setTakenOver(value => value + 1); void missionStore.refresh(props.instanceId)
+  createEffect(on(() => calendars.rows().map(calendar => `${calendar.id}:${calendar.missionID}`).join(), () => {
+    setTakenOver(value => value + 1)
+    if (state().status === "ready" && calendars.rows().some(calendar => calendar.missionID && !rows().some(row => row.id === calendar.missionID)))
+      void missionStore.refresh(props.instanceId)
   }, { defer: true }))
   // The selection follows a programmed Mission to the launch that replaced the selected one.
   let followed = calendars.rows()
@@ -859,11 +860,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
               openEditor(calendar ? { kind: "create", calendar: calendar.id, draft: missionProgrammingDraft(calendar, directory()) } : { kind: "edit", mission: selected() })
             }}
             onDelete={() => void deleteMission(selected())}
+            programming={programmingOf(id) && { paused: programmingOf(id)!.paused, between: selected().status !== "active" || selected().runState === "prepared",
+              act: action => { setProgrammingFailed(false); return calendars.act(programmingOf(id)!.id, { action }).catch(() => { setProgrammingFailed(true) }) } }}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
             onOpenTask={sessionId => void onOpenActor(sessionId)} />
-          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} disabled={Boolean(editor())} failed={programmingFailed()}
-            onAct={action => calendars.act(calendar().id, { action })} />}</Show>
+          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} failed={programmingFailed()} />}</Show>
           {tracking()}
         </section>
       }}</Show>

@@ -124,7 +124,7 @@ export function stageSessionRevert(instanceId: string, sessionId: string, messag
       await client.session.interrupt({ sessionID: sessionId, resume: false }, options)
       assertCurrent()
       // Interrupt acknowledges acceptance before execution cleanup settles.
-      await client.session.wait({ sessionID: sessionId }, options)
+      await client.experimental.session.wait({ sessionID: sessionId }, options)
       assertCurrent()
       await client.session.revert.stage(input, options)
     }

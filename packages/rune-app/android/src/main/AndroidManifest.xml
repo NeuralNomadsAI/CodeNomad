@@ -5,12 +5,13 @@
         android:allowBackup="false"
         android:label="CodeNomad">
         <activity
-            android:name="ly.anoma.rune.RuneActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:name="dev.rune.RuneActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboard|keyboardHidden|navigation|density"
             android:exported="true"
+            android:windowSoftInputMode="adjustNothing"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <meta-data
-                android:name="ly.anoma.rune.lib_name"
+                android:name="dev.rune.lib_name"
                 android:value="main" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -18,7 +19,7 @@
             </intent-filter>
         </activity>
         <provider
-            android:name="ly.anoma.rune.RuneClipboardProvider"
+            android:name="dev.rune.RuneClipboardProvider"
             android:authorities="${applicationId}.rune.clipboard"
             android:exported="false"
             android:grantUriPermissions="true" />

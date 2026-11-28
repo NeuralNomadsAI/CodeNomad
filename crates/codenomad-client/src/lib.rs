@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_api;
+mod agent_permissions;
 pub mod attachments;
 pub mod backend;
 pub mod blank_session_cleanup;
@@ -43,6 +44,7 @@ pub mod temporary_workspaces;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
+pub mod workspaces_clone;
 pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
@@ -78,3 +80,5 @@ mod prompt_tests;
 mod prompt_transport_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transport_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod workspaces_clone_tests;
