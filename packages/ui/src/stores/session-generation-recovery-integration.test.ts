@@ -407,4 +407,49 @@ describe("native-outcome recovery through real session stores", () => {
       fixture.cleanup()
     }
   })
+
+  it("bounds concurrent session.get outcome reads during large runtime status refreshes", async () => {
+    const id = "recovery-bounded-outcome-concurrency"
+    const fixture = setup(id, "succeeded")
+    try {
+      const total = 18
+      const many = new Map<string, Session>()
+      for (let i = 0; i < total; i++) {
+        const sid = `ses_${i}`
+        many.set(sid, { ...fixture.baseline, id: sid, status: "working", generationRecovery: null })
+      }
+      setSessions(previous => new Map(previous).set(id, many))
+
+      let inFlight = 0
+      let maxInFlight = 0
+      let completed = 0
+      const pending: Array<() => void> = []
+      fixture.client.session.active = async () => ({})
+      ;(fixture.client.session as any).get = async ({ sessionID }: { sessionID: string }) => {
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise<void>(resolve => pending.push(() => {
+          inFlight -= 1
+          completed += 1
+          resolve()
+        }))
+        return { ...fixture.info, id: sessionID, outcome: "succeeded" }
+      }
+
+      const refresh = refreshSessionRuntimeStatus(id)
+      // Drain batches one microtask at a time so concurrency cap is observable.
+      while (completed < total) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+        const batch = pending.splice(0, pending.length)
+        batch.forEach(release => release())
+      }
+      await refresh
+
+      assert.equal(completed, total)
+      assert.ok(maxInFlight <= 6, `expected <= 6 concurrent session.get calls, got ${maxInFlight}`)
+      assert.ok(maxInFlight >= 2, `expected parallel worker pool, got ${maxInFlight}`)
+    } finally {
+      fixture.cleanup()
+    }
+  })
 })

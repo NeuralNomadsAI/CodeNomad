@@ -329,3 +329,21 @@ test("fences list publication if the workspace closes during per-row ownership c
     assert.deepEqual(response.json(), { status: "unavailable" })
   } finally { await f.app.close() }
 })
+
+test("deduplicates directory ownership checks across many automations on list", async () => {
+  const f = fixture()
+  try {
+    let ownsCalls = 0
+    f.state.onOwnsLocation = () => { ownsCalls += 1 }
+    const rows = [
+      ...Array.from({ length: 50 }, (_, index) => rawAutomation({ id: `aut_wt_${index}`, status: "done", directory: "/repo/worktree" })),
+      ...Array.from({ length: 50 }, (_, index) => rawAutomation({ id: `aut_root_${index}`, status: "done", directory: "/repo/root" })),
+    ]
+    f.state.fetch = async () => Response.json({ data: rows })
+    const response = await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().automations.length, 100)
+    // 1 in resolveOwnedSession + 1 for the distinct `/repo/root` directory + 1 in revalidate.
+    assert.equal(ownsCalls, 3)
+  } finally { await f.app.close() }
+})
