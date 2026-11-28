@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Заменить новой политикой запуска",
   "missions.scheduling.error.retained": "Оставьте сохранённую политику без изменений или явно замените её перед редактированием расписания.",
   "missions.scheduling.title": "Расписание",
+  "missions.scheduling.stop": "Окончательно остановить расписание",
+  "missions.scheduling.stopConfirm": "Остановить это расписание навсегда? Новых запусков не будет. Миссия останется в списке.",
   "missions.scheduling.when": "Запускать, когда",
   "missions.scheduling.connector.else": "иначе",
   "missions.scheduling.connector.if": "если",

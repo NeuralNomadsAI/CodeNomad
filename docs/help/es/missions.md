@@ -70,7 +70,7 @@ La programación basada en calendario requiere agente y modelo explícitos para 
 
 ## Programación {#daily-schedules}
 
-Una Misión con un horario repetido o un evento sigue siendo una sola fila de la lista: cada lanzamiento sustituye al anterior en la misma conversación de coordinación y espera mientras el anterior siga activo. Su detalle muestra **Lanzar cuando**, **Estado deseado** con **Pausar** o **Reanudar**, la próxima activación o comprobación, **Pasadas iniciadas** y **Ejecuciones anteriores** (los últimos 20 lanzamientos). Con **Iniciar automáticamente** desactivado, se crea en pausa. **Editar la misión seleccionada** vuelve a abrir el formulario de creación, y el siguiente lanzamiento usa lo que guarde. **Eliminar la misión seleccionada…** quita primero su programación.
+Una Misión con un horario repetido o un evento sigue siendo una sola fila de la lista: cada lanzamiento sustituye al anterior en la misma conversación de coordinación y espera mientras el anterior siga activo. Su detalle muestra **Lanzar cuando**, **Estado deseado**, la próxima activación o comprobación, **Pasadas iniciadas** y **Ejecuciones anteriores** (los últimos 20 lanzamientos). Con **Iniciar automáticamente** desactivado, se crea en pausa. **Editar la misión seleccionada** vuelve a abrir el formulario de creación, y el siguiente lanzamiento usa lo que guarde. **Eliminar la misión seleccionada…** quita primero su programación. Mientras no haya un lanzamiento en curso, ▶ y ⏸ de la barra de herramientas reanudan o pausan su programación y ■ la detiene definitivamente, dejando la Misión en la lista; durante un lanzamiento controlan ese lanzamiento, y el menú ⋯ pausa o reanuda la programación.
 
 ### Criterios {#native-scheduling}
 
@@ -118,7 +118,7 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 ### Colores y estados {#status-colours}
 
-La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
+La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa en el color de acento indica una Misión pausada en pleno trabajo; un símbolo de pausa naranja, una programación en pausa que no lanza nada hasta que la reanude; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
 Un icono de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
 

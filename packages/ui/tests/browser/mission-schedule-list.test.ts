@@ -192,7 +192,7 @@ test("unified waiting and exact successful passages distinguish prepared, pause,
     assert.deepEqual([await entry.getAttribute("aria-current"), await expander.getAttribute("aria-expanded")], ["true", "true"])
     await click(page, "Play"); await waitMark("waiting")
     assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run/)
-    await click(page, "Pause"); await waitMark("paused")
+    await click(page, "Pause"); await waitMark("suspended")
     await click(page, "Resume"); await waitMark("waiting")
     await success("first-result")
     const first = f.doc.history.at(-1)!.id

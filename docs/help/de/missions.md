@@ -70,7 +70,7 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 ## Zeitplanung {#daily-schedules}
 
-Eine Mission mit wiederkehrendem Zeitplan oder Ereignis bleibt eine einzige Zeile der Liste: Jeder Start ersetzt den vorherigen in derselben Koordinator-Unterhaltung und wartet, solange der vorherige noch aktiv ist. Ihr Detail zeigt **Starten, wenn**, **Gewünschter Zustand** mit **Pausieren** oder **Fortsetzen**, die nächste Aktivierung oder Prüfung, **Gestartete Durchläufe** und **Frühere Läufe** (die letzten 20 Starts). Ist **Automatisch starten** aus, wird sie pausiert erstellt. **Ausgewählte Mission bearbeiten** öffnet das Erstellungsformular erneut, und der nächste Start verwendet, was Sie speichern. **Ausgewählte Mission löschen…** entfernt zuerst ihre Zeitplanung.
+Eine Mission mit wiederkehrendem Zeitplan oder Ereignis bleibt eine einzige Zeile der Liste: Jeder Start ersetzt den vorherigen in derselben Koordinator-Unterhaltung und wartet, solange der vorherige noch aktiv ist. Ihr Detail zeigt **Starten, wenn**, **Gewünschter Zustand**, die nächste Aktivierung oder Prüfung, **Gestartete Durchläufe** und **Frühere Läufe** (die letzten 20 Starts). Ist **Automatisch starten** aus, wird sie pausiert erstellt. **Ausgewählte Mission bearbeiten** öffnet das Erstellungsformular erneut, und der nächste Start verwendet, was Sie speichern. **Ausgewählte Mission löschen…** entfernt zuerst ihre Zeitplanung. Solange kein Start läuft, setzen ▶ und ⏸ in der Symbolleiste ihre Zeitplanung fort oder pausieren sie, und ■ stoppt sie endgültig, wobei die Mission in der Liste bleibt; während eines Starts steuern sie diesen Start, und das Menü ⋯ pausiert die Zeitplanung oder setzt sie fort.
 
 ### Kriterien {#native-scheduling}
 
@@ -120,7 +120,7 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 ### Farben und Zustände {#status-colours}
 
-Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
+Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein Pausensymbol in der Akzentfarbe bedeutet eine während der Arbeit pausierte Mission, ein orangefarbenes Pausensymbol eine pausierte Zeitplanung, die nichts startet, bis Sie sie fortsetzen, und ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
 Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
 

@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "नयाँ समयतालिका नीतिले प्रतिस्थापन गर्नुहोस्",
   "missions.scheduling.error.retained": "समयतालिका सम्पादन गर्नुअघि सुरक्षित गरिएको नीति जस्ताको तस्तै राख्नुहोस् वा स्पष्ट रूपमा प्रतिस्थापन गर्नुहोस्।",
   "missions.scheduling.title": "समयतालिका",
+  "missions.scheduling.stop": "समयतालिका स्थायी रूपमा रोक्नुहोस्",
+  "missions.scheduling.stopConfirm": "यो समयतालिका स्थायी रूपमा रोक्ने? अब कुनै सुरुआत हुने छैन। मिसन सूचीमा रहन्छ।",
   "missions.scheduling.when": "सुरु गर्ने बेला",
   "missions.scheduling.connector.else": "अन्यथा",
   "missions.scheduling.connector.if": "यदि",

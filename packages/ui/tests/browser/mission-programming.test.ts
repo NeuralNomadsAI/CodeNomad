@@ -6,7 +6,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionCalendarView } from "../../../server/src/opencode/mission-calendars"
 import type {} from "./fixtures/mission-navigation"
-import { clickMissionAction, missionDetail, missionEntryStatus, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
+import { clickMissionAction, missionDetail, missionEntryStatus, missionMenuAction, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
@@ -81,12 +81,16 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     assert.doesNotMatch(await missionEntryStatus(page, "Other work"), /Next wake/)
     const icon = (key: string) => page.locator(`.mission-row[data-mission-key="mission:${key}"] .mission-row-flag`)
     assert.deepEqual([await icon("A").getAttribute("class"), await icon("B").getAttribute("class")].map(value => /lucide-repeat/.test(value ?? "")), [true, false])
-    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC Desired state Running Pause Next wake Nov 28, 2026, 9:00 AM Launched passages 2/)
+    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC Desired state Running Next wake Nov 28, 2026, 9:00 AM Launched passages 2/)
     assert.match(await missionDetail(page).locator(".mission-past-runs").innerText(), /Nov 26, 2026, 9:00 AM · Completed/)
 
-    await missionDetail(page).getByRole("button", { name: "Scheduling · Pause" }).click()
-    await missionDetail(page).getByRole("button", { name: "Scheduling · Resume" }).waitFor()
-    assert.match(await facts(page), /Paused Resume Next wake None/)
+    // A launch is under way: the toolbar commands it, and the menu suspends the programming.
+    assert.equal(await missionDetail(page).getByRole("button").filter({ hasText: /^(Pause|Resume)$/ }).count(), 0)
+    const paused = page.waitForResponse(response => /\/pause$/.test(new URL(response.url()).pathname))
+    await (await missionMenuAction(page, "Scheduling · Pause")).click()
+    await paused
+    await missionDetail(page).getByText("Paused", { exact: true }).waitFor()
+    assert.match(await facts(page), /Desired state Paused Next wake None/)
     assert.deepEqual(writes, ["POST /missions/calendars/cal_review/pause"])
 
     // The next launch replaces the Mission: the selection follows it.
@@ -143,5 +147,29 @@ test("a programmed Mission without tasks unfolds from its chevron like any other
     assert.match(await facts(page), /Launch when Every day · 09:00 · UTC/)
     await chevron("A").click()
     await missionDetail(page).locator(".mission-schedule-facts").waitFor({ state: "hidden" })
+  } finally { await page.close() }
+})
+
+test("a paused programmed Mission between launches reads as paused, and Play resumes its programming", async () => {
+  const { page, state, writes, open } = await setup()
+  try {
+    state.missions = [mission("A", "Daily review", "prepared"), mission("B", "Other work")]
+    state.calendars = [programming("A", { paused: true, last: undefined })]
+    await open()
+    await selectMission(page, "Daily review")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="suspended"]').waitFor()
+    assert.match(await missionEntryStatus(page, "Daily review"), /^Paused · Every day/)
+    // Play resumes the programming; it starts no launch by hand.
+    await clickMissionAction(page, "Scheduling · Resume")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="waiting"]').waitFor()
+    await clickMissionAction(page, "Scheduling · Pause")
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark[data-mark="suspended"]').waitFor()
+    assert.deepEqual(writes, ["POST /missions/calendars/cal_review/resume", "POST /missions/calendars/cal_review/pause"])
+    // Stop ends the programming for good, once confirmed: the Mission stays, as an ordinary one.
+    await clickMissionAction(page, "Stop scheduling permanently")
+    await page.getByRole("dialog").getByRole("button", { name: "Stop scheduling permanently", exact: true }).click()
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-mark:not([data-mark="suspended"])').waitFor()
+    assert.equal(writes.at(-1), "DELETE /missions/calendars/cal_review")
+    assert.doesNotMatch(await missionEntryStatus(page, "Daily review"), /Every day/)
   } finally { await page.close() }
 })

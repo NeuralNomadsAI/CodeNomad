@@ -52,6 +52,6 @@ test("between launches the row waits for its next wake or is paused; a launch ke
   const running = missionProgramming(calendar(), t, "en-GB"), paused = missionProgramming(calendar({ paused: true }), t, "en-GB")
   assert.deepEqual((["idle", "prepared", "permission", "done", "interrupted"] as const).map(mark => running.mark(mark, true)),
     ["waiting", "waiting", "permission", "done", "interrupted"])
-  assert.deepEqual((["idle", "prepared", "done"] as const).map(mark => paused.mark(mark, true)), ["paused", "prepared", "done"])
+  assert.deepEqual((["idle", "prepared", "done"] as const).map(mark => paused.mark(mark, true)), ["suspended", "suspended", "done"])
   assert.equal(running.mark("idle", false), "idle", "a launch under way is never shown as waiting")
 })

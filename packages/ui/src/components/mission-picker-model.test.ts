@@ -39,7 +39,7 @@ test("schedule mark: an answer first, then the schedule's state, and a current p
   assert.equal(mark({ blockReason: "failed" }, false), "interrupted")
   const pendingPassage = { id: "passage" } as NonNullable<UnifiedMissionSchedule["pendingPassage"]>
   assert.equal(mark({ pendingPassage }), "working")
-  assert.equal(mark({ pendingPassage, state: "paused" }), "paused")
+  assert.equal(mark({ pendingPassage, state: "paused" }), "suspended")
   assert.equal(mark({ pendingPassage, state: "paused" }, false, 1), "permission")
   assert.equal(mark({ state: "paused", firstPlayedAt: null, observation: { ...doc.observation, state: "unarmed" } }), "prepared")
   const latestResult = { id: "A", outcome: "completed" } as NonNullable<UnifiedMissionSchedule["latestResult"]>

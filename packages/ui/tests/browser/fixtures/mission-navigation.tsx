@@ -12,6 +12,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import AlertDialog from "../../../src/components/alert-dialog"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 import { serverApi } from "../../../src/lib/api-client"
@@ -77,4 +78,4 @@ declare global {
     }
   }
 }
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><Fixture /><AlertDialog /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

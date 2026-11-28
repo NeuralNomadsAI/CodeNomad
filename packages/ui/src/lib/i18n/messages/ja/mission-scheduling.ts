@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "新しいスケジュール方針に置き換える",
   "missions.scheduling.error.retained": "保存済みの方針を変更せずに保持するか、明示的に置き換えてからスケジュールを編集してください。",
   "missions.scheduling.title": "スケジュール",
+  "missions.scheduling.stop": "スケジュールを完全に停止",
+  "missions.scheduling.stopConfirm": "このスケジュールを完全に停止しますか？以後の起動は行われません。ミッションは一覧に残ります。",
   "missions.scheduling.when": "起動条件",
   "missions.scheduling.connector.else": "それ以外",
   "missions.scheduling.connector.if": "もし",
