@@ -12,6 +12,8 @@
 // 6. A calendar waiting for commits on a local branch launches nothing until one lands,
 //    then coordinates in the conversation it names.
 // 7. A programming saved with a prepared Mission launches by starting that Mission.
+// 8. A schedule the recurring engine left in the plugin's storage is read without that engine
+//    and left deleted the way the engine deletes one.
 // Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
@@ -19,6 +21,7 @@ import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
+import { DatabaseSync } from "node:sqlite"
 import { pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
@@ -218,6 +221,19 @@ try {
   await until("held coordinator turn", async () => seen.heldTurns, count => count > 0, 120_000)
   await calendars().pause("cal_e2e")
   await daemon.stop()
+  {
+    // What the recurring engine stored for a schedule, beside this project's other Missions keys.
+    const db = new DatabaseSync(env.OPENCODE_DB)
+    try {
+      const slot = db.prepare("SELECT key FROM kv WHERE key LIKE '%codenomad-missions/calendar-v1/%/cal_e2e'").get().key
+      const [, namespace, token] = /^(.*)codenomad-missions\/calendar-v1\/([a-f0-9]{24})\/cal_e2e$/.exec(slot)
+      const created = JSON.parse(db.prepare("SELECT value FROM kv WHERE value LIKE '%\"type\":\"mission.created\"%' LIMIT 1").get().value)
+      db.prepare("INSERT INTO kv (key, value, time_created, time_updated) VALUES (?, ?, ?, ?)").run(
+        `${namespace}codenomad-missions/documents-v1/project/${token}/missions/msn_legacy_e2e`,
+        JSON.stringify({ id: "msn_legacy_e2e", projectID: created.projectID, projectCanonical: created.projectCanonical, revision: 3, timeGeneration: 1,
+          state: "stopped", configuration: { title: "Legacy E2E" }, calendars: [{ scheduleID: "aut_legacy", sessionID: "ses_cn_schedule_legacy" }] }), Date.now(), Date.now())
+    } finally { db.close() }
+  }
   script.holdMs = 0; script.service++
   daemon = await startDaemon("2")
   const restored = await until("Missions after restart", () => missions(daemon), list => list.some(mission => mission.id === second.id), 30_000)
@@ -255,6 +271,14 @@ try {
   await writeFile(lease, "")
   const prepared = (await until("the prepared Mission", () => daemon.client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "req_prepared_e2e", objective: OBJECTIVE,
     title: "Prepared E2E", template: "custom", prepared: true }, callOpts), created => !!created?.mission?.id, 30_000)).mission
+  const native = daemon.client.rpc(CODENOMAD_MISSIONS_RPC)
+  assert.deepEqual((await native.legacySchedules({}, callOpts)).schedules.map(item => [item.id, item.configuration.title, item.running, item.busy, item.automations]),
+    [["msn_legacy_e2e", "Legacy E2E", false, false, ["aut_legacy"]]])
+  await native.retireLegacySchedule({ id: "msn_legacy_e2e" }, callOpts)
+  assert.deepEqual((await native.legacySchedules({}, callOpts)).schedules, [])
+  // The recurring engine reads its own storage as before: the schedule is one it deleted.
+  assert.equal(JSON.stringify(await native.scheduleList({ limit: 8 }, callOpts)).includes("msn_legacy_e2e"), false)
+  console.log("PASS 8 (a schedule the recurring engine left is read and deleted without that engine)")
   await rm(lease)
   await calendars().save("cal_prepared", [rule("cal_prepared", { objective: OBJECTIVE, title: "Prepared E2E", template: "custom", prepared: prepared.id,
     when: [{ kind: "branch-commits", directory: root, ref: "refs/heads/main" }] })])

@@ -41,6 +41,10 @@ impl<S> Clone for Scoped<S> {
 }
 
 impl<S> Scoped<S> {
+    pub(super) fn new(owner: PanelOwner<S>, scope: std::rc::Rc<()>) -> Self {
+        Self { owner, scope }
+    }
+
     pub(super) fn get<'a>(&self, state: &'a mut S) -> Option<&'a mut Panel> {
         (self.owner)(state).filter(|panel| std::rc::Rc::ptr_eq(&panel.scope, &self.scope))
     }
@@ -54,10 +58,7 @@ pub(crate) fn view<S: 'static>(
     let Some(target) = panel.reader.target() else {
         return rune::el();
     };
-    let scoped = Scoped {
-        owner,
-        scope: panel.scope.clone(),
-    };
+    let scoped = Scoped::new(owner, panel.scope.clone());
     let snapshot = panel
         .detail
         .snapshot

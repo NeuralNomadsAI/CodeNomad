@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::{files::test_http::Http, platform, strings::t};
 use rune::{Env, Key, KeyEvent, Mods, Runtime, col};
 use rune_theme_codenomad::layout::{self, Layout};
@@ -26,9 +26,12 @@ impl Harness {
             session: Some("ses1".into()),
             owned_tab: false,
             revision: 0,
+            location_epoch: 0,
             observed: None,
             authority: 0,
+            native_authority: 0,
             online: true,
+            native_online: true,
             stats: [0; 2],
             stats_status: None,
             integrations: 0,
@@ -856,6 +859,33 @@ fn session_move_cancels_stale_location_and_duplicate_labels_and_live_form_visibi
             act.header
         );
         act.reply(200, json!({})).await;
+    });
+}
+
+#[test]
+fn coalesced_location_invalidation_cancels_connect_modal_without_authority_change() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let integrations = json!([{
+            "id": "custom",
+            "name": "Custom",
+            "methods": [{ "type": "key", "label": "API key" }],
+            "connections": []
+        }]);
+        let mut rt = make_rt(http.backend.clone());
+        assert!(tick(&mut rt, 1.0));
+        reply_catalog(&http, integrations, json!([]), json!([]), None).await;
+        poll_until(&mut rt, 1.0, |h| h.catalog.manager.snapshot.is_some());
+
+        click(&mut rt, "providers-connect-button", 1.0);
+        assert!(rt.state.catalog.manager.connect.is_some());
+        let auth_before = rt.state.target.provider_authority();
+        rt.update(|h, _| {
+            h.target.invalidate_location();
+        });
+        assert_eq!(rt.state.target.provider_authority(), auth_before);
+        assert!(tick(&mut rt, 2.0));
+        assert!(rt.state.catalog.manager.connect.is_none());
     });
 }
 

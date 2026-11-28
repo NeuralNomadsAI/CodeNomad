@@ -38,7 +38,10 @@ interface Entry {
 }
 
 function shellAutomationSignature(automations: readonly SessionAutomation[]): string | null {
-  const rows = automations.filter(item => item.action.type === "shell")
+  const rows = automations.filter(item => item.action.type === "shell" && (
+    item.status === "active"
+    || (item.status === "done" && item.lastOutput === undefined && item.lastOutcome === undefined)
+  ))
   if (rows.length === 0) return null
   return rows.map(item => `${item.id}\0${item.status}\0${item.runCount}\0${item.updatedAt}\0${item.lastOutcome ?? ""}\0${item.lastOutput ?? ""}`).join("\n")
 }
@@ -289,7 +292,8 @@ export function createSessionAutomationsStore(
         if (shown?.status !== "ok") return undefined
         const before = shellAutomationSignature(shown.automations)
         if (before === null) return undefined
-        clearShellFollowUp(entry)
+        // A settle follow-up is already armed from a recent exit: let it coalesce rapid unrelated shell exits.
+        if (entry.shellFollowUpTimer) return undefined
         entry.overdueChecks = 0
         return refresh(owner, sessionId).then(() => {
           if (entry.demand === 0 || entries.get(stateKey) !== entry || options.signal?.(owner)?.aborted) return

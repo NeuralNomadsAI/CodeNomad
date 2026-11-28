@@ -69,6 +69,24 @@ test("inspect start accepts bounded titles and verbatim notes and refuses an exi
   }
 })
 
+test("mission.program reaches the bridge under its own key, and prepare leaves repeating criteria to it", async t => {
+  const tools = new Map<string, any>(), calls: any[] = [], registration = { dispose: async () => {} }
+  const cleanup = await setupMissionsBusiness({
+    tool: { transform: async (configure: any) => { configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration } },
+    session: { hook: async () => registration },
+  } as never, async sessionID => ({ control: {} as never, readSessionID: sessionID, current() {}, beforeTool: async () => {} }),
+  async (sessionID, input) => { calls.push({ sessionID, input }); return { programs: [] } })
+  t.after(cleanup)
+  const program = tools.get("program"), validate = new Ajv().compile(program.input)
+  assert.deepEqual([validate({ action: "list" }), validate({ action: "pause", id: "cal_review" }), validate({ action: "run" })], [true, true, false])
+  assert.deepEqual(JSON.parse((await program.execute({ action: "pause", id: "cal_review" }, { sessionID: "ses_actor" })).content), { programs: [] })
+  assert.deepEqual(calls, [{ sessionID: "ses_actor", input: { program: { action: "pause", id: "cal_review" } } }])
+  await assert.rejects(program.execute({ action: "pause" }, { sessionID: "ses_actor" }), "an action without its id never reaches the bridge")
+  const refused = JSON.parse((await tools.get("prepare").execute({ objective: "Review", template: "custom",
+    launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } }, { sessionID: "ses_actor", progress: async () => {} })).content)
+  assert.deepEqual(refused, { outcome: "refused", phase: "creation", code: "use-mission-program" })
+  assert.equal(calls.length, 1)
+})
 test("schedule tools preserve the actual caller for roots, descendants, actors and passages", async t => {
   const tools = new Map<string, any>(), calls: unknown[] = [], registration = { dispose: async () => {} }
   let loseACK = false
@@ -180,7 +198,7 @@ test("registers project tools, typed snapshot RPC, and role context", async () =
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "program", "settings", "control", "configure", "delete"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)

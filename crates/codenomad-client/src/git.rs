@@ -1,6 +1,6 @@
 //! Display reads and explicit mutations for CodeNomad's owned Git checkouts.
 use crate::{
-    backend::{Backend, read_json_limited},
+    backend::{Backend, OversizedResponse, read_json_limited},
     catalog::{Project, Sessions},
     files::{MAX_FILE_BYTES, relative},
     history::{Result, valid_id},
@@ -615,25 +615,46 @@ fn path_batches(mut paths: &[String]) -> impl Iterator<Item = &[String]> {
 async fn read(request: RequestBuilder, limit: usize) -> Result<Value> {
     let response = request.send().await?;
     if response.status().is_success() {
-        return read_json_limited(response, limit).await;
+        return read_json_limited(response, limit).await.map_err(|error| {
+            if error.is::<OversizedResponse>() {
+                GitError::OversizedContent.into()
+            } else if error.is::<serde_json::Error>() {
+                GitError::UnexpectedResponse.into()
+            } else {
+                error
+            }
+        });
     }
     let status = response.status().as_u16();
     let data = read_json_limited(response, 64 * 1024)
         .await
         .unwrap_or(Value::Null);
-    Err(Refusal::new(
-        status,
-        data["code"].as_str().map(str::to_owned),
-        data["error"]
-            .as_str()
-            .or(data["message"].as_str())
-            .map(str::to_owned),
-    )
-    .into())
+    let message = data["error"]
+        .as_str()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .or_else(|| {
+            data["message"]
+                .as_str()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+        })
+        .map(str::to_owned);
+    Err(Refusal::new(status, data["code"].as_str().map(str::to_owned), message).into())
 }
 
 async fn acknowledge(request: RequestBuilder) -> Result<()> {
-    if read(request, 64 * 1024).await?["ok"] == true {
+    let value = read(request, 64 * 1024).await.map_err(|error| {
+        if matches!(
+            error.downcast_ref::<GitError>(),
+            Some(GitError::OversizedContent | GitError::UnexpectedResponse)
+        ) {
+            GitError::UnconfirmedMutation.into()
+        } else {
+            error
+        }
+    })?;
+    if value["ok"] == true {
         Ok(())
     } else {
         Err(GitError::UnconfirmedMutation.into())

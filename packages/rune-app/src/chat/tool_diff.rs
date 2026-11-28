@@ -194,6 +194,10 @@ impl Preferences {
     }
 
     pub(crate) fn sync_focused_agent_control(s: &mut State, focused: Option<&str>) -> bool {
+        let reconciled = s
+            .agent
+            .as_mut()
+            .is_some_and(crate::agent::Ui::reconcile_custom_focus);
         let next = if s.screen.is_launcher() {
             None
         } else {
@@ -204,7 +208,7 @@ impl Preferences {
             s.revision += 1;
             true
         } else {
-            false
+            reconciled
         }
     }
 

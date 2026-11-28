@@ -11,6 +11,7 @@ pub mod blank_session_cleanup;
 pub mod catalog;
 pub mod content;
 pub mod files;
+pub mod folders;
 pub mod git;
 pub mod history;
 pub mod http;
@@ -25,6 +26,7 @@ pub mod prompt_catalogue;
 mod prompt_command;
 pub mod prompt_history;
 mod prompt_receipt;
+pub mod prompt_shell;
 pub mod provider_usage;
 pub mod recovery;
 pub mod runtime;
@@ -63,6 +65,8 @@ mod files_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod files_write_tests;
 #[cfg(test)]
+mod folders_tests;
+#[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
@@ -70,5 +74,7 @@ mod history_tests;
 mod inbox_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod prompt_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod prompt_transport_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transport_tests;

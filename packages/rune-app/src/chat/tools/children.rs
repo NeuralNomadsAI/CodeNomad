@@ -29,6 +29,36 @@ const CHILD_LIMIT: usize = 12;
 const RETAINED_LIMIT: usize = 24;
 const WAITING_LIMIT: usize = 32;
 pub(super) const STEP_BYTES: usize = 2 << 20;
+pub(super) const MAX_TRUNCATED_IMAGE_PATH_BYTES: usize = 4 * 1024;
+pub(super) const MAX_TRUNCATED_IMAGE_SNAPSHOT_BYTES: usize = 32 * 1024;
+
+pub(super) fn tool_image_shadows_bytes(groups: &crate::chat::document::ToolImageShadows) -> usize {
+    let base = groups
+        .len()
+        .saturating_mul(std::mem::size_of::<Box<[Box<str>]>>());
+    groups.iter().fold(base, |acc, paths| {
+        paths.iter().fold(
+            acc.saturating_add(paths.len().saturating_mul(std::mem::size_of::<Box<str>>())),
+            |inner, path| inner.saturating_add(path.len()),
+        )
+    })
+}
+
+pub(super) fn truncated_image_entry_bytes(
+    msg_id: &str,
+    tool_id: &str,
+    groups: &crate::chat::document::ToolImageShadows,
+) -> usize {
+    std::mem::size_of::<(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)>()
+        .saturating_add(msg_id.len())
+        .saturating_add(tool_id.len())
+        .saturating_add(tool_image_shadows_bytes(groups))
+}
+
+pub(super) fn dropped_image_entry_bytes(groups: &crate::chat::document::ToolImageShadows) -> usize {
+    std::mem::size_of::<crate::chat::document::ToolImageShadows>()
+        .saturating_add(tool_image_shadows_bytes(groups))
+}
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
@@ -117,8 +147,20 @@ struct Snapshot {
     steps: Steps,
     steps_truncated: bool,
     steps_incomplete: bool,
+    older_pages: bool,
     truncated_tools: HashSet<(String, String)>,
+    truncated_tool_images: Box<[(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)]>,
+    dropped_tool_images: Box<[crate::chat::document::ToolImageShadows]>,
+    truncated_tool_images_overflow: bool,
     reports: Reports,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(in crate::chat) struct ChildToolState<'a> {
+    pub steps: &'a [(String, Arc<Tool>)],
+    pub truncated_images: &'a [(Box<str>, Box<str>, crate::chat::document::ToolImageShadows)],
+    pub dropped_images: &'a [crate::chat::document::ToolImageShadows],
+    pub older_pages: bool,
 }
 
 enum ChildUpdate {
@@ -289,6 +331,12 @@ impl Children {
                     .saturating_add(report.report.state.len())
                     .saturating_add(report.report.body.len());
             }
+            for (msg_id, tool_id, groups) in entry.snapshot.truncated_tool_images.iter() {
+                total = total.saturating_add(truncated_image_entry_bytes(msg_id, tool_id, groups));
+            }
+            for groups in entry.snapshot.dropped_tool_images.iter() {
+                total = total.saturating_add(dropped_image_entry_bytes(groups));
+            }
         }
         total
     }
@@ -392,6 +440,26 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
+    pub(in crate::chat) fn verified_tool_state(
+        &self,
+        parent: Option<&str>,
+        id: &str,
+    ) -> ChildToolState<'_> {
+        let key = child_key(parent, id);
+        if self.unavailable.contains(&key) {
+            return ChildToolState::default();
+        }
+        self.entries
+            .get(&key)
+            .filter(|entry| !entry.load_error && !entry.snapshot.truncated_tool_images_overflow)
+            .map_or_else(ChildToolState::default, |entry| ChildToolState {
+                steps: entry.snapshot.steps.as_slice(),
+                truncated_images: entry.snapshot.truncated_tool_images.as_ref(),
+                dropped_images: entry.snapshot.dropped_tool_images.as_ref(),
+                older_pages: entry.snapshot.older_pages,
+            })
+    }
+
     pub(super) fn steps_truncated(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
             .get(&child_key(parent, id))
@@ -436,7 +504,7 @@ impl Children {
 
 #[cfg(test)]
 impl Children {
-    pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
+    pub(in crate::chat) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         self.install_under(None, child, page)
     }
 

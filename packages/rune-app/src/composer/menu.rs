@@ -20,7 +20,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 fn can_queue(s: &State) -> bool {
-    s.phase.running() && s.composer.picker.selected_command(&s.draft.text).is_none() && can_send(s)
+    !s.composer.shell_mode
+        && s.phase.running()
+        && s.composer.picker.selected_command(&s.draft.text).is_none()
+        && can_send(s)
 }
 
 pub(crate) fn can_clear(s: &State) -> bool {
@@ -31,7 +34,7 @@ pub(crate) fn clear(s: &mut State, tx: &mut Tx) {
     if !can_clear(s) {
         return;
     }
-    s.composer.recall = None;
+    recall::clear_recalled(s);
     s.draft.undo_group(|edit| {
         edit.set_selection(0, edit.text.len());
         edit.insert("");
@@ -68,7 +71,9 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         }),
     );
     queue.disabled = !can_queue(s);
-    queue.description = super::shortcuts::Action::Alternate.label(s);
+    queue.description = (!s.composer.shell_mode)
+        .then(|| super::shortcuts::Action::Alternate.label(s))
+        .flatten();
     let mut attach = Item::new(
         "attach",
         t(if s.composer.device.busy() {

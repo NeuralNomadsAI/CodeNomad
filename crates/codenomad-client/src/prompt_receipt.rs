@@ -6,10 +6,36 @@ const MAX_WIRE: usize = 64 * 1024 * 1024;
 const MAX_RECEIPT: usize = 64 * 1024;
 
 pub(crate) async fn read(response: reqwest::Response) -> Result<Value> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let idle = Some(crate::http::REQUEST_TIMEOUT);
+    #[cfg(target_arch = "wasm32")]
+    let idle = None;
+    read_with_idle_timeout(response, idle).await
+}
+
+pub(crate) async fn read_with_idle_timeout(
+    response: reqwest::Response,
+    idle_timeout: Option<std::time::Duration>,
+) -> Result<Value> {
     let mut projection = Projection::default();
     let mut chunks = response.bytes_stream();
     let mut wire = 0;
-    while let Some(chunk) = chunks.next().await {
+    loop {
+        #[cfg(not(target_arch = "wasm32"))]
+        let next = match idle_timeout {
+            Some(limit) => tokio::time::timeout(limit, chunks.next())
+                .await
+                .map_err(|_| PromptError::Unconfirmed)?,
+            None => chunks.next().await,
+        };
+        #[cfg(target_arch = "wasm32")]
+        let next = {
+            let _ = idle_timeout;
+            chunks.next().await
+        };
+        let Some(chunk) = next else {
+            break;
+        };
         let chunk = chunk?;
         wire += chunk.len();
         if wire > MAX_WIRE {

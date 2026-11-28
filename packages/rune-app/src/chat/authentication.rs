@@ -44,7 +44,7 @@ pub(crate) fn expired(
         return;
     }
     s.renew_scope();
-    s.direct_authentication = Recovery {
+    s.direct_authentication = Box::new(Recovery {
         challenge: Some(Challenge {
             backend: expired,
             expected_server,
@@ -54,7 +54,7 @@ pub(crate) fn expired(
         }),
         username: TextEdit::new("codenomad"),
         password: TextEdit::new(""),
-    };
+    });
     retry(s);
 }
 
@@ -182,7 +182,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
             challenge.error = Some("authRecovery.unavailable");
         }
         Reply::Connected(backend) => {
-            s.direct_authentication = Recovery::default();
+            s.direct_authentication = Default::default();
             s.phase = crate::Phase::Reconnecting;
             crate::settings::connected(s, &backend);
             if let Some(agent) = &mut s.agent {

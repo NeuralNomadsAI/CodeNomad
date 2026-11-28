@@ -143,6 +143,11 @@ impl Actions {
             reread: false,
         });
     }
+
+    #[cfg(test)]
+    pub(in crate::chat) fn fixture_set_boundary(&mut self, id: Option<&str>) {
+        self.boundary = id.map(str::to_owned);
+    }
 }
 
 fn available(s: &State) -> bool {
@@ -254,6 +259,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s.transcript_display.messages.boundary = Some(id);
                         s.revision += 1;
                         if empty_draft(s) {
+                            s.composer.exit_shell_mode();
                             s.draft.replace_text(&text);
                             s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
                             tx.focus("composer", false);

@@ -454,7 +454,7 @@ const server = createServer(async (req,res) => {
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
     if (p === '/api/workspaces/catalogue/provider-accounts/example') {
       assert.equal(url.searchParams.get('directory'),directory)
-      return json({logins:{active:'account@example.test',secondary:'other@example.test'}})
+      return json({supported:false,enabled:false,logins:{active:'account@example.test',secondary:'other@example.test'}})
     }
     if (p === `${base}session` && req.method === 'POST') {
       let body = ''
@@ -1107,8 +1107,8 @@ try {
   await page.getByRole('button',{name:'Personal memory',exact:true}).waitFor({state:'attached'})
   assert.equal(await page.getByText('Project-only entry text',{exact:true}).count(),0)
   assert(reviews.some(({operation})=>operation.scope==='global'))
-  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
-  assert(preferencesStream,'Memory observes the host stream without opening another connection')
+  assert.equal(streams.size,1,'Memory observes the host stream without opening another connection')
+  const preferencesStream = Array.from(streams.values())[0]
   memoryEnabled = false
   preferencesStream.write('data: {"type":"memory.changed"}\n\n')
   await page.getByRole('switch',{name:'Memory',checked:false,exact:true}).waitFor({state:'attached'})
@@ -1293,8 +1293,8 @@ try {
   await afterPaint()
   await readExpanded.click({force:true})
   await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'attached'})
-  const prefStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
-  assert(prefStream,'Preferences EventSource must be connected')
+  assert.equal(streams.size,1,'Preferences shares the single multiplexed EventSource')
+  const prefStream = Array.from(streams.values())[0]
   failConfigReadOnce = true
   const failedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET' && response.status() === 503)
   prefStream.write(`data: ${JSON.stringify({type:'storage.configChanged',owner:'ui'})}\n\n`)
@@ -1337,8 +1337,8 @@ try {
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
-  const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
-  assert(nonConversation(),'The catalogue has an EventSource without a conversation')
+  assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
+  const nonConversation = () => Array.from(streams.values())[0]
   account = 'default'
   nonConversation().write(`data: ${JSON.stringify({type:'instance.event',instanceId:'catalogue',event:{type:'credential.switched'}})}\n\n`)
   await visible('account@example.test')

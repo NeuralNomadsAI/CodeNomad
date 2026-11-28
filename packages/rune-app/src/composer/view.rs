@@ -57,12 +57,35 @@ pub fn view(
         )
         .child(more)
         .child(
-            layout::button_tx(
-                t("promptInput.overlay.send"),
-                !can_send(s),
-                screen::action_tx(&scope, super::actions::send_button),
-            )
-            .key("send"),
+            if s.composer.shell_mode {
+                layout::shell_send_button_tx(
+                    t("promptInput.overlay.send"),
+                    t("promptInput.send.ariaLabel"),
+                    !can_send(s),
+                    screen::action_tx(&scope, super::actions::send_button),
+                )
+            } else {
+                layout::button_tx(
+                    t("promptInput.overlay.send"),
+                    !can_send(s),
+                    screen::action_tx(&scope, super::actions::send_button),
+                )
+            }
+            .key("send")
+            .help(crate::settings::with_shortcut_label(
+                s,
+                t(
+                    if !s.composer.shell_mode
+                        && s.phase.running()
+                        && crate::settings::queues_follow_ups(s)
+                    {
+                        "promptInput.send.queueAriaLabel"
+                    } else {
+                        "promptInput.send.ariaLabel"
+                    },
+                ),
+                super::shortcuts::Action::Send.id(),
+            )),
         );
     if stop {
         actions = actions.child(
@@ -153,7 +176,7 @@ pub fn view(
         }
         body = body.child(chips);
     }
-    if s.composer.picker.command_unavailable(&s.draft.text) {
+    if !s.composer.shell_mode && s.composer.picker.command_unavailable(&s.draft.text) {
         actions = actions.child(
             layout::button(
                 t("rune.refresh"),
@@ -212,17 +235,34 @@ fn editor(
     bounds: rune_theme_codenomad::interruption::SessionLayout,
     caret_pins: crate::chat::ComposerCaretPins,
 ) -> El {
+    #[cfg(target_arch = "wasm32")]
+    super::web_bang::install();
     let locked = s.composer.editing_locked();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
     let input_key = format!("input-{}", s.web_composer_input_epoch);
-    let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
+    s.composer.draft_was_empty.set(s.draft.text.is_empty());
+    let shell_description = s
+        .composer
+        .shell_mode
+        .then(|| t("promptInput.overlay.shellModeActive"));
+    let shell_status =
+        shell_description.filter(|_| !bounds.scrolls_stack() && s.draft.text.is_empty());
+    let placeholder = t(if s.composer.shell_mode {
+        "promptInput.placeholder.shell"
+    } else {
+        "promptInput.placeholder.default"
+    });
+    let mut input = layout::composer_input(&s.draft, placeholder)
         .key(input_key)
         .label(t("rune.prompt"));
+    if let Some(status) = shell_description {
+        input = input.description_static(status);
+    }
     let scroll = s.tool_diff_preferences.composer_scroll.clone();
     if locked {
-        return layout::composer_field(
+        return layout::composer_field_with_status(
             input.disabled(true),
             bounds,
             false,
@@ -231,6 +271,8 @@ fn editor(
             },
             None,
             None,
+            s.composer.shell_mode,
+            shell_status,
         )
         .key("composer");
     }
@@ -244,6 +286,8 @@ fn editor(
             s.current_scope(&key_scope) && key(s, event, tx)
         })
         .on_input_paste(move |s: &mut State, content, tx| {
+            #[cfg(target_arch = "wasm32")]
+            super::web_bang::clear();
             if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
             }
@@ -256,7 +300,10 @@ fn editor(
             {
                 return true;
             }
-            super::long_paste::paste(s, content.text(), tx)
+            if super::long_paste::paste(s, content.text(), tx) {
+                return true;
+            }
+            false
         });
     #[cfg(not(target_arch = "wasm32"))]
     let input = {
@@ -278,7 +325,7 @@ fn editor(
                 }
             })
     };
-    layout::composer_field(
+    layout::composer_field_with_status(
         input,
         bounds,
         s.draft.focused,
@@ -287,6 +334,8 @@ fn editor(
         },
         caret_pins.inner,
         caret_pins.stack,
+        s.composer.shell_mode,
+        shell_status,
     )
     .key("composer")
     .drawn_rect_into(&s.tool_diff_preferences.composer_bounds)
@@ -301,7 +350,7 @@ fn editor(
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {
     let picker = &s.composer.picker;
-    if !picker.open() {
+    if s.composer.shell_mode || !picker.open() {
         return;
     }
     let scope = s.input_scope.clone();
@@ -349,12 +398,44 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     .build(&kit(layout::dark()), layer);
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub(super) fn enter_shell_from_edit(s: &mut State, tx: &mut Tx, web_bang: bool) -> bool {
+    if web_bang
+        && !s.composer.shell_mode
+        && !s.composer.editing_locked()
+        && !s.composer.device.busy()
+        && !s.draft.is_composing()
+        && s.composer.draft_was_empty.get()
+        && s.draft.text == "!"
+        && s.draft.range() == (1, 1)
+    {
+        s.draft.clear();
+        s.composer.shell_mode = true;
+        s.composer.mark_edited();
+        s.composer.picker.reset();
+        s.composer.draft_was_empty.set(true);
+        layout::announce_polite(tx, t("promptInput.overlay.shellModeActive"));
+        crate::workspace::draft_changed(s, tx);
+        return true;
+    }
+    false
+}
+
 pub(super) fn changed(s: &mut State, tx: &mut Tx) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(read) = &s.composer.device.clipboard {
         read.set(false);
     }
-    s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
+    #[cfg(target_arch = "wasm32")]
+    if enter_shell_from_edit(s, tx, super::web_bang::take()) {
+        return;
+    }
+    s.composer.draft_was_empty.set(s.draft.text.is_empty());
+    if s.composer.shell_mode {
+        s.composer.picker.reset();
+    } else {
+        s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
+    }
     crate::workspace::draft_changed(s, tx);
 }
 
@@ -393,21 +474,50 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
+    if s.draft.is_composing() {
+        return false;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
         return true;
     }
-    if event.key == Key::Enter && s.composer.device.busy() {
+    if s.composer.device.busy()
+        && (event.key == Key::Enter
+            || Action::Send.matches(s, event, tx)
+            || Action::Alternate.matches(s, event, tx)
+            || Action::Newline.matches(s, event, tx))
+    {
         return true;
     }
-    if event.key == Key::Enter
-        && tx.key_repeat()
+    if tx.key_repeat()
+        && !s.composer.shell_mode
+        && event.key == Key::Enter
         && (s.composer.picker.open() || s.composer.picker.selected_command(&s.draft.text).is_some())
     {
         return true;
     }
-    if matches!(event.key, Key::Backspace | Key::Delete)
+    if !s.composer.shell_mode
+        && !s.composer.editing_locked()
+        && !s.composer.device.busy()
+        && s.draft.text.is_empty()
+        && s.draft.range() == (0, 0)
+        && !event.mods.ctrl
+        && !event.mods.cmd
+        && !event.mods.alt
+        && !event.mods.logo
+        && matches!(&event.key, Key::Text(text) if text == "!")
+    {
+        #[cfg(target_arch = "wasm32")]
+        super::web_bang::clear();
+        s.composer.shell_mode = true;
+        s.composer.mark_edited();
+        s.composer.picker.reset();
+        layout::announce_polite(tx, t("promptInput.overlay.shellModeActive"));
+        return true;
+    }
+    if !s.composer.shell_mode
+        && matches!(event.key, Key::Backspace | Key::Delete)
         && s.composer
             .draft
             .delete_mention(&mut s.draft, event.key == Key::Backspace)
@@ -431,14 +541,36 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             }
             return true;
         }
+        if Action::Send.matches(s, event, tx)
+            || Action::Alternate.matches(s, event, tx)
+            || Action::Newline.matches(s, event, tx)
+        {
+            return true;
+        }
+    }
+    if s.composer.shell_mode {
+        if Action::ExitShell.matches(s, event, tx) {
+            if !tx.key_repeat() && !s.composer.editing_locked() {
+                s.composer.exit_shell_mode();
+                s.composer.picker.reset();
+            }
+            return true;
+        }
+        if event.key == Key::Backspace && s.draft.text.is_empty() && s.draft.range() == (0, 0) {
+            s.composer.exit_shell_mode();
+            s.composer.picker.reset();
+            return true;
+        }
     }
     if event.mods == rune::Mods::default()
         && event.key == Key::Escape
         && s.composer.recall.is_some()
         && !s.composer.device.busy()
     {
-        super::recall::restore(s);
-        s.composer.picker.reset();
+        if !tx.key_repeat() {
+            super::recall::restore(s);
+            s.composer.picker.reset();
+        }
         return true;
     }
     for (action, older) in [(Action::PreviousPrompt, true), (Action::NextPrompt, false)] {
@@ -447,15 +579,46 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
     }
     if Action::Clear.matches(s, event, tx) {
-        super::menu::clear(s, tx);
+        if !tx.key_repeat() {
+            super::menu::clear(s, tx);
+        }
         true
+    } else if s.composer.shell_mode {
+        if Action::Newline.matches(s, event, tx) {
+            if !s.composer.editing_locked() {
+                s.draft.insert("\n");
+                changed(s, tx);
+            }
+            true
+        } else if Action::Send.matches(s, event, tx) {
+            if !tx.key_repeat() {
+                send(s, tx, false);
+            }
+            true
+        } else if Action::Alternate.matches(s, event, tx) || event.key == Key::Enter {
+            true
+        } else {
+            super::menu::jump_key(s, event, tx)
+        }
     } else if Action::Alternate.matches(s, event, tx) {
-        send(s, tx, true);
+        if !tx.key_repeat() {
+            send(s, tx, true);
+        }
         true
-    } else if event.key == Key::Enter && event.mods == rune::Mods::default() {
-        send(s, tx, false);
+    } else if Action::Newline.matches(s, event, tx) {
+        if !s.composer.editing_locked() {
+            s.draft.insert("\n");
+            changed(s, tx);
+        }
         true
-    } else {
+    } else if Action::Send.matches(s, event, tx) {
+        if !tx.key_repeat() {
+            send(s, tx, false);
+        }
+        true
+    } else if !s.composer.picker.open() {
         super::menu::jump_key(s, event, tx)
+    } else {
+        false
     }
 }

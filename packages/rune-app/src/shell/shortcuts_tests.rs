@@ -164,6 +164,7 @@ fn close_instance_respects_file_edit_and_pending_form_guards() {
         fields: vec![json!({"key":"name","type":"string"})],
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
     });
     agent.drafts.insert(
         ("form-1".into(), "name".into()),
@@ -597,7 +598,7 @@ fn browse_folder_wins_on_home_outside_inputs_and_defers_to_new_instance_otherwis
     s.workspace = Some(ui);
     let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
-    s.screen = Screen::Launcher(l);
+    s.screen = Screen::Launcher(Box::new(l));
     let mut rt = project_runtime(s);
 
     // Home view without focused input: Ctrl+N triggers browse-folder, not new-instance.

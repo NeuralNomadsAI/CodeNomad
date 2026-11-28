@@ -24,6 +24,14 @@ struct Claim {
     cleaning: bool,
     done: Option<bool>,
 }
+impl Claim {
+    fn settled(&self) -> bool {
+        self.revoked
+            && !self.cleaning
+            && self.done == Some(true)
+            && (!self.alive || !self.sent || self.project.is_some())
+    }
+}
 #[derive(Clone)]
 pub struct Cleanup {
     pub backend: Backend,
@@ -49,14 +57,39 @@ impl Openings {
             .lock()
             .map_err(|_| "opening owner unavailable".into())
     }
+    fn same_server(claim: &Backend, current: &Backend) -> bool {
+        claim.base == current.base
+            && match (
+                claim.client.server_identity(),
+                current.client.server_identity(),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            }
+    }
     pub fn begin(&self, backend: Backend, intent: &str) -> Result<Pending> {
         let request = codenomad_client::http::client_id()?;
+        let mut retry_failed = false;
         let generation = {
             let mut state = self.state()?;
-            state.entries.retain(|c| {
-                c.alive || c.cleaning || c.done != Some(true) || c.sent && c.project.is_none()
-            });
+            state.entries.retain(|c| c.alive || !c.settled());
+            if !state.closed {
+                for claim in &mut state.entries {
+                    if claim.revoked && !claim.cleaning && claim.done == Some(false) {
+                        if Self::same_server(&claim.backend, &backend) {
+                            claim.backend.client = backend.client.clone();
+                            claim.backend.client_id.clone_from(&backend.client_id);
+                        }
+                        claim.done = None;
+                        retry_failed = true;
+                    }
+                }
+            }
             if state.closed || state.entries.len() >= 16 {
+                drop(state);
+                if retry_failed {
+                    self.schedule();
+                }
                 return Err("opening admission unavailable".into());
             }
             for claim in &mut state.entries {
@@ -131,9 +164,15 @@ impl Openings {
     fn revoke(&self, request: &str) {
         if let Ok(mut state) = self.state() {
             if let Some(claim) = state.entries.iter_mut().find(|c| c.request == request) {
+                let was_alive = claim.alive;
                 claim.revoked = true;
                 claim.alive = false;
+                // An early cancel ACK while Pending was still live may have preceded a failed send.
+                if was_alive && claim.sent && claim.project.is_none() && claim.done == Some(true) {
+                    claim.done = None;
+                }
             }
+            state.entries.retain(|c| c.alive || !c.settled());
         }
         self.schedule();
     }
@@ -171,7 +210,7 @@ impl Openings {
             .iter_mut()
             .filter_map(|claim| {
                 claim.revoked = true;
-                if claim.done == Some(true) && (!claim.sent || claim.project.is_some()) {
+                if claim.settled() {
                     return None;
                 }
                 Some(Cleanup {
@@ -200,7 +239,7 @@ impl Openings {
             .map(|s| {
                 s.entries
                     .iter()
-                    .filter(|c| c.done != Some(true) || c.sent && c.project.is_none())
+                    .filter(|c| c.done != Some(true) || (c.alive && c.sent && c.project.is_none()))
                     .map(|c| Cleanup {
                         backend: c.backend.clone(),
                         request: c.request.clone(),
@@ -211,16 +250,19 @@ impl Openings {
             .unwrap_or_default()
     }
     pub fn settled(&self) -> bool {
-        self.state().is_ok_and(|s| {
-            s.entries
-                .iter()
-                .all(|c| !c.revoked || c.done == Some(true) && (!c.sent || c.project.is_some()))
-        })
+        self.state()
+            .is_ok_and(|s| s.entries.iter().all(|c| !c.revoked || c.settled()))
     }
-    pub fn retry_cleanup(&self) {
+    pub fn retry_cleanup(&self, current: Option<&Backend>) {
         if let Ok(mut state) = self.state() {
             for claim in &mut state.entries {
-                if claim.revoked && claim.done == Some(false) {
+                if claim.revoked && !claim.cleaning && claim.done == Some(false) {
+                    if let Some(current) = current
+                        && Self::same_server(&claim.backend, current)
+                    {
+                        claim.backend.client = current.client.clone();
+                        claim.backend.client_id.clone_from(&current.client_id);
+                    }
                     claim.done = None;
                 }
             }
@@ -275,6 +317,7 @@ impl Openings {
                             retry = true;
                         }
                     }
+                    state.entries.retain(|c| c.alive || !c.settled());
                 }
                 if retry {
                     owner.schedule();
@@ -414,5 +457,257 @@ mod tests {
         assert!(owner.departure().is_empty());
         // Suppress actual IO when this pure admission proof drops its guard.
         owner.state().unwrap().cleanup_allowed = false;
+    }
+
+    fn opening_fixture_server(
+        cancel_status: std::sync::Arc<std::sync::atomic::AtomicU16>,
+        cancel_hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{Read, Write};
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = format!("http://{}/", listener.local_addr().unwrap());
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !stop_flag.load(SeqCst) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut socket, _)) => {
+                        let _ = socket.set_nonblocking(false);
+                        let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                        let _ = socket.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+                        let mut req = Vec::new();
+                        let mut byte = [0u8; 1];
+                        while !req.ends_with(b"\r\n\r\n") && req.len() < 16384 {
+                            if socket.read(&mut byte).unwrap_or(0) == 0 {
+                                break;
+                            }
+                            req.push(byte[0]);
+                        }
+                        let text = String::from_utf8_lossy(&req);
+                        let length = text
+                            .lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                            .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if length > 0 && length <= 65536 {
+                            let mut body = vec![0u8; length];
+                            let _ = socket.read_exact(&mut body);
+                        }
+                        let is_cancel = text
+                            .lines()
+                            .next()
+                            .is_some_and(|line| line.contains("/api/workspaces/creation/cancel"));
+                        let (status, body) = if is_cancel {
+                            cancel_hits.fetch_add(1, SeqCst);
+                            let expected = cancel_status.load(SeqCst);
+                            let has_fresh_cookie = text.lines().any(|line| {
+                                line.split_once(':').is_some_and(|(k, v)| {
+                                    k.eq_ignore_ascii_case("cookie")
+                                        && v.contains("cn_session=fresh")
+                                })
+                            });
+                            if expected == 204 || (expected == 401 && has_fresh_cookie) {
+                                ("204 No Content", "")
+                            } else if expected == 401 {
+                                ("401 Unauthorized", r#"{"error":"unauthorized"}"#)
+                            } else {
+                                ("503 Service Unavailable", r#"{"error":"unavailable"}"#)
+                            }
+                        } else {
+                            ("500 Internal Server Error", r#"{"error":"boom"}"#)
+                        };
+                        let resp = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes());
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (addr, stop, handle)
+    }
+
+    fn backend_at(base: String) -> Backend {
+        Backend {
+            client: codenomad_client::http::Http::new().unwrap(),
+            base,
+            workspace: String::new(),
+            session: String::new(),
+            client_id: "fixture".into(),
+            session_directory: None,
+            fresh_mode: false,
+        }
+    }
+
+    #[test]
+    fn failed_openings_release_admission_slots_once_cleanup_settles_after_drop() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
+        };
+
+        let cancel_status = Arc::new(AtomicU16::new(204));
+        let cancel_hits = Arc::new(AtomicUsize::new(0));
+        let (base, stop, handle) = opening_fixture_server(cancel_status, cancel_hits.clone());
+        let owner = Openings::default();
+        let backend = backend_at(base);
+
+        for attempt in 0..18 {
+            let pending = owner
+                .begin(backend.clone(), "tab-0")
+                .unwrap_or_else(|e| panic!("attempt {attempt} must obtain a slot: {e}"));
+            assert!(crate::platform::block_on(pending.create("/fixture")).is_err());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !owner.settled() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "attempt {attempt} cleanup did not settle"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        assert!(owner.settled());
+        assert!(owner.pending().is_empty());
+        assert_eq!(cancel_hits.load(SeqCst), 18);
+        assert!(owner.departure().is_empty());
+
+        stop.store(true, SeqCst);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn failed_cleanups_retry_on_reconnect_and_begin_to_reclaim_slots() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
+        };
+
+        let cancel_status = Arc::new(AtomicU16::new(503));
+        let cancel_hits = Arc::new(AtomicUsize::new(0));
+        let (base, stop, handle) =
+            opening_fixture_server(cancel_status.clone(), cancel_hits.clone());
+        let owner = Openings::default();
+        let backend = backend_at(base);
+
+        for _ in 0..16 {
+            let pending = owner.begin(backend.clone(), "tab-0").unwrap();
+            assert!(crate::platform::block_on(pending.create("/fixture")).is_err());
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner
+            .state()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|c| c.cleaning || c.done != Some(false))
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!owner.settled());
+
+        // 1. Server recovers: beginning a new opening retries failed cleanups, then slots free up.
+        cancel_status.store(204, SeqCst);
+        assert!(owner.begin(backend.clone(), "tab-0").is_err());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !owner.settled() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let recovered = owner.begin(backend.clone(), "tab-0").unwrap();
+        owner.state().unwrap().entries.clear();
+        drop(recovered);
+
+        // 2. Reconnect path (`retry_cleanup`) refreshes rotated session cookies and frees the slot.
+        cancel_status.store(401, SeqCst);
+        let stale = Backend {
+            client: codenomad_client::http::Http::with_session_cookie(
+                &backend.base,
+                "cn_session",
+                "stale",
+            )
+            .unwrap(),
+            ..backend.clone()
+        };
+        let pending = owner.begin(stale, "tab-1").unwrap();
+        assert!(crate::platform::block_on(pending.create("/fixture")).is_err());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner
+            .state()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|c| c.cleaning || c.done != Some(false))
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!owner.settled());
+        let renewed = Backend {
+            client: codenomad_client::http::Http::with_session_cookie(
+                &backend.base,
+                "cn_session",
+                "fresh",
+            )
+            .unwrap(),
+            ..backend.clone()
+        };
+        owner.retry_cleanup(Some(&renewed));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !owner.settled() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(owner.pending().is_empty());
+
+        stop.store(true, SeqCst);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn early_cancel_before_failed_send_rechecks_cleanup_after_pending_drops() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU16, AtomicUsize, Ordering::SeqCst},
+        };
+
+        let cancel_status = Arc::new(AtomicU16::new(204));
+        let cancel_hits = Arc::new(AtomicUsize::new(0));
+        let (base, stop, handle) = opening_fixture_server(cancel_status, cancel_hits.clone());
+        let owner = Openings::default();
+        let pending = owner.begin(backend_at(base), "tab-0").unwrap();
+        {
+            let mut state = owner.state().unwrap();
+            let claim = &mut state.entries[0];
+            claim.sent = true;
+            claim.revoked = true;
+            claim.done = Some(true);
+        }
+        assert!(!owner.settled());
+        drop(pending);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !owner.settled() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(cancel_hits.load(SeqCst), 1);
+        assert!(owner.pending().is_empty());
+
+        stop.store(true, SeqCst);
+        handle.join().unwrap();
     }
 }

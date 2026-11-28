@@ -180,6 +180,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "この暦には将来の予定がありません。",
   "missions.scheduling.error.capability": "スケジュールを利用できません。下書きを保持するか、起動条件を削除してください。",
   "missions.scheduling.error.unsupported": "この起動条件はスケジュールできません。",
+  "missions.scheduling.error.coordinatorProfile": "既存の会話は、コーディネーターのエージェント、モデル、思考を使用していません。一致させるか、新しいセッションを使用してください。",
   "missions.scheduleList.activationRefused.layer.project": "プロジェクト設定",
   "missions.scheduleList.activationRefused.layer.global": "グローバル設定",
   "missions.scheduleList.activationRefused.layer.inherited": "継承された設定",

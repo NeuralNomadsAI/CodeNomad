@@ -11,7 +11,10 @@ use rune_theme_codenomad::{
 };
 use std::borrow::Cow;
 
+mod local_images;
 mod mermaid;
+
+pub(super) use local_images::{Conversation, ToolImageShadows, tool_image_paths};
 
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
@@ -39,16 +42,66 @@ pub(super) fn search_limit_for(
     TOOL_LIMIT + if revealed { STEP } else { 0 }
 }
 
+pub(super) fn clipped_tool_pane(
+    s: &State,
+    clip_key: &str,
+    large: bool,
+    build: impl FnOnce() -> El,
+) -> El {
+    let clip = s.transcript_display.tool_clock.clip_rect(clip_key);
+    let nested = s.transcript_display.tool_clock.extend_clip(&clip);
+    let content = s
+        .transcript_display
+        .tool_clock
+        .with_active_clip(&nested, build);
+    let watch_clip = clip.clone();
+    let prev = std::cell::Cell::new(clip.get());
+    markdown::tool_pane(content, large)
+        .drawn_rect_into(&clip)
+        .on_drawn_layout_tx(move |_: &mut State, _, tx| {
+            let current = watch_clip.get();
+            if current != prev.replace(current) {
+                tx.wake_after(std::time::Duration::ZERO);
+            }
+            tx.live_only();
+        })
+}
+
 pub(super) fn bounded_prose_matches(
     s: &State,
     key: &str,
     source: &str,
     limit: usize,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
     let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
-    markdown::prose_has_match(&shown, query)
+    let truncated = shown.len() < source.len();
+    let local = local_images::prepare(s, key, &shown, truncated, conversation);
+    let fallback = local.fallback_label();
+    let image_search = local.image_search_text();
+    markdown::prose_has_match_with_images(&shown, truncated, query, &fallback, &image_search)
+}
+
+pub(super) fn bounded_prose_highlights_for(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    base_limit: usize,
+    conversation: Conversation<'_>,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
+    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
+    let truncated = shown.len() < source.len();
+    let local = local_images::prepare(s, key, &shown, truncated, conversation);
+    let fallback = local.fallback_label();
+    let image_search = local.image_search_text();
+    markdown::prose_has_highlight_with_images(&shown, truncated, query, &fallback, &image_search)
 }
 
 pub(super) fn skill_prose_matches(
@@ -56,11 +109,12 @@ pub(super) fn skill_prose_matches(
     card_key: &str,
     key: &str,
     source: &str,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let revealed = query.active || s.transcript_display.search_revealed(card_key);
     let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    bounded_prose_matches(s, key, source, limit, query)
+    bounded_prose_matches(s, key, source, limit, conversation, query)
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
@@ -89,7 +143,16 @@ pub(super) fn prose_claimed(
         || s.transcript_display.search_revealed(&key)
         || s.transcript_display.search_revealed(message);
     let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    prose_for(s, message, key, source, streaming, limit, query)
+    prose_for(
+        s,
+        message,
+        key,
+        source,
+        streaming,
+        limit,
+        Conversation::Root,
+        query,
+    )
 }
 
 pub(super) fn prose_search(
@@ -98,9 +161,20 @@ pub(super) fn prose_search(
     card_key: &str,
     key: String,
     source: &str,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
-    prose_pane_search(s, message, card_key, key, source, false, PROSE_LIMIT, query)
+    prose_pane_search(
+        s,
+        message,
+        card_key,
+        key,
+        source,
+        false,
+        PROSE_LIMIT,
+        conversation,
+        query,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -112,12 +186,22 @@ pub(super) fn prose_pane_search(
     source: &str,
     streaming: bool,
     base_limit: usize,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let revealed =
         query.is_some_and(|q| q.active) || s.transcript_display.search_revealed(card_key);
     let limit = base_limit + if revealed { STEP } else { 0 };
-    prose_for(s, message, key, source, streaming, limit, query)
+    prose_for(
+        s,
+        message,
+        key,
+        source,
+        streaming,
+        limit,
+        conversation,
+        query,
+    )
 }
 
 pub(super) fn bounded_prose_matches_for(
@@ -126,18 +210,29 @@ pub(super) fn bounded_prose_matches_for(
     key: &str,
     source: &str,
     base_limit: usize,
+    conversation: Conversation<'_>,
     query: rune_theme_codenomad::timeline::search::Query<'_>,
 ) -> bool {
     let revealed = query.active || s.transcript_display.search_revealed(card_key);
     let limit = base_limit + if revealed { STEP } else { 0 };
-    bounded_prose_matches(s, key, source, limit, query)
+    bounded_prose_matches(s, key, source, limit, conversation, query)
 }
 
 #[cfg(test)]
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
-    prose_for(s, "", key, source, streaming, limit, None)
+    prose_for(
+        s,
+        "",
+        key,
+        source,
+        streaming,
+        limit,
+        Conversation::Root,
+        None,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prose_for(
     s: &State,
     message: &str,
@@ -145,6 +240,7 @@ fn prose_for(
     source: &str,
     streaming: bool,
     limit: usize,
+    conversation: Conversation<'_>,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let group = key.clone();
@@ -163,6 +259,8 @@ fn prose_for(
             .map(|hit| hit.text_query(None))
     });
     window(s, key, &[source], limit, |shown, units| {
+        let truncated = shown.len() < source.len();
+        let mut local = local_images::prepare(s, &group, shown, truncated, conversation);
         let claim_active =
             query.is_some_and(|q| q.active && q.claimed.is_none_or(|claimed| !claimed.get()));
         let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
@@ -174,7 +272,13 @@ fn prose_for(
             && let Some(q) = query
             && let Some(claimed) = q.claimed
             && let Some(pq) = prose_query
-            && markdown::prose_has_match(shown, pq)
+            && markdown::prose_has_highlight_with_images(
+                shown,
+                truncated,
+                pq,
+                &local.fallback_label(),
+                &local.image_search_text(),
+            )
         {
             claimed.set(true);
         }
@@ -192,6 +296,7 @@ fn prose_for(
         let search_overrides = s
             .transcript_display
             .diagram_search_overrides(search_id, &group);
+        let local_stamp = (local.sentinel_ready, std::mem::take(&mut local.stamp));
         let stamp = (
             version,
             steps,
@@ -203,6 +308,7 @@ fn prose_for(
             prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
             &search_overrides,
+            &local_stamp,
             (!streaming).then_some(shown),
         );
         let build = || {
@@ -211,10 +317,13 @@ fn prose_for(
             let search_terms = query
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
-            let truncated = shown.len() < source.len();
             let diff_group = group.clone();
             let diff_scope = scope.clone();
-            markdown::prose(
+            let image_scope = scope.clone();
+            let image_search_terms = prose_query.map(|q| (q.terms.to_vec(), q.ranked));
+            let (fallback_fn, image_search_fn, image_lookup, image_frame) =
+                local.into_render(image_scope, image_search_terms);
+            markdown::prose_with_images(
                 shown,
                 streaming,
                 truncated,
@@ -321,6 +430,10 @@ fn prose_for(
                     .key(format!("{diff_group}-diff-{}-copy", frame.index));
                     transcript::code_block_frame(Some(t("toolCall.diff.label")), vec![copy], card)
                 },
+                &fallback_fn,
+                &image_search_fn,
+                image_lookup,
+                image_frame,
             )
         };
         if units > TOOL_LIMIT {

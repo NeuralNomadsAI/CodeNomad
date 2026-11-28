@@ -1,12 +1,164 @@
 use crate::{Space, TextRole, kit, layout::dark, tokens};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use rune::{El, ScrollSpec, rich};
+pub use rune_kit::markdown::ImageFrame;
+use rune_kit::markdown::{Block, parse};
 use rune_kit::{CodeFrame, DiffFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiftedImage {
+    pub src: String,
+    pub alt: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageSearch {
+    /// Keep the image's alt text in prose search (non-lifted or unresolved images).
+    Inline,
+    /// Rendered image pixels: omit highlight spans while keeping its accessible label discoverable
+    /// for visibility checks.
+    Hidden { label: String },
+    /// Match against a custom fallback label rendered by `image_frame`.
+    Fallback { key: String, label: String },
+}
+
 pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) -> bool {
     let source = literal_breaks(source);
-    !prose_ranges(&source, query, 1).is_empty()
+    let (ranges, active_image, unhighlighted_image) =
+        prose_ranges_with_images(&source, query, 1, &|_| ImageSearch::Inline);
+    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
+}
+
+pub fn prose_has_match_with_images(
+    source: &str,
+    truncated: bool,
+    query: crate::timeline::search::Query<'_>,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> bool {
+    let source = literal_breaks_with_images(source, truncated, fallback_label);
+    let (ranges, active_image, unhighlighted_image) =
+        prose_ranges_with_images(&source, query, 1, image_search_text);
+    !ranges.is_empty() || active_image.is_some() || unhighlighted_image
+}
+
+pub fn prose_has_highlight_with_images(
+    source: &str,
+    truncated: bool,
+    query: crate::timeline::search::Query<'_>,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> bool {
+    let source = literal_breaks_with_images(source, truncated, fallback_label);
+    let (ranges, active_image, _) = prose_ranges_with_images(&source, query, 1, image_search_text);
+    !ranges.is_empty() || active_image.is_some()
+}
+
+/// Returns every lifted `Block::Image` occurrence and its normalized plain alt text in document
+/// order. Non-liftable and nested images are flattened before parsing so discovery, search and
+/// rendering share the same block order and fallback labels.
+pub fn prose_lifted_images(source: &str, truncated: bool) -> Vec<LiftedImage> {
+    fn collect(
+        blocks: Vec<Block>,
+        alts: &mut std::collections::HashMap<String, std::collections::VecDeque<String>>,
+        found: &mut Vec<LiftedImage>,
+    ) {
+        for block in blocks {
+            match block {
+                Block::Image { src, alt, .. } => {
+                    let normalized_alt = alts
+                        .get_mut(&src)
+                        .and_then(std::collections::VecDeque::pop_front)
+                        .unwrap_or(alt);
+                    found.push(LiftedImage {
+                        src,
+                        alt: normalized_alt,
+                    });
+                }
+                Block::Quote(items) => collect(items, alts, found),
+                Block::List { items, .. } => {
+                    for item in items {
+                        collect(item, alts, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !source.contains("![") {
+        return Vec::new();
+    }
+    let normalized = literal_breaks_with_images(source, truncated, &|_, liftable| {
+        (!liftable).then(String::new)
+    });
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let mut alts: std::collections::HashMap<String, std::collections::VecDeque<String>> =
+        std::collections::HashMap::new();
+    let mut depth = 0usize;
+    let mut current_src = String::new();
+    let mut current_alt = String::new();
+    for event in Parser::new_ext(&normalized, options) {
+        if depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        alts.entry(std::mem::take(&mut current_src))
+                            .or_default()
+                            .push_back(std::mem::take(&mut current_alt));
+                    }
+                }
+                Event::Text(text)
+                | Event::Code(text)
+                | Event::InlineHtml(text)
+                | Event::Html(text) => current_alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => current_alt.push(' '),
+                _ => {}
+            }
+            continue;
+        }
+        if let Event::Start(Tag::Image { dest_url, .. }) = event
+            && !dest_url.is_empty()
+        {
+            depth = 1;
+            current_src.clear();
+            current_src.push_str(&dest_url);
+            current_alt.clear();
+        }
+    }
+    let mut found = Vec::new();
+    collect(parse(&normalized), &mut alts, &mut found);
+    found
+}
+
+pub fn prose_image(image: El) -> El {
+    image.radius(0.0).cursor(rune::Cursor::Default)
+}
+
+pub fn prose_image_placeholder([width, height]: [u32; 2], max_h: f32, label: &str) -> El {
+    let ratio = if width > 0 && height > 0 {
+        width as f32 / height as f32
+    } else {
+        1.0
+    };
+    rune::el()
+        .aspect_fit(ratio)
+        .max_w(width.max(1) as f32)
+        .max_h(if max_h > 0.0 { max_h } else { 512.0 })
+        .radius(0.0)
+        .role("img")
+        .label(label)
+}
+
+pub fn prose_fallback_text(label: &str, query: Option<crate::timeline::search::Query<'_>>) -> El {
+    crate::timeline::search::ink(rune::text(label.to_owned()).selectable(true), label, query)
+}
+
+pub fn blank_pixel(wake: rune::Waker) -> rune::Image {
+    rune::ImageCache::new(wake).rgba(1, 1, [0_u8, 0, 0, 0])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -23,75 +175,233 @@ pub fn prose<S: 'static>(
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
     diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
 ) -> El {
-    let dark = dark();
-    let kit = &*kit(dark);
+    prose_with_images(
+        source,
+        streaming,
+        truncated,
+        highlight,
+        query,
+        link,
+        secondary,
+        help,
+        wrapped,
+        frame,
+        diff_frame,
+        &|_, _| None,
+        &|_| ImageSearch::Inline,
+        |_| None,
+        |el, _, _| prose_image(el),
+    )
+}
+
+#[inline(never)]
+fn prose_style(kit: &rune_kit::Kit, dark: bool, highlight: bool) -> Box<MarkdownStyle> {
     let t = tokens(dark);
-    let style = MarkdownStyle::from_kit(kit)
-        .code_block(t.color("surface-inset"), rune::Color::TRANSPARENT)
-        .code_block_radius(0.0)
-        .code_block_text(t.color("text-primary"))
-        .plain_code_text(t.color("text-primary"))
-        .inline_code_bg(t.color("surface-muted"))
-        .inline_code_text(t.color("text-primary"))
-        .quote(t.color("border-base"), 3.0, 12.0, t.color("text-secondary"))
-        .rule(t.color("border-base"))
-        .link(t.color("accent-primary"))
-        .link_hover(t.color("accent-hover"))
-        .link_underline(rune::Color::TRANSPARENT)
-        .syntax_highlight(highlight)
-        .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
-    let source = literal_breaks_with(source, truncated).into_owned();
-    let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
-        Some(q) => prose_ranges(&source, q, 512)
-            .into_iter()
-            .enumerate()
-            .map(|(i, spans)| {
-                let hl =
-                    if q.active && i == 0 && q.claimed.is_none_or(|claimed| !claimed.replace(true))
-                    {
-                        rune_kit::markdown::Highlight::current()
-                            .bg(t.color("transcript-search-active"))
-                            .fg(t.color("transcript-search-active-ink"))
-                            .radius(0.0)
-                            .key("history-search-match")
-                    } else {
-                        rune_kit::markdown::Highlight::new()
-                            .bg(t.color("transcript-search-mark"))
-                            .radius(0.0)
-                    };
-                (spans, hl)
-            })
-            .collect(),
-        None => Vec::new(),
+    let style = Box::new(
+        MarkdownStyle::from_kit(kit)
+            .code_block(t.color("surface-inset"), rune::Color::TRANSPARENT)
+            .code_block_radius(0.0)
+            .code_block_text(t.color("text-primary"))
+            .plain_code_text(t.color("text-primary")),
+    );
+    let style = prose_style_inline(style, dark);
+    prose_style_misc(style, dark, highlight)
+}
+
+#[inline(never)]
+fn prose_style_inline(style: Box<MarkdownStyle>, dark: bool) -> Box<MarkdownStyle> {
+    let t = tokens(dark);
+    Box::new(
+        (*style)
+            .inline_code_bg(t.color("surface-muted"))
+            .inline_code_text(t.color("text-primary"))
+            .quote(t.color("border-base"), 3.0, 12.0, t.color("text-secondary"))
+            .rule(t.color("border-base")),
+    )
+}
+
+#[inline(never)]
+fn prose_style_misc(style: Box<MarkdownStyle>, dark: bool, highlight: bool) -> Box<MarkdownStyle> {
+    let t = tokens(dark);
+    Box::new(
+        (*style)
+            .link(t.color("accent-primary"))
+            .link_hover(t.color("accent-hover"))
+            .link_underline(rune::Color::TRANSPARENT)
+            .syntax_highlight(highlight)
+            .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS),
+    )
+}
+
+type ProseHighlights = (
+    Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
+    Option<String>,
+);
+
+#[inline(never)]
+fn prose_highlights(
+    source: &str,
+    dark: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> ProseHighlights {
+    let Some(q) = query else {
+        return (Vec::new(), None);
     };
-    Markdown::new(source)
-        .style(style)
-        .highlights(matches)
-        .selectable(true)
-        .tasks_read_only()
-        .scroll_wide(true)
-        .streaming(streaming)
-        .on_link_tx(link)
-        .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
-        .link_help(help)
+    let t = tokens(dark);
+    let (ranges, first_image, _) = prose_ranges_with_images(source, q, 512, image_search_text);
+    let active_image = if q.active
+        && first_image.is_some()
+        && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+    {
+        first_image
+    } else {
+        None
+    };
+    let matches = ranges
+        .into_iter()
+        .enumerate()
+        .map(|(i, spans)| {
+            let hl = if active_image.is_none()
+                && q.active
+                && i == 0
+                && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+            {
+                rune_kit::markdown::Highlight::current()
+                    .bg(t.color("transcript-search-active"))
+                    .fg(t.color("transcript-search-active-ink"))
+                    .radius(0.0)
+                    .key("history-search-match")
+            } else {
+                rune_kit::markdown::Highlight::new()
+                    .bg(t.color("transcript-search-mark"))
+                    .radius(0.0)
+            };
+            (spans, hl)
+        })
+        .collect();
+    (matches, active_image)
+}
+
+#[inline(never)]
+fn prose_markdown_base(
+    source: String,
+    style: Box<MarkdownStyle>,
+    matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)>,
+    streaming: bool,
+) -> Box<Markdown> {
+    let md = Box::new(Markdown::new(source).style(*style).highlights(matches));
+    prose_markdown_flags(md, streaming)
+}
+
+#[inline(never)]
+fn prose_markdown_flags(md: Box<Markdown>, streaming: bool) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .selectable(true)
+            .tasks_read_only()
+            .scroll_wide(true)
+            .streaming(streaming),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_links<S: 'static>(
+    md: Box<Markdown>,
+    link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
+    help: impl Fn(&str) -> Option<String> + 'static,
+) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .on_link_tx(link)
+            .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
+            .link_help(help),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_media(
+    md: Box<Markdown>,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
+    image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
+    active_image_key: Option<String>,
+) -> Box<Markdown> {
+    Box::new(
+        (*md)
+            .images(image)
+            .image_frame(move |el, frame| image_frame(el, frame, active_image_key.as_deref())),
+    )
+}
+
+#[inline(never)]
+fn prose_markdown_frames(
+    md: Box<Markdown>,
+    wrapped: impl Fn(usize, &str) -> bool + 'static,
+    frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
+    diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
+    kit: &rune_kit::Kit,
+) -> El {
+    (*md)
         .code_wrap(wrapped)
         .code_frame(frame)
         .diff_frame(diff_frame)
         .build(kit)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn prose_with_images<S: 'static>(
+    source: &str,
+    streaming: bool,
+    truncated: bool,
+    highlight: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+    link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
+    help: impl Fn(&str) -> Option<String> + 'static,
+    wrapped: impl Fn(usize, &str) -> bool + 'static,
+    frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
+    diff_frame: impl Fn(El, &DiffFrame<'_>) -> El + 'static,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
+    image_frame: impl Fn(El, &ImageFrame<'_>, Option<&str>) -> El + 'static,
+) -> El {
+    let dark = dark();
+    let kit = &*kit(dark);
+    let style = prose_style(kit, dark, highlight);
+    let source = literal_breaks_with_images(source, truncated, fallback_label).into_owned();
+    let (matches, active_image_key) = prose_highlights(&source, dark, query, image_search_text);
+    let md = prose_markdown_base(source, style, matches, streaming);
+    let md = prose_markdown_links(md, link, secondary, help);
+    let md = prose_markdown_media(md, image, image_frame, active_image_key);
+    prose_markdown_frames(md, wrapped, frame, diff_frame, kit)
+}
+
+#[cfg(test)]
 fn prose_ranges(
     source: &str,
     query: crate::timeline::search::Query<'_>,
     limit: usize,
 ) -> Vec<Vec<std::ops::Range<usize>>> {
+    prose_ranges_with_images(source, query, limit, &|_| ImageSearch::Inline).0
+}
+
+fn prose_ranges_with_images(
+    source: &str,
+    query: crate::timeline::search::Query<'_>,
+    limit: usize,
+    image_search_text: &dyn Fn(&str) -> ImageSearch,
+) -> (Vec<Vec<std::ops::Range<usize>>>, Option<String>, bool) {
     if limit == 0 || source.is_empty() {
-        return Vec::new();
+        return (Vec::new(), None, false);
     }
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     const MAX_SPANS: usize = 2_048;
     let mut out = Vec::new();
+    let mut first_image_hit: Option<String> = None;
+    let mut unhighlighted_image_match = false;
     let mut total_spans = 0usize;
     let mut blocks = 0usize;
     let mut rendered = String::new();
@@ -153,8 +463,99 @@ fn prose_ranges(
         rendered.clear();
         map.clear();
     };
+    let mut non_liftable_depth = 0usize;
+    let mut skipped_image_depth = 0usize;
+    let mut skipped_image_fallback: Option<(String, String)> = None;
+    let mut skipped_image_collect_alt = false;
+    let mut skipped_image_alt = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if skipped_image_depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => skipped_image_depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    skipped_image_depth = skipped_image_depth.saturating_sub(1);
+                    if skipped_image_depth == 0 {
+                        if let Some((slot_key, label)) = skipped_image_fallback.take() {
+                            if out.is_empty() && first_image_hit.is_none() && query.matches(&label)
+                            {
+                                first_image_hit = Some(slot_key);
+                                if limit == 1 {
+                                    break;
+                                }
+                            }
+                        } else if skipped_image_collect_alt {
+                            if !unhighlighted_image_match
+                                && !skipped_image_alt.is_empty()
+                                && query.matches(&skipped_image_alt)
+                            {
+                                unhighlighted_image_match = true;
+                            }
+                            skipped_image_alt.clear();
+                            skipped_image_collect_alt = false;
+                        }
+                    }
+                }
+                Event::Text(ref text)
+                | Event::Code(ref text)
+                | Event::InlineHtml(ref text)
+                | Event::Html(ref text)
+                    if skipped_image_collect_alt =>
+                {
+                    skipped_image_alt.push_str(text);
+                }
+                Event::SoftBreak | Event::HardBreak if skipped_image_collect_alt => {
+                    skipped_image_alt.push(' ');
+                }
+                _ => {}
+            }
+            continue;
+        }
         match event {
+            Event::Start(Tag::Image { ref dest_url, .. })
+                if !dest_url.is_empty() && non_liftable_depth == 0 =>
+            {
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
+                if limit == 1 && !out.is_empty() {
+                    break;
+                }
+                skipped_image_depth = 1;
+                match image_search_text(dest_url) {
+                    ImageSearch::Inline => {
+                        skipped_image_fallback = None;
+                        skipped_image_collect_alt = true;
+                        skipped_image_alt.clear();
+                    }
+                    ImageSearch::Hidden { label } => {
+                        skipped_image_fallback = None;
+                        skipped_image_collect_alt = false;
+                        if !unhighlighted_image_match && !label.is_empty() && query.matches(&label)
+                        {
+                            unhighlighted_image_match = true;
+                        }
+                    }
+                    ImageSearch::Fallback { key, label } => {
+                        skipped_image_fallback = Some((key, label));
+                        skipped_image_collect_alt = false;
+                    }
+                }
+            }
+            Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. }) => {
+                non_liftable_depth += 1;
+            }
+            Event::End(
+                pulldown_cmark::TagEnd::Emphasis
+                | pulldown_cmark::TagEnd::Strong
+                | pulldown_cmark::TagEnd::Strikethrough
+                | pulldown_cmark::TagEnd::Link,
+            ) => {
+                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+            }
             Event::Text(ref text) | Event::Code(ref text) => {
                 if text.is_empty() {
                     continue;
@@ -193,23 +594,45 @@ fn prose_ranges(
             }
             Event::SoftBreak => rendered.push(' '),
             Event::HardBreak => rendered.push('\n'),
+            Event::Start(Tag::Heading { .. } | Tag::TableCell) => {
+                non_liftable_depth += 1;
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
+                if limit == 1 && !out.is_empty() {
+                    break;
+                }
+            }
+            Event::End(pulldown_cmark::TagEnd::Heading(_) | pulldown_cmark::TagEnd::TableCell) => {
+                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
+                if limit == 1 && !out.is_empty() {
+                    break;
+                }
+            }
             Event::Start(
                 Tag::Paragraph
-                | Tag::Heading { .. }
                 | Tag::List(_)
                 | Tag::Item
                 | Tag::CodeBlock(_)
                 | Tag::BlockQuote(_)
                 | Tag::Table(_)
-                | Tag::TableRow
-                | Tag::TableCell,
+                | Tag::TableRow,
             )
             | Event::End(
                 pulldown_cmark::TagEnd::Paragraph
-                | pulldown_cmark::TagEnd::Heading(_)
                 | pulldown_cmark::TagEnd::Item
-                | pulldown_cmark::TagEnd::CodeBlock
-                | pulldown_cmark::TagEnd::TableCell,
+                | pulldown_cmark::TagEnd::CodeBlock,
             ) => {
                 flush(
                     &mut rendered,
@@ -235,7 +658,7 @@ fn prose_ranges(
     if limit > 1 {
         out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
     }
-    out
+    (out, first_image_hit, unhighlighted_image_match)
 }
 
 fn map_inline_code(
@@ -337,11 +760,50 @@ pub fn link_menu<S: 'static>(
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the
 // transcript can gate preview on completion and keep source actions on one frame.
 pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
-    literal_breaks_with(source, false)
+    literal_breaks_with_images(source, false, &|_, _| None)
 }
 
-fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
-    if !source.contains(['<', '\n']) {
+fn push_escaped_markdown(out: &mut String, text: &str) {
+    for c in text.chars() {
+        match c {
+            '\n' => out.push_str("  \n"),
+            '\r' => {}
+            c if c.is_ascii_punctuation() => {
+                use std::fmt::Write;
+                let _ = write!(out, "&#{};", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+}
+
+fn push_escaped_image_fallback(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    // Empty-destination Markdown images stay inline plain text in Rune Kit and are skipped by its
+    // URL autolinker, while keeping searchable text spans aligned for prose_ranges.
+    out.push_str("![");
+    for c in text.chars() {
+        match c {
+            '\n' => out.push(' '),
+            '\r' => {}
+            c if c.is_ascii_punctuation() => {
+                use std::fmt::Write;
+                let _ = write!(out, "&#{};", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push_str("]()");
+}
+
+fn literal_breaks_with_images<'a>(
+    source: &'a str,
+    truncated: bool,
+    fallback_label: &dyn Fn(&str, bool) -> Option<String>,
+) -> Cow<'a, str> {
+    if !source.contains(['<', '\n']) && !source.contains("![") {
         return Cow::Borrowed(source);
     }
     let options =
@@ -349,8 +811,40 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
     let mut last = 0;
     let mut in_list_item = 0usize;
     let mut quote_depth = 0usize;
+    let mut non_liftable_depth = 0usize;
+    let mut kept_image_depth = 0usize;
+    let mut stripped_image_depth = 0usize;
+    let mut stripped_fallback = String::new();
+    let mut stripped_alt = String::new();
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if stripped_image_depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => stripped_image_depth += 1,
+                Event::End(pulldown_cmark::TagEnd::Image) => {
+                    stripped_image_depth -= 1;
+                    if stripped_image_depth == 0 {
+                        let shown =
+                            if stripped_alt.trim().is_empty() && !stripped_fallback.is_empty() {
+                                stripped_fallback.as_str()
+                            } else {
+                                stripped_alt.as_str()
+                            };
+                        push_escaped_image_fallback(&mut result, shown);
+                        stripped_alt.clear();
+                        stripped_fallback.clear();
+                        last = range.end;
+                    }
+                }
+                Event::Text(text)
+                | Event::Code(text)
+                | Event::InlineHtml(text)
+                | Event::Html(text) => stripped_alt.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => stripped_alt.push(' '),
+                _ => {}
+            }
+            continue;
+        }
         match &event {
             Event::Start(Tag::Item) => {
                 in_list_item += 1;
@@ -366,6 +860,52 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
             }
             Event::End(pulldown_cmark::TagEnd::BlockQuote(_)) => {
                 quote_depth = quote_depth.saturating_sub(1);
+                continue;
+            }
+            Event::Start(
+                Tag::Heading { .. }
+                | Tag::TableCell
+                | Tag::Emphasis
+                | Tag::Strong
+                | Tag::Strikethrough
+                | Tag::Link { .. },
+            ) => {
+                non_liftable_depth += 1;
+                continue;
+            }
+            Event::End(
+                pulldown_cmark::TagEnd::Heading(_)
+                | pulldown_cmark::TagEnd::TableCell
+                | pulldown_cmark::TagEnd::Emphasis
+                | pulldown_cmark::TagEnd::Strong
+                | pulldown_cmark::TagEnd::Strikethrough
+                | pulldown_cmark::TagEnd::Link,
+            ) => {
+                non_liftable_depth = non_liftable_depth.saturating_sub(1);
+                continue;
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                if kept_image_depth > 0 {
+                    // Flatten every image nested inside a kept image's alt text (regardless of its
+                    // destination) so discovery, search and rendering share the same lifted blocks.
+                    result.push_str(&source[last..range.start]);
+                    stripped_image_depth = 1;
+                    stripped_alt.clear();
+                    stripped_fallback.clear();
+                    continue;
+                }
+                if let Some(fallback) = fallback_label(dest_url, non_liftable_depth == 0) {
+                    result.push_str(&source[last..range.start]);
+                    stripped_image_depth = 1;
+                    stripped_alt.clear();
+                    stripped_fallback = fallback;
+                    continue;
+                }
+                kept_image_depth += 1;
+                continue;
+            }
+            Event::End(pulldown_cmark::TagEnd::Image) => {
+                kept_image_depth = kept_image_depth.saturating_sub(1);
                 continue;
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
@@ -397,17 +937,7 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
                 result.push_str(&source[last..range.start]);
-                for c in raw.chars() {
-                    match c {
-                        '\n' => result.push_str("  \n"),
-                        '\r' => {}
-                        c if c.is_ascii_punctuation() => {
-                            use std::fmt::Write;
-                            let _ = write!(result, "&#{};", c as u32);
-                        }
-                        c => result.push(c),
-                    }
-                }
+                push_escaped_markdown(&mut result, &raw);
             }
             _ => continue,
         }
@@ -742,6 +1272,160 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert!(!prose_has_match(hard_break, space_query));
+}
+
+#[cfg(test)]
+#[test]
+fn literal_breaks_with_images_strips_only_selected_images_and_escapes_alt_text() {
+    let source = "See ![*Chart* [1]](missing.png) and ![Ok](found.png) and ![](empty.png)\n\n## ![Head](found.png)\n\nOk again";
+    let rewritten = literal_breaks_with_images(source, false, &|src, liftable| {
+        if !liftable || src != "found.png" {
+            Some(src.to_owned())
+        } else {
+            None
+        }
+    });
+    assert_eq!(
+        rewritten,
+        "See ![Chart &#91;1&#93;]() and ![Ok](found.png) and ![empty&#46;png]()\n\n## ![Head]()\n\nOk again"
+    );
+    let terms = vec!["Chart".into()];
+    let query = crate::timeline::search::Query {
+        terms: &terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    let chart_spans = prose_ranges(&rewritten, query, 8);
+    assert_eq!(chart_spans.len(), 1);
+    assert_eq!(&rewritten[chart_spans[0][0].clone()], "Chart");
+    let url_alt = literal_breaks_with_images(
+        "![https://example.test/a.png](missing.png)",
+        false,
+        &|src, _| Some(src.to_owned()),
+    );
+    assert!(matches!(
+        parse(&url_alt).as_slice(),
+        [Block::Para(inline)] if inline.links.is_empty() && inline.text == "https://example.test/a.png"
+    ));
+    let ok_terms = vec!["Ok".into()];
+    let ok_query = crate::timeline::search::Query {
+        terms: &ok_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    let (ok_spans, _, _) = prose_ranges_with_images(&rewritten, ok_query, 8, &|src| {
+        if src == "found.png" {
+            ImageSearch::Hidden { label: "Ok".into() }
+        } else {
+            ImageSearch::Inline
+        }
+    });
+    assert_eq!(ok_spans.len(), 1);
+    assert_eq!(&rewritten[ok_spans[0][0].clone()], "Ok");
+    assert!(ok_spans[0][0].start > rewritten.find("## ![Head]()").unwrap());
+    let remote_terms = vec!["Plan réseau".into()];
+    let remote_query = crate::timeline::search::Query {
+        terms: &remote_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(prose_has_match(
+        "# ![Plan réseau](https://example.test/plan.png)",
+        remote_query
+    ));
+    assert!(prose_has_match(
+        "![Plan réseau](https://example.test/plan.png)",
+        remote_query
+    ));
+    let heading_remote = "# ![Plan réseau](https://example.test/plan.png)";
+    let heading_spans = prose_ranges(heading_remote, remote_query, 8);
+    assert_eq!(heading_spans.len(), 1);
+    assert_eq!(&heading_remote[heading_spans[0][0].clone()], "Plan réseau");
+    // A lifted remote image stays searchable but must not claim the active highlight span from
+    // subsequent paintable prose.
+    let lifted_then_prose = "![Plan réseau](https://example.test/plan.png)\n\nPlan réseau";
+    let lifted_spans = prose_ranges(lifted_then_prose, remote_query, 8);
+    assert_eq!(lifted_spans.len(), 1);
+    assert_eq!(
+        &lifted_then_prose[lifted_spans[0][0].clone()],
+        "Plan réseau"
+    );
+    assert!(lifted_spans[0][0].start > lifted_then_prose.find("\n\n").unwrap());
+    assert!(!prose_has_highlight_with_images(
+        "![Plan réseau](https://example.test/plan.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Inline,
+    ));
+    // Rendered local image pixels keep their accessible label discoverable for hidden-input
+    // visibility checks without claiming a highlight span (including empty-alt filename labels).
+    assert!(prose_has_match_with_images(
+        "![Plan réseau](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
+    ));
+    assert!(!prose_has_highlight_with_images(
+        "![Plan réseau](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
+    ));
+    assert!(prose_has_match_with_images(
+        "![](local.png)",
+        false,
+        remote_query,
+        &|_, _| None,
+        &|_| ImageSearch::Hidden {
+            label: "Plan réseau".into(),
+        },
+    ));
+    let html_alt = literal_breaks_with_images("![<chart>](missing.png)", false, &|src, _| {
+        Some(src.to_owned())
+    });
+    assert_eq!(html_alt, "![&#60;chart&#62;]()");
+    let html_terms = vec!["<chart>".into()];
+    let html_query = crate::timeline::search::Query {
+        terms: &html_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(prose_has_match(&html_alt, html_query));
+    assert_eq!(
+        prose_lifted_images(
+            "![A](a.png)\n\n## ![B](b.png)\n\n*![C](c.png)*\n\n[![D](d.png)](https://example.test)\n\n> ![E](e.png)\n\n![outer ![inner](https://example.test/x.png) `code`](outer.png)\n\n![left![ ](https://example.test/i.png)right](ws.png)",
+            false
+        ),
+        vec![
+            LiftedImage {
+                src: "a.png".into(),
+                alt: "A".into(),
+            },
+            LiftedImage {
+                src: "e.png".into(),
+                alt: "E".into(),
+            },
+            LiftedImage {
+                src: "outer.png".into(),
+                alt: "outer inner code".into(),
+            },
+            LiftedImage {
+                src: "ws.png".into(),
+                alt: "left right".into(),
+            },
+        ]
+    );
 }
 
 #[cfg(test)]

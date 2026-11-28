@@ -5,6 +5,10 @@ import { registerMissionRoutes } from "./missions"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { missionProgramInput } from "../../missions/program-tool"
+import { legacyScheduleKey } from "../../missions/legacy-schedules"
+import { missionTombstoneSchema } from "../../missions/mission-document"
 
 const directory = "C:/private-fixture/worktree", projectID = "private-project"
 
@@ -31,15 +35,16 @@ async function fixture() {
       create: async (input: any) => { const value = { id: `aut_${++next}`, tz: "UTC", status: "active", runCount: 0, ...input }; automations.push(value); return value },
       pause: async ({ automationID }: any) => { row(automationID).status = "paused" },
       resume: async ({ automationID }: any) => { row(automationID).status = "active" },
-      delete: async ({ automationID }: any) => { automations.splice(automations.indexOf(row(automationID)), 1) },
+      delete: async ({ automationID }: any) => { if (!row(automationID)) throw new Error("Automation not found"); automations.splice(automations.indexOf(row(automationID)), 1) },
     } },
     rpc: () => new Proxy({}, { get: (_, method) => async (input: any) => method === "documentCapabilities" ? { version: 1, automaticStart: true, rootPermissions: true }
       : handlers[method](input, { error: (type: string, message: string, data: any) => { throw Object.assign(new Error(message), { type, data }) } }) }),
   }
   const workspace = { id: "workspace" }, base = { directory }
+  const connection = { client, assertCurrent() {} }
   const manager: any = {
     get: () => workspace, list: () => [workspace], getServiceLocation: () => base, getServiceWslDistro: () => undefined,
-    getSharedServiceClient: async () => client, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }),
+    getSharedServiceClient: async () => client, getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id: string, location: any) => location.directory === directory,
     getServiceDirectoryForPath: async (_id: string, path: string) => path === directory ? directory : undefined,
     getWorktreeIdentityForPath: async (_id: string, path: string) => path === directory ? "C:/private-fixture/physical" : undefined,
@@ -63,7 +68,20 @@ async function fixture() {
     return { status: response.statusCode, body: response.json() }
   }
   const rpc = client.rpc(), mission = async (missionID: string) => (await rpc.mission({ missionID })).mission
-  return { automations, sessions, call, mission, rpc, close: async () => { await app.close(); await dispose() } }
+  // An agent's conversation of the project: mission.program reaches the same operation through the private bridge.
+  sessions.set("ses_agent", { id: "ses_agent", projectID, location: { directory } })
+  const agent = (program: object, sessionID = "ses_agent") => controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence,
+    settings: { getProfileScope: () => ({ key: "profile" }) } } as never, sessionID, { kind: "schedule", input: { program } }, new AbortController().signal) as Promise<any>
+  // A schedule the recurring engine left in the plugin's storage, with the native Automation that woke it.
+  const legacy = (id: string, extra: Record<string, unknown> = {}, launch: unknown = configuration().launch) => {
+    automations.push({ id: `aut_old_${id}`, sessionID: `ses_cn_schedule_${id}`, name: `cm_${id}`, status: "active", runCount: 3, tz: "UTC" })
+    storage.set(legacyScheduleKey({ id: projectID, canonical: directory }, id), { id, projectID, projectCanonical: directory, revision: 7, timeGeneration: 1, state: "running", blocked: null, calendars: [{ scheduleID: `aut_old_${id}`, sessionID: `ses_cn_schedule_${id}` }],
+      configuration: { ...configuration("Old instructions"), launch, title: `Old ${id}`, roots: [{ mode: "directory-only", directory }], profileID: "profile", executionHost: "local" }, ...extra })
+  }
+  const stored = (id: string) => storage.get(legacyScheduleKey({ id: projectID, canonical: directory }, id))
+  // Deleted the way the recurring engine deletes: what still reads its storage keeps reading it.
+  const retired = (id: string) => { const left = stored(id); return "deletedAt" in left && missionTombstoneSchema.safeParse(left).success }
+  return { automations, sessions, call, mission, rpc, agent, legacy, stored, retired, missions: async () => (await rpc.list({})).missions as Array<{ id: string; title?: string; runState?: string }>, close: async () => { await app.close(); await dispose() } }
 }
 const profile = { agent: "fixture", model: { providerID: "provider", id: "model" } }
 const configuration = (objective = "Review", when: unknown[] = [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }]) => ({
@@ -122,5 +140,107 @@ test("a programming is paused, resumed and deleted, and refused with its reason"
     assert.equal((await f.call("PUT", "/cal_review", { configuration: { ...configuration(), unknown: true } })).status, 400)
     assert.deepEqual((await f.call("DELETE", "/cal_review")).body, { calendars: [] })
     assert.deepEqual([(await f.call("DELETE", "/cal_review")).status, (await f.call("POST", "/cal_review/pause")).body.code], [404, "calendar-missing"])
+  } finally { await f.close() }
+})
+
+test("an agent saves, lists, pauses and deletes a programmed Mission of its conversation's directory", async () => {
+  const f = await fixture()
+  try {
+    assert.deepEqual(await f.agent({ action: "list" }), { programs: [] })
+    const saved = await f.agent({ action: "save", id: "cal_agent", configuration: configuration(), paused: true })
+    const [program] = saved.programs
+    assert.deepEqual([program.id, program.title, program.paused, program.launch, "nextDueAt" in program], ["cal_agent", "Daily review", true, configuration().launch, false])
+    assert.equal((await f.mission(program.missionID)).runState, "prepared")
+    assert.equal((await f.agent({ action: "save", id: "cal_agent", configuration: configuration("Review again") })).programs.length, 1, "saving again replaces")
+    assert.equal((await f.agent({ action: "resume", id: "cal_agent" })).programs[0].paused, false)
+    assert.deepEqual(await f.agent({ action: "save", id: "cal_other", configuration: configuration("Review", [{ kind: "mission-completed", missionID: "msn_other" }]) }),
+      { refused: "calendar-unsupported", reason: "event" })
+    assert.deepEqual(await f.agent({ action: "pause", id: "cal_absent" }), { refused: "calendar-missing" })
+    assert.deepEqual(await f.agent({ action: "delete", id: "cal_agent" }), { programs: [] })
+    await assert.rejects(f.agent({ action: "list" }, "ses_unknown"), "a conversation outside the project controls nothing")
+    for (const invalid of [{ action: "list", id: "cal_agent" }, { action: "save", id: "cal_agent" }, { action: "pause" }, { action: "pause", id: "cal_agent", paused: true }, { action: "save", id: "a b", configuration: configuration() }])
+      assert.equal(missionProgramInput.safeParse(invalid).success, false, JSON.stringify(invalid).slice(0, 60))
+  } finally { await f.close() }
+})
+
+test("the schedules the recurring engine left become programmed Missions, running or paused as they were", async () => {
+  const f = await fixture()
+  try {
+    f.legacy("msn_running", {}); f.legacy("msn_held", { blocked: "failed" }); f.legacy("msn_paused", { state: "paused" })
+    f.legacy("msn_busy", { pending: { id: "psg_under_way" } })
+    // The conversation one of them named no longer exists: its first launch opens another.
+    const named = f.stored("msn_running"); named.configuration.coordinatorSessionID = "ses_deleted"
+    const { calendars } = (await f.call("GET")).body
+    assert.deepEqual(calendars.map((item: any) => [item.id, item.title, item.paused, item.mission.objective, item.mission.coordinatorSessionID]).sort(),
+      [["msn_held", "Old msn_held", true, "Old instructions", undefined], ["msn_paused", "Old msn_paused", true, "Old instructions", undefined],
+        ["msn_running", "Old msn_running", false, "Old instructions", undefined]])
+    assert.deepEqual(["msn_running", "msn_held", "msn_paused"].map(f.retired), [true, true, true], "the schedules are deleted")
+    const old = () => f.automations.map(item => String(item.id)).filter(id => id.startsWith("aut_old_"))
+    assert.deepEqual(old(), ["aut_old_msn_busy"], "their own Automations are gone")
+    assert.equal((await f.mission(calendars[0].missionID)).runState, "prepared")
+    assert.equal(f.retired("msn_busy"), false, "a schedule whose passage is under way waits for its end")
+    const count = f.automations.length
+    await f.call("GET")
+    assert.equal(f.automations.length, count, "taken over once")
+    delete f.stored("msn_busy").pending
+    assert.equal((await f.call("GET")).body.calendars.length, 4)
+    assert.deepEqual([f.retired("msn_busy"), old()], [true, []])
+  } finally { await f.close() }
+})
+
+test("a schedule whose launch criteria do not carry over becomes an ordinary prepared Mission; one already programmed is only removed", async () => {
+  const f = await fixture()
+  try {
+    f.legacy("msn_other", {}, { when: [{ kind: "mission-completed", missionID: "msn_source" }] })
+    await f.call("PUT", "/msn_done", { configuration: configuration("Already programmed") })
+    assert.equal(f.retired("msn_other"), true, "whatever the operation")
+    f.legacy("msn_done", { state: "stopped" })
+    const before = f.automations.filter(item => item.action?.args?.calendar === "msn_done").map(item => item.id)
+    const { calendars } = (await f.call("GET")).body
+    assert.deepEqual(calendars.map((item: any) => [item.id, item.mission.objective]), [["msn_done", "Already programmed"]])
+    assert.deepEqual(f.automations.filter(item => item.action?.args?.calendar === "msn_done").map(item => item.id), before, "its programmed Mission is untouched")
+    assert.deepEqual([f.retired("msn_other"), f.retired("msn_done")], [true, true])
+    const titles = (await f.missions()).map(item => [item.title, item.runState])
+    assert.ok(titles.some(([title, state]) => title === "Old msn_other" && state === "prepared"), JSON.stringify(titles))
+  } finally { await f.close() }
+})
+
+const conversation = (id: string, variant?: string) => ({ id, projectID, location: { directory }, agent: profile.agent, model: { ...profile.model, ...(variant ? { variant } : {}) } })
+
+test("a conversation that does not run the coordinator's agent and model is refused when the programming is saved", async () => {
+  const f = await fixture()
+  try {
+    f.sessions.set("ses_named", conversation("ses_named", "high"))
+    const named = { configuration: { ...configuration(), coordinatorSessionID: "ses_named" } }
+    const refused = await f.call("PUT", "/cal_named", named)
+    assert.deepEqual([refused.status, refused.body.code], [422, "calendar-coordinator-profile"])
+    assert.deepEqual([f.automations.length, (await f.missions()).length], [0, 0], "nothing is saved")
+    assert.equal((await f.agent({ action: "save", id: "cal_named", ...named })).refused, "calendar-coordinator-profile")
+    f.sessions.set("ses_named", conversation("ses_named"))
+    const saved = await f.call("PUT", "/cal_named", named)
+    assert.equal(saved.status, 200, JSON.stringify(saved.body))
+    assert.equal((await f.mission(saved.body.calendars[0].missionID)).coordinatorSessionId, "ses_named")
+  } finally { await f.close() }
+})
+
+test("a paused programmed Mission whose Mission is gone has one prepared again; a running one is left to its launch", async () => {
+  const f = await fixture()
+  try {
+    f.sessions.set("ses_named", conversation("ses_named"))
+    await f.call("PUT", "/cal_lost", { configuration: { ...configuration("Lost"), coordinatorSessionID: "ses_named" }, paused: true })
+    const { calendars } = (await f.call("PUT", "/cal_running", { configuration: configuration("Running") })).body
+    const gone = Object.fromEntries(calendars.map((item: any) => [item.id, item.missionID]))
+    for (const missionID of Object.values(gone) as string[])
+      await f.rpc.delete({ missionID, expectedRevision: (await f.mission(missionID)).revision, requestID: `gone_${missionID}`, deleteManagedSessions: false })
+    // The conversation it names has changed model since: its Mission is prepared in another one.
+    f.sessions.set("ses_named", conversation("ses_named", "high"))
+    const read = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item]))
+    const restored = await f.mission(read.cal_lost.missionID)
+    assert.notEqual(read.cal_lost.missionID, gone.cal_lost)
+    assert.deepEqual([restored.runState, read.cal_lost.mission.objective, restored.coordinatorSessionId === "ses_named", read.cal_lost.paused, read.cal_lost.mission.coordinatorSessionID],
+      ["prepared", "Lost", false, true, "ses_named"])
+    assert.equal(read.cal_running.missionID, gone.cal_running, "a run may be replacing it")
+    const again = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item.missionID]))
+    assert.equal(again.cal_lost, read.cal_lost.missionID, "prepared once")
   } finally { await f.close() }
 })

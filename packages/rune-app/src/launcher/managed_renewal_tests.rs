@@ -96,7 +96,9 @@ fn managed_local_host_renews_expired_session_without_showing_login() {
             path: "/proj".into(),
             temporary: false,
         });
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -177,7 +179,9 @@ fn failed_managed_renewal_falls_back_to_login_once_without_looping() {
         l.connection = Some(expired.clone());
         l.server_id = Some("srv-managed".into());
         l.host = Some(host);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -253,7 +257,9 @@ fn managed_renewal_rejects_server_identity_mismatch_and_shows_login() {
         l.connection = Some(expired.clone());
         l.server_id = Some("srv-expected".into());
         l.host = Some(host);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -368,7 +374,9 @@ fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
         l.connection = Some(expired.clone());
         l.server_id = Some("srv-ok".into());
         l.host = Some(host);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -489,7 +497,9 @@ fn launcher_job_proxied_401_does_not_expire_live_codenomad_session() {
                 .error_for_status()?;
             Err("expected 401".into())
         });
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -569,7 +579,9 @@ fn renewed_cookie_revoked_on_workspaces_401_is_rejected_and_shows_login() {
         l.connection = Some(expired.clone());
         l.server_id = Some("srv-ok".into());
         l.host = Some(host);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -650,7 +662,9 @@ fn stale_created_reply_after_renewal_preserves_session_without_binding_expired_b
         l.pending = true;
         l.pending_connection_generation = l.connection_generation;
         l.result = Some(job_rx);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -760,7 +774,9 @@ fn transient_managed_renewal_retries_once_and_recovers() {
         l.connection = Some(expired.clone());
         l.server_id = Some("srv-managed".into());
         l.host = Some(host);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 
@@ -834,7 +850,9 @@ fn stale_connected_reply_after_renewal_does_not_reinstall_expired_backend() {
         l.pending = true;
         l.pending_connection_generation = l.connection_generation;
         l.result = Some(boot_rx);
-        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        s.screen = crate::Screen::Chat {
+            launcher: Some(Box::new(l)),
+        };
         let mut rt =
             rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
 

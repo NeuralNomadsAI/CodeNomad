@@ -13,7 +13,7 @@ import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-link
 
 interface FlightState {
   controller: AbortController
-  consumers: Set<AbortSignal>
+  consumers: Map<AbortSignal, () => void>
   /** Callers without a signal never leave; they keep the flight alive. */
   residents: number
   deadline: ReturnType<typeof setTimeout>
@@ -28,7 +28,7 @@ interface DirectoryCacheEntry {
   state?: FlightState
 }
 
-const MAX_CACHE_ENTRIES = 64
+export const BARE_PATH_MAX_CACHE_ENTRIES = 512
 
 /** A stale entry revalidates on its next demand; no background polling. */
 export const BARE_PATH_TTL_MS = 30_000
@@ -42,15 +42,23 @@ export function clearBarePathCaches(): void {
   cache.clear()
 }
 
+const touchCacheEntry = (key: string, entry: DirectoryCacheEntry) => {
+  cache.delete(key)
+  cache.set(key, entry)
+}
+
 const evictOldestIdleEntry = () => {
-  if (cache.size <= MAX_CACHE_ENTRIES) return
-  let oldest: string | undefined, oldestAt = Infinity
-  for (const [key, entry] of cache) {
-    if (entry.flight || entry.at >= oldestAt) continue
-    oldest = key
-    oldestAt = entry.at
+  while (cache.size > BARE_PATH_MAX_CACHE_ENTRIES) {
+    let victim: string | undefined
+    for (const [key, entry] of cache) {
+      if (!entry.flight) {
+        victim = key
+        break
+      }
+    }
+    if (victim === undefined) break
+    cache.delete(victim)
   }
-  if (oldest !== undefined) cache.delete(oldest)
 }
 
 /** A consumer's leaving only counts once no successor holds the flight: a
@@ -61,8 +69,8 @@ const trackConsumer = (signal: AbortSignal | undefined, state: FlightState, key:
     state.residents += 1
     return
   }
-  state.consumers.add(signal)
-  signal.addEventListener("abort", () => {
+  if (signal.aborted || state.consumers.has(signal)) return
+  const onAbort = () => {
     state.consumers.delete(signal)
     if (state.consumers.size > 0 || state.residents > 0 || state.settled || state.revoked) return
     setTimeout(() => {
@@ -75,7 +83,9 @@ const trackConsumer = (signal: AbortSignal | undefined, state: FlightState, key:
       if (entry?.state === state) cache.delete(key)
       state.controller.abort()
     }, 0)
-  }, { once: true })
+  }
+  state.consumers.set(signal, onAbort)
+  signal.addEventListener("abort", onAbort, { once: true })
 }
 
 /** Linkable names of one directory inside the worktree `directory`: files,
@@ -93,14 +103,17 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     trackConsumer(options?.signal, existing.state!, key)
     return existing.flight
   }
-  if (existing && Date.now() - existing.at < BARE_PATH_TTL_MS) return Promise.resolve(existing.files)
+  if (existing && Date.now() - existing.at < BARE_PATH_TTL_MS) {
+    touchCacheEntry(key, existing)
+    return Promise.resolve(existing.files)
+  }
   // The flight's placeholder overwrites this slot; remember the completed
   // entry it replaces so a failed refresh can keep its last good set.
   const prior = existing !== undefined && existing.flight === undefined ? existing : undefined
 
   const state: FlightState = {
     controller: new AbortController(),
-    consumers: new Set(),
+    consumers: new Map(),
     residents: 0,
     deadline: setTimeout(() => state.controller.abort(), BARE_PATH_LISTING_DEADLINE_MS),
     revoked: false,
@@ -124,6 +137,8 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     } finally {
       state.settled = true
       clearTimeout(state.deadline)
+      for (const [consumer, onAbort] of state.consumers) consumer.removeEventListener("abort", onAbort)
+      state.consumers.clear()
     }
     if (state.revoked) {
       // The last consumer left before the read settled; nothing publishes.
@@ -134,13 +149,13 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
       // retries; a first failure (or a deadline) caches emptiness until the
       // TTL revalidates it.
       const files = prior?.files ?? new Set<string>()
-      cache.set(key, { files, at: prior?.at ?? Date.now() })
+      touchCacheEntry(key, { files, at: prior?.at ?? Date.now() })
       return files
     }
-    cache.set(key, { files: fetched, at: Date.now() })
+    touchCacheEntry(key, { files: fetched, at: Date.now() })
     return fetched
   })()
-  cache.set(key, { files: existing?.files ?? new Set<string>(), at: existing?.at ?? 0, flight, state })
+  touchCacheEntry(key, { files: existing?.files ?? new Set<string>(), at: existing?.at ?? 0, flight, state })
   evictOldestIdleEntry()
   return flight
 }
@@ -150,7 +165,10 @@ export interface LinkBarePathsOptions {
   sessionId: string
   base: SessionLinkBase
   titles: SessionLinkTitles
+  /** Cancels DOM wrapping for a superseded render pass. */
   signal: AbortSignal
+  /** Cancels directory listings only when the markdown block unmounts or changes worktree. */
+  fetchSignal?: AbortSignal
 }
 
 interface ResolvedTarget {
@@ -231,9 +249,18 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       }
       if (!parents.size || options.signal.aborted || !container.isConnected) return
       const unique = [...parents]
+      const fetchSignal = options.fetchSignal ?? options.signal
       const nameSets = new Map(await Promise.all(unique.map(async parent =>
-        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent, { signal: options.signal })] as const)))
+        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent, { signal: fetchSignal })] as const)))
       if (options.signal.aborted || !container.isConnected) return
+      let hasAnyLinkable = false
+      for (const names of nameSets.values()) {
+        if (names.size > 0) {
+          hasAnyLinkable = true
+          break
+        }
+      }
+      if (!hasAnyLinkable) return
 
       const verified = (target: ResolvedTarget | undefined): target is ResolvedTarget =>
         target !== undefined && Boolean(nameSets.get(target.parent)?.has(target.name))

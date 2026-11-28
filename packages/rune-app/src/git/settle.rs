@@ -44,7 +44,7 @@ impl Ui {
         if lane == Lane::Changes {
             self.index_checked = None;
         }
-        self.requests.slot_mut(lane).error = Some(format_git_error(&error, ErrorContext::Read));
+        self.requests.slot_mut(lane).error = Some(git_message(&error, ErrorContext::Read));
     }
 
     pub(super) fn accept(&mut self, lane: Lane, value: Value) {
@@ -116,7 +116,7 @@ impl Ui {
                                 .any(|commit| existing.contains(&commit.id))
                         {
                             self.requests.slot_mut(lane).error =
-                                Some(crate::strings::t("rune.failed").into());
+                                Some(GitMessage::Key("settings.info.actions.failed"));
                             return;
                         }
                         page.commits.splice(..0, previous.commits.iter().cloned());
@@ -145,7 +145,7 @@ impl Ui {
                         .is_err()
                 {
                     self.requests.slot_mut(lane).error =
-                        Some(crate::strings::t("toolCall.output.tooLarge").into());
+                        Some(GitMessage::Key("toolCall.output.tooLarge"));
                 }
             }
         }
@@ -181,7 +181,7 @@ impl Ui {
         let announce = matches!(&action, Mutation::Init(_) | Mutation::Commit { .. });
         self.mutation_message = match (action, outcome) {
             (Mutation::Init(_), Ok(())) => {
-                Some((true, crate::strings::t("filesPanel.gitInit.success").into()))
+                Some((true, GitMessage::Key("filesPanel.gitInit.success")))
             }
             (Mutation::Commit { draft, .. }, Ok(())) => {
                 if self.changes.draft.text == draft {
@@ -189,7 +189,7 @@ impl Ui {
                 }
                 Some((
                     true,
-                    crate::strings::t("instanceShell.gitChanges.commit.success").into(),
+                    GitMessage::Key("instanceShell.gitChanges.commit.success"),
                 ))
             }
             (Mutation::Paths(_, _, revision), Ok(())) => {
@@ -197,15 +197,14 @@ impl Ui {
                 None
             }
             (Mutation::Init(_), Err(error)) => {
-                Some((false, format_git_error(&error, ErrorContext::Init)))
+                Some((false, git_message(&error, ErrorContext::Init)))
             }
             (Mutation::Commit { .. }, Err(error)) => {
-                Some((false, format_git_error(&error, ErrorContext::Commit)))
+                Some((false, git_message(&error, ErrorContext::Commit)))
             }
-            (Mutation::Paths(..), Err(error)) => Some((
-                false,
-                format_git_error(&error, ErrorContext::StageOrUnstage),
-            )),
+            (Mutation::Paths(..), Err(error)) => {
+                Some((false, git_message(&error, ErrorContext::StageOrUnstage)))
+            }
         };
         if announce {
             self.mutation_notice = self.mutation_message.clone();
@@ -247,7 +246,7 @@ enum ErrorContext {
     Init,
 }
 
-fn format_git_error(error: &Error, context: ErrorContext) -> String {
+fn git_message(error: &Error, context: ErrorContext) -> GitMessage {
     let fallback = match context {
         ErrorContext::Commit => "instanceShell.gitChanges.commit.error",
         ErrorContext::Read | ErrorContext::StageOrUnstage | ErrorContext::Init => "rune.failed",
@@ -264,28 +263,27 @@ fn format_git_error(error: &Error, context: ErrorContext) -> String {
                 _ => None,
             };
             if let Some(key) = key {
-                return crate::strings::t(key).into();
+                return GitMessage::Key(key);
             }
-            let detail = refusal
-                .message()
-                .unwrap_or_else(|| crate::strings::t(fallback));
-            return crate::strings::t("filesPanel.gitInit.error").replace("{message}", detail);
+            return match refusal.message() {
+                Some(detail) => GitMessage::InitErrorRaw(detail.to_owned()),
+                None => GitMessage::InitErrorKey(fallback),
+            };
         }
-        let detail = crate::strings::t(git_error_key(error).unwrap_or(fallback));
-        return crate::strings::t("filesPanel.gitInit.error").replace("{message}", detail);
+        return GitMessage::InitErrorKey(git_error_key(error).unwrap_or(fallback));
     }
 
     if let Some(refusal) = error.downcast_ref::<Refusal>() {
         if refusal.code.as_deref() == Some("git_required") {
-            return crate::strings::t("filesPanel.gitInit.gitRequired").into();
+            return GitMessage::Key("filesPanel.gitInit.gitRequired");
         }
         if let Some(message) = refusal.message() {
-            return message.to_owned();
+            return GitMessage::Raw(message.to_owned());
         }
-        return crate::strings::t(fallback).into();
+        return GitMessage::Key(fallback);
     }
 
-    crate::strings::t(git_error_key(error).unwrap_or(fallback)).into()
+    GitMessage::Key(git_error_key(error).unwrap_or(fallback))
 }
 
 fn git_error_key(error: &Error) -> Option<&'static str> {
@@ -295,6 +293,8 @@ fn git_error_key(error: &Error) -> Option<&'static str> {
         GitError::UnconfirmedMutation => Some("gitPanel.error.unconfirmedMutation"),
         GitError::OversizedContent => Some("toolCall.output.tooLarge"),
         GitError::UnsupportedImageType => Some("filesPanel.binary"),
-        GitError::InvalidRequest | GitError::UnexpectedResponse => None,
+        GitError::InvalidRequest | GitError::UnexpectedResponse => {
+            Some("settings.info.actions.failed")
+        }
     }
 }

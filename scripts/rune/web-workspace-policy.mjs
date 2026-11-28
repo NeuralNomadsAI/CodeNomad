@@ -187,6 +187,12 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
       if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
+      if(mobilePreferences&&method==='GET'&&p==='/api/filesystem'){
+        const leaf=project?path.basename(project):null
+        const target=query.get('path')
+        return query.get('includeFiles')===''&&[...query.keys()].every(k=>k==='includeFiles'||k==='path')&&
+          (target===null||target==='.'||target===leaf)
+      }
       if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
         return !!hidesFixtureThinking(body)
       const history=p.match(/^\/api\/storage\/instances\/([^/]+)$/)
