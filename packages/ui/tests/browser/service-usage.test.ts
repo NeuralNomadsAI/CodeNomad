@@ -280,7 +280,7 @@ test("a new Preferences renderer/backend restores totals and charts before a two
   const record = { path: "/fixture/project" }
   const connection = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "fixture-only" } }, assertCurrent() {}, client: {
     config: { get: async () => [{ type: "directory", path: "/fixture/discovery" }] },
-    session: { stats: async (query: any) => {
+    experimental: { session: { stats: async (query: any) => {
       calls++; const value = steps
       await new Promise(resolve => setTimeout(resolve, 2000))
       if (fail) { fail = false; throw new Error("fixture native failure") }
@@ -289,7 +289,7 @@ test("a new Preferences renderer/backend restores totals and charts before a two
         tokens, cost: 1.2345, tools: { mode: "none" }, activeDays: 2, streak: 2,
         models: [{ model: { providerID: "fixture", id: "synthetic" }, tokens, steps: value, cost: 1.2345 }],
         activity: [{ date: "2026-10-19", steps: value }] }
-    } },
+    } } },
   } }
   const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
     getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }
@@ -351,13 +351,13 @@ test("P1/P2 held discovery cannot block real fresh display; abandoned periods ca
   const calls: number[] = [], record = { path: "/fixture/project" }
   const connection = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "fixture-only" } }, assertCurrent() {}, client: {
     config: { get: async () => { await discovery; return [{ type: "directory", path: "/fixture/discovery" }] } },
-    session: { stats: async (query: any) => {
+    experimental: { session: { stats: async (query: any) => {
       const days = (query.to - query.from) / 86400000; calls.push(days)
       if (days === 30) { entered(); await held; released() }
       const tokens = { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }
       return { range: { from: query.from, to: query.to }, sessions: 1, subagents: 0, prompts: 1, steps: days,
         tokens, cost: 0, tools: { mode: "none" }, activeDays: 1, streak: 1, models: [], activity: [{ date: "2026-10-20", steps: days }] }
-    } },
+    } } },
   } }
   const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
     getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }

@@ -1,4 +1,3 @@
-import { Service } from "@opencode/client/service"
 import type { ImageGenerationSelection, ImageModelOption, ImageSettingsSnapshot, PluginControlLocation } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
@@ -74,16 +73,12 @@ export class ImageSettings {
 
   /** `null` when the native catalog cannot be read; the configured choice stays readable without it. */
   private async imageModels(context: Awaited<ReturnType<ImageSettings["context"]>>): Promise<ImageModelOption[] | null> {
-    const url = new URL("/api/model", context.connection.endpoint.url)
-    url.searchParams.set("location[directory]", context.location.directory)
-    url.searchParams.set("types", "image")
     let data: unknown
     try {
-      const response = await context.connection.fetch(url, {
-        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: bounded(5_000, context.signal),
-      })
-      if (response.ok) data = (await response.json() as { data?: unknown }).data
-      else await response.body?.cancel()
+      data = (await context.connection.client.model.list(
+        { location: { directory: context.location.directory }, types: ["image"] },
+        { signal: bounded(5_000, context.signal) },
+      )).data
     } catch { data = undefined }
     context.signal?.throwIfAborted()
     // Every catalog outcome, failures included, still belongs to the connection that produced the rest of the snapshot.

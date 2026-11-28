@@ -1013,8 +1013,7 @@ function normalizeRuntimeEntry(plugin: PluginInfo, index: number, packageVersion
     ...(plugin.features.server === true ? { server: true as const } : {}),
     ...(plugin.features.tui === true ? { tui: true as const } : {}),
     ...(plugin.features.rpc === true ? { rpc: true as const } : {}),
-    // Newer services report GUI packages; the pinned client type predates the flag.
-    ...((plugin.features as Record<string, unknown>).gui === true ? { gui: true as const } : {}),
+    ...(plugin.features.gui === true ? { gui: true as const } : {}),
   } : {}
   const state = plugin.state.status === "active"
     ? { status: "active" as const }
