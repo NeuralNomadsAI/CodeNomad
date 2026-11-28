@@ -1,11 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
-import type { MissionRecurrenceCurrent, MissionRecurrenceSnapshot } from "../../../server/src/api-types"
-export type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
-export type RecurrenceSchedule = MissionRecurrenceSnapshot["schedules"][number]
-export type RecurrenceAction = RecurrenceSchedule["actions"][number]
-export type RecurrenceHistoryItem = RecurrenceSchedule["history"][number]
-import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
-import type { ServerApi } from "../lib/api-client"
+import type { MissionRecurrenceCurrent } from "../../../server/src/api-types"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents as serverEvents } from "../lib/server-events"
@@ -13,18 +7,9 @@ import { parseInstanceKey } from "../lib/backend-identity"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
-import { copyMissionProfiles } from "./mission-creation-drafts"
 import { sessionListRestored } from "./session-list-restoration"
 import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
-
-export type RecurrenceDraft = Parameters<ServerApi["createMissionRecurrence"]>[1]
-const heldDrafts = new Map<string, Readonly<RecurrenceDraft>>()
-export function uncertainRecurrence(scope: string) { return heldDrafts.get(scope) }
-export function holdRecurrence(scope: string, draft: RecurrenceDraft) {
-  if (!heldDrafts.has(scope)) heldDrafts.set(scope, { ...draft, clock: { ...draft.clock },
-    watchedConversationIDs: [...draft.watchedConversationIDs], profiles: copyMissionProfiles(draft.profiles)! })
-}
 
 interface RecurrenceEntry {
   attachment: AbortSignal
@@ -32,13 +17,11 @@ interface RecurrenceEntry {
   instanceId: string
   projectID?: string
   directory: string
-  scheduleID?: string
-  owner?: "daily" | "scheduled"
+  scheduleID: string
   inventory?: ReturnType<typeof createMissionPanelInventory>
   inventorySource?: string
   client: unknown
   generation: number
-  snapshot?: MissionRecurrenceSnapshot
   currentSnapshot?: MissionRecurrenceCurrent
   error: boolean
   demand: number
@@ -55,7 +38,7 @@ const cache = new Map<string, RecurrenceEntry>()
 const stoppedInstances = new Set<string>()
 const [cacheVersion, setCacheVersion] = createSignal(0)
 const changed = () => setCacheVersion(value => value + 1)
-const cacheKey = (instanceId: string, projectID: string | undefined, directory: string, scheduleID?: string, owner?: string) => JSON.stringify([instanceId, projectID, directory, scheduleID, owner ?? "daily"])
+const cacheKey = (instanceId: string, projectID: string | undefined, directory: string, scheduleID?: string) => JSON.stringify([instanceId, projectID, directory, scheduleID])
 
 function placed(entry: RecurrenceEntry): boolean {
   const instance = instances().get(entry.instanceId)
@@ -87,42 +70,35 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
   entry.controller = controller
   changed()
   const admitted = () => !signal.aborted && entry.controller === controller && entry.demand > 0 && current(entry)
-  const request = Promise.resolve().then<MissionRecurrenceCurrent | MissionRecurrenceSnapshot>(() => {
+  const request = Promise.resolve().then(() => {
     if (!admitted()) throw new DOMException("Obsolete recurrence owner", "AbortError")
-    const api = backendOf(entry.instanceId).api, workspaceId = parseInstanceKey(entry.instanceId).workspaceId
-    return entry.scheduleID ? api.fetchMissionCurrentPassage(workspaceId, entry.scheduleID, signal, entry.owner)
-      : api.fetchMissionRecurrence(workspaceId, signal)
+    return backendOf(entry.instanceId).api.fetchMissionCurrentPassage(parseInstanceKey(entry.instanceId).workspaceId, entry.scheduleID, signal)
   })
   void request.then(async value => {
     if (!admitted()) return
     if (value?.version !== 1 || typeof value.projectID !== "string"
       || entry.projectID && value.projectID !== entry.projectID) throw new Error("Foreign recurrence snapshot")
-    if (entry.scheduleID) {
-      if (!("scheduleID" in value) || value.scheduleID !== entry.scheduleID
-        || value.mission && (!value.passageID || value.mission.projectID !== value.projectID)) throw new Error("Foreign passage snapshot")
-      entry.currentSnapshot = value
-      if (value.source) {
-        const source = value.source
-        const same = JSON.stringify(source) === entry.inventorySource
-        if (!same) {
-          entry.inventory?.clear(entry.instanceId)
-          entry.inventorySource = JSON.stringify(source)
-          entry.inventory = createMissionPanelInventory({ passage: source, scope: () => entry.directory, projectID: () => entry.projectID,
-            signal: () => entry.attachment,
-            capture: () => () => current(entry) && entry.demand > 0 && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
-            read: (id, selector, scope) => backendOf(id).api.fetchMissionCurrentPanel(parseInstanceKey(id).workspaceId, source, selector, scope),
-            tasks: (id, _mission, task, scope) => backendOf(id).api.fetchMissionCurrentTasks(parseInstanceKey(id).workspaceId, source, task, scope) })
-        }
-        const inventory = entry.inventory!
-        inventory.setDemand(entry.instanceId, true); inventory.want(entry.instanceId, "passage", source.missionID, true, signal)
-        await (same ? inventory.refresh(entry.instanceId, true, signal) : inventory.ensure(entry.instanceId, signal))
-        if (!admitted()) return
-        if (inventory.state(entry.instanceId).status !== "ready") throw new Error("Current passage header unavailable")
-      } else { entry.inventory?.clear(entry.instanceId); entry.inventory = undefined; entry.inventorySource = undefined }
-    } else {
-      if (!("schedules" in value) || !Array.isArray(value.schedules)) throw new Error("Foreign recurrence snapshot")
-      entry.snapshot = value
-    }
+    if (value.scheduleID !== entry.scheduleID
+      || value.mission && (!value.passageID || value.mission.projectID !== value.projectID)) throw new Error("Foreign passage snapshot")
+    entry.currentSnapshot = value
+    if (value.source) {
+      const source = value.source
+      const same = JSON.stringify(source) === entry.inventorySource
+      if (!same) {
+        entry.inventory?.clear(entry.instanceId)
+        entry.inventorySource = JSON.stringify(source)
+        entry.inventory = createMissionPanelInventory({ passage: source, scope: () => entry.directory, projectID: () => entry.projectID,
+          signal: () => entry.attachment,
+          capture: () => () => current(entry) && entry.demand > 0 && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
+          read: (id, selector, scope) => backendOf(id).api.fetchMissionCurrentPanel(parseInstanceKey(id).workspaceId, source, selector, scope),
+          tasks: (id, _mission, task, scope) => backendOf(id).api.fetchMissionCurrentTasks(parseInstanceKey(id).workspaceId, source, task, scope) })
+      }
+      const inventory = entry.inventory!
+      inventory.setDemand(entry.instanceId, true); inventory.want(entry.instanceId, "passage", source.missionID, true, signal)
+      await (same ? inventory.refresh(entry.instanceId, true, signal) : inventory.ensure(entry.instanceId, signal))
+      if (!admitted()) return
+      if (inventory.state(entry.instanceId).status !== "ready") throw new Error("Current passage header unavailable")
+    } else { entry.inventory?.clear(entry.instanceId); entry.inventory = undefined; entry.inventorySource = undefined }
     entry.error = false
     changed()
   }).catch(() => {
@@ -160,33 +136,31 @@ function scheduleRefresh(entry: RecurrenceEntry, urgency: RefreshUrgency = "urge
   }, due - now)
 }
 
-/** List and visible central reader share one demand/read per project directory. */
-interface ReadDemand {
+/** Panel and visible central reader share one demand/read per schedule and project directory. */
+export function useMissionCurrentPassage(props: {
   instanceId: () => string; projectID: () => string | undefined; directory: () => string
   active: () => boolean; refresh?: () => number
-  scheduleID?: () => string | undefined
-  owner?: () => "daily" | "scheduled"
-}
-function useRecurrenceRead(props: ReadDemand) {
+  scheduleID: () => string | undefined
+}) {
   const binding = createMemo(() => {
     const instanceId = props.instanceId()
-    return { instanceId, projectID: props.projectID(), directory: props.directory(), scheduleID: props.scheduleID?.(), owner: props.owner?.() ?? "daily",
+    return { instanceId, projectID: props.projectID(), directory: props.directory(), scheduleID: props.scheduleID(),
       attachment: captureBackendOperation(instanceId).signal,
-      active: props.active() && (!props.scheduleID || Boolean(props.scheduleID())) && sessionListRestored(instanceId),
+      active: props.active() && Boolean(props.scheduleID()) && sessionListRestored(instanceId),
       actualDirectory: instances().get(instanceId)?.folder, actualProjectID: instances().get(instanceId)?.metadata?.project?.id,
       client: instances().get(instanceId)?.client, generation: getOpenCodeInstanceGeneration(instanceId) }
   }, undefined, { equals: (a, b) => Boolean(a && a.instanceId === b.instanceId && a.projectID === b.projectID
-    && a.directory === b.directory && a.scheduleID === b.scheduleID && a.owner === b.owner && a.actualDirectory === b.actualDirectory && a.actualProjectID === b.actualProjectID
+    && a.directory === b.directory && a.scheduleID === b.scheduleID && a.actualDirectory === b.actualDirectory && a.actualProjectID === b.actualProjectID
     && a.attachment === b.attachment && a.active === b.active && a.client === b.client && a.generation === b.generation) })
   createEffect(() => {
-    const identity = binding()
+    const identity = binding(), scheduleID = identity.scheduleID
     // Multiple consumers can rebind before the instance's Location metadata.
     // Acquire demand only once that identity is readable, so their handoff
     // cannot keep an unread entry's demand above zero and skip its first read.
-    if (!identity.active || identity.actualDirectory !== identity.directory
+    if (!identity.active || !scheduleID || identity.actualDirectory !== identity.directory
       || identity.projectID && identity.actualProjectID && identity.projectID !== identity.actualProjectID) return
     const entry = untrack(() => {
-      const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner)
+      const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, scheduleID)
       let value = cache.get(key)
       if (value && value.attachment !== identity.attachment) { cancel(value); value.attachment = identity.attachment }
       if (!value || value.client !== identity.client || value.generation !== identity.generation) {
@@ -195,7 +169,7 @@ function useRecurrenceRead(props: ReadDemand) {
           const oldest = [...cache.values()].find(item => !item.demand)
           if (oldest) { cancel(oldest); cache.delete(oldest.key) }
         }
-        value = { key, instanceId: identity.instanceId, projectID: identity.projectID, directory: identity.directory, scheduleID: identity.scheduleID, owner: identity.owner, client: identity.client,
+        value = { key, instanceId: identity.instanceId, projectID: identity.projectID, directory: identity.directory, scheduleID, client: identity.client,
           attachment: identity.attachment,
           generation: identity.generation, error: stoppedInstances.has(identity.instanceId), demand: 0,
           stopped: stoppedInstances.has(identity.instanceId), trailing: false }
@@ -209,14 +183,14 @@ function useRecurrenceRead(props: ReadDemand) {
   const state = () => {
     cacheVersion()
     const identity = binding()
-    if (props.scheduleID && !identity.scheduleID) return
-    const entry = cache.get(cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner))
+    if (!identity.scheduleID) return
+    const entry = cache.get(cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID))
     return entry?.client === identity.client && entry?.generation === identity.generation && placed(entry) ? entry : undefined
   }
   let previousRefresh: number | undefined, previousKey: string | undefined
   createEffect(() => {
     const identity = binding(), refresh = props.refresh?.()
-    const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner)
+    const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID)
     if (previousKey === key && previousRefresh !== refresh) untrack(() => {
       const entry = cache.get(key)
       if (entry) scheduleRefresh(entry)
@@ -225,8 +199,7 @@ function useRecurrenceRead(props: ReadDemand) {
     previousRefresh = refresh
   })
   return {
-    snapshot: () => state()?.snapshot,
-    currentSnapshot: () => {
+    snapshot: () => {
       const entry = state(), snapshot = entry?.currentSnapshot, inventory = entry?.inventory
       if (!snapshot || !inventory) return snapshot
       const shown = inventory.state(entry.instanceId)
@@ -234,27 +207,21 @@ function useRecurrenceRead(props: ReadDemand) {
     },
     inventory: () => state()?.inventory,
     error: () => state()?.error ?? false,
-    stale: () => Boolean(state()?.snapshot && state()?.error),
     loading: () => Boolean(state()?.controller),
   }
 }
 
-export function useMissionRecurrence(props: Omit<ReadDemand, "scheduleID">) { return useRecurrenceRead(props) }
-export function useMissionCurrentPassage(props: ReadDemand & { scheduleID: () => string | undefined }) {
-  const read = useRecurrenceRead(props)
-  return { snapshot: read.currentSnapshot, inventory: read.inventory, error: read.error, loading: read.loading }
-}
-
 serverEvents.on("instance.event", event => {
   if (event.type !== "instance.event") return
-  const schedule = readRecurrenceScheduleChanged(event.event), plugin = event.event.type === "plugin.updated"
+  const plugin = event.event.type === "plugin.updated"
   const changedJournal = isMissionChangedEvent(event.event), passage = changedJournal || isMissionActivityEvent(event.event)
-  if (!schedule && !plugin && !passage) return
+  if (!plugin && !passage) return
   // The native relay already validates placement; filesystem aliases are not UI authority.
   for (const entry of cache.values()) {
     if (entry.instanceId !== event.instanceId) continue
-    if (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || changedJournal && entry.scheduleID) scheduleRefresh(entry)
-    else if (passage && entry.scheduleID) scheduleRefresh(entry, "activity")
+    if (plugin || changedJournal) scheduleRefresh(entry)
+    // Activity matters only to a running passage, or to a read that has not shown one yet.
+    else if (passage && (!entry.currentSnapshot || entry.currentSnapshot.passageID || entry.error)) scheduleRefresh(entry, "activity")
   }
 })
 serverEvents.on("instance.eventStatus", event => {
@@ -277,7 +244,6 @@ serverEvents.on("workspace.stopped", event => {
   stoppedInstances.add(event.workspaceId)
   for (const entry of cache.values()) if (entry.instanceId === event.workspaceId) {
     entry.stopped = true
-    entry.snapshot = undefined
     entry.currentSnapshot = undefined
     entry.error = true
     cancel(entry)

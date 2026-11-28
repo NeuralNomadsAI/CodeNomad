@@ -167,6 +167,15 @@ try {
       signal: AbortSignal.timeout(15000),
     })
   }
+  const attestedPatch = async (pathname, body, ctx) => {
+    const cookie = await cookieHeaderFor(ctx)
+    return attestedFetch(new URL(pathname, url).href, {
+      method: 'PATCH',
+      headers: {'content-type': 'application/json', ...(cookie ? {cookie} : {})},
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    })
+  }
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
@@ -208,6 +217,7 @@ try {
       const linkedReads=[]
       let linkedContinuationRecovered
       let linkedAcrossSwitch
+      let folderBrowse = false
       let holdRecall = false, releaseRecall, markRecall
       const recallHeld = new Promise(resolve => { markRecall = resolve })
       const recallGate = new Promise(resolve => { releaseRecall = resolve })
@@ -329,6 +339,8 @@ try {
         if(network)await network.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1})
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
+        const viewportMeta = await page.locator('meta[name="viewport"]').getAttribute('content')
+        assert(viewportMeta?.split(',').includes('viewport-fit=cover'), `App viewport must include viewport-fit=cover: ${viewportMeta}`)
         if(values.connected){
           const present=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           if(values.mobile)await page.waitForFunction(()=>['web.handover.done','web.gpu.failed','web.handover.failed']
@@ -433,7 +445,39 @@ try {
           }
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
-          await press(values.project)
+          if (values.mobile && !recallScene) {
+            const folderLabel = messages['instanceInfo.labels.folder']
+            const folderName = path.basename(values.project)
+            const waitFolderValue = expected => page.waitForFunction(
+              ({label, expected}) => [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
+                .some(el => el.getAttribute('aria-label') === label && el.textContent === expected),
+              {label: folderLabel, expected},
+              {timeout: 15_000},
+            )
+            const waitBrowse = expectedPath => page.waitForResponse(response => {
+              const requested = new URL(response.url())
+              return requested.pathname === '/api/filesystem' &&
+                requested.searchParams.get('includeFiles') === '' &&
+                requested.searchParams.get('path') === expectedPath &&
+                response.ok()
+            })
+            const rootBrowse = waitBrowse(null)
+            void rootBrowse.catch(() => {})
+            await press(messages['folderSelection.browseMenu.title'])
+            await rootBrowse
+            await page.getByRole('button', {name: folderName, exact: true}).waitFor()
+            await waitFolderValue(path.dirname(values.project))
+            const subBrowse = waitBrowse(folderName)
+            void subBrowse.catch(() => {})
+            await press(folderName)
+            await subBrowse
+            await page.getByRole('button', {name: messages['directoryBrowser.goToParent'], exact: true}).waitFor()
+            await waitFolderValue(values.project)
+            folderBrowse = true
+            await press(messages['directoryBrowser.openCurrent'])
+          } else {
+            await press(values.project)
+          }
           if (values.mobile && !recallScene) {
             const right = messages['window.menu.rightPanel']
             const drawer = page.getByRole('region', {name:right, exact:true})
@@ -513,8 +557,8 @@ try {
               linkedContinuationRecovered=true
             }
             assert.equal(await row('Another session').count(),0)
-            await openSessionSearch(page, sessions, messages, tap)
-            await page.locator('textarea:focus').fill('Another session')
+            const searchEditor = await openSessionSearch(page, sessions, messages, tap)
+            await searchEditor.fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])
@@ -773,13 +817,13 @@ try {
             await page.getByRole('paragraph').filter({hasText:'Fixture passage 181'}).waitFor()
             await press(messages['rune.latest'])
             await reading()
-            await markerFilters(page,messages,url,values.project,{touch:false,pages})
+            await markerFilters(page,messages,url,values.project,{touch:false,pages,attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context)})
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)
           }
           if(values.timeline&&name==='tablet'){
             const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
-            await markerFilters(page,messages,url,values.project,{touch:true,pages})
+            await markerFilters(page,messages,url,values.project,{touch:true,pages,attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context)})
           }
           if(missions)await missions.check(press)
           if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
@@ -883,6 +927,7 @@ try {
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.linkedAcrossSwitch=linkedAcrossSwitch
+          measured.folderBrowse=folderBrowse
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]
@@ -908,6 +953,7 @@ try {
             assert(routes.some(row=>row.query.includes('cursor=')))
           }
            if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,{
+             attestedPatch:(pathname,body)=>attestedPatch(pathname,body,context),
              holdNextAnchor(){
                const held={release:Promise.withResolvers()}
                holdAnchor=held

@@ -82,6 +82,11 @@ export interface ToolCallExpansionDefaults {
   tools: Record<string, VisibilityPreference>
 }
 
+/** Every setting a transcript preset replaces. */
+export type TranscriptDetailSettings = Pick<UiSettings,
+  | "showThinkingBlocks" | "thinkingBlocksExpansion" | "toolCallExpansionDefaults" | "toolOutputExpansion" | "diagnosticsExpansion"
+  | "systemMessagesVisibility" | "toolGroupVisibility" | "toolInputsVisibility" | "showUsageMetrics" | "usageMetricsExpansion">
+
 export interface SpeechSettings {
   provider: SpeechProviderPreference
   apiKey?: string
@@ -145,6 +150,8 @@ export interface UiSettings {
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
+  /** The Custom choices a preset last replaced; choosing Custom applies them again. */
+  transcriptCustomPreset?: TranscriptDetailSettings
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
@@ -363,29 +370,12 @@ const defaultSpeechSettings: SpeechSettings = {
   },
 }
 
-function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
-  const sanitized = input ?? {}
+function normalizeTranscriptDetailSettings(sanitized: Partial<UiSettings>): TranscriptDetailSettings {
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
   const fallback = transcriptPresetFallbacks(toolCallExpansionDefaults.preset)
   return {
-    multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
-    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
-    showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
-    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
-    holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
-    promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
-    hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
-    followUpBehavior:
-      sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
-        ? sanitized.followUpBehavior
-        : defaultUiSettings.followUpBehavior,
-    newConversationPermissions: sanitized.newConversationPermissions === "supervised" ? "supervised" : defaultUiSettings.newConversationPermissions,
-    showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
-    locale: sanitized.locale ?? defaultUiSettings.locale,
-    diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
-    hideDiffWhitespaceChanges: sanitized.hideDiffWhitespaceChanges ?? defaultUiSettings.hideDiffWhitespaceChanges,
     toolCallExpansionDefaults,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: normalizeVisibilityPreference(
@@ -406,6 +396,31 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.usageMetricsExpansion,
       fallback.usageMetricsExpansion,
     ),
+  }
+}
+
+function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
+  const sanitized = input ?? {}
+  const custom: unknown = sanitized.transcriptCustomPreset
+  return {
+    multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
+    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
+    ...normalizeTranscriptDetailSettings(sanitized),
+    transcriptCustomPreset: custom && typeof custom === "object" && !Array.isArray(custom) ? normalizeTranscriptDetailSettings(custom) : undefined,
+    showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
+    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
+    holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
+    promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
+    followUpBehavior:
+      sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
+        ? sanitized.followUpBehavior
+        : defaultUiSettings.followUpBehavior,
+    newConversationPermissions: sanitized.newConversationPermissions === "supervised" ? "supervised" : defaultUiSettings.newConversationPermissions,
+    showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
+    locale: sanitized.locale ?? defaultUiSettings.locale,
+    diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    hideDiffWhitespaceChanges: sanitized.hideDiffWhitespaceChanges ?? defaultUiSettings.hideDiffWhitespaceChanges,
     showProviderUsageCreditBalance:
       sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,

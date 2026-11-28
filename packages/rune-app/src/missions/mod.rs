@@ -1,6 +1,7 @@
 //! Read-only Mission views owned by a project occurrence.
 mod briefing;
 mod briefing_view;
+mod calendars;
 mod control_fields;
 mod detail;
 mod directory;
@@ -17,6 +18,7 @@ pub(crate) use briefing::{ActiveBriefing, BriefingGesture, BriefingKey, Briefing
 pub(crate) use briefing_view::{
     confirmation as briefing_confirmation, controls as briefing_controls,
 };
+pub(crate) use calendars::delete_confirmation as calendar_delete_confirmation;
 pub(crate) use directory::Panel;
 pub(crate) use lifecycle::{Gesture, Lifecycle, Source};
 pub(crate) use lifecycle_view::{confirmation, controls};

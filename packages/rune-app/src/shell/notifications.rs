@@ -189,6 +189,15 @@ impl Host {
         self.deferred.retain(|notice| keeps(&notice.target));
     }
 
+    pub(crate) fn main_window_focused(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        return web::focused();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.focused
+        }
+    }
+
     fn focused(&self) -> bool {
         #[cfg(target_arch = "wasm32")]
         return web::focused();
@@ -296,6 +305,11 @@ fn activate_notice(s: &mut State, target: Target) {
         )
     });
     (s.wake)();
+}
+
+#[cfg(test)]
+pub(crate) fn set_focus_for_test(s: &mut State, focused: bool) {
+    s.notifications.focused = focused;
 }
 
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {

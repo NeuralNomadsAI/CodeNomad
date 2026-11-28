@@ -25,6 +25,17 @@ pub(crate) use transcript_preset::Row as TranscriptRow;
 pub(crate) fn show_timeline(s: &crate::State) -> bool {
     s.settings.shared.borrow().show_timeline()
 }
+
+pub(crate) fn auto_cleanup_blank_sessions(s: &crate::State) -> bool {
+    s.settings.shared.borrow().auto_cleanup_blank_sessions()
+}
+
+pub(crate) fn keep_unseen_subagent_idle_status(s: &crate::State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .keep_unseen_subagent_idle_status()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -55,7 +66,9 @@ pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_n
 pub(crate) use delivery::{
     notification_fixture, notification_fixture_for, notification_test_config,
 };
-pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{
+    matches_shortcut, shortcut_label, with_shortcut_label, with_shortcut_label_excluding,
+};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{
@@ -222,6 +235,12 @@ pub(crate) fn fixture_appearance(
 #[cfg(test)]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_config_doc(s: &mut State, doc: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config_doc(doc);
     s.revision += 1;
 }
 
@@ -540,6 +559,11 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_settings(s: &State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_settings(settings);
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

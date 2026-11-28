@@ -238,10 +238,10 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   return (
     <>
       <div class="tab-bar tab-bar-instance">
-        <Show when={!hasNativeTitlebar}>
-          <BrandLogo alt={t("folderSelection.logoAlt")} class="native-titlebar-logo tab-bar-logo" />
-        </Show>
         <div class="tab-container">
+          <Show when={!hasNativeTitlebar}>
+            <BrandLogo alt={t("folderSelection.logoAlt")} class="native-titlebar-logo tab-bar-logo" />
+          </Show>
           <TabScroll>
               <div class="tab-strip-tabs" role="tablist" ref={tabList}>
                 <Show

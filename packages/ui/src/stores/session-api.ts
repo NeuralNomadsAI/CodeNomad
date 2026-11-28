@@ -73,7 +73,7 @@ import {
   getSessionListIds,
   sessionInfoByInstance,
 } from "./session-state"
-import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
+import { settleAbandonedSessionListRestoration, settleSessionListFirstPage } from "./session-list-restoration"
 import { clearAttachments, deleteSessionAttachments } from "./attachments"
 import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
@@ -121,6 +121,7 @@ import {
   captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
   mergeOpenCodeLoadedPage, observeNonEventSettlement, seedOpenCodeSessionMessages,
 } from "./opencode-data"
+import { isSessionTranscriptVisible } from "./session-transcript-visibility"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -343,13 +344,14 @@ async function fetchV2Sessions(
   signal.throwIfAborted()
   const instanceClient = instances().get(instanceId)?.client
   const client = getRootClient(instanceId)
+  const explicitGlobalDirectory = options.project === "global" && Boolean(options.directory)
   const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
-  const scopedProject = project === "global" ? undefined : project
+  const scopedProject = explicitGlobalDirectory ? "global" : project === "global" ? undefined : project
   const directory = options.directory ?? instances().get(instanceId)?.folder
   const listOptions: V2SessionListOptions = options.cursor
     ? { cursor: options.cursor }
     : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
-  if (scopedProject) delete listOptions.directory
+  if (scopedProject && !explicitGlobalDirectory) delete listOptions.directory
 
   const read = () => {
     signal.throwIfAborted()
@@ -396,7 +398,7 @@ async function fetchCompleteSessionInventory(
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
   // V1 sessions can remain in the global project after migration while sharing this directory.
-  if (!directoryOnly && project !== "global" && directory) scopes.push({ directory, order: "desc" })
+  if (!directoryOnly && project !== "global" && directory) scopes.push({ project: "global", directory, order: "desc" })
 
   for (const scope of scopes) {
     const seenCursors = new Set<string>()
@@ -503,13 +505,11 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   // including without a delivered SSE event; the later activity read wins.
   if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
-  // A run the UI still believed working that the final activity read does not
-  // list settled during an SSE gap; its terminal event may never be delivered.
-  // The observation owes the transcript's settlement read.
+  // A run the UI still believed working (or pending prompt admission) that the
+  // final activity read does not list settled during an SSE gap; its terminal
+  // event may never be delivered. The observation owes the transcript's
+  // settlement read.
   const settledWithoutEvent: string[] = []
-  for (const [id, baseline] of captured) {
-    if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
-  }
   setSessions(previous => {
     const held = previous.get(instanceId)
     if (!held) return previous
@@ -521,30 +521,51 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     for (const [id, baseline] of captured) {
       const latest = held.get(id)
       if (!latest) continue
+      const isInactive = !Object.prototype.hasOwnProperty.call(active, id)
       const info = outcomes.get(id)
       // Activity can release an acknowledged send's brief delivery hold even
       // if the historical outcome could not be read. Keep the rest of the row.
-      if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) {
+      if (outcomes.has(id) && !info && isInactive) {
         const epoch = idleReadAdmissionEpoch(baseline, latest)
         if (epoch !== latest.idleReadAdmissionEpoch) {
           update(id, { ...latest, idleReadAdmissionEpoch: epoch })
         }
+        if (baseline.status === "working" && (latest === baseline || latest.status === "idle")) settledWithoutEvent.push(id)
         continue
       }
       // An unchanged, already-authoritative idle row needs neither a new
       // object nor publication. Unknown and unsettled rows still reconcile.
-      if (latest === baseline && !info && !Object.prototype.hasOwnProperty.call(active, id)
+      if (latest === baseline && !info && isInactive
         && baseline.status === "idle" && baseline.runtimeStatusKnown && baseline.retry === null
         && baseline.generationRecovery === null && baseline.outcome !== "interrupted"
         && baseline.idleReadAdmissionEpoch === idleReadAdmissionEpoch(baseline)) continue
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
-      if (merged) update(id, merged)
+      if (merged) {
+        update(id, merged)
+        if (isInactive && merged.status === "idle" && (
+          baseline.status === "working"
+          || (baseline.generationRecovery === "pending" && merged.generationRecovery !== "pending")
+        )) {
+          settledWithoutEvent.push(id)
+        }
+      }
     }
     return current ? new Map(previous).set(instanceId, current) : previous
   })
   reconcilePendingSessionIndicators(instanceId)
-  for (const sessionId of settledWithoutEvent) observeNonEventSettlement(instanceId, sessionId)
+  for (const sessionId of settledWithoutEvent) {
+    if (observeNonEventSettlement(instanceId, sessionId)) continue
+    const store = messageStoreBus.getInstance(instanceId)
+    const watched = activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId)
+    if (watched && isLatestWindow(store?.getMessageWindow(sessionId))) {
+      void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
+        log.warn("Failed to refresh non-event settled session messages", { instanceId, sessionId, error })
+      })
+    } else if (messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+  }
   return active
 }
 
@@ -873,6 +894,7 @@ async function fetchSessions(instanceId: string, options?: {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
       return
     }
+    settleSessionListFirstPage(instanceId)
     const hasProjectInventory = Boolean(getInstanceMetadata(instanceId)?.project?.id)
     let inventory: SDKSession[] = []
     let inventoryComplete = false

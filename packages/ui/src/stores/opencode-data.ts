@@ -20,7 +20,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
-import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
+import { hasTranscriptProjectionGates, isTranscriptWatched, publishResyncedTranscriptPage, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 import {
   divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, owedFragments, settleHeldTargets, type TranscriptDivergence,
@@ -670,7 +670,11 @@ async function resyncAuthoritativeTranscript(
     swapped = true
     replaceTranscriptEntry(transcript, fresh)
 
-    transcript.onResynced?.(fresh.data)
+    if (transcript.onResynced) {
+      transcript.onResynced(fresh.data)
+    } else if (!publishResyncedTranscriptPage(instanceId, sessionId, fresh.data)) {
+      projectOpenCodeMessages(instanceId, sessionId, fresh.data, false)
+    }
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
     if (transcript.retireWhenDrained && fresh.data.session.status(sessionId) === "running") {
@@ -1312,10 +1316,11 @@ function repairDivergedTranscript(instanceId: string, sessionId: string, transcr
 
 /** Settlement evidence for a watched transcript that is still diverged, with
  * no tool settlement read of its own: the stale projection cannot be trusted. */
-function repairDivergedSettlement(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+function repairDivergedSettlement(instanceId: string, sessionId: string, transcript: TranscriptEntry): boolean {
   if (!isDiverged(transcript, transcript.entry) || !isTranscriptWatched(instanceId, sessionId)
-    || awaitsFirstPage(instanceId, sessionId, transcript)) return
+    || awaitsFirstPage(instanceId, sessionId, transcript)) return false
   repairDivergedTranscript(instanceId, sessionId, transcript, true)
+  return true
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -1378,7 +1383,7 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the
   // entry; resets, eviction and destructive teardown cancel instead.
-  flushTranscriptProjections(instanceId, sessionId)
+  flushTranscriptProjections(instanceId, sessionId, { final: true })
   destroyOpenCodeData(instanceId, sessionId)
 }
 
@@ -1481,18 +1486,27 @@ function completeSettlementRead(
  * the UI still believed working has settled, so the terminal event may never
  * be delivered. The observation owes the same settlement read the terminal
  * event would have finished. */
-export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
+export function observeNonEventSettlement(instanceId: string, sessionId: string): boolean {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
-  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return false
   flushTranscriptContentBatch(instanceId, sessionId, transcript)
-  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
-    repairDivergedSettlement(instanceId, sessionId, transcript)
-    return
+  if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
+    // Unlike a terminal event, nothing invalidated the SDK's message key; a key
+    // an earlier sync completed would make this read a no-op.
+    transcript.entry.data.session.message.invalidate(sessionId)
+    completeSettlementRead(instanceId, sessionId, transcript)
+    return true
   }
-  // Unlike a terminal event, nothing invalidated the SDK's message key; a key
-  // an earlier sync completed would make this read a no-op.
+  if (isDiverged(transcript, transcript.entry)) {
+    return repairDivergedSettlement(instanceId, sessionId, transcript)
+  }
+  if (transcript.needsAuthoritativeResync || transcript.resyncing) return true
+  // The run settled during an SSE gap without delivering a terminal event:
+  // reply rows or tail deltas can be missing with no unsettled tool or divergence.
+  if (!isTranscriptWatched(instanceId, sessionId)) return false
   transcript.entry.data.session.message.invalidate(sessionId)
-  completeSettlementRead(instanceId, sessionId, transcript)
+  completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true })
+  return true
 }
 
 /** The SDK reducer's own settlement-refresh condition: an assistant tool whose

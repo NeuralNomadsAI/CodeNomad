@@ -120,6 +120,16 @@ pub(super) async fn current_root(app: &App, scope: &Scope, earlier: &Value) -> R
     Ok(row)
 }
 
+/// Re-verifies any owned agent caller (root or child) without requiring `parentID == null`,
+/// matching TS `ownedMissionAgent.refresh` (`mission-agent-owner.ts`).
+pub(super) async fn current_agent(app: &App, scope: &Scope, earlier: &Value) -> Result<Value, Error> {
+    let row = session(app, scope, earlier["id"].as_str().ok_or_else(foreign)?).await?;
+    if row["location"] != earlier["location"] || row["parentID"] != earlier["parentID"] {
+        return Err(foreign());
+    }
+    Ok(row)
+}
+
 pub(super) async fn send(app: &App, scope: &Scope, method: Method, path: &str, input: &Value) -> Result<Value, Error> {
     let (status, body) = scope.request(app, method, path, &[], Some(input), 15, 128 * 1024).await?;
     if !status.is_success() {

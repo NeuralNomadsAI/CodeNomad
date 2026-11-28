@@ -478,3 +478,101 @@ test("a destructive event projects synchronously and subsumes the pending frame"
     f.cleanup()
   }
 })
+
+test("a failed coalesced frame projection retries on bounded backoff instead of dropping the page", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retry-failure")
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let attempts = 0
+  f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+    attempts += 1
+    if (attempts === 1) throw new Error("transient projection failure")
+    return originalHydrate(...args)
+  }) as typeof f.store.hydrateMessages
+  try {
+    const { streamId, joined } = f.stream(3)
+    clock.fire()
+    assert.equal(attempts, 1, "first projection attempt failed")
+    assert.equal(f.store.getMessage(streamId), undefined)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    clock.fire()
+    assert.equal(attempts, 2, "failed frame projection retried automatically")
+    assert.equal(f.storeText(streamId), joined, "retried projection landed the missed reply")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})
+
+test("exhausting failed frame retries reloads a watched latest-window session authoritatively", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retry-exhausted")
+  const client = (sdkManager as any).clients.get(`${f.instanceId}:/workspaces/${f.instanceId}/instance`)
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let hydrateAttempts = 0
+  let messageReloads = 0
+  client.message.list = async () => {
+    messageReloads += 1
+    return { data: [], cursor: {} }
+  }
+  f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+    hydrateAttempts += 1
+    if (hydrateAttempts <= 3) throw new Error("persistent projection failure")
+    return originalHydrate(...args)
+  }) as typeof f.store.hydrateMessages
+  try {
+    f.stream(2)
+    clock.fire()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    clock.fire()
+    await new Promise(resolve => setTimeout(resolve, 240))
+    clock.fire()
+    for (let wait = 0; wait < 20 && messageReloads === 0; wait += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(hydrateAttempts, 3, "initial attempt plus two retries ran")
+    assert.equal(messageReloads, 1, "exhausted retries trigger an authoritative reload for the watched session")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})
+
+test("a failed final projection at reducer retirement triggers an authoritative reload instead of dropping the page", async () => {
+  const clock = frameClock()
+  const f = fixture("frame-retire-failure-reload")
+  const client = (sdkManager as any).clients.get(`${f.instanceId}:/workspaces/${f.instanceId}/instance`)
+  const originalHydrate = f.store.hydrateMessages.bind(f.store)
+  let reloads = 0
+  let failNextHydrate = false
+  try {
+    await settleWithRunningTool(f)
+    client.message.list = async () => {
+      reloads += 1
+      return { data: [{
+        id: "msg_tool", type: "assistant", agent: "build", model, time: { created: 500, completed: 600 },
+        content: [{ type: "tool", id: "tool", name: "read", time: { created: 501, ran: 502, completed: 600 },
+          state: { status: "completed", input: {}, metadata: {}, content: [{ type: "text", text: "reloaded" }] } }],
+      }], cursor: {} }
+    }
+    f.store.hydrateMessages = ((...args: Parameters<typeof f.store.hydrateMessages>) => {
+      if (failNextHydrate) {
+        failNextHydrate = false
+        throw new Error("retirement flush failed")
+      }
+      return originalHydrate(...args)
+    }) as typeof f.store.hydrateMessages
+    failNextHydrate = true
+    finishTool(f)
+    for (let wait = 0; wait < 20 && reloads === 0; wait += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(reloads, 1, "failed retirement flush reloads the watched session immediately before teardown cancels timers")
+  } finally {
+    f.store.hydrateMessages = originalHydrate
+    clock.restore()
+    f.cleanup()
+  }
+})

@@ -24,6 +24,42 @@ impl std::fmt::Display for ListingTooLarge {
 impl std::error::Error for ListingTooLarge {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileError {
+    NotFound,
+    WorkspaceUnavailable,
+    Unavailable,
+    AccessDenied,
+    Unauthorized,
+    TooLarge,
+    Conflict,
+    InvalidRequest,
+    InvalidEncoding,
+    UnexpectedResponse,
+    Transport,
+    Server,
+}
+
+impl std::fmt::Display for FileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotFound => "file_not_found",
+            Self::WorkspaceUnavailable => "file_workspace_unavailable",
+            Self::Unavailable => "file_unavailable",
+            Self::AccessDenied => "file_access_denied",
+            Self::Unauthorized => "file_unauthorized",
+            Self::TooLarge => "file_too_large",
+            Self::Conflict => "file_conflict",
+            Self::InvalidRequest => "file_invalid_request",
+            Self::InvalidEncoding => "file_invalid_encoding",
+            Self::UnexpectedResponse => "file_unexpected_response",
+            Self::Transport => "file_transport",
+            Self::Server => "file_server",
+        })
+    }
+}
+impl std::error::Error for FileError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     File,
     Directory,
@@ -46,10 +82,17 @@ pub struct Preview {
     pub version: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteConflict {
+    ChangedOnDisk,
+    WorktreeDeleting,
+    Other,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteResult {
     Saved(Option<String>),
-    Conflict(Option<String>),
+    Conflict(WriteConflict),
 }
 
 impl Backend {
@@ -70,14 +113,18 @@ impl Backend {
         expected_version: &str,
     ) -> Result<WriteResult> {
         self.file_scope(directory, path, false)?;
-        if contents.len() > MAX_FILE_BYTES || expected_version.is_empty() {
-            return Err("invalid file write".into());
+        if contents.len() > MAX_FILE_BYTES {
+            return Err(FileError::TooLarge.into());
+        }
+        if expected_version.is_empty() {
+            return Err(FileError::InvalidRequest.into());
         }
         let body = serde_json::to_vec(&serde_json::json!({
             "contents":contents,"expectedVersion":expected_version
-        }))?;
+        }))
+        .map_err(|_| FileError::InvalidRequest)?;
         if body.len() > 8 * 1024 * 1024 {
-            return Err("oversized file write".into());
+            return Err(FileError::TooLarge.into());
         }
         let response = self
             .client
@@ -89,7 +136,8 @@ impl Backend {
             .header("Content-Type", "application/json")
             .body(body)
             .send()
-            .await?;
+            .await
+            .map_err(|_| FileError::Transport)?;
         if response.status() == reqwest::StatusCode::CONFLICT {
             let reason = read_json_limited(response, 4096)
                 .await
@@ -98,11 +146,15 @@ impl Backend {
                     let reason = body["error"].as_str()?.trim();
                     (!reason.is_empty()).then(|| reason.to_owned())
                 });
-            return Ok(WriteResult::Conflict(reason));
+            let conflict = match reason.as_deref() {
+                Some("File changed on disk") => WriteConflict::ChangedOnDisk,
+                Some("Worktree deletion is in progress") => WriteConflict::WorktreeDeleting,
+                _ => WriteConflict::Other,
+            };
+            return Ok(WriteResult::Conflict(conflict));
         }
-        let response = response.error_for_status()?;
         if !response.status().is_success() {
-            return Err("unexpected file write response".into());
+            return Err(classify_http_error(response, false).await);
         }
         let version = response
             .headers()
@@ -123,17 +175,13 @@ impl Backend {
             ))
             .query(&[("path", path), ("directory", directory)])
             .send()
-            .await?;
-        if response.status() == reqwest::StatusCode::BAD_REQUEST {
-            let error = response.error_for_status_ref().err();
-            let body = read_json_limited(response, 4096).await;
-            if body.is_ok_and(|body| body["error"] == "Directory listing too large") {
-                return Err(ListingTooLarge.into());
-            }
-            return Err(error.ok_or("invalid file listing response")?.into());
+            .await
+            .map_err(|_| FileError::Transport)?;
+        if !response.status().is_success() {
+            return Err(classify_http_error(response, true).await);
         }
-        let data = read_json(response.error_for_status()?).await?;
-        let rows = data.as_array().ok_or("invalid file listing")?;
+        let data = read_json(response).await.map_err(map_json_error)?;
+        let rows = data.as_array().ok_or(FileError::UnexpectedResponse)?;
         if rows.len() > MAX_ENTRIES {
             return Err(ListingTooLarge.into());
         }
@@ -142,17 +190,17 @@ impl Backend {
             .map(|row| {
                 let name = string(row, "name")?;
                 let key = string(row, "path")?;
-                relative(key, false, directory)?;
+                relative(key, false, directory).map_err(|_| FileError::UnexpectedResponse)?;
                 let (parent, leaf) = key.rsplit_once('/').unwrap_or((".", key));
                 if parent != path || leaf != name || !seen.insert(key) {
-                    return Err("foreign or duplicate file entry".into());
+                    return Err(FileError::UnexpectedResponse.into());
                 }
                 let absolute_path = optional(row, "absolutePath")?;
                 if absolute_path
                     .as_deref()
                     .is_some_and(|p| !crate::absolute_server_path(p))
                 {
-                    return Err("invalid absolute file path".into());
+                    return Err(FileError::UnexpectedResponse.into());
                 }
                 Ok(Entry {
                     name: name.into(),
@@ -160,13 +208,13 @@ impl Backend {
                     kind: match string(row, "type")? {
                         "file" => EntryKind::File,
                         "directory" => EntryKind::Directory,
-                        _ => return Err("invalid file entry type".into()),
+                        _ => return Err(FileError::UnexpectedResponse.into()),
                     },
                     absolute_path,
                     directory_identity: optional(row, "directoryIdentity")?,
                     size: row
                         .get("size")
-                        .map(|v| v.as_u64().ok_or("invalid file size"))
+                        .map(|v| v.as_u64().ok_or(FileError::UnexpectedResponse))
                         .transpose()?,
                     modified_at: optional(row, "modifiedAt")?,
                 })
@@ -175,34 +223,39 @@ impl Backend {
     }
     pub async fn preview_file(&self, directory: &str, path: &str) -> Result<Preview> {
         self.file_scope(directory, path, false)?;
-        let data = read_json_limited(
-            self.client
-                .get(format!(
-                    "{}api/workspaces/{}/files/preview",
-                    self.base, self.workspace
-                ))
-                .query(&[("path", path), ("directory", directory)])
-                .send()
-                .await?
-                .error_for_status()?,
-            MAX_PREVIEW_JSON,
-        )
-        .await?;
+        let response = self
+            .client
+            .get(format!(
+                "{}api/workspaces/{}/files/preview",
+                self.base, self.workspace
+            ))
+            .query(&[("path", path), ("directory", directory)])
+            .send()
+            .await
+            .map_err(|_| FileError::Transport)?;
+        if !response.status().is_success() {
+            return Err(classify_http_error(response, false).await);
+        }
+        let data = read_json_limited(response, MAX_PREVIEW_JSON)
+            .await
+            .map_err(map_json_error)?;
         if data["workspaceId"].as_str() != Some(self.workspace.as_str())
             || data["relativePath"].as_str() != Some(path)
         {
-            return Err("foreign file preview".into());
+            return Err(FileError::UnexpectedResponse.into());
         }
         if data["encoding"].as_str() != Some("base64") {
-            return Err("invalid file preview encoding".into());
+            return Err(FileError::InvalidEncoding.into());
         }
         let contents = string(&data, "contents")?;
         if contents.len() > MAX_CONTENTS {
-            return Err("oversized file preview".into());
+            return Err(FileError::TooLarge.into());
         }
-        let bytes = STANDARD.decode(contents)?;
+        let bytes = STANDARD
+            .decode(contents)
+            .map_err(|_| FileError::InvalidEncoding)?;
         if bytes.len() > MAX_FILE_BYTES {
-            return Err("oversized file preview".into());
+            return Err(FileError::TooLarge.into());
         }
         Ok(Preview {
             workspace_id: self.workspace.clone(),
@@ -213,9 +266,63 @@ impl Backend {
     }
     fn file_scope(&self, directory: &str, path: &str, listing: bool) -> Result<()> {
         if !valid_id(&self.workspace) || !crate::absolute_server_path(directory) {
-            return Err("invalid file scope".into());
+            return Err(FileError::InvalidRequest.into());
         }
         relative(path, listing, directory)
+    }
+}
+
+async fn classify_http_error(response: reqwest::Response, listing: bool) -> crate::history::Error {
+    let status = response.status();
+    let message = read_json_limited(response, 4096)
+        .await
+        .ok()
+        .and_then(|body| {
+            body["error"]
+                .as_str()
+                .or(body["message"].as_str())
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        });
+    if listing
+        && status == reqwest::StatusCode::BAD_REQUEST
+        && message.as_deref() == Some("Directory listing too large")
+    {
+        return ListingTooLarge.into();
+    }
+    classify_status(status, message.as_deref()).into()
+}
+
+fn classify_status(status: reqwest::StatusCode, message: Option<&str>) -> FileError {
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED => FileError::Unauthorized,
+        reqwest::StatusCode::FORBIDDEN => FileError::AccessDenied,
+        reqwest::StatusCode::NOT_FOUND => match message {
+            Some("Workspace not found") => FileError::WorkspaceUnavailable,
+            _ => FileError::NotFound,
+        },
+        reqwest::StatusCode::CONFLICT => FileError::Conflict,
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE => FileError::TooLarge,
+        reqwest::StatusCode::BAD_REQUEST => match message {
+            Some("Selected file is too large to attach") => FileError::TooLarge,
+            Some("Access outside of root is not allowed")
+            | Some("Directory is not owned by this workspace") => FileError::AccessDenied,
+            Some("Selected path is unavailable") => FileError::Unavailable,
+            _ => FileError::InvalidRequest,
+        },
+        status if status.is_server_error() => FileError::Server,
+        status if status.is_client_error() => FileError::InvalidRequest,
+        _ => FileError::UnexpectedResponse,
+    }
+}
+
+fn map_json_error(error: crate::history::Error) -> crate::history::Error {
+    if error.is::<reqwest::Error>() {
+        FileError::Transport.into()
+    } else if error.to_string() == "oversized response" {
+        FileError::TooLarge.into()
+    } else {
+        FileError::UnexpectedResponse.into()
     }
 }
 fn file_link(base: &str, destination: &str) -> Option<String> {
@@ -253,14 +360,14 @@ pub(crate) fn relative(path: &str, listing: bool, directory: &str) -> Result<()>
         || path.contains(['\\', '\0'])
         || path.split('/').any(|part| matches!(part, "" | "." | ".."))
     {
-        return Err("invalid relative file path".into());
+        return Err(FileError::InvalidRequest.into());
     }
     Ok(())
 }
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key]
         .as_str()
-        .ok_or_else(|| "invalid file response".into())
+        .ok_or_else(|| FileError::UnexpectedResponse.into())
 }
 fn optional(value: &Value, key: &str) -> Result<Option<String>> {
     value
@@ -268,7 +375,7 @@ fn optional(value: &Value, key: &str) -> Result<Option<String>> {
         .map(|v| {
             v.as_str()
                 .map(str::to_owned)
-                .ok_or_else(|| "invalid file metadata".into())
+                .ok_or_else(|| FileError::UnexpectedResponse.into())
         })
         .transpose()
 }

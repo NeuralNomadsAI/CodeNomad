@@ -2148,6 +2148,12 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
 
 #[test]
 fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
+    wheel_after_bottom_clamped_resize_cases_22_to_25();
+    wheel_after_bottom_clamped_resize_cases_26_to_30();
+    wheel_after_bottom_clamped_resize_cases_31_to_34();
+}
+
+fn wheel_after_bottom_clamped_resize_cases_22_to_25() {
     // 22. A manual wheel gesture between Frame 1 and Frame 2 after a bottom-clamped resize must
     // win over the saved anchor (both for headless rt.wheel and real host wheel_event).
     let top_passage_key = |rt: &Runtime<State>| -> Option<String> {
@@ -2423,7 +2429,9 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
             && comp_25[1] + comp_25[3] <= stack_25[1] + stack_25[3] + 1.0,
         "focused composer must remain visible when attachment error clears: comp={comp_25:?}, stack={stack_25:?}"
     );
+}
 
+fn wheel_after_bottom_clamped_resize_cases_26_to_30() {
     // 26. Boolean field "q" must not collide with a text field named "q-true" when revealing the
     // focused question field on dock shrink.
     let mut s = state();
@@ -2675,7 +2683,9 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
             && reason_30[1] + reason_30[3] <= stack_30[1] + stack_30[3] + 1.0,
         "typing in an off-screen focused dock field must reveal it inside session-stack: reason={reason_30:?}, stack={stack_30:?}"
     );
+}
 
+fn wheel_after_bottom_clamped_resize_cases_31_to_34() {
     // 31. Adding resources to an already capped permission dock must re-reveal focused reason-* inside pending-content.
     let mut s = state();
     seed_passages(&mut s, 16);

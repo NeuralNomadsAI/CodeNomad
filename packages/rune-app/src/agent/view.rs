@@ -85,6 +85,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
         body = body.child(
             field(&a.search)
                 .label(t("rune.find_model"))
+                .input_mode(rune::InputMode::Search)
                 .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
                 .build(&field_kit(layout::dark()))
                 .key("model-search"),

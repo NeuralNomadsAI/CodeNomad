@@ -155,6 +155,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     let change = screen::action_tx(&scope, super::query_changed);
     let input = layout::hinted_field(&model.query, t("messageSection.search.placeholder"))
         .label(t("messageSection.search.ariaLabel"))
+        .input_mode(rune::InputMode::Search)
         .on_edit(move |s: &mut State| {
             if s.current_scope(&scope) {
                 &mut state(s).query

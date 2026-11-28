@@ -15,21 +15,31 @@ import { serverEvents } from "../../../src/lib/server-events"
 import "../../../src/index.css"
 
 const instanceId = "receipt-instance", sessionId = "session-a", messageId = "message-a"
-const direct = new URLSearchParams(location.search).has("direct")
-const scrollFixture = new URLSearchParams(location.search).has("scroll")
+const params = new URLSearchParams(location.search)
+const direct = params.has("direct")
+const scrollFixture = params.has("scroll")
+const withNonAssistant = params.has("withNonAssistant")
 const [scope, setScope] = createSignal({ instanceId, sessionId, messageId })
 const [active, setActive] = createSignal(true)
 const model = { providerID: "fixture", id: "fixture" }
 const message = { id: messageId, type: "assistant", agent: "build", model, time: { created: 1, completed: 10 }, content: [
-  ...(new URLSearchParams(location.search).has("toolOnly") ? [] : [{ type: "text", text: "Native response remains separate from permission receipts." }]),
+  ...(params.has("toolOnly") ? [] : [{ type: "text", text: "Native response remains separate from permission receipts." }]),
   { id: "call-a", type: "tool", name: "shell", time: { created: 1, completed: 2 }, state: { status: "completed", input: { command: "echo hello" }, content: [{ type: "text", text: "hello" }] } },
 ] }
+const nonAssistantMessages = [
+  { id: "user-1", type: "user", text: "Prompt utilisateur", time: { created: 0 } },
+  { id: "queued-1", type: "user", text: "Prompt en file", time: { created: 11 } },
+  { id: "compaction-1", type: "compaction", status: "completed", summary: "Compacted", time: { created: 12, completed: 13 } },
+]
+const pendingPrompts = withNonAssistant
+  ? new Map([["queued-1", { id: "queued-1", type: "user" as const, delivery: "queue" as const, payload: { text: "Prompt en file" } }]])
+  : undefined
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, location: { directory: "/fixture" }, time: { created: 1, updated: 10 } }) },
   message: { list: async () => ({ data: scrollFixture ? Array.from({ length: 30 }, (_, index) => ({ ...message,
     id: `message-${index}`, content: [{ type: "text", text: `Message ${index}\n\n${"Native transcript content. ".repeat(25)}` }],
-  })) : [message], cursor: {} }) },
+  })) : withNonAssistant ? [nonAssistantMessages[0], message, ...nonAssistantMessages.slice(1)] : [message], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -46,6 +56,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ display: "flex", height: "700px", width: "min(100%, 900px)" }}>
     {direct ? <div style={{ width: "100%" }}><PermissionReceipts {...scope()} active={active()} /></div>
       : <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={active()}
+          pendingPrompts={pendingPrompts}
           onLoadLatestMessages={() => loadMessages(instanceId, sessionId, { force: true })} />}
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

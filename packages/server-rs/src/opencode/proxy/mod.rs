@@ -6,7 +6,9 @@ mod account_tests;
 mod background_tests;
 mod defer_media;
 mod dispatch;
-mod guards;
+pub(crate) mod guards;
+#[cfg(test)]
+mod inbox_tests;
 mod mutation;
 #[cfg(test)]
 mod stack_tests;
@@ -32,7 +34,7 @@ use guards::{
     parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
 };
 
-pub(super) fn before_dispatch_error((status, body): Error) -> Response {
+pub(in crate::opencode) fn before_dispatch_error((status, body): Error) -> Response {
     (status, [("x-codenomad-before-dispatch", "1")], body).into_response()
 }
 
@@ -120,6 +122,15 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     let (id, suffix) = tail.split_once('/').ok_or_else(invalid)?;
     let suffix = suffix.strip_prefix("instance").ok_or_else(invalid)?;
     let workspace = app.workspace(id)?;
+    let workspace_closed = || async {
+        loop {
+            let notified = app.workspace_closed.notified();
+            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+                return;
+            }
+            notified.await;
+        }
+    };
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.strip_suffix('/').unwrap_or(&route);
     if (route.starts_with("/api/credential/")
@@ -144,14 +155,29 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE))
         && declared.is_some_and(|length| length > body_limit)
     {
-        let _ = super::proxy_body::read(body, body_limit, declared).await;
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = workspace_closed() => return Err(not_found()),
+            _ = super::proxy_body::read(body, body_limit, declared) => {}
+        }
+        principal.live()?;
+        if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+            return Err(not_found());
+        }
         return Err(super::proxy_body::too_large());
     }
     let mut pending_body = Some(body);
     let mut prompt_directories = Vec::new();
     let mut prompt_input = if send_input {
-        let bytes =
-            super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared).await?;
+        let bytes = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = workspace_closed() => return Err(not_found()),
+            res = super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared) => {
+                res?
+            }
+        };
         let data = super::prompt::parse(&head.headers, &bytes)?;
         if data.as_object().is_some_and(schedule_input) {
             return Err(carrier_denied());
@@ -172,15 +198,6 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
     let account_route = is_account_no_store_route(route, &head.method);
-    let workspace_closed = || async {
-        loop {
-            let notified = app.workspace_closed.notified();
-            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
-                return;
-            }
-            notified.await;
-        }
-    };
     let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
     let deadline = if message_list {
         list_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30))
@@ -340,11 +357,25 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     static TRACE_FENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let trace_fence =
         send_input && *TRACE_FENCE.get_or_init(|| std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some());
-    let allow_subfolder = send_input || message_list;
+    let inbox_or_background = session.is_some()
+        && ((head.method == Method::GET && route.ends_with("/inbox"))
+            || (matches!(head.method, Method::PATCH | Method::DELETE)
+                && route
+                    .strip_prefix("/api/session/")
+                    .and_then(|r| r.split_once("/inbox/"))
+                    .is_some_and(|(sid, item)| !sid.is_empty() && !item.is_empty() && !item.contains('/')))
+            || (head.method == Method::POST && route.ends_with("/background")));
+    let allow_subfolder = send_input || message_list || inbox_or_background;
     // TS checks every client-supplied directory and ambient context before session lookup or relay
     // (`http-server.ts:1248-1269`).
     let mut requested_checkout = None;
     let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut extra_mutation_dirs: Vec<(
+        String,
+        std::path::PathBuf,
+        String,
+        crate::worktrees::ownership::DirectoryProof,
+    )> = Vec::new();
     // Hold the admission slot across the entire `message.list` admission phase (query/header
     // checks, `session.get`, session location identity, and `media_directory`/placement inventory),
     // moving the owned permit into `spawn_blocking` probes so cancellation never frees a slot
@@ -392,15 +423,21 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
                 .flatten()
                 .ok_or_else(foreign)?;
                 verified_media_dirs.push((req.clone(), resolved));
-            } else if send_input {
-                let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
+            } else if send_input || inbox_or_background {
+                let Some((resolved, physical, dir_id)) = guards::directory_identity(&app.scope, Some(req), false)
+                else {
                     return Err(foreign());
                 };
+                if resolved != physical {
+                    return Err(foreign());
+                }
                 let proof =
                     crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true)
                         .await
                         .ok_or_else(foreign)?;
-                if requested_checkout.is_none() {
+                if inbox_or_background {
+                    extra_mutation_dirs.push((req.clone(), physical, dir_id, proof));
+                } else if requested_checkout.is_none() {
                     requested_checkout = Some(proof);
                 }
             } else if !account_route && !crate::worktrees::owns(&app, &workspace, req).await {
@@ -488,7 +525,13 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             }
         }
     } else {
-        admission_work.await?
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            result = admission_work => result?,
+        }
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
     let bound_directory = if send_input {
@@ -519,7 +562,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     } else {
         None
     };
-    let directory = if send_input {
+    let directory = if send_input || inbox_or_background {
         native_directory.or(requested.as_deref())
     } else if global_form_directory.is_some() {
         global_form_directory.as_deref()
@@ -580,10 +623,18 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         } else {
             None
         }
-    } else if allow_subfolder && requested.as_deref().is_some_and(|req| Some(req) == native_directory) {
+    } else if send_input && requested.as_deref().is_some_and(|req| Some(req) == native_directory) {
         requested_checkout.take()
     } else if let Some((_, physical, _)) = &initial_identity {
-        crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            proof = crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true) => {
+                proof
+            }
+        }
     } else {
         None
     };
@@ -608,7 +659,13 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
                     ) => res.map_err(|_| upstream_error())?,
                 }
             } else {
-                crate::worktrees::placement_verified(&app, &workspace, &record["location"]).await
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    res = crate::worktrees::placement_verified(&app, &workspace, &record["location"]) => res,
+                }
             };
             match placement {
                 Ok(verified) => Some(verified),
@@ -692,6 +749,28 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
                 }
                 prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
+        } else if inbox_or_background {
+            let ctx_dir = context["directory"].as_str().ok_or_else(invalid)?;
+            let Some((resolved, physical, dir_id)) = guards::directory_identity(&app.scope, Some(ctx_dir), false)
+            else {
+                return Err(foreign());
+            };
+            if resolved != physical {
+                return Err(foreign());
+            }
+            let proof = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                proof = crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true) => {
+                    proof.ok_or_else(foreign)?
+                }
+            };
+            if extra_mutation_dirs.iter().any(|(_, req_phys, _, _)| *req_phys != physical) {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
+            extra_mutation_dirs.push((ctx_dir.to_owned(), physical, dir_id, proof));
         } else if !message_list && !account_route {
             // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
@@ -732,7 +811,10 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if !message_list && !account_route && (seen_directory || (prompt_query.is_none() && value != directory))
+                if !message_list
+                    && !account_route
+                    && !inbox_or_background
+                    && (seen_directory || (prompt_query.is_none() && value != directory))
                 {
                     return Err(foreign());
                 }
@@ -787,6 +869,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             return Ok(PreparedRelay::Response(unavailable()));
         }
     }
+    let mut session_cleanup_guard = None;
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
         if (!message_list && record["location"]["directory"] != directory)
@@ -795,12 +878,36 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             return Err(error(Status::FORBIDDEN, "Session does not belong to workspace"));
         }
         if head.method != Method::GET {
-            if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
+            let exact_root = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => {
+                    return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
+                }
+                _ = workspace_closed() => return Err(not_found()),
+                result = crate::worktrees::exact_root_supported(&app, &workspace) => result?,
+            };
+            if !exact_root {
                 return Ok(PreparedRelay::Response(unavailable()));
             }
-            verify_mutation_at(&app, &endpoint, session, directory, record).await.map_err(|e| {
-                if send_input && e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e }
-            })?;
+            if head.method != Method::HEAD {
+                session_cleanup_guard = Some(
+                    app.session_cleanup
+                        .enter_mutation(session)
+                        .ok_or_else(|| error(Status::CONFLICT, "Session cleanup is in progress"))?,
+                );
+            }
+            tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => {
+                    return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
+                }
+                _ = workspace_closed() => return Err(not_found()),
+                result = verify_mutation_at(&app, &endpoint, session, directory, record) => result.map_err(|e| {
+                    if send_input && e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e }
+                })?,
+            }
         } else if route.strip_prefix("/api/session/").is_some_and(|rest| !rest.contains('/'))
             && head.headers.get(SESSION_PLACEMENT_HEADER).is_some_and(|v| v == "1")
         {
@@ -851,6 +958,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         pending_body: &mut pending_body,
         prompt_input: &mut prompt_input,
         prompt_locations: &prompt_locations,
+        extra_mutation_dirs: &extra_mutation_dirs,
         trace_fence,
         explicit: explicit || global_form_directory.is_some(),
         requested_dirs: &requested_dirs,
@@ -979,6 +1087,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         account_manual,
         account_verified_locs,
         rules_lock,
+        session_cleanup_guard,
     })))
 }
 

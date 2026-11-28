@@ -10,6 +10,7 @@ import { LOCATION_CONTEXT_HEADER, locationRequestOptions } from "../../opencode/
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { OpenCodeSharedService } from "../../workspaces/opencode-service"
 import { legacyContractFixture } from "../../opencode/compatibility/contract-fixture"
+import { MINIMUM, newerPatch } from "../../opencode/runtime-version-fixture"
 
 test("modern proxy preserves Forms scope and rejects obsolete selectors in cursors and history", async () => {
   const upstream = Fastify()
@@ -17,7 +18,7 @@ test("modern proxy preserves Forms scope and rejects obsolete selectors in curso
   upstream.all("/*", async request => { forwarded++; return { method: request.method, url: request.url, body: request.body, headers: request.headers } })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint: Endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`, auth: { type: "basic", username: "opencode", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.3.2", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM, pid: 1, discovery: "info" })
   const client = { session: { get: async ({ sessionID }: { sessionID: string }) => ({ location: { directory: sessionID === "foreign" ? "/foreign" : "/native" } }) } } as unknown as OpenCodeClient
   const connection = { endpoint, client, fetch: createRuntimeFetch(endpoint), assertCurrent() {}, invalidate() {}, profile: async () => "modern" as const }
   const directories = new Set(["/host", "/native"])
@@ -89,7 +90,7 @@ test("future releases advertising retired schemas are refused before functional 
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
-  rememberRuntime(endpoint, { version: "2.3.100", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: newerPatch(99), pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   try {
     await assert.rejects(service.client({ kind: "lifecycle", identity: "isolated-test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } }), { code: "opencode_update_required" })

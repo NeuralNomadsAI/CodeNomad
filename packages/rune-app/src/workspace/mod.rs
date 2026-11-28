@@ -32,8 +32,10 @@ pub(crate) use state::{
 };
 pub(crate) use state::{
     MAX_WINDOW_DEVICE_FILES, StashedTemporary, TemporaryTabInfo, Ui, active_project_title,
-    active_session, active_temporary_workspace, attachment_draft_admissible, bound,
-    bound_with_adopt, can_close_active, can_new, can_switch_tabs, capture, capture_files_mode,
+    active_session, active_temporary_workspace, attachment_draft_admissible,
+    auto_cleanup_abort_for_project, auto_cleanup_abort_for_session,
+    auto_cleanup_abort_if_protected, auto_cleanup_is_deleting_session, bound, bound_with_adopt,
+    can_close_active, can_new, can_switch_tabs, capture, capture_files_mode,
     check_restored_draft_sessions, clear_temporary_mark, close, close_after_keep, close_ordinary,
     confirm_unconfirmed, connected, conversation_stream_clients, detach_dead_temporary,
     detach_stopped_temporary, draft_changed, file_draft_status, file_wrap, files_tab,
@@ -42,8 +44,8 @@ pub(crate) use state::{
     panel_width, poll, poll_file_drafts, prepare_open, reconcile_temporary_folders,
     recover_missing_session_draft, remove_cleaned_session, rename_tab, renew_connection,
     restore_files_mode, restore_stashed, resume, resume_restored_draft_checks, retry,
-    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
-    session_cleanup_protected, session_deleted_hook, stash_for_discard,
+    schedule_blank_cleanup, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
+    select_relative, session_cleanup_protected, session_deleted_hook, stash_for_discard,
     stashed_has_in_memory_state, status, strip, tab_rename_seed, temporary_tab_info,
     toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
     window_inline_usage_without_history,

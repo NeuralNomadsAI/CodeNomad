@@ -386,9 +386,14 @@ pub(crate) async fn refresh_coordinator(
 }
 
 async fn mode(target: &Target<'_>, requested: Option<routes::Mode>) -> Result<routes::Mode, Error> {
+    let _lock = session_lock(target.session["id"].as_str().ok_or_else(unavailable)?).await;
+    mode_locked(target, requested).await
+}
+
+async fn mode_locked(target: &Target<'_>, requested: Option<routes::Mode>) -> Result<routes::Mode, Error> {
     use routes::Mode::{Autonomous, Supervised};
+    target.check()?;
     let session = target.session;
-    let _lock = session_lock(session["id"].as_str().ok_or_else(unavailable)?).await;
     let key = key(session)?;
     let settings = &target.app.settings;
     let prior = saved(settings, &key)?;

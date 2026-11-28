@@ -31,14 +31,10 @@ for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) t
       schedules.push(request.searchParams.get("directory")!)
       return route.fulfill({ json: { version: 1, projectID: "p", schedules: [] } })
     }
-    if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence") {
-      return route.fulfill({ json: { version: 1, projectID: "p", schedules: [], actions: [] } })
-    }
     return route.fulfill({ status: 503, json: { error: "Inventory unavailable in this fixture" } })
   })
   try {
-    const recurrence = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence")
-    const schedule = mode === "control" ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") : undefined
+    const schedule = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled")
     await page.goto(`${fixture.url}?mode=${mode}`)
     const local = page.locator('[data-composer="local"] textarea'), remote = page.locator('[data-composer="remote"] textarea')
     await Promise.all([
@@ -65,12 +61,11 @@ for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) t
         releaseRemote()
       })(),
     ])
-    await recurrence
     await schedule
     const result = await page.evaluate(() => (window as any).backendConsumers)
     assert.deepEqual(result.reads, [result.folder], "local storage receives the physical folder key")
     assert.deepEqual(remoteHistory, [result.folder], "remote storage HTTP receives the physical folder key")
-    if (mode === "control") assert.ok(schedules.length)
+    assert.ok(schedules.length)
     assert.ok(schedules.every(directory => directory === "/repo"), JSON.stringify(schedules))
     assert.deepEqual(errors, [])
   } finally { releaseRemote(); await browser.close() }

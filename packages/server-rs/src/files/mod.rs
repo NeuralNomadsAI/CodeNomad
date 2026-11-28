@@ -370,11 +370,18 @@ pub async fn preview(
     let key = q.path.as_deref().ok_or_else(invalid)?;
     let p = workspace_path(&w.path, key, false)?;
     let _slot = app.file_reader.acquire().await.unwrap();
-    root(&w)?;
-    let bytes = links::read(&w.path, &p, MAX)?.ok_or_else(unavailable)?;
-    let tag = version(&bytes);
+    let w_read = w.clone();
+    let p_read = p.clone();
+    let (tag, contents) = tokio::task::spawn_blocking(move || -> Result<(String, String), Error> {
+        root(&w_read)?;
+        let bytes = links::read(&w_read.path, &p_read, MAX)?.ok_or_else(unavailable)?;
+        let tag = version(&bytes);
+        let contents = STANDARD.encode(&bytes);
+        Ok((tag, contents))
+    })
+    .await
+    .map_err(|_| unavailable())??;
     app.workspace(&id)?;
-    let contents = STANDARD.encode(&bytes);
     Ok((
         [(axum::http::header::ETAG, tag.clone())],
         Json(json!({"workspaceId":id,"relativePath":key,"contents":contents,"encoding":"base64","version":tag})),
@@ -739,6 +746,113 @@ mod tests {
         assert_eq!(conflicting.status(), Status::BAD_REQUEST);
 
         server.abort();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn preview_stats_first_rejects_oversized_and_directory_and_reads_via_spawn_blocking() {
+        use std::sync::Arc;
+        let dir = crate::shared::test_dir("files-m11-preview");
+        let root_dir = dunce::canonicalize(&dir).unwrap();
+        let ws_dir = root_dir.join("project");
+        let folder = ws_dir.join("sub");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(ws_dir.join("hello.txt"), "hello world\n").unwrap();
+        // Sparse-friendly oversized file (> 5 MiB) rejected at stat before reading.
+        let big = std::fs::File::create(ws_dir.join("oversized.bin")).unwrap();
+        big.set_len(MAX as u64 + 1).unwrap();
+        drop(big);
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "codenomad".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: std::time::Duration::from_secs(60),
+            absolute: std::time::Duration::from_secs(60),
+        })
+        .unwrap();
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let app = Arc::new(crate::App::new(
+            auth,
+            0,
+            root_dir.clone(),
+            root_dir.clone(),
+            false,
+            settings,
+            Value::Null,
+            crate::opencode::Native::test_connection(([127, 0, 0, 1], 9).into()),
+            PathBuf::new(),
+            None,
+            watch::Watches::new(tx),
+            None,
+        ));
+        let id = uuid::Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id,
+            request_id: None,
+            path: ws_dir.clone(),
+            name: None,
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({ "directory": ws_dir }),
+            temporary: None,
+        });
+
+        let resp = preview(
+            State(app.clone()),
+            Route(id.to_string()),
+            Query(Input { path: Some("hello.txt".into()), directory: None, worktree: None }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), Status::OK);
+        let etag = resp.headers().get(axum::http::header::ETAG).unwrap().to_str().unwrap().to_owned();
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["version"], etag);
+        assert_eq!(STANDARD.decode(body["contents"].as_str().unwrap()).unwrap(), b"hello world\n");
+
+        let too_large = preview(
+            State(app.clone()),
+            Route(id.to_string()),
+            Query(Input { path: Some("oversized.bin".into()), directory: None, worktree: None }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(too_large.0, Status::BAD_REQUEST);
+        assert_eq!(too_large.1.0["error"], "Selected file is too large to attach");
+
+        let dir_err = preview(
+            State(app.clone()),
+            Route(id.to_string()),
+            Query(Input { path: Some("sub".into()), directory: None, worktree: None }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(dir_err.0, Status::BAD_REQUEST);
+        assert_eq!(dir_err.1.0["error"], "Selected path is not a file");
+
+        assert_eq!(
+            links::read_lenient_async(ws_dir.clone(), "hello.txt".into(), MAX).await.unwrap().unwrap(),
+            b"hello world\n"
+        );
+        assert_eq!(links::read_lenient_async(ws_dir.clone(), "sub".into(), MAX).await.unwrap(), None);
+        assert_eq!(
+            links::read_lenient_async(ws_dir.clone(), "oversized.bin".into(), MAX).await.unwrap_err().1.0["error"],
+            "Selected file is too large to attach"
+        );
+
         let _ = std::fs::remove_dir_all(dir);
     }
 }

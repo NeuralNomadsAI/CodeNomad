@@ -796,14 +796,10 @@ impl Controls {
 
         let stacked = palette_ui::workbench_stacked(workbench_width, actions_width, coarse);
         let saved_builtin_override = editing_option.as_ref().is_some_and(|option| {
-            let Some(id) = option.builtin_id else {
-                return false;
-            };
-            if id == "custom" {
-                option.colors != option.original_colors
-            } else {
-                prefs.has_saved_override(id)
-            }
+            let has_saved = option
+                .builtin_id
+                .is_some_and(|id| id != "custom" && prefs.has_saved_override(id));
+            palettes::option_has_override(option, has_saved)
         });
         let display_colors = if draft.dirty {
             draft.colors.clone()

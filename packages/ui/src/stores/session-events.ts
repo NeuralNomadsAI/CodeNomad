@@ -47,7 +47,9 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionListIds, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionListIds, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, messagesLoaded, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { isSessionTranscriptVisible } from "./session-transcript-visibility"
+import { isLatestWindow } from "./message-v2/message-window"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -416,24 +418,33 @@ async function reconcileTerminalNativeSessionStatus(
   if (!authority.current()) return
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
   if (!authority.current()) return
-  refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+  refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages, options.failed)
   if (!authority.current()) return
   if (options.notify) notifySessionAttention("sessionDone", instanceId, sessionId)
 }
 
-function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
+function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false, failed = false): void {
   const signal = backendEvents.signalForInstance(instanceId)
   // The native reducer can reconcile its own cache after a missing tool terminal
   // event, but our bounded visible message store needs an authoritative load too.
   const store = messageStoreBus.getInstance(instanceId)
-  const unsettledTools = store?.getSessionMessageIds(sessionId).some(id => {
-    const message = store.getMessage(id)
+  const messageIds = store?.getSessionMessageIds(sessionId) ?? []
+  const unsettledTools = messageIds.some(id => {
+    const message = store?.getMessage(id)
     return message?.partIds.some(partId => {
       const part = message.parts[partId]?.data
       return part?.type === "tool" && (part.state?.status === "pending" || part.state?.status === "running")
     })
   })
-  if (force || unsettledTools) {
+  const lastMessage = messageIds.length ? store?.getMessage(messageIds[messageIds.length - 1]) : undefined
+  const missingReply = !failed && Boolean(
+    (activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId))
+    && isLatestWindow(store?.getMessageWindow(sessionId))
+    && (store?.hasPendingSends(sessionId)
+      || lastMessage?.role === "user"
+      || (messagesLoaded().get(instanceId)?.has(sessionId) && messageIds.length === 0)),
+  )
+  if (force || unsettledTools || missingReply) {
     void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
       log.warn("Failed to refresh settled session messages", { instanceId, sessionId, error })
     })

@@ -77,6 +77,6 @@ Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**. Zum Fe
 1. Prüfen Sie die Verbindungsanzeige und verbinden Sie sich erneut mit demselben Backend/Projekt.
 2. Lassen Sie die Wiederherstellung offene native Anfragen abgleichen; bekannte Anfragen und Entwürfe bleiben bei unvollständiger Abdeckung erhalten.
 
-Nach zwei unvollständigen Versuchen in Folge zeigt jedes Projekt pro Browser-Tab nur eine Warnung an, bis die Wiederherstellung vollständig gelingt.
+Vorübergehende Wiederherstellungsfehler werden im Hintergrund ohne Benachrichtigung erneut versucht. Wenn das mitgelieferte OpenCode-Plugin wartende Anfragen nicht auflisten kann, erscheint pro Backend ein Hinweis im Browser-Tab, bis die Wiederherstellung gelingt.
 
-Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und die Warnung erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).
+Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und ein Hinweis auf ein fehlendes Plugin erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).

@@ -3,8 +3,6 @@ import { after, before, test } from "node:test"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionActorActivity, MissionMap, MissionSummary, MissionTask } from "../../../server/src/api-types"
 import { missionSummary } from "../../../server/src/missions/mission-summary"
-import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
@@ -40,10 +38,7 @@ const release = () => mission("release", RELEASE, [task("draft", "Draft notes", 
   task("review", "Review notes", "dispatching", { actorSessionId: "ses_review", blockedBy: ["draft"] }), task("publish", "Publish notes", "queued", { blockedBy: ["review"] })])
 const audit = () => mission("audit", AUDIT, [task("scan", "Scan dependencies", "dispatching", { actorSessionId: "ses_scan" })])
 const empty = () => mission("empty", EMPTY, [], { runState: "prepared" })
-const schedule: RecurrenceSchedule = { id: "rec_nightly", title: SCHEDULE, revision: 1, state: "running", clock: { time: "02:00", zone: "UTC" },
-  nextDueAt: Date.now() + 3_600_000, pending: null, controls: [], actions: ["pause", "stop", "run-now"], history: [], latestResult: null }
-
-interface Data { missions: MissionMap[]; activity: Record<string, MissionActorActivity[]>; schedules: RecurrenceSchedule[]
+interface Data { missions: MissionMap[]; activity: Record<string, MissionActorActivity[]>
   deletions: Array<Record<string, unknown>>; failDelete: number
   /** The rows' summaries, when they differ from the server's own (`missionSummary`). */
   summaries?: (missions: MissionMap[]) => MissionSummary[] }
@@ -60,10 +55,7 @@ async function open(page: Page, data: Data, windowContext: "local" | "remote" = 
     const request = route.request(), path = new URL(request.url()).pathname
     const content = missionContentFixture(request.url(), request.method(), data.missions)
     if (content) return route.fulfill({ json: content })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
-      projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: data.schedules }) })
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
-    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: data.schedules[0]?.id ?? null, passageID: null } })
     if (path.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } })
     // Pause is refused: the mission changed first.
     if (path.endsWith("/control")) return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
@@ -88,7 +80,7 @@ async function open(page: Page, data: Data, windowContext: "local" | "remote" = 
   return { errors, settings }
 }
 const fresh = (): Data => ({ missions: [release(), audit(), empty()], activity: { release: [{ sessionId: "ses_review", state: "running" }], audit: [] },
-  schedules: [], deletions: [], failDelete: 0 })
+  deletions: [], failDelete: 0 })
 /** Serves a changed dataset and waits for the panel to read it. */
 async function publish(page: Page, data: Data, change: (data: Data) => void) {
   change(data)
@@ -161,8 +153,7 @@ test("one selection at a time: a Mission row, or instead one of its tasks", asyn
 test("a click only selects; the chevron alone expands and collapses a row", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 900 } })
   try {
-    const data = fresh(); data.schedules = [schedule]
-    const { errors } = await open(page, data)
+    const { errors } = await open(page, fresh())
     const entry = await inlineMissionEntry(page, RELEASE), expander = chevron(page, RELEASE)
     const draft = missionTask(missionRows(page), "Draft notes")
     await entry.click()
@@ -189,12 +180,6 @@ test("a click only selects; the chevron alone expands and collapses a row", asyn
     assert.equal(await (await inlineMissionEntry(page, AUDIT)).getAttribute("aria-current"), null)
     assert.equal(await entry.getAttribute("aria-current"), "true")
 
-    // An unselected schedule's children are its selected detail: its chevron selects and expands it.
-    const nightly = await inlineMissionEntry(page, SCHEDULE)
-    await chevron(page, SCHEDULE).click()
-    await attribute(nightly, "aria-current", "true")
-    await attribute(chevron(page, SCHEDULE), "aria-expanded", "true")
-    await page.locator(".mission-schedule-detail").waitFor()
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -247,7 +232,7 @@ test("a Mission's chevron carries its task rows' most urgent state: input, worki
     // A finished task whose conversation still runs (after its report) is finished work, not work.
     const shipped = mission("shipped", "Ship the exporter", [task("ship", "Package the exporter", "completed", { actorSessionId: "ses_ship" }),
       task("wait", "Announce the exporter", "blocked", { blockedBy: ["ship"] })])
-    const data: Data = { missions: [ask, work, shipped], schedules: [], deletions: [], failDelete: 0, activity: {
+    const data: Data = { missions: [ask, work, shipped], deletions: [], failDelete: 0, activity: {
       ask: [{ sessionId: "ses_answer", state: "form" }], work: [{ sessionId: "ses_build", state: "running" }], shipped: [{ sessionId: "ses_ship", state: "running" }] } }
     const { errors } = await open(page, data)
     for (const [title, taskTitle] of [["Ask about the schema", "Answer the schema question"], ["Work on the importer", "Build the importer"],
@@ -356,7 +341,7 @@ test("the first completion is green even after selecting unfinished work; a mous
   try {
     const title = "Complete the first tasks"
     const data: Data = { missions: [mission("first", title, ["first", "second", "waiting", "third", "outside"].map(key => task(key, key, "queued")))],
-      activity: {}, schedules: [], deletions: [], failDelete: 0 }
+      activity: {}, deletions: [], failDelete: 0 }
     const { errors } = await open(page, data)
     await selectMission(page, title)
     await missionTask(missionRows(page), "first").click()
@@ -402,7 +387,7 @@ for (const direction of ["ltr", "rtl"]) {
       const data: Data = { missions: [mission("rails", title, [
         ...Array.from({ length: 6 }, (_, i) => task(`source${i}`, `Source ${i}`, "queued")),
         ...Array.from({ length: 6 }, (_, i) => task(`target${i}`, `Target ${i}`, "queued", { blockedBy: i ? [] : ["source0"] })),
-      ])], activity: {}, schedules: [], deletions: [], failDelete: 0 }
+      ])], activity: {}, deletions: [], failDelete: 0 }
       const { errors } = await open(page, data)
       await page.locator("html").evaluate((element, dir) => element.setAttribute("dir", dir), direction)
       await selectMission(page, title)

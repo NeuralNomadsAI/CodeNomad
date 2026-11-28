@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    http::{Method, StatusCode as Status, header},
+    http::{Method, StatusCode as Status},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -115,12 +115,23 @@ pub(super) struct MutationContext<'a> {
     pub prompt_input: &'a mut Option<Value>,
     pub prompt_locations:
         &'a [(String, crate::opencode::prompt::Location, (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant))],
+    pub extra_mutation_dirs: &'a [(String, PathBuf, String, crate::worktrees::ownership::DirectoryProof)],
     pub trace_fence: bool,
     pub explicit: bool,
     pub requested_dirs: &'a [String],
     pub location_context_dir: Option<&'a str>,
     pub session_list: bool,
     pub target: &'a mut reqwest::Url,
+}
+
+async fn wait_workspace_closed(app: &Shared, workspace: &Workspace) {
+    loop {
+        let notified = app.workspace_closed.notified();
+        if !app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == workspace.id && w.path == workspace.path) {
+            return;
+        }
+        notified.await;
+    }
 }
 
 pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<MutationOutcome, Error> {
@@ -136,6 +147,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         pending_body,
         prompt_input,
         prompt_locations,
+        extra_mutation_dirs,
         trace_fence,
         explicit,
         requested_dirs,
@@ -170,24 +182,22 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         let data: Value = if let Some(data) = prompt_input.take() {
             data
         } else {
-            let contents = crate::opencode::proxy_body::read(
-                pending_body.take().ok_or_else(upstream_error)?,
-                body_limit,
-                declared,
-            )
-            .await?;
+            let contents = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(endpoint) => return Err(upstream_error()),
+                _ = wait_workspace_closed(app, workspace) => return Err(not_found()),
+                res = crate::opencode::proxy_body::read(
+                    pending_body.take().ok_or_else(upstream_error)?,
+                    body_limit,
+                    declared,
+                ) => res?,
+            };
             if contents.is_empty() {
                 body_empty = true;
                 json!({})
             } else {
-                let valid_ct = if account_mutation {
-                    is_json_content_type(&head.headers)
-                } else {
-                    head.headers
-                        .get(header::CONTENT_TYPE)
-                        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
-                };
-                if !valid_ct {
+                if !is_json_content_type(&head.headers) {
                     return Err(if control.is_some() {
                         controls::invalid("Invalid session control")
                     } else if account_mutation {
@@ -305,7 +315,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                     data.insert("permissions".into(), block.clone());
                 }
             }
-            if head.method != Method::DELETE && !(background && body_empty) {
+            if head.method != Method::DELETE && !((background || inbox_patch) && body_empty) {
                 input = Some(Value::Object(data));
             }
         }
@@ -390,6 +400,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         for loc in &account_verified_locs {
             checkouts.push(fence::identity(&loc.owned.checkout));
+        }
+        for (_, physical, _, _) in extra_mutation_dirs {
+            checkouts.push(fence::identity(&fence::checkout_root(&app.scope, physical)));
         }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
@@ -595,15 +608,58 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         && !send_input
         && let Some(session) = session
     {
-        let fresh = crate::opencode::session_record_at(app, endpoint, session)
-            .await
-            .map_err(|e| if e.0 == Status::NOT_FOUND { foreign() } else { e })?;
-        if actual.as_ref().is_none_or(|record| !same_target(record, &fresh)) {
-            return Err(foreign());
+        let verify_under_fence = async {
+            let fresh = crate::opencode::session_record_at(app, endpoint, session)
+                .await
+                .map_err(|e| if e.0 == Status::NOT_FOUND { foreign() } else { e })?;
+            if actual.as_ref().is_none_or(|record| !same_target(record, &fresh)) {
+                return Err(foreign());
+            }
+            if marker(&fresh) {
+                return Err(carrier_denied());
+            }
+            let fresh_dir = fresh["location"]["directory"].as_str().ok_or_else(foreign)?;
+            if let (Some((_, physical, _)), Some(admitted)) = (recheck.initial_identity, recheck.input_checkout) {
+                if !crate::worktrees::ownership::capture_directory(app, workspace, physical)
+                    .await
+                    .is_some_and(|current| admitted.same_checkout(&current))
+                {
+                    return Err(foreign());
+                }
+            } else if !crate::worktrees::owns(app, workspace, fresh_dir).await {
+                return Err(foreign());
+            }
+            for (_raw, physical, _initial_id, proof) in extra_mutation_dirs {
+                if !crate::worktrees::ownership::capture_directory(app, workspace, physical)
+                    .await
+                    .is_some_and(|current| proof.same_checkout(&current))
+                {
+                    return Err(foreign());
+                }
+            }
+            // Final synchronous physical-identity and liveness checks after all `.await`s
+            // so no alias or checkout can retarget while probing another location.
+            if recheck.initial_identity.is_some() && recheck.input_checkout.is_some() && !recheck.location_live() {
+                return Err(foreign());
+            }
+            for (raw, physical, initial_id, proof) in extra_mutation_dirs {
+                let current_id = directory_identity(&app.scope, Some(raw.as_str()), false);
+                if !current_id.as_ref().is_some_and(|(r, p, id)| r == physical && p == physical && id == initial_id)
+                    || !proof.live(physical)
+                {
+                    return Err(foreign());
+                }
+            }
+            Ok(())
+        };
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(endpoint) => return Err(upstream_error()),
+            _ = wait_workspace_closed(app, workspace) => return Err(not_found()),
+            res = verify_under_fence => res?,
         }
-        if marker(&fresh) {
-            return Err(carrier_denied());
-        }
+        principal.live()?;
         if !crate::sessions::permission_mode::workspace_current(app, workspace) {
             return Err(foreign());
         }

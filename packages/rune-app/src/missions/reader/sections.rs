@@ -236,7 +236,7 @@ fn render_page<S: 'static>(source_text: &str, markdown_text: Option<&str>, raw: 
         false,
         true,
         None,
-        |_, href, tx| open_safe_url(href, tx),
+        |_, href, tx| crate::chat::open_external(href, tx),
         |_, _, _, _| {},
         |_| None,
         |_, _| true,
@@ -314,17 +314,4 @@ pub(super) fn task_status_label(status: TaskStatus) -> &'static str {
         TaskStatus::Failed => "missions.control.task.status.failed",
         TaskStatus::Withdrawn => "missions.control.task.status.superseded",
     })
-}
-
-fn open_safe_url(href: &str, tx: &mut Tx) {
-    let trimmed = href.trim();
-    let allowed = trimmed
-        .get(..7)
-        .is_some_and(|p| p.eq_ignore_ascii_case("http://") || p.eq_ignore_ascii_case("mailto:"))
-        || trimmed
-            .get(..8)
-            .is_some_and(|p| p.eq_ignore_ascii_case("https://"));
-    if allowed {
-        let _ = tx.open_url(trimmed);
-    }
 }

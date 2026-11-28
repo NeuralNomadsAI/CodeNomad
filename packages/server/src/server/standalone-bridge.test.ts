@@ -71,6 +71,7 @@ async function startStandalone(t: TestContext, listenerArgs: string[], skipAuth 
 
   return {
     output: () => output,
+    logFile: path.join(root, "config", "logs", "server.log"),
     announced: { protocol: announced[1], host: announced[2] },
     stop: async () => {
       child.stdin.write("codenomad:shutdown\n")
@@ -85,6 +86,10 @@ test("a standalone HTTPS server publishes a private loopback bridge for Missions
   assert.equal(server.announced.protocol, "https")
   assert.doesNotMatch(server.output(), /Local Connection URL : http:\/\//, "the private listener is not announced")
   await server.stop()
+  // The backend keeps its own timestamped log beside its configuration, whoever reads its stdout.
+  const log = await readFile(server.logFile, "utf8")
+  assert.match(log, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[INFO\] \[app\] Starting CodeNomad CLI server /m)
+  assert.match(log, /Z \[INFO\] \[app\] Shutdown complete$/m)
 })
 
 test("an HTTP-only IPv6 server still publishes a reachable IPv4 loopback bridge", { timeout: 90_000 }, async t => {

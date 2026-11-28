@@ -14,11 +14,9 @@ import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage
 import { nativeImmediatePlayPassage, nativeMissionScheduleActorControl, nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl } from "./native-mission-schedule-immediate"
 import { NativeScheduleControlRefusal, nativeScheduleOwnerControlReceipt, type NativeScheduleOwnerControl } from "./native-schedule-owner"
-import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
+import { compactNativeMissionDocumentDeletion } from "./native-mission-schedule-deletion"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { configureNativeMissionPreparation } from "./native-mission-preparation"
-import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
-import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { assertAgentScheduledCoordinatorSelection, prevalidateAgentScheduledCoordinatorCreation } from "./native-scheduled-coordinator-adoption"
 import { ScheduledCoordinatorRefusal } from "./native-source-fence"
 
@@ -82,6 +80,11 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   if (!doc) throw new Error("Mission schedule unavailable")
   const conflict = () => refusal("control-conflict")
   if ("deletedAt" in doc) {
+    if (action === "check") {
+      if (doc.checks?.some(item => item.requestID === requestID && item.expectedRevision === expectedRevision))
+        return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+      return conflict()
+    }
     if (action !== "delete" || doc.requestID !== requestID || doc.expectedRevision !== expectedRevision
       || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) return conflict()
     return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
@@ -131,7 +134,8 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     const registration = yield* acquireNativeMissionServiceRegistration()
     const descriptors = artifacts ?? doc.calendarOwner?.installation
     if (!descriptors) throw new Error("Mission runtime descriptor unavailable")
-    const installation = { registrationFile: registration.registrationFile, provider: { ...descriptors.provider }, runtime: { ...descriptors.runtime } }
+    const installation = { registrationFile: registration.registrationFile,
+      runtime: { ...descriptors.runtime } }
     const prepared = doc, configuration = request.configuration
     doc = yield* Effect.tryPromise(() => store.change(missionID, expectedRevision, () => { registration.assertCurrent(); return current() }, value => {
       changes.configure(value, configuration, Date.now())
@@ -207,7 +211,14 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
         ...(request.transport.principal?.kind === "agent" && request.transport.principal.creationRequestID
           ? { automaticStart: { ...request.transport.principal, creationRequestID: request.transport.principal.creationRequestID,
             creationDigest: request.transport.principal.creationDigest! } } : {}) }))
-      if (prepared instanceof NativeScheduleControlRefusal) return { document: null, pending: false, refusal: prepared.refusal }
+      if (prepared instanceof NativeScheduleControlRefusal) {
+        if (action === "check") {
+          const latest = yield* Effect.promise(() => store.read(missionID))
+          if (latest && "deletedAt" in latest && latest.checks?.some(item => item.requestID === requestID && item.expectedRevision === expectedRevision))
+            return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, latest, run, false, requestID))
+        }
+        return { document: null, pending: false, refusal: prepared.refusal }
+      }
       doc = prepared
       admitControl(doc)
       doc = yield* Effect.tryPromise(() => owner.reconcile(missionID))
@@ -227,22 +238,8 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   // Re-evaluate the quota after admission/settlement, preserving mapping proofs.
   yield* Effect.tryPromise(() => owner.reconcile(missionID))
   if (action === "delete" || action === "check") {
-    const deleting = yield* Effect.promise(() => store.read(missionID))
-    if (deleting && !("deletedAt" in deleting) && deleting.deletion) {
-      const deletion = deleting.deletion
-      const managedCleanup = deletion.deleteManagedSessions && deleting.launchedCount > 0
-      if (managedCleanup || deleting.coordinatorReleases.length) actorPending = true
-      else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
-        && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
-        const range = yield* optionalOrdinaryJournalRange(ctx, run)
-        yield* Effect.tryPromise(() => store.withExclusion(async locked => {
-          await deleteDormantMissionJournal(locked, { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
-            set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, deleting, current)
-          await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
-            { missionID, ...deletion }, Date.now(), current, true)
-        }))
-      }
-    }
+    const compacted = yield* Effect.tryPromise(() => compactNativeMissionDocumentDeletion(ctx, store, missionID, run, current, actorPending))
+    if (compacted.managedOrReleasePending) actorPending = true
   }
   return yield* Effect.promise(async () => nativeMissionScheduleResult(ctx, await store.read(missionID), run, actorPending, requestID))
 })

@@ -551,18 +551,18 @@ impl BrowserController {
                             .ok_or("Browser open target changed".into())
                         },
                     )
-                    .map(OpenResult::Committed)
+                    .map(|url| OpenResult::Committed(url, super::registration_identity(&registration)))
                 })();
                 let mut inner = lock.lock().map_err(|error| error.to_string())?;
                 let result = match result {
-                    Ok(OpenResult::Committed(url)) => {
+                    Ok(OpenResult::Committed(url, identity)) => {
                         current_claim(&inner, &request_id).and_then(|claim| {
                             check_open_target(
                                 &inner,
                                 &request_id,
                                 claim.target.as_ref().ok_or("Browser open target changed")?,
                             )?;
-                            Ok(OpenResult::Committed(url))
+                            Ok(OpenResult::Committed(url, identity))
                         })
                     }
                     other => other,
@@ -574,7 +574,7 @@ impl BrowserController {
                     .and_then(|claim| Some((claim, claim.instance_id.as_ref()?)))
                 {
                     let committed = match &result {
-                        Ok(OpenResult::Committed(url)) => Some(url),
+                        Ok(OpenResult::Committed(url, _)) => Some(url),
                         _ => None,
                     };
                     let _ = app.emit_to(event_target, "browser-target:open-settled", json!({
@@ -585,7 +585,9 @@ impl BrowserController {
                 match result? {
                     OpenResult::Absent => continue,
                     OpenResult::Reroute => continue 'route,
-                    OpenResult::Committed(url) => return Ok(json!({ "url": url })),
+                    OpenResult::Committed(url, registration) => {
+                        return Ok(json!({ "url": url, "registration": registration }))
+                    }
                 }
             }
             return Err("No visible local window has the owning project tab".into());
@@ -596,7 +598,8 @@ impl BrowserController {
 enum OpenResult {
     Absent,
     Reroute,
-    Committed(String),
+    /// The committed URL and the registration that loaded it.
+    Committed(String, String),
 }
 
 pub(super) fn check_open_target(

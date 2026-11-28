@@ -46,9 +46,8 @@ process.env.XDG_DATA_HOME = path.join(root, "next-start-data")
 const configFile = path.join(env.OPENCODE_CONFIG_DIR, "opencode.json")
 await writeFile(configFile, "{}\n")
 
-let client, developer = false, callBrowser = false, inventoryUnavailable = false, providerError
+let client, developer = false, providerError
 let observedTools = []
-const nativeCalls = []
 const bridge = Fastify()
 let registration = createAutomationBridgeRegistration("http://127.0.0.1")
 registerAutomationPluginRoute(bridge, {
@@ -57,22 +56,15 @@ registerAutomationPluginRoute(bridge, {
   workspaceManager: {
     getSharedServiceClient: async () => client,
     list: () => [{ id: "unrelated" }, { id: "fixture" }],
-    ownsLocation: async (id, location) => {
-      if (id === "unrelated") {
-        if (inventoryUnavailable) throw new Error("Synthetic unavailable unrelated native inventory")
-        return false
-      }
-      return path.resolve(location.directory).toLowerCase() === project.toLowerCase()
-    },
+    ownsLocation: async (id, location) => id !== "unrelated" && path.resolve(location.directory).toLowerCase() === project.toLowerCase(),
   },
   nativeParent: {
     available: true,
-    request: async (method, params) => {
+    request: async method => {
       if (method === "developer.status") return { status: developer
         ? { state: "ready", cdpUrl: "http://127.0.0.1:1", runId: "fixture", nativeIdentity: "fixture", windowId: "fixture" }
         : { state: "stopped" } }
-      nativeCalls.push({ method, params })
-      return { url: params.command.url }
+      throw new Error(`Unexpected native request ${method}`)
     },
   },
 })
@@ -83,11 +75,6 @@ const provider = createServer(async (request, response) => {
     const body = JSON.parse(raw)
     const primary = request.headers["x-automation-kind"] === "primary"
     if (primary) observedTools = (body.tools ?? []).map(tool => tool.function?.name).filter(Boolean)
-    const invoke = primary && callBrowser
-    if (invoke) {
-      assert(observedTools.includes("codenomad_browser"), "Native model catalog must contain the browser tool")
-      callBrowser = false
-    }
     if (!body.stream) {
       response.setHeader("content-type", "application/json")
       response.end(JSON.stringify({ id: "fixture", choices: [{ message: { role: "assistant", content: "Fixture" }, finish_reason: "stop" }] }))
@@ -98,11 +85,8 @@ const provider = createServer(async (request, response) => {
       id: "fixture", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta, finish_reason }],
     })}\n\n`)
     chunk({ role: "assistant" })
-    if (invoke) chunk({ tool_calls: [{ index: 0, id: `fixture-${Date.now()}`, type: "function", function: {
-      name: "codenomad_browser", arguments: JSON.stringify({ action: "open", url: "https://example.com" }),
-    } }] })
-    else chunk({ content: "Done" })
-    chunk({}, invoke ? "tool_calls" : "stop")
+    chunk({ content: "Done" })
+    chunk({}, "stop")
     response.end("data: [DONE]\n\n")
   } catch (error) { providerError = error; response.destroy(error) }
 })
@@ -183,9 +167,9 @@ try {
   }
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad.automation" && plugin.state.status === "active"))
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad-session-pruning" && plugin.state.status === "active"))
-  await until(async () => (await sample()).includes("codenomad_browser"))
-  const allTools = ["codenomad_act", "codenomad_browser", "codenomad_inspect", "codenomad_screenshot"]
-  assert.deepEqual(await sample(), allTools, "Backend presence exposes all tools independently of Developer Mode")
+  await until(async () => (await sample()).includes("codenomad_inspect"))
+  const allTools = ["codenomad_act", "codenomad_inspect", "codenomad_screenshot"]
+  assert.deepEqual(await sample(), allTools, "Backend presence exposes developer automation tools independently of Developer Mode")
   // Keep project discovery disabled to exclude real ancestor configuration.
   // That also disables OpenCode's config watcher, so explicitly observe the
   // same directory with an OS watcher rather than accept a false-positive test.
@@ -200,20 +184,6 @@ try {
     configWatcher.close()
   }
   assert.equal(await readFile(setupLog, "utf8"), setupBeforeHeartbeat, "Backend heartbeats must not reload native configuration/plugins")
-  const skills = await client.skill.list({ location })
-  assert(JSON.stringify(skills).includes("codenomad-browser"), "Bundled skill is visible in an arbitrary project")
-  inventoryUnavailable = true
-  callBrowser = true
-  await sample()
-  assert.equal(callBrowser, false, "The model requested an open against incomplete inventory")
-  assert.equal(nativeCalls.length, 0, "Opening with uncertain tab ownership must not reach the native host")
-  inventoryUnavailable = false
-  callBrowser = true
-  await sample()
-  assert.equal(nativeCalls.length, 1)
-  assert.equal(nativeCalls[0].method, "browser.execute")
-  assert.equal(nativeCalls[0].params.sessionID, session.id)
-  assert.deepEqual(nativeCalls[0].params.workspaceIDs, ["fixture"])
   const denied = await bridge.inject({ method: "POST", url: "/api/opencode-plugin/automation",
     headers: { "x-codenomad-automation-token": registration.token },
     payload: { mode: "developer-execute", sessionID: session.id, command: { action: "inspect" } },
@@ -225,11 +195,10 @@ try {
   assert.deepEqual(await sample(), allTools)
   await second(); second = undefined
   await until(async () => (await sample()).length === 0)
-  assert(!JSON.stringify(await client.skill.list({ location })).includes("codenomad-browser"))
   first = await openPresence()
-  await until(async () => (await sample()).length === 4)
+  await until(async () => (await sample()).length === 3)
   assert.deepEqual(await sample(), allTools)
-  console.log(`PASS ${version}: connected-daemon discovery despite backend environment mismatch, automation and pruning provisioning, stable native plugins across heartbeats, late native discovery, arbitrary project, all definitions without Developer Mode, browser execution, native target fences, independent leases, clean shutdown and reopening`)
+  console.log(`PASS ${version}: connected-daemon discovery despite backend environment mismatch, automation and pruning provisioning, stable native plugins across heartbeats, late native discovery, arbitrary project, developer definitions without Developer Mode, native target fences, independent leases, clean shutdown and reopening`)
 } finally {
   await first?.(); await second?.(); await removeBridge?.()
   child?.kill()

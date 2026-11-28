@@ -30,7 +30,7 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 If the desktop app opens a draft recovery window, use **Copy** to keep each listed edit before closing it.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
 
-Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
+Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care. Save checks the file version before replacing it; if a change is detected while saving, the save is refused and your draft is kept so you can **Refresh** or **Save** again.
 
 With **Restore previous state** enabled, reopen the same file in the same project and checkout after restarting the desktop app to recover your draft. If the file changed on disk, CodeNomad keeps the draft and flags the conflict. The original changes only when you explicitly save. Each desktop profile retains up to 32 drafts, with a total limit of 256 KiB. If the window stays open because a draft could not be kept, save your edits or copy them before discarding the draft. **Refresh** asks before discarding a draft.
 

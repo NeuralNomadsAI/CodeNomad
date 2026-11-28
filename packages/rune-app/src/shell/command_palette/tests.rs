@@ -530,3 +530,318 @@ fn scope_renewal_auth_trigger_attachments_floating_focus_and_rebound_nav_are_saf
     assert!(!is_open(&rt.state));
     assert_eq!(focused_key(&rt).as_deref(), Some("sessions-panel-toggle"));
 }
+
+fn find_a11y_by_name<'a>(node: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    if node.get("name").and_then(|v| v.as_str()) == Some(name) {
+        return Some(node);
+    }
+    node.get("children")?
+        .as_array()?
+        .iter()
+        .find_map(|child| find_a11y_by_name(child, name))
+}
+
+fn search_active_descendant(rt: &Runtime<State>) -> Option<String> {
+    let tree = rt.accessibility_json();
+    let placeholder = strings::with_locale("en", || strings::t("commandPalette.searchPlaceholder"));
+    let input =
+        find_a11y_by_name(&tree, placeholder).expect("palette search input in accessibility tree");
+    input
+        .get("activeDescendant")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+}
+
+#[test]
+fn keyboard_navigation_scrolls_list_updates_active_descendant_and_rename_falls_back_to_trigger() {
+    // 1. Overflowing viewport: keyboard navigation reveals selected rows inside command-palette-list
+    //    and keeps the search field's accessibility activeDescendant in sync.
+    let mut rt = runtime(workspace_state(2));
+    rt.set_viewport((1400.0, 260.0), 1.0);
+    settle(&mut rt);
+
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    let items = strings::with_locale("en", || visible_commands(&rt.state));
+    assert!(
+        items.len() >= 8,
+        "expected enough palette commands to overflow a compact viewport"
+    );
+    let first_id = items[0].id;
+    let second_id = items[1].id;
+    let last_id = items.last().unwrap().id;
+    let first_key = item_key(first_id);
+    let second_key = item_key(second_id);
+    let last_key = item_key(last_id);
+
+    let list_el = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(theme::LIST))
+        .expect("palette list viewport");
+    let first_el = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(first_key.as_str()))
+        .expect("first command row");
+    let last_el_before = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(last_key.as_str()))
+        .expect("last command row");
+    assert!(
+        first_el.visible[3] > 0.0,
+        "first row must be visible on open"
+    );
+    assert!(
+        last_el_before.visible[3] <= 0.0,
+        "last row must initially overflow below the compact palette list"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(first_key.as_str()),
+        "search field must expose initial selected row as activeDescendant"
+    );
+
+    // ArrowDown updates activeDescendant to the second row.
+    send_key(&mut rt, Key::Down, Mods::default());
+    assert_eq!(rt.state.command_palette.selected_id, Some(second_id));
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(second_key.as_str()),
+        "ArrowDown must update activeDescendant"
+    );
+
+    // End reveals the last row inside the list viewport and updates activeDescendant.
+    send_key(&mut rt, Key::End, Mods::default());
+    assert_eq!(rt.state.command_palette.selected_id, Some(last_id));
+    let last_el_after_end = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(last_key.as_str()))
+        .expect("last command row after End");
+    assert!(
+        last_el_after_end.visible[3] > 0.0
+            && last_el_after_end.visible[1] >= list_el.rect[1] - 1.0
+            && last_el_after_end.visible[1] + last_el_after_end.visible[3]
+                <= list_el.rect[1] + list_el.rect[3] + 1.0,
+        "End must scroll the last row into the palette list viewport (visible={:?}, list={:?})",
+        last_el_after_end.visible,
+        list_el.rect
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(last_key.as_str()),
+        "End must update activeDescendant to the last row"
+    );
+
+    // Home scrolls back to the top and updates activeDescendant to the first row.
+    send_key(&mut rt, Key::Home, Mods::default());
+    assert_eq!(rt.state.command_palette.selected_id, Some(first_id));
+    let first_el_after_home = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(first_key.as_str()))
+        .expect("first command row after Home");
+    assert!(
+        first_el_after_home.visible[3] > 0.0,
+        "Home must scroll the first row back into view"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(first_key.as_str())
+    );
+
+    // ArrowUp wraps to the last row and scrolls it into view; ArrowDown wraps back to the first.
+    send_key(&mut rt, Key::Up, Mods::default());
+    assert_eq!(rt.state.command_palette.selected_id, Some(last_id));
+    let last_el_after_wrap = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(last_key.as_str()))
+        .expect("last command row after ArrowUp wrap");
+    assert!(
+        last_el_after_wrap.visible[3] > 0.0,
+        "ArrowUp wrap must reveal the last row"
+    );
+    send_key(&mut rt, Key::Down, Mods::default());
+    assert_eq!(rt.state.command_palette.selected_id, Some(first_id));
+    let first_el_after_wrap = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(first_key.as_str()))
+        .expect("first command row after ArrowDown wrap");
+    assert!(
+        first_el_after_wrap.visible[3] > 0.0,
+        "ArrowDown wrap must reveal the first row"
+    );
+
+    // Empty search results clear activeDescendant.
+    rt.paste("zzzz-no-command-match");
+    settle(&mut rt);
+    assert_eq!(
+        search_active_descendant(&rt),
+        None,
+        "empty search results must clear activeDescendant"
+    );
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(!is_open(&rt.state));
+
+    // 2. Opening rename-instance from the palette with no prior focus falls back to theme::TRIGGER
+    //    both via Enter (execute_selected) and via row click (execute_by_id).
+    let mut rt_enter = runtime(workspace_state(2));
+    assert_eq!(focused_key(&rt_enter), None);
+    send_key(&mut rt_enter, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt_enter.state));
+    rt_enter.paste("rename instance");
+    settle(&mut rt_enter);
+    send_key(&mut rt_enter, Key::Enter, Mods::default());
+    assert!(!is_open(&rt_enter.state));
+    assert!(crate::shell::tab_rename::is_open(&rt_enter.state));
+    send_key(&mut rt_enter, Key::Escape, Mods::default());
+    assert!(!crate::shell::tab_rename::is_open(&rt_enter.state));
+    assert_eq!(
+        focused_key(&rt_enter).as_deref(),
+        Some(theme::TRIGGER),
+        "rename-instance executed by Enter without prior focus must restore focus to theme::TRIGGER"
+    );
+
+    let mut rt_click = runtime(workspace_state(2));
+    assert_eq!(focused_key(&rt_click), None);
+    send_key(&mut rt_click, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt_click.state));
+    rt_click.paste("rename instance");
+    settle(&mut rt_click);
+    click(&mut rt_click, &item_key("rename-instance"));
+    assert!(!is_open(&rt_click.state));
+    assert!(crate::shell::tab_rename::is_open(&rt_click.state));
+    send_key(&mut rt_click, Key::Escape, Mods::default());
+    assert!(!crate::shell::tab_rename::is_open(&rt_click.state));
+    assert_eq!(
+        focused_key(&rt_click).as_deref(),
+        Some(theme::TRIGGER),
+        "rename-instance executed by click without prior focus must restore focus to theme::TRIGGER"
+    );
+}
+
+#[test]
+fn stationary_pointer_over_scrolling_list_does_not_override_keyboard_selection() {
+    let mut rt = runtime(workspace_state(2));
+    rt.set_viewport((1400.0, 260.0), 1.0);
+    settle(&mut rt);
+
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    let items = strings::with_locale("en", || visible_commands(&rt.state));
+    assert!(items.len() >= 8);
+    let enabled: Vec<_> = items.iter().filter(|item| !item.disabled).collect();
+    assert!(enabled.len() >= 4);
+    let first_id = items[0].id;
+    let second_id = enabled[1].id;
+    let last_id = items.last().unwrap().id;
+    let first_key = item_key(first_id);
+    let second_key = item_key(second_id);
+    let last_key = item_key(last_id);
+
+    // Move the pointer onto the second enabled row: real pointer movement selects it.
+    let (px, py) = rt
+        .find(&second_key)
+        .expect("second enabled command row visible");
+    rt.pointer_move(px, py);
+    settle(&mut rt);
+    assert_eq!(rt.state.command_palette.selected_id, Some(second_id));
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(second_key.as_str())
+    );
+
+    // Keep the pointer stationary over the list and press End to scroll past the fold.
+    // Let Rune's scroll glide finish and re-evaluate hover under the stationary pointer.
+    send_key(&mut rt, Key::End, Mods::default());
+    for _ in 0..45 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(last_id),
+        "scroll-retargeted hover under a stationary pointer must not overwrite End selection"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(last_key.as_str()),
+        "activeDescendant must stay on the keyboard-selected row after scroll settles"
+    );
+
+    // A duplicate pointer event at the exact same coordinates must still not steal selection.
+    rt.pointer_move(px, py);
+    settle(&mut rt);
+    assert_eq!(rt.state.command_palette.selected_id, Some(last_id));
+
+    // Genuine pointer movement onto a scrolled-in enabled row re-enables hover selection.
+    let scrolled_enabled = enabled
+        .iter()
+        .rev()
+        .find(|item| {
+            item.id != last_id
+                && item.id != second_id
+                && rt.elements().into_iter().any(|el| {
+                    el.key.as_deref() == Some(item_key(item.id).as_str()) && el.visible[3] > 4.0
+                })
+        })
+        .expect("another enabled row visible after End");
+    let scrolled_key = item_key(scrolled_enabled.id);
+    let (mx, my) = rt.find(&scrolled_key).expect("scrolled enabled row center");
+    rt.pointer_move(mx, my);
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(scrolled_enabled.id),
+        "moving the pointer after scrolling to End must select the row under the moved cursor"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(scrolled_key.as_str())
+    );
+
+    // Press Home while the pointer rests stationary: selection must stay on the first row.
+    send_key(&mut rt, Key::Home, Mods::default());
+    for _ in 0..45 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.state.command_palette.selected_id,
+        Some(first_id),
+        "stationary pointer must not override Home selection after scrolling back to top"
+    );
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(first_key.as_str())
+    );
+}
+
+#[test]
+fn search_field_uses_search_input_mode_and_disables_autofill() {
+    assert_eq!(view::QUERY_INPUT_MODE, rune::InputMode::Search);
+    assert_eq!(view::QUERY_INPUT_MODE.as_html(), "search");
+    assert_eq!(view::QUERY_AUTOFILL, rune::Autofill::Off);
+    assert_eq!(view::QUERY_AUTOFILL.as_html(), "off");
+
+    let mut rt = runtime(workspace_state(2));
+    send_key(&mut rt, Key::Command('p'), primary_mods(true));
+    assert!(is_open(&rt.state));
+    assert!(focused_path_contains(&rt, FIELD));
+
+    let elements = rt.elements();
+    let input = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some(FIELD))
+        .expect("palette search field");
+    assert_eq!(input.role, "textbox");
+
+    send_key(&mut rt, Key::Text("rename".into()), Mods::default());
+    assert_eq!(rt.state.command_palette.query.text, "rename");
+    assert_eq!(
+        search_active_descendant(&rt).as_deref(),
+        Some(item_key("rename-instance").as_str())
+    );
+}

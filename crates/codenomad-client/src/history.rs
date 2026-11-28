@@ -9,6 +9,18 @@ pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const WINDOW_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const MAX_TOOL_TEXT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SHELL_BODY_BYTES: usize = 32 * 1024;
+
+fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
 
 #[derive(Clone, Debug)]
 pub struct Page {
@@ -54,12 +66,34 @@ pub fn decode_message(v: &Value) -> Result<Message> {
             .or_else(|| v["error"]["message"].as_str())
             .unwrap_or_default()
             .into(),
+        "shell" => {
+            let command = v["command"].as_str().unwrap_or_default();
+            let output = v["output"]["output"]
+                .as_str()
+                .or_else(|| v["output"].as_str())
+                .unwrap_or_default();
+            let mut body = match (command.is_empty(), output.is_empty()) {
+                (false, false) => {
+                    let cmd_limit = MAX_SHELL_BODY_BYTES.saturating_sub(3);
+                    let prefix = format!("$ {}\n", truncate_utf8(command, cmd_limit));
+                    let remaining = MAX_SHELL_BODY_BYTES.saturating_sub(prefix.len());
+                    format!("{prefix}{}", truncate_utf8(output, remaining))
+                }
+                (true, false) => truncate_utf8(output, MAX_SHELL_BODY_BYTES).into(),
+                (false, true) => truncate_utf8(command, MAX_SHELL_BODY_BYTES).into(),
+                (true, true) => String::new(),
+            };
+            body.shrink_to_fit();
+            body
+        }
         _ => crate::content::text_body(&parts),
     };
     Ok(Message {
         id: id.into(),
         role: role.into(),
-        completed: role == "user" || !v["time"]["completed"].is_null(),
+        completed: role == "user"
+            || !v["time"]["completed"].is_null()
+            || (role == "shell" && v["status"].as_str().is_some_and(|s| s != "running")),
         body,
         usage: (role == "assistant")
             .then(|| crate::content::Usage::decode(v))

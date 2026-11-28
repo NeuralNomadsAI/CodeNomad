@@ -55,6 +55,9 @@ struct NativeMock {
     /// Optional hook executed when `/api/session/active` is queried, used to simulate a file
     /// arriving between `onlyIfEmpty`'s initial empty check and the atomic `rmdir`.
     on_active: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Optional one-shot async pause on `DELETE /api/session/{id}`, used to drop the discard
+    /// caller mid-flight and prove the detached discard finishes atomically.
+    on_delete: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 async fn fake_native(State(mock): State<Arc<Mutex<NativeMock>>>, req: Request) -> Response {
@@ -133,7 +136,15 @@ async fn fake_native(State(mock): State<Arc<Mutex<NativeMock>>>, req: Request) -
     if method == Method::DELETE
         && let Some(sid) = path.strip_prefix("/api/session/")
     {
-        mock.lock().unwrap().removed.push(sid.to_owned());
+        let pause = {
+            let mut guard = mock.lock().unwrap();
+            guard.removed.push(sid.to_owned());
+            guard.on_delete.take()
+        };
+        if let Some((reached, release)) = pause {
+            reached.notify_one();
+            release.notified().await;
+        }
         if sid == "ses_already_gone" {
             return (Status::NOT_FOUND, Json(json!({ "_tag": "SessionNotFoundError", "sessionID": sid })))
                 .into_response();
@@ -811,5 +822,70 @@ async fn unavailable_registry_returns_empty_list_on_get_and_503_on_mutations() {
     assert_eq!(
         serde_json::from_slice::<Value>(&body).unwrap(),
         json!({ "error": "Temporary workspaces are unavailable" })
+    );
+}
+
+#[tokio::test]
+async fn discard_completes_when_caller_disconnects_mid_flight() {
+    let h = Harness::new(true).await;
+    let created = h.client.post(format!("{}/api/workspaces/temporary", h.base)).send().await.unwrap();
+    assert_eq!(created.status(), Status::CREATED);
+    let created_body: Value = created.json().await.unwrap();
+    let folder = created_body["path"].as_str().unwrap().to_owned();
+    fs::write(Path::new(&folder).join("scratch.txt"), "remove me").unwrap();
+
+    let ws = h.open_workspace(&folder, None).await;
+    let ws_id = ws["id"].as_str().unwrap().to_owned();
+
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut mock = h.mock.lock().unwrap();
+        mock.sessions = vec![
+            json!({ "id": "ses_parent", "location": { "directory": folder } }),
+            json!({ "id": "ses_child", "parentID": "ses_parent", "location": { "directory": folder } }),
+        ];
+        mock.on_delete = Some((reached.clone(), release.clone()));
+    }
+
+    let sub = h.app.events.subscribe();
+    let caller = tokio::spawn(discard(State(h.app.clone()), RoutePath(ws_id.clone()), HeaderMap::new(), Bytes::new()));
+
+    tokio::time::timeout(Duration::from_secs(15), reached.notified())
+        .await
+        .expect("discard should pause on deleting the first session");
+    assert_eq!(h.mock.lock().unwrap().removed, vec!["ses_child"]);
+    assert!(Path::new(&folder).exists(), "folder must still exist while paused mid-discard");
+
+    // Simulate an HTTP client disconnect mid-flight by dropping the handler future.
+    caller.abort();
+    let _ = caller.await;
+
+    release.notify_one();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut deleted_event = false;
+    while tokio::time::Instant::now() < deadline {
+        for event in h.drain_events(&sub) {
+            if event["type"] == "workspace.temporaryChanged" && event["folders"] == json!([]) {
+                deleted_event = true;
+            }
+        }
+        if deleted_event && !Path::new(&folder).exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert!(deleted_event, "detached discard must finish and emit workspace.temporaryChanged");
+    assert_eq!(h.mock.lock().unwrap().removed, vec!["ses_child", "ses_parent"]);
+    assert!(!Path::new(&folder).exists(), "detached discard must remove the temporary folder on disk");
+    assert!(
+        !h.app.temporary_workspaces.as_ref().unwrap().has(Path::new(&folder)),
+        "detached discard must unregister the temporary folder"
+    );
+    assert!(
+        h.app.inner.lock().unwrap().workspaces.iter().all(|w| w.id.to_string() != ws_id),
+        "detached discard must close the workspace tab"
     );
 }

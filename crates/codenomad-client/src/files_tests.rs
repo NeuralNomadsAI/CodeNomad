@@ -1,7 +1,7 @@
 use crate::{
     backend::{Backend, read_json},
-    files::{EntryKind, ListingTooLarge, MAX_ENTRIES, MAX_FILE_BYTES},
-    http::Http,
+    files::{EntryKind, FileError, ListingTooLarge, MAX_ENTRIES, MAX_FILE_BYTES},
+    http::{Http, is_unauthorized},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -361,6 +361,156 @@ fn malformed_http_errors_and_json_byte_bounds_are_preserved() {
             "ordinary client JSON stays at 2 MiB"
         );
     })
+}
+
+#[test]
+fn typed_file_errors_cover_http_transport_and_validation_without_raw_details() {
+    let assert_typed = |error: crate::history::Error, expected: FileError| {
+        assert_eq!(
+            error.downcast_ref::<FileError>().copied(),
+            Some(expected),
+            "unexpected error: {error}"
+        );
+        let text = error.to_string().to_ascii_lowercase();
+        for forbidden in [
+            "reqwest",
+            "error sending request",
+            "status code",
+            "http status",
+            "127.0.0.1",
+            "http://",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "raw detail `{forbidden}` leaked into `{text}`"
+            );
+        }
+    };
+    run(async {
+        let server = Server::new(vec![
+            (401, br#"{"error":"Unauthorized"}"#.to_vec()),
+            (403, br#"{"error":"Forbidden"}"#.to_vec()),
+            (404, br#"{"error":"Workspace not found"}"#.to_vec()),
+            (404, br#"{"error":"Missing"}"#.to_vec()),
+            (409, br#"{"error":"Conflict"}"#.to_vec()),
+            (413, br#"{"error":"Too large"}"#.to_vec()),
+            (
+                400,
+                br#"{"error":"Selected file is too large to attach"}"#.to_vec(),
+            ),
+            (
+                400,
+                br#"{"error":"Access outside of root is not allowed"}"#.to_vec(),
+            ),
+            (
+                400,
+                br#"{"error":"Directory is not owned by this workspace"}"#.to_vec(),
+            ),
+            (400, br#"{"error":"Selected path is unavailable"}"#.to_vec()),
+            (400, br#"{"error":"Bad request"}"#.to_vec()),
+            (500, br#"{"error":"Internal boom"}"#.to_vec()),
+            (200, b"{not-json".to_vec()),
+            (
+                200,
+                serde_json::to_vec(&json!({
+                    "workspaceId": "workspace",
+                    "relativePath": "code.bin",
+                    "encoding": "utf-8",
+                    "contents": "YQ=="
+                }))
+                .unwrap(),
+            ),
+            (
+                200,
+                serde_json::to_vec(&json!({
+                    "workspaceId": "workspace",
+                    "relativePath": "code.bin",
+                    "encoding": "base64",
+                    "contents": "not-valid-base64!!!"
+                }))
+                .unwrap(),
+            ),
+            (
+                200,
+                serde_json::to_vec(&preview(&vec![0; MAX_FILE_BYTES + 1])).unwrap(),
+            ),
+        ]);
+        let unauthorized = server
+            .backend
+            .preview_file("/trial", "code.bin")
+            .await
+            .unwrap_err();
+        assert!(is_unauthorized(&unauthorized));
+        assert_typed(unauthorized, FileError::Unauthorized);
+
+        for expected in [
+            FileError::AccessDenied,
+            FileError::WorkspaceUnavailable,
+            FileError::NotFound,
+            FileError::Conflict,
+            FileError::TooLarge,
+            FileError::TooLarge,
+            FileError::AccessDenied,
+            FileError::AccessDenied,
+            FileError::Unavailable,
+            FileError::InvalidRequest,
+            FileError::Server,
+            FileError::UnexpectedResponse,
+            FileError::InvalidEncoding,
+            FileError::InvalidEncoding,
+            FileError::TooLarge,
+        ] {
+            let err = server
+                .backend
+                .preview_file("/trial", "code.bin")
+                .await
+                .unwrap_err();
+            assert_typed(err, expected);
+        }
+
+        // Closed port -> Transport error with no raw reqwest URL or text.
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_base = format!("http://{}/", closed.local_addr().unwrap());
+        drop(closed);
+        let offline = Backend {
+            client: Http::new().unwrap(),
+            base: closed_base,
+            workspace: "workspace".into(),
+            session: String::new(),
+            client_id: "files-offline".into(),
+            session_directory: None,
+            fresh_mode: false,
+        };
+        assert_typed(
+            offline.files("/trial", ".").await.unwrap_err(),
+            FileError::Transport,
+        );
+        assert_typed(
+            offline
+                .preview_file("/trial", "code.bin")
+                .await
+                .unwrap_err(),
+            FileError::Transport,
+        );
+        assert_typed(
+            offline
+                .write_file("/trial", "code.bin", "hello", "\"v1\"")
+                .await
+                .unwrap_err(),
+            FileError::Transport,
+        );
+        assert_typed(
+            offline.files("/trial", "../escape").await.unwrap_err(),
+            FileError::InvalidRequest,
+        );
+        assert_typed(
+            offline
+                .write_file("/trial", "code.bin", "hello", "")
+                .await
+                .unwrap_err(),
+            FileError::InvalidRequest,
+        );
+    });
 }
 
 #[test]

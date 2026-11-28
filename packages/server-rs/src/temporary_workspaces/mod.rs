@@ -749,8 +749,17 @@ async fn discard(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Status, OpError> {
-    let reg = registry(&app)?;
+    let _ = registry(&app)?;
     let only_if_empty = parse_discard_body(&headers, &body)?;
+    // Detach the mutation so an HTTP client disconnect mid-flight cannot leave
+    // sessions deleted while the tab or temporary folder remains half-discarded.
+    tokio::spawn(discard_owned(app, id, only_if_empty))
+        .await
+        .map_err(|_| error(Status::INTERNAL_SERVER_ERROR, "Failed to discard temporary workspace"))?
+}
+
+async fn discard_owned(app: Shared, id: String, only_if_empty: bool) -> Result<Status, OpError> {
+    let reg = registry(&app)?;
     let (_, initial_folder) = require_temporary(&app, reg, &id)?;
     let folder_guard = fence::serialize(folder_lock_key(&initial_folder)).await;
 

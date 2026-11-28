@@ -238,6 +238,13 @@ impl Draft {
                 || self.requires_attachment_support())
     }
 
+    pub fn can_send_shell(&self, edit: &TextEdit) -> bool {
+        let (count, bytes) = self.part_usage(Some(edit));
+        count <= MAX_PARTS
+            && bytes <= super::long_paste::MAX_BYTES
+            && self.resolve_shell(edit).is_some()
+    }
+
     pub fn requires_attachment_support(&self) -> bool {
         self.attachments
             .iter()

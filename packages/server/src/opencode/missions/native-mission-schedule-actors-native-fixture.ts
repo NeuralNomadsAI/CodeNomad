@@ -14,8 +14,6 @@ import { missionDocumentPassage } from "../../missions/mission-document-passage-
 import { captureMissionCalendarPlacement } from "../../missions/mission-calendar-placement"
 import { missionCalendarOwnerSchema } from "../../missions/mission-calendar-owner-state"
 import { acquireNativeScheduledActorTransport } from "./native-mission-schedule-actors"
-import { nativeScheduleCarrierHooks, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
-import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
 import type { NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import type { MissionStorage } from "../../missions/journal"
 import type { MissionDocument } from "../../missions/mission-document"
@@ -25,9 +23,6 @@ const definition = Rpc.define({ id: "codenomad.scheduled-actors-qualification", 
 export default Plugin.define({ id: definition.id, effect: ctx => Effect.gen(function* () {
   const options = ctx.options as NativeScheduleCarrierInstallation & { configYamlPath: string; logFile: string }
   const trace = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.tapCause(cause => Effect.sync(() => appendFileSync(options.logFile, Cause.pretty(cause) + "\n"))))
-  yield* registerNativeScheduleProvider(ctx, options)
-  const hooks = nativeScheduleCarrierHooks(() => false)
-  yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
   const current = () => true as const
   const handler = (method: "prepare" | "control") => (raw: unknown) => trace(Effect.scoped(Effect.gen(function* () {
     const graph = yield* Effect.context<never>(), run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromiseWith(graph)(effect)
@@ -45,7 +40,7 @@ export default Plugin.define({ id: definition.id, effect: ctx => Effect.gen(func
       let doc = await documents.read("actors_native") as MissionDocument | undefined
       if (!doc) {
         if (method !== "prepare") throw new Error("Fixture unprepared")
-        const selection = { agent: "build", model: NATIVE_SCHEDULE_CARRIER_MODEL }
+        const selection = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
         doc = await documents.create("actors_native", { title: "Private actor proof", objective: "Private fixture", template: "custom", taskMode: "native",
           profileID: "private-profile", executionHost: "host", profiles: { coordinator: selection, roles: { specialist: selection } },
           roots: [{ mode: "directory-only", directory: ctx.location.directory }], watchedConversationIDs: [],
@@ -53,7 +48,7 @@ export default Plugin.define({ id: definition.id, effect: ctx => Effect.gen(func
         doc = await documents.change(doc.id, doc.revision, current, next => {
           changes.play(next, "first_play", Date.now(), []); changes.reserve(next, { kind: "immediate", requestID: "native_original" }, Date.now(), [])
           changes.admitted(next, next.pending!.id, Date.now())
-          next.calendarOwner = missionCalendarOwnerSchema.parse({ version: 1, installation: { registrationFile: options.registrationFile, provider: options.provider, runtime: options.runtime },
+          next.calendarOwner = missionCalendarOwnerSchema.parse({ version: 1, installation: { registrationFile: options.registrationFile, runtime: options.runtime },
             profileSource: { profileID: "private-profile", executionHost: "host", configYamlPath: options.configYamlPath },
             placement: captureMissionCalendarPlacement(next.configuration.roots),
             operation: { action: "play", requestID: "first_play", expectedRevision: 0, fingerprint: "a".repeat(64), pending: false, startedAt: Date.now() },
@@ -61,7 +56,7 @@ export default Plugin.define({ id: definition.id, effect: ctx => Effect.gen(func
         })
         const rootID = Session.ID.make(doc.pending!.coordinatorSessionID)
         await run(ctx.session.create({ id: rootID, agent: Agent.ID.make("build"), model: {
-          providerID: Provider.ID.make(NATIVE_SCHEDULE_CARRIER_MODEL.providerID), id: Model.ID.make(NATIVE_SCHEDULE_CARRIER_MODEL.id) },
+          providerID: Provider.ID.make(selection.model.providerID), id: Model.ID.make(selection.model.id) },
           location: { directory: ctx.location.directory }, metadata: { "codenomad.mission": { version: 1, missionID: doc.pending!.missionID,
             kind: "coordinator", role: "coordinator", document: { missionID: doc.id, passageID: doc.pending!.id } } } }))
         const child = await run(ctx.session.create({ parentID: rootID }))

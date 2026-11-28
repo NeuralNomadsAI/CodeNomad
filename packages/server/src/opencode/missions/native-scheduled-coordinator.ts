@@ -11,8 +11,9 @@ import type { MissionNativeRunner, MissionNativeService } from "./native-service
 import type { NativeMissionSession } from "../../missions/control-types"
 import { abortableNativeEffect } from "./native-invocation"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
-import { NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
-import { assertAgentScheduledCoordinatorSelection, acquireAgentScheduledCoordinatorValidation } from "./native-scheduled-coordinator-adoption"
+import { NATIVE_SCHEDULE_CARRIER_MARKER, nativeScheduleDocumentKey } from "./native-schedule-carrier-binding"
+import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
+import { assertAgentScheduledCoordinatorSelection } from "./native-scheduled-coordinator-adoption"
 
 /** Explicit coordinator adoption keeps the conversation and all unrelated metadata.
  * State-setting calls reconcile by readback; only admission sends the original input. */
@@ -23,9 +24,9 @@ export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: 
   validate?: () => Promise<() => true>) {
   const pending = doc.pending!, selected = pending.configuration.profiles?.coordinator
   if (!pending.coordinatorReused || !selected?.agent || !selected.model) throw new Error("Existing coordinator selection unavailable")
+  // The full ownership validation runs when the calendar is saved, never per passage.
   assertAgentScheduledCoordinatorSelection(pending.configuration, doc.creation?.author)
-  const agentValidation = doc.creation?.author ? validate
-    ?? (() => run(acquireAgentScheduledCoordinatorValidation(ctx, run, doc, observeCurrent, signal))) : undefined
+  const agentValidation = doc.creation?.author ? validate : undefined
   await agentValidation?.()
   const read = async () => {
     observeCurrent()
@@ -50,6 +51,7 @@ export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: 
     if (!await accepted()) throw new Error("Existing coordinator update unconfirmed")
   }
   let value = await read()
+  await assertCoordinatorFree(ctx, run, doc, value)
   if (value.agent !== selected.agent) await apply(fresh => ctx.session.switchAgent({ sessionID: Session.ID.make(fresh.id), agent: Agent.ID.make(selected.agent!) }),
     async () => (await read()).agent === selected.agent)
   value = await read()
@@ -60,6 +62,22 @@ export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: 
   const marked = async () => canonicalAuthority((await read()).metadata?.["codenomad.mission"] ?? null) === canonicalAuthority(expected)
   if (!await marked()) await apply(fresh => ctx.session.update({ sessionID: Session.ID.make(fresh.id),
     metadata: JSON.parse(canonicalAuthority({ ...fresh.metadata, "codenomad.mission": expected })) }), marked)
+}
+
+/** A conversation holds one passage marker: tool calls and subagents follow it. While another
+ * calendar's passage runs in it, this start fails before marking; the passage stays pending
+ * and the next reconciliation starts it once the conversation is free. A stale marker is replaced. */
+async function assertCoordinatorFree(ctx: Plugin.Context, run: MissionNativeRunner, doc: MissionDocument, session: NativeMissionSession) {
+  const raw = session.metadata?.["codenomad.mission"]
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
+  const marker = raw as { missionID?: string; document?: { missionID?: string; passageID?: string; coordinatorReused?: unknown } }
+  if (typeof marker.document?.missionID !== "string" || marker.document.missionID === doc.id) return
+  let running = false
+  try {
+    const owner = await run(ctx.storage.get(nativeScheduleDocumentKey(ctx, marker.document.missionID)))
+    running = !!scheduledPassageOwner(owner, doc, session.id, marker)
+  } catch { /* Unreadable or stale: replaced. */ }
+  if (running) throw new Error("Coordinator runs another passage")
 }
 
 /** Called only after the archive CAS. Clearing the exact old marker releases

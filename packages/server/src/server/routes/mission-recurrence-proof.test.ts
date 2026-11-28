@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
-import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
+import { verifyRecurrenceRequest } from "./mission-recurrence-proof"
 
 for (const action of ["play", "configure", "delete"] as const) test(`${action} proof requires a current real human session, exact request digest and owned Location`, async () => {
   const identity = { sessionID: "real-cookie", workspaceID: "workspace", requestID: "http_play_0",
@@ -17,7 +17,7 @@ for (const action of ["play", "configure", "delete"] as const) test(`${action} p
       getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: {
         location: { get: async () => ({ directory: "/owned" }) },
       } }) } }
-  const verify = (input = body) => verifyHumanRecurrenceRequest(input, deps as never, new AbortController().signal)
+  const verify = (input = body) => verifyRecurrenceRequest(input, deps as never, new AbortController().signal)
   assert.deepEqual(await verify(), { admitted: true })
   authEnabled = false
   await assert.rejects(verify())
@@ -42,6 +42,6 @@ test("ownership finishing after the original proof deadline never acknowledges h
       getSessionFromHeaders: () => ({ username: "human", sessionId: "real-cookie" }) },
     manager: { getServiceWslDistro: () => undefined, get: () => workspace, ownsLocation: async () => { now += 200; return true },
       getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: { location: { get: async () => ({ directory: "/owned" }) } } }) } }
-  await assert.rejects(verifyHumanRecurrenceRequest({ ...identity, digest: recurrenceControlRequestDigest(identity) },
+  await assert.rejects(verifyRecurrenceRequest({ ...identity, digest: recurrenceControlRequestDigest(identity) },
     deps as never, new AbortController().signal, () => now), /proof expired/)
 })

@@ -81,6 +81,60 @@ fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
 }
 
 #[test]
+fn advanced_session_toggles_are_enabled_with_their_help_descriptions() {
+    fn find_switch<'a>(tree: &'a Value, name: &str) -> Option<&'a Value> {
+        if tree["role"] == "switch" && tree["name"] == name {
+            return Some(tree);
+        }
+        tree["children"]
+            .as_array()?
+            .iter()
+            .find_map(|child| find_switch(child, name))
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    crate::strings::with_locale("en", || {
+        for (name, help_key) in [
+            (
+                "Auto-cleanup blank sessions",
+                "settings.behavior.autoCleanup.subtitle",
+            ),
+            (
+                "Keep subagent idle markers",
+                "settings.behavior.keepUnseenSubagentIdle.subtitle",
+            ),
+        ] {
+            let switch = find_switch(&tree, name).expect(name);
+            let states = switch["states"].as_array().unwrap();
+            assert!(
+                !states.contains(&Value::from("disabled")),
+                "{name} must be enabled"
+            );
+            assert!(
+                states.contains(&Value::from("checked")),
+                "{name} must default to checked"
+            );
+            assert_eq!(
+                switch["description"].as_str(),
+                Some(crate::strings::t(help_key)),
+                "{name} description must use its real subtitle"
+            );
+        }
+    });
+}
+
+#[test]
 fn keyboard_shortcuts_records_the_focused_save_binding() {
     let mut state = Window {
         section: Section::Shortcuts,

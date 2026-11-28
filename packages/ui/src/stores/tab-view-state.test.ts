@@ -27,7 +27,7 @@ it("restores occurrence views on recreated UUIDs; repeated hydration and sibling
   assert.equal(captureTabViewState(a), undefined)
   seedTabViewState(a, view("a"))
   seedTabViewState(b, { ...view("b"), missions: { reader: { missionId: "mission", kind: "recurrence",
-    instanceId: "old-backend", projectID: "project" } } })
+    instanceId: "old-backend", projectID: "project", scheduleOwner: "scheduled" } } })
   assert.equal(getTabViewState(b).missions?.reader?.instanceId, b)
   updateTabViewState(a, { previews: { session: { ...preview("a"), mode: "chat" } } })
   seedTabViewState(a, view("stale"))
@@ -127,21 +127,21 @@ it("round trips distinct descriptor envelopes through strict partitions and degr
   const encoded = await encodeClientSnapshotV2(source)
   const loaded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
   assert.equal(canonicalJson(loaded), canonicalJson(source))
-  const manifest = JSON.parse(encoded.partitions[encoded.root.sessionPartition])
+  const partitions: Record<string, string> = { ...encoded.partitions }
+  const manifest = JSON.parse(partitions[encoded.root.sessionPartition])
   const shell = manifest.session.tabs[0]
   const oldWorkspace = shell.workspacePartition
-  const changed = JSON.parse(encoded.partitions[oldWorkspace])
+  const changed = JSON.parse(partitions[oldWorkspace])
   changed.viewState = { version: 99 }
   const text = canonicalJson(changed), changedKey = await sha256(text)
-  encoded.partitions[changedKey] = text
-  delete encoded.partitions[oldWorkspace]
+  partitions[changedKey] = text
+  delete partitions[oldWorkspace]
   shell.workspacePartition = changedKey
   const rootText = canonicalJson(manifest), rootKey = await sha256(rootText)
-  delete encoded.partitions[encoded.root.sessionPartition]
-  encoded.partitions[rootKey] = rootText
-  encoded.root.sessionPartition = rootKey
-  encoded.root.partitionKeys = Object.keys(encoded.partitions).sort()
-  const degraded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+  delete partitions[encoded.root.sessionPartition]
+  partitions[rootKey] = rootText
+  const degradedRoot = { ...encoded.root, sessionPartition: rootKey, partitionKeys: Object.keys(partitions).sort() }
+  const degraded = await decodeClientSnapshotV2(degradedRoot, 1, async key => partitions[key] ?? null)
   assert.equal((degraded?.session?.tabs[0] as RestorableWorkspaceTabState)?.viewState, undefined)
   assert.deepEqual((degraded?.session?.tabs[1] as RestorableWorkspaceTabState)?.viewState, view("a"))
 })

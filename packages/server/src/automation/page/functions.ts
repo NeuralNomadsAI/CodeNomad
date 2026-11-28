@@ -88,6 +88,21 @@ export const ELEMENT_FUNCTIONS = {
   const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
   if (!select) throw new Error("codenomad:not-select");
   return choose(select, args[0], args[1]);`,
+  "select-values": `${CHOOSE}
+  const control = element instanceof HTMLLabelElement ? element.control : element;
+  const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
+  if (!select) throw new Error("codenomad:not-select");
+  if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+  const options = Array.from(select.options), picked = [];
+  for (const raw of args[0]) {
+    const option = options.find(item => item.value === String(raw));
+    if (!option) throw new Error("codenomad:no-option:" + String(raw));
+    if (!picked.includes(option)) picked.push(option);
+  }
+  return apply(select, picked, options);`,
+  "file-input": `const label = element instanceof HTMLLabelElement ? element : element.closest && element.closest("label");
+  const control = element instanceof HTMLInputElement ? element : label && label.control;
+  return control instanceof HTMLInputElement && control.type === "file";`,
   focus: `if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
   if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");
@@ -156,6 +171,9 @@ export const ELEMENT_FUNCTIONS = {
     if ([item.getAttribute("aria-label"), item.getAttribute("title"), item.getAttribute("placeholder"), item.value].some(value => text(value).includes(needle))) return true;
   }
   return false;`,
+  "checked-state": `return element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null;`,
+  "body-text-includes": `const body = element.ownerDocument.body;
+  return !!body && body.innerText.includes(String(args[0]));`,
 } as const
 
 export const GLOBAL_FUNCTIONS = {
@@ -172,8 +190,8 @@ export const GLOBAL_FUNCTIONS = {
 } as const
 export type PageFunctionId = keyof typeof ELEMENT_FUNCTIONS | keyof typeof GLOBAL_FUNCTIONS
 export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
-  "option-click": [], "programmatic-click": [], select: ["strings"], focus: [], describe: [], field: [], prepare: ["boolean"],
-  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"],
+  "option-click": [], "programmatic-click": [], select: ["strings"], "select-values": ["strings"], "file-input": [], focus: [], describe: [], field: [], prepare: ["boolean"],
+  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"], "body-text-includes": ["string"], "checked-state": [],
   "active-element": [], "document-root": [], "input-acceptance": [], "mark-input": [], "unmark-input": [],
 }
 export const handleResult = (id: PageFunctionId) => ["field", "active-element", "document-root"].includes(id)

@@ -151,6 +151,11 @@ impl Preferences {
         self.config.snapshot = Some(json!({ "settings": settings }));
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_config_doc(&mut self, doc: Value) {
+        self.config.snapshot = Some(doc);
+    }
+
     fn seen_drop(&self, client_id: &str) -> u64 {
         self.seen_drops
             .iter()
@@ -545,6 +550,11 @@ impl Preferences {
     #[cfg(test)]
     pub(super) fn fixture_shortcuts(&mut self, overrides: Value) {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_settings(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({"settings": settings}));
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]

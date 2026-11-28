@@ -32,6 +32,7 @@ import {
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { discoverCheckoutRoot } from "./git-common-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
 import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory, WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
@@ -565,6 +566,15 @@ export class WorkspaceManager {
     // discovery (or a second connection) to authorize that exact local directory.
     if (target && target === root) {
       try {
+        const checkoutRoot = await discoverCheckoutRoot(root)
+        media?.current()
+        if (!checkoutRoot || checkoutRoot === root) {
+          return { slug: "root", directory: target, worktreeDirectory: root, exact: true }
+        }
+      } catch {
+        media?.current()
+      }
+      try {
         const { repoRoot } = await resolveRepoRoot(root)
         media?.current()
         const worktreeDirectory = await realpath(repoRoot)
@@ -676,7 +686,7 @@ export class WorkspaceManager {
   async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
     const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     const result = await browser.readFileContent(relativePath, { encoding: "base64" })
-    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64", version: result.version }
   }
 
   async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
@@ -692,15 +702,15 @@ export class WorkspaceManager {
     }
   }
 
-  async writeFile(workspaceId: string, relativePath: string, contents: string): Promise<void> {
+  async writeFile(workspaceId: string, relativePath: string, contents: string, options?: { expectedVersion?: string }): Promise<string> {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
-    await browser.writeFile(relativePath, contents)
+    return browser.writeFile(relativePath, contents, options)
   }
 
-  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
+  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string, options?: { expectedVersion?: string }): Promise<string> {
     const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
-    await browser.writeFile(relativePath, contents)
+    return browser.writeFile(relativePath, contents, options)
   }
 
   async create(

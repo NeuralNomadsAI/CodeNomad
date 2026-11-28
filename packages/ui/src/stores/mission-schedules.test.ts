@@ -12,7 +12,7 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 const fixture = { list: async (): Promise<MissionScheduleList> => { throw new Error("unconfigured") },
    detail: async (_id: string, _signal: AbortSignal, _input?: { requestID?: string }): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
    control: async (_instance: string, _id: string, _input: any): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
-   settings: async (_instance: string, _id: string, _input: any, _write?: boolean): Promise<any> => { throw new Error("unconfigured") },
+   settings: async (_instance: string, _id: string, _input: any, _write?: boolean, _signal?: AbortSignal): Promise<any> => { throw new Error("unconfigured") },
    client: () => ({}), generation: () => 0, enabled: true,
    backendEvents: { signalForInstance: (_instance: string) => attachment.signal,
      on: () => () => {}, forInstance: (_instance: unknown) => ({ onOpen: () => () => {} }) } }
@@ -33,7 +33,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     "./instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
     "./opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
     "./session-list-restoration": "export const sessionListRestored = () => true;",
-    "./missions": "export const isMissionActivityEvent = () => false;",
+    "./missions": "export const isMissionActivityEvent = event => event.type === 'session.execution.started';",
   }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && specifier === "../lib/backend-client")
      return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/api-client"] + " export const backendOf = () => ({ api: serverApi });")}` }
@@ -47,6 +47,7 @@ after(() => { hooks.deregister(); delete (globalThis as any).__missionSchedulesT
 const { createRoot, createSignal, createEffect, createMemo, untrack } = await import("solid-js")
 const { useMissionSchedules, unifiedScheduleHolds: holds, unifiedScheduleHold: held, changedUnifiedScheduleHolds: bump } = await import("./mission-schedules")
 const { createMissionScheduleControls } = await import("../components/mission-schedule-controls")
+const { ACTIVITY_REFRESH_INTERVAL_MS } = await import("../lib/event-refresh-scheduler")
 const deferred = <T = void>() => {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
@@ -203,6 +204,36 @@ test("a successful HTTP response naming a foreign document never publishes the s
   } finally { h.dispose() }
 })
 
+test("remounting on the same live client hydrates cached rows immediately while revalidating", async () => {
+  const h = setup(false)
+  const sharedClient = h.store && fixture.client()
+  fixture.detail = async () => ({ document: selected, pending: false })
+  try {
+    await until(() => h.store.fresh(selected.id))
+    assert.equal(h.store.rows().length, 9)
+    h.dispose()
+    const gate = deferred<MissionScheduleList>()
+    fixture.client = () => sharedClient
+    fixture.generation = () => 0
+    fixture.list = async () => gate.promise
+    let disposeSecond!: () => void
+    const remounted = createRoot(cleanup => {
+      disposeSecond = cleanup
+      return useMissionSchedules({ instanceId: () => "instance", projectID: () => "project", directory: () => "/repo",
+        active: () => true, selected: () => undefined, refresh: () => 0 })
+    })
+    try {
+      assert.equal(remounted.rows().length, 9, "cached rows appear immediately across right-panel tab switches")
+      assert.equal(remounted.next(), "aaa_7")
+      assert.equal(remounted.fresh("aaa_0"), false, "cached rows wait for background revalidation before becoming fresh")
+      gate.resolve({ version: 1, projectID: "project", schedules: page.slice(0, 2) })
+      await until(() => !remounted.loading())
+      assert.equal(remounted.rows().length, 2)
+      assert.equal(remounted.fresh("aaa_0"), true)
+    } finally { disposeSecond() }
+  } finally { h.dispose() }
+})
+
 // Mirror the list's keyed selected owner: a publication hold must retain its sole
 // row and controller until the surviving list publishes the confirmed revision.
 function controlsFor(h: ReturnType<typeof setup>) {
@@ -251,7 +282,8 @@ test("a native pre-write refusal releases only the matching UI control and keeps
 })
 
 for (const negativeFirst of [false, true]) test(`${negativeFirst ? "negative then positive" : "FIRST positive"} cold receipt retains its selected controller until display publication`, async () => {
-  const h = setup(), c = controlsFor(h), requests: string[] = [], display = deferred<MissionScheduleRead>(), started = deferred()
+  const h = setup(), requests: string[] = [], display = deferred<MissionScheduleRead>(), started = deferred()
+  let c: ReturnType<typeof controlsFor> | undefined
   try {
     await until(() => !h.store.loading())
     assert.equal(h.store.selectionError(), "pending"); assert.equal(h.store.fresh(selected.id), false)
@@ -260,82 +292,101 @@ for (const negativeFirst of [false, true]) test(`${negativeFirst ? "negative the
       if (input?.requestID) { requests.push(input.requestID); return negativeFirst && requests.length === 1 ? { pending: true, document: null } : confirmed(original) }
       started.resolve(); return display.promise
     }
-    if (negativeFirst) { await c.controls()!.reconcile(); assert.equal(holds.get(key()), original) }
+    c = controlsFor(h)
     const owner = c.controls()!
-    await owner.reconcile()
+    if (negativeFirst) {
+      await until(() => requests.length === 1 && !owner.busy())
+      assert.equal(holds.get(key()), original)
+      await owner.reconcile()
+    } else {
+      await until(() => held(key())?.phase === "publication")
+    }
     assert.ok(c.calls.refresh > 0, "the live parent is invalidated without removing the sole selected display owner")
     assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.minimumRevision, 8)
     assert.equal(holds.get(key())?.requestID, original.requestID); assert.equal(holds.get(key())?.expectedRevision, 7)
     assert.equal(c.controls(), owner); assert.equal(owner.capable("pause"), false)
     await started.promise; display.resolve({ pending: false, document: running })
-    await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")
+    await until(() => h.store.fresh(selected.id) && c!.controls()?.capability() === "available")
     assert.equal(c.controls(), owner, "publication preserves the keyed controller")
     assert.equal(holds.has(key()), false); assert.equal(c.controls()!.capable("pause"), true)
     assert.equal(h.store.selectionError(), undefined); assert.equal(h.store.next(), "aaa_7"); assert.equal(h.store.rows().length, 10)
     assert.deepEqual(requests, Array(negativeFirst ? 2 : 1).fill("original_request"))
     assert.equal(original.expectedRevision, 7); assert.ok(c.calls.refresh > 0)
-  } finally { c.dispose(); h.dispose() }
+  } finally { c?.dispose(); h.dispose() }
 })
 
 for (const positive of [false, true]) for (const change of ["selection", "selection ABA", "scope", "scope ABA", "client", "generation", "hide", "dispose"] as const)
-test(`late ${positive ? "positive" : "negative"} receipt after ${change} only settles exact bookkeeping`, async () => {
-  const h = setup(), c = controlsFor(h), gate = deferred<MissionScheduleRead>(), started = deferred()
+test(`late ${positive ? "positive" : "negative"} receipt after ${change} is cancelled and ignored`, async () => {
+  const h = setup(), gate = deferred<MissionScheduleRead>(), later = deferred<MissionScheduleRead>(), started = deferred()
+  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0, firstSignal: AbortSignal | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.detail = async (_id, _signal, input) => {
-      if (input?.requestID) { started.resolve(); return gate.promise }
+    fixture.detail = async (_id, signal, input) => {
+      if (input?.requestID) {
+        if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
+        return later.promise
+      }
       return { pending: false, document: running }
     }
-    const owner = c.controls()!, read = owner.reconcile()
+    c = controlsFor(h)
     await started.promise
+    assert.ok(firstSignal instanceof AbortSignal && !firstSignal.aborted)
     if (change.startsWith("selection")) { h.select("retained_other"); if (change.endsWith("ABA")) h.select(selected.id) }
     if (change.startsWith("scope")) { h.setDirectory("/other"); if (change.endsWith("ABA")) h.setDirectory("/repo") }
     if (change === "client") h.setClient({})
     if (change === "generation") h.setGeneration(1)
     if (change === "hide") h.setActive(false)
     if (change === "dispose") c.dispose()
+    assert.equal(firstSignal!.aborted, true, `receipt GET must be aborted on ${change}`)
     const before = { ...c.calls }
-    gate.resolve(positive ? confirmed(h.hold) : { pending: true, document: null }); await read
-    assert.deepEqual(c.calls, before, "old receipt never refreshes or navigates the destination")
+    gate.resolve(positive ? confirmed(h.hold) : { pending: true, document: null })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(c.calls, before, "stale receipt never refreshes or navigates the destination")
     assert.equal(holds.has(key()), true)
-    assert.equal(holds.get(key())?.phase, positive ? "publication" : "control")
+    assert.equal(holds.get(key())?.phase, "control", "stale receipt GET must not settle the hold")
     assert.equal(holds.get(key())?.requestID, h.hold.requestID)
-    if (positive) assert.equal(holds.get(key())?.minimumRevision, 8)
-  } finally { c.dispose(); h.dispose() }
+  } finally { later.resolve({ pending: true, document: null }); c?.dispose(); h.dispose() }
 })
 
 test("a held partial control offers no further mutation; only its exact receipt read settles it", async () => {
   const h = setup(), original = { ...h.hold, partial: true }
   holds.set(key(), original); bump()
-  const c = controlsFor(h), controls: unknown[] = []
+  const controls: unknown[] = []
+  let allowReceipt = false
+  let c: ReturnType<typeof controlsFor> | undefined
   try {
     fixture.control = async (_instance, _id, input) => { controls.push(input); throw new Error("must not dispatch") }
-    fixture.detail = async (_id, _signal, input) => input?.requestID ? confirmed(original)
+    fixture.detail = async (_id, _signal, input) => input?.requestID
+      ? allowReceipt ? confirmed(original) : { pending: true, document: null }
       : { pending: false, document: { ...running, availableActions: ["check", "pause", "stop"] as typeof running.availableActions } }
-    await until(() => !h.store.loading() && c.controls()?.capability() === "available")
+    c = controlsFor(h)
+    await until(() => !h.store.loading() && c!.controls()?.capability() === "available" && !c!.controls()!.busy())
     const owner = c.controls()!
+    assert.equal(holds.get(key()), original)
     for (const action of ["check", "pause", "stop"] as const) { assert.equal(owner.capable(action), false); await owner.act(action) }
     assert.deepEqual(controls, [])
+    allowReceipt = true
     await owner.reconcile()
     assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.requestID, original.requestID)
-  } finally { c.dispose(); h.dispose() }
+  } finally { c?.dispose(); h.dispose() }
 })
 
 for (const action of ["activation", "delete"] as const) test(`cold first-positive ${action} retains a publication barrier or removes the deleted owner`, async () => {
   const h = setup(), hold = { ...h.hold, phase: action === "activation" ? "activation" as const : "control" as const,
     action: action === "activation" ? "play" as const : "delete" as const }
   holds.set(key(), hold); bump()
-  const c = controlsFor(h)
+  let c: ReturnType<typeof controlsFor> | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async (_instance, id, input, write) => {
-      assert.equal(id, selected.id); assert.deepEqual(input, { requestID: "original_request", expectedDocumentRevision: 7 }); assert.equal(write, undefined)
+    fixture.settings = async (_instance, id, input, write, signal) => {
+      assert.equal(id, selected.id); assert.deepEqual(input, { requestID: "original_request", expectedDocumentRevision: 7 }); assert.equal(write, false); assert.ok(signal instanceof AbortSignal)
       return { document: { revision: 8, scheduleActivation: { requestID: hold.requestID, expectedRevision: 7, state: "ready" } } }
     }
     fixture.detail = async (_id, _signal, input) => input?.requestID
       ? { pending: false, document: null, deleted: true, deletionReceipt: { id: selected.id, requestID: hold.requestID, expectedRevision: 7, deleteManagedSessions: false } }
       : action === "delete" ? { pending: false, document: null } : { pending: false, document: { ...selected, revision: 8 } }
-    await c.controls()!.reconcile()
+    c = controlsFor(h)
+    await until(() => action === "activation" ? held(key())?.phase === "publication" : !held(key()))
     assert.equal(holds.has(key()), action === "activation"); assert.ok(c.calls.refresh > 0)
     if (action === "activation") {
       assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.minimumRevision, 8)
@@ -343,65 +394,89 @@ for (const action of ["activation", "delete"] as const) test(`cold first-positiv
     assert.equal(c.calls.deleted, action === "delete" ? 1 : 0)
     if (action === "activation") { await until(() => h.store.fresh(selected.id)); assert.equal(holds.has(key()), false) }
     else assert.equal(h.selection(), undefined)
-  } finally { c.dispose(); h.dispose() }
+  } finally { c?.dispose(); h.dispose() }
 })
 
 for (const action of ["activation", "delete"] as const) for (const positive of [false, true])
 for (const change of ["selection", "scope ABA", "client", "dispose"] as const)
-test(`late ${positive ? "positive" : "negative"} ${action} confirmation after ${change} keeps the destination untouched`, async () => {
+test(`late ${positive ? "positive" : "negative"} ${action} confirmation after ${change} is cancelled and ignored`, async () => {
   const h = setup(), hold = { ...h.hold, phase: action === "activation" ? "activation" as const : "control" as const,
     action: action === "activation" ? "play" as const : "delete" as const }
   holds.set(key(), hold); bump()
-  const c = controlsFor(h), gate = deferred<any>(), started = deferred()
+  const gate = deferred<any>(), later = deferred<any>(), started = deferred()
+  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0, firstSignal: AbortSignal | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async () => { started.resolve(); return gate.promise }
-    fixture.detail = async (_id, _signal, input) => {
-      if (input?.requestID) { started.resolve(); return gate.promise }
+    fixture.settings = async (_instance, _id, _input, _write, signal) => {
+      if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
+      return later.promise
+    }
+    fixture.detail = async (_id, signal, input) => {
+      if (input?.requestID) {
+        if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
+        return later.promise
+      }
       return { pending: false, document: running }
     }
-    const read = c.controls()!.reconcile(); await started.promise
+    c = controlsFor(h)
+    await started.promise
+    assert.ok(firstSignal instanceof AbortSignal && !firstSignal.aborted)
     if (change === "selection") h.select("retained_other")
     if (change === "scope ABA") { h.setDirectory("/other"); h.setDirectory("/repo") }
     if (change === "client") h.setClient({})
     if (change === "dispose") c.dispose()
+    assert.equal(firstSignal!.aborted, true, `${action} receipt GET must be aborted on ${change}`)
     const before = { ...c.calls }
     gate.resolve(action === "activation" ? { document: { revision: 8, scheduleActivation: { requestID: hold.requestID, expectedRevision: 7, state: positive ? "ready" : "pending" } } }
       : { pending: !positive, document: null, deleted: positive, ...(positive ? { deletionReceipt: { id: selected.id,
         requestID: hold.requestID, expectedRevision: 7, deleteManagedSessions: false } } : {}) })
-    await read
-    assert.deepEqual(c.calls, before); assert.equal(holds.has(key()), action === "activation" || !positive)
-    if (positive && action === "activation") {
-      assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.minimumRevision, 8)
-      assert.equal(holds.get(key())?.requestID, hold.requestID)
-    }
-  } finally { c.dispose(); h.dispose() }
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(c.calls, before); assert.equal(holds.get(key()), hold, "stale receipt GET must not settle the hold")
+  } finally {
+    later.resolve(action === "activation" ? { document: { revision: 7, scheduleActivation: null } } : { pending: true, document: null })
+    c?.dispose(); h.dispose()
+  }
 })
 
 for (const action of ["pause", "activation"] as const) for (const positive of [false, true])
-test(`late ${positive ? "positive" : "negative"} ${action} POST cannot start receipt reads or another control on a replaced client`, async () => {
+test(`late ${positive ? "positive" : "negative"} ${action} POST cannot start another control or write on a replaced client`, async () => {
   const h = setup(false), c = controlsFor(h), gate = deferred<any>(), started = deferred()
-  const calls = { control: 0, settings: 0, detail: 0 }
+  const calls = { control: 0, settingsWrite: 0, settingsRead: 0, displayDetail: 0, receiptDetail: 0 }
   try {
     fixture.detail = async () => ({ pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play"] } })
     await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")
     if (action === "activation") fixture.enabled = false
-    fixture.detail = async () => { calls.detail++; return { pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play"] } } }
+    fixture.detail = async (_id, _signal, input) => {
+      if (input?.requestID) { calls.receiptDetail++; return { pending: true, document: null } }
+      calls.displayDetail++
+      return { pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play"] } }
+    }
     fixture.control = async () => { calls.control++; started.resolve(); return gate.promise }
-    fixture.settings = async (_instance, _id, _input, write) => { assert.equal(write, true); calls.settings++; started.resolve(); return gate.promise }
+    fixture.settings = async (_instance, _id, _input, write) => {
+      if (!write) { calls.settingsRead++; return { document: { revision: 7, scheduleActivation: null } } }
+      calls.settingsWrite++; started.resolve(); return gate.promise
+    }
     const pending = c.controls()!.act(action === "activation" ? "play" : action)
     await started.promise
     const request = holds.get(key())!
     h.setClient({})
     // Replacement-client inventory reconciliation is independent of the old POST.
     await until(() => !h.store.loading())
-    const before = { ...calls }, effects = { ...c.calls }
+    const before = { ...calls }
     gate.resolve(action === "activation" ? { document: { revision: 8, scheduleActivation: { requestID: request.requestID, expectedRevision: request.expectedRevision,
       state: positive ? "ready" : "pending" } } }
       : { pending: !positive, document: { ...running, control: { action, requestID: request.requestID, expectedRevision: request.expectedRevision, pending: !positive } } })
     await pending
-    assert.deepEqual(calls, before); assert.deepEqual(c.calls, effects)
-    assert.equal(calls.control, action === "activation" ? 0 : 1); assert.equal(calls.settings, action === "activation" ? 1 : 0)
+    assert.equal(calls.control, before.control); assert.equal(calls.settingsWrite, before.settingsWrite)
+    assert.equal(calls.displayDetail, before.displayDetail)
+    assert.equal(calls.control, action === "activation" ? 0 : 1); assert.equal(calls.settingsWrite, action === "activation" ? 1 : 0)
+    if (positive) {
+      assert.equal(calls.receiptDetail, 0); assert.equal(calls.settingsRead, 0)
+    } else {
+      // Only the live replacement client's automatic read-only receipt check may run.
+      assert.equal(calls.receiptDetail, action === "pause" ? 1 : 0)
+      assert.equal(calls.settingsRead, action === "activation" ? 1 : 0)
+    }
     assert.equal(holds.has(key()), true)
     assert.equal(holds.get(key())?.phase, positive ? "publication" : request.phase)
     assert.equal(holds.get(key())?.requestID, request.requestID)
@@ -463,27 +538,29 @@ test("a direct ACK blocks every new mutation through failed, partial and older d
 test("recovered activation retains its exact publication obligation across remount without automatically continuing Play", { timeout: 10_000 }, async () => {
   const h = setup(), activation = { ...h.hold, phase: "activation" as const }
   holds.set(key(), activation); bump()
-  const c = controlsFor(h)
+  let c: ReturnType<typeof controlsFor> | undefined
   let settings = 0, controls = 0, receiptReads = 0
   let remount: ReturnType<typeof setup> | undefined, mountedControls: ReturnType<typeof controlsFor> | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async (_instance, id, input, write) => {
-      settings++; assert.equal(write, undefined); assert.equal(id, selected.id)
+    fixture.settings = async (_instance, id, input, write, signal) => {
+      settings++; assert.equal(write, false); assert.ok(signal instanceof AbortSignal); assert.equal(id, selected.id)
       assert.deepEqual(input, { requestID: activation.requestID, expectedDocumentRevision: 7 })
       return { document: { revision: 9, scheduleActivation: { requestID: activation.requestID, expectedRevision: 7, state: "ready" } } }
     }
     fixture.control = async () => { controls++; throw new Error("unexpected Play") }
-    await c.controls()!.reconcile()
+    c = controlsFor(h)
+    await until(() => held(key())?.phase === "publication")
     const publication = holds.get(key())!
     assert.equal(publication.phase, "publication"); assert.equal(publication.minimumRevision, 9)
     assert.equal(publication.requestID, activation.requestID); assert.equal(publication.expectedRevision, 7)
     c.dispose(); h.dispose()
-    remount = setup("preserve"); mountedControls = controlsFor(remount)
+    remount = setup("preserve")
     fixture.detail = async (_id, _signal, input) => {
       if (input?.requestID) receiptReads++
       return { pending: false, document: running }
     }
+    mountedControls = controlsFor(remount)
     await until(() => remount!.store.fresh(selected.id) && mountedControls!.controls()?.capability() === "available")
     const owner = mountedControls.controls()!
     assert.equal(holds.get(key()), publication); assert.equal(owner.publishing(), true)
@@ -493,7 +570,7 @@ test("recovered activation retains its exact publication obligation across remou
     fixture.detail = async () => ({ pending: false, document: { ...running, revision: 9 } })
     await owner.reconcile(); await until(() => !held(key()) && remount!.store.fresh(selected.id))
     assert.equal(mountedControls.controls(), owner); assert.equal(controls, 0); assert.equal(settings, 1)
-  } finally { mountedControls?.dispose(); remount?.dispose(); c.dispose(); h.dispose() }
+  } finally { mountedControls?.dispose(); remount?.dispose(); c?.dispose(); h.dispose() }
 })
 
 for (const refused of [false, true])
@@ -564,26 +641,28 @@ if (phase === "activation" && invalid === "foreign") continue
 test(`${invalid} ${phase} confirmation preserves the original hold without a publication obligation`, async () => {
   const h = setup(), original = { ...h.hold, phase }
   holds.set(key(), original); bump()
-  const c = controlsFor(h)
+  let c: ReturnType<typeof controlsFor> | undefined, reads = 0
   try {
     await until(() => !h.store.loading())
     const document = { ...confirmed(original).document!,
       id: invalid === "foreign" ? "foreign_document" : selected.id,
       revision: invalid === "missing revision" ? undefined : invalid === "older revision" ? 6 : invalid === "fractional revision" ? 8.5 : 8,
       scheduleActivation: { requestID: original.requestID, expectedRevision: 7, state: "ready" } }
-    fixture.settings = async () => ({ document: { revision: document.revision, scheduleActivation: document.scheduleActivation } })
-    fixture.detail = async () => ({ pending: false, document: document as typeof selected })
-    await c.controls()!.reconcile()
+    fixture.settings = async () => { reads++; return { document: { revision: document.revision, scheduleActivation: document.scheduleActivation } } }
+    fixture.detail = async (_id, _signal, input) => { if (input?.requestID) reads++; return { pending: false, document: document as typeof selected } }
+    c = controlsFor(h)
+    await until(() => reads >= 1 && !c!.controls()!.busy())
     assert.equal(holds.get(key()), original); assert.equal(c.controls()!.publishing(), false)
     assert.equal(held(key())?.minimumRevision, undefined); assert.equal(original.requestID, "original_request")
     assert.equal(original.expectedRevision, 7)
-  } finally { c.dispose(); h.dispose() }
+  } finally { c?.dispose(); h.dispose() }
 })
 }
 
 for (const change of ["selection ABA", "scope ABA", "client", "generation", "hide", "dispose"] as const)
 test(`a late revision-R display cannot release a publication hold after ${change}`, { timeout: 10_000 }, async () => {
-  const h = setup(), c = controlsFor(h), display = deferred<MissionScheduleRead>(), started = deferred()
+  const h = setup(), display = deferred<MissionScheduleRead>(), started = deferred()
+  let c: ReturnType<typeof controlsFor> | undefined
   let receiptReads = 0, controls = 0
   try {
     await until(() => !h.store.loading())
@@ -592,7 +671,8 @@ test(`a late revision-R display cannot release a publication hold after ${change
       if (input?.requestID) { receiptReads++; return confirmed(h.hold) }
       started.resolve(); return display.promise
     }
-    await c.controls()!.reconcile(); await started.promise
+    c = controlsFor(h)
+    await started.promise
     const publication = holds.get(key())!
     assert.equal(publication.phase, "publication"); assert.equal(publication.minimumRevision, 8)
     fixture.detail = async id => ({ pending: false, document: { ...running, id, revision: 7 } })
@@ -613,5 +693,83 @@ test(`a late revision-R display cannot release a publication hold after ${change
       await until(() => !held(key()) && h.store.fresh(selected.id))
     }
     assert.equal(receiptReads, 1); assert.equal(controls, 0)
-  } finally { c.dispose(); h.dispose() }
+  } finally { c?.dispose(); h.dispose() }
+})
+
+test("native activity rereads the schedules only while one runs a passage", { timeout: 30_000 }, async () => {
+  const listeners = new Set<(event: any) => void>(), on = fixture.backendEvents.on
+  fixture.backendEvents.on = ((type: string, listener: (event: any) => void) => {
+    if (type === "instance.event") listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }) as typeof on
+  let passage = false
+  const h = setup(false, async () => ({ version: 1, projectID: "project", schedules: [{ ...running,
+    pendingPassage: passage ? { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 100 } : null }] }))
+  // An activity read is due only ACTIVITY_REFRESH_INTERVAL_MS after the previous one settled.
+  const settle = () => new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
+  const emit = () => { for (const listener of listeners) listener({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: {} } }) }
+  try {
+    await until(() => !h.store.loading())
+    const idle = h.calls.list
+    emit(); await settle()
+    assert.equal(h.calls.list, idle, "no passage: activity reads nothing")
+    passage = true; h.store.refresh(); await until(() => !h.store.loading())
+    const before = h.calls.list
+    emit(); await settle()
+    assert.equal(h.calls.list, before + 1, "a running passage rereads on activity")
+  } finally { h.dispose(); fixture.backendEvents.on = on }
+})
+
+test("out-of-page selected schedule with 503 schedule-pending enables recovery Check without enabling ordinary mutations", { timeout: 10_000 }, async () => {
+  const pendingDoc = { ...selected, revision: 9, availableActions: ["check", "pause", "play"] as any }
+  const h = setup(false)
+  let detailMode: "fresh" | "pending-match" | "pending-stale" = "fresh"
+  const controlsCalls: any[] = []
+  let disposeControls: (() => void) | undefined
+  try {
+    fixture.detail = async id => {
+      if (detailMode === "fresh") return { pending: false, document: { ...pendingDoc, id } }
+      const rev = detailMode === "pending-match" ? 9 : 10
+      throw new HttpResponseError("pending", 503, null, "schedule-pending", {
+        pending: true, code: "schedule-pending",
+        document: { ...pendingDoc, id, revision: rev, control: { requestID: "orig", expectedRevision: 8, action: "check", pending: true } },
+      })
+    }
+    fixture.control = async (_instance, _id, input) => {
+      controlsCalls.push(input)
+      return { pending: false, document: { ...pendingDoc, revision: 10, control: { requestID: input.requestID, expectedRevision: 9, action: "check", pending: false } } }
+    }
+    h.store.refresh()
+    await until(() => h.store.fresh(selected.id))
+    const ctrl = createRoot(dispose => {
+      disposeControls = dispose
+      const doc = () => h.store.rows().find(row => row.id === selected.id)!
+      return createMissionScheduleControls({
+        instanceId: "instance", projectID: "project", directory: "/repo", document: doc, active: () => true,
+        enabled: () => !h.store.error() && h.store.fresh(selected.id),
+        recoveryEnabled: () => !h.store.error() && h.store.recoveryEligible(selected.id),
+        refreshVersion: () => 0, refresh: () => h.store.refresh(), onDeleted: () => {},
+      })
+    })
+    detailMode = "pending-match"
+    h.store.refresh()
+    await until(() => h.store.selectionError() === "pending" && !h.store.loading())
+    assert.equal(h.store.fresh(selected.id), false)
+    assert.equal(h.store.recoveryEligible(selected.id), true)
+    assert.equal(ctrl.capable("play"), false, "ordinary mutations stay disabled while non-fresh")
+    assert.equal(ctrl.capable("check"), true, "Check stays enabled for matching pending revision")
+    await ctrl.act("check")
+    assert.equal(controlsCalls.length, 1)
+    assert.equal(controlsCalls[0].action, "check")
+    // Mismatched revision on 503 does not grant recovery eligibility.
+    detailMode = "fresh"
+    h.store.refresh()
+    await until(() => h.store.fresh(selected.id))
+    detailMode = "pending-stale"
+    h.store.refresh()
+    await until(() => h.store.selectionError() === "pending" && !h.store.loading())
+    assert.equal(h.store.fresh(selected.id), false)
+    assert.equal(h.store.recoveryEligible(selected.id), false)
+    assert.equal(ctrl.capable("check"), false)
+  } finally { disposeControls?.(); h.dispose() }
 })

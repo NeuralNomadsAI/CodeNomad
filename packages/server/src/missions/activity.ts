@@ -121,6 +121,14 @@ export async function projectMissionActivity(input: {
       if (evidence.nativeCall === "active" || evidence.nativeCall === "unknown") unsettledCalls.add(key)
     }
   }
+  // Actors belonging only to completed missions with no open reports or calls do not
+  // walk their recursive session.list family tree; own activity, own forms/permissions
+  // and active-descendant probes still observe them without O(tree) session.list fan-out.
+  // A pending request that descends from such an actor walks its family after all.
+  const walkFamily = new Set(occurrences.filter(({ mission, actor }) => {
+    const key = `${mission.id}\0${actor.sessionId}`
+    return mission.status !== "completed" || missingReports.has(key) || unsettledCalls.has(key)
+  }).map(({ actor }) => actor.sessionId))
 
   const signal = AbortSignal.timeout(15_000)
   const locationReads = new Map<string, LocationRead>()
@@ -142,6 +150,27 @@ export async function projectMissionActivity(input: {
       failed,
     })
   }
+  /** The first of `actors` at or above a request's session, within a shared read budget. */
+  const actorAbove = async (sessionID: string, actors: ReadonlySet<string>, parents: Map<string, string | undefined>, budget: { reads: number }) => {
+    const seen = new Set<string>()
+    let cursor: string | undefined = sessionID === "global" ? undefined : sessionID
+    while (cursor && !actors.has(cursor) && !seen.has(cursor)) {
+      seen.add(cursor)
+      if (!parents.has(cursor)) {
+        const kept = input.cache?.parent(input.client, cursor)
+        if (kept) parents.set(cursor, kept.parentID)
+        else {
+          if (budget.reads-- <= 0) return
+          const id = cursor, epoch = input.cache?.currentEpoch()
+          const session = await settle(() => observe(() => input.client.session.get({ sessionID: id }, { signal })))
+          parents.set(id, session.ok ? session.value.parentID : undefined)
+          if (session.ok && epoch !== undefined) input.cache?.keepParent(input.client, id, session.value.parentID, epoch)
+        }
+      }
+      cursor = parents.get(cursor)
+    }
+    return cursor && actors.has(cursor) ? cursor : undefined
+  }
   // More actors than one refresh reads: those whose own conversation or a descendant
   // asks for an answer come first, then those with open work, each in mission order.
   const prioritized = async (): Promise<string[]> => {
@@ -155,18 +184,8 @@ export async function projectMissionActivity(input: {
     for (const read of locationReads.values()) {
       if (read.failed) continue
       for (const { sessionID } of [...read.forms, ...read.permissions]) {
-        const seen = new Set<string>()
-        let cursor: string | undefined = sessionID === "global" ? undefined : sessionID
-        while (cursor && !declared.has(cursor) && !seen.has(cursor)) {
-          seen.add(cursor)
-          if (!parents.has(cursor)) {
-            if (budget.reads-- <= 0) break
-            const id = cursor, session = await settle(() => observe(() => input.client.session.get({ sessionID: id }, { signal })))
-            parents.set(id, session.ok ? session.value.parentID : undefined)
-          }
-          cursor = parents.get(cursor)
-        }
-        if (cursor && declared.has(cursor)) asking.add(cursor)
+        const actor = await actorAbove(sessionID, declared, parents, budget)
+        if (actor) asking.add(actor)
       }
     }
     const working = new Set([...missingReports, ...unsettledCalls].map(key => key.slice(key.indexOf("\0") + 1)))
@@ -206,6 +225,26 @@ export async function projectMissionActivity(input: {
     }
     authorizedLocations.set(locationKey(read.session.location), read.session.location)
     read.owned = true
+  })
+  await readBounded([...authorizedLocations.entries()].filter(([key]) => !locationReads.has(key)), ([key, location]) => readLocation(key, location))
+  // A request names its session: its ancestry tells whether an unwalked actor's family asks.
+  const unwalked = new Set([...actorReads].filter(([id, read]) => read.owned && !walkFamily.has(id)).map(([id]) => id))
+  if (unwalked.size) {
+    const parents = new Map<string, string | undefined>(), budget = { reads: ANCESTRY_READS }
+    for (const resources of locationReads.values()) {
+      if (resources.failed) continue
+      for (const { sessionID } of [...resources.forms, ...resources.permissions]) {
+        const actor = unwalked.has(sessionID) ? undefined : await actorAbove(sessionID, unwalked, parents, budget)
+        if (actor) walkFamily.add(actor)
+      }
+    }
+  }
+  await readBounded([...actorReads.entries()], async ([sessionID, read]) => {
+    if (!read.owned || !read.session) return
+    if (!walkFamily.has(sessionID)) {
+      read.familyFailed = true
+      return
+    }
     const kept = cache?.tree(input.client, read.session)
     if (kept) assertCurrent()
     const family = kept ? { ok: true as const, value: kept } : await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,
@@ -220,8 +259,6 @@ export async function projectMissionActivity(input: {
   if (familyIDs.length > MAX_FAMILY_SESSIONS) return unknownProjection()
 
   const activeResult = await settle(() => observe(() => input.client.session.active({ signal })))
-
-  await readBounded([...authorizedLocations.entries()].filter(([key]) => !locationReads.has(key)), ([key, location]) => readLocation(key, location))
 
   // Queued input decides a state only for an actor that owes a report or has an open call
   // and that no request, run or background work already describes: read only those inboxes.

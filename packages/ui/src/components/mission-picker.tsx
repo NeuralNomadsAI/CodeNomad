@@ -123,7 +123,7 @@ export function MissionRows(props: {
           onClick={() => props.onSelect(entry())}>
           <span class="mission-row-mark" data-mark={entry().mark} aria-hidden="true">
             <Dynamic component={entry().mark === "paused" ? Pause : entry().mark === "interrupted" ? AlertTriangle
-              : key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} />
+              : key.startsWith("mission:") && !entry().recurring ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} />
           </span>
           <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
         </button>
