@@ -1,6 +1,6 @@
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
-/** Colour carries attention; the waiting underline and pause/warning shapes
+/** Colour carries attention; the hourglass, pause and warning shapes
  * distinguish states independently of the palette's accent contrast. */
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
