@@ -37,7 +37,11 @@ pub(super) fn visible(s: &State, message: &str, tool: &Tool) -> bool {
 
 pub(crate) fn inferred_websearch<'a>(s: &State, rows: &'a [Row]) -> Option<(&'a str, &'a str)> {
     let agent = s.agent.as_ref()?;
-    if !agent.forms.iter().any(|form| form.infer_websearch) {
+    if !agent
+        .forms
+        .iter()
+        .any(|form| form.tool.is_none() && form.infer_websearch)
+    {
         return None;
     }
     rows.iter().rev().find_map(|message| {

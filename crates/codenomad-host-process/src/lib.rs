@@ -29,7 +29,7 @@ mod wake_lock;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use date::{local_clock, local_month_day};
+pub use date::{local_clock, local_clock_seconds, local_month_day};
 pub use date::{local_date_time, local_time_zone};
 pub use second_launch::LaunchCoordinator;
 #[cfg(unix)]
@@ -40,6 +40,12 @@ use windows::Family;
 
 #[cfg(unix)]
 pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
+    let (y, m, d, h, min, _) = local_clock_seconds(seconds)?;
+    Some((y, m, d, h, min))
+}
+
+#[cfg(unix)]
+pub fn local_clock_seconds(seconds: i64) -> Option<(i32, i32, i32, i32, i32, i32)> {
     let time = libc::time_t::try_from(seconds).ok()?;
     let mut out = std::mem::MaybeUninit::<libc::tm>::uninit();
     // localtime_r writes the caller's buffer on success without sharing mutable calendar state.
@@ -55,6 +61,7 @@ pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
         local.tm_mday,
         local.tm_hour,
         local.tm_min,
+        local.tm_sec.clamp(0, 59),
     ))
 }
 

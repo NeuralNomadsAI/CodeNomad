@@ -167,10 +167,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             }
             (panel, actions)
         } else if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-            (
-                crate::agent_form_view::fields(s, f),
-                crate::agent_form_view::actions(s, f),
-            )
+            crate::agent_form_view::form_panel(s, f)
         } else {
             (rune::el(), rune::el())
         };

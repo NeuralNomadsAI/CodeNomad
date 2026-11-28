@@ -146,13 +146,23 @@ impl State {
             Editor::Form(id) => self
                 .agent
                 .as_mut()
+                .filter(|a| !a.forms_mutating())
                 .and_then(|a| a.drafts.get_mut(&id))
                 .map(|d| d.editor()),
             Editor::Custom(id) => self
                 .agent
                 .as_mut()
-                .and_then(|a| a.drafts.get_mut(&id))
-                .map(|d| d.custom_editor()),
+                .filter(|a| !a.forms_mutating())
+                .and_then(|a| {
+                    a.reconcile_custom_focus();
+                    a.drafts
+                        .get_mut(&id)
+                        .filter(|d| !d.oversized_multiselect_default)
+                        .map(|d| {
+                            d.custom_was_focused = true;
+                            d.custom_editor()
+                        })
+                }),
         };
         edit.unwrap_or(&mut self.rejected_edit)
     }
