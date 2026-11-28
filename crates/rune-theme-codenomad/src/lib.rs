@@ -16,6 +16,7 @@ pub mod git_diff;
 pub mod git_panel;
 pub mod interruption;
 mod kit;
+pub mod launcher;
 pub mod layout;
 pub mod markdown;
 pub mod palettes;

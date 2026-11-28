@@ -55,8 +55,10 @@ pub fn connect(s: &mut State, _: &mut Tx) {
         let Some(backend) = &l.connection else { return };
         backend.base.clone()
     } else {
-        l.host = None;
-        l.managed_renewal_failed_for = None;
+        if l.connection.is_none() {
+            l.host = None;
+            l.managed_renewal_failed_for = None;
+        }
         l.address.text.clone()
     };
     let password = l.password.text.clone();

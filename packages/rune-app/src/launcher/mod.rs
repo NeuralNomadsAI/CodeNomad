@@ -6,6 +6,7 @@ pub(crate) mod linked;
 mod managed_renewal_tests;
 pub(crate) mod placement;
 mod projects;
+pub(crate) mod recent;
 #[cfg(target_arch = "wasm32")]
 mod reopen;
 mod search;
@@ -55,6 +56,31 @@ pub use sessions::{
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VersionMeta {
+    pub server_version: Option<String>,
+    pub ui_version: Option<String>,
+    pub ui_source: Option<String>,
+}
+
+impl VersionMeta {
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        let non_empty = |v: &serde_json::Value| {
+            v.as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        let meta = Self {
+            server_version: non_empty(&value["serverVersion"]),
+            ui_version: non_empty(&value["ui"]["version"]),
+            ui_source: non_empty(&value["ui"]["source"]),
+        };
+        (meta.server_version.is_some() || meta.ui_version.is_some() || meta.ui_source.is_some())
+            .then_some(meta)
+    }
+}
+
 pub struct Launcher {
     pub address: TextEdit,
     pub password: TextEdit,
@@ -67,6 +93,13 @@ pub struct Launcher {
     pub visits: Visits,
     pub connection: Option<Backend>,
     pub(crate) authentication_required: bool,
+    pub(crate) custom_names: Vec<(String, String)>,
+    pub(crate) removed_recents: Vec<String>,
+    recent_save_job: Option<(u64, Receiver<codenomad_client::settings::PatchOutcome>)>,
+    pending_recent_save: Option<Vec<serde_json::Value>>,
+    last_patched_recents: Option<Vec<serde_json::Value>>,
+    pub(crate) recent_menu: rune_theme_codenomad::action_menu::State<State>,
+    pub(crate) open_recent_menu: Option<String>,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
     pub(crate) workspace_stream_generation: u64,
@@ -108,6 +141,8 @@ pub struct Launcher {
     managed_renewal_attempts: u8,
     pub(crate) projects_stale: bool,
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
+    pub(crate) version_meta: Option<VersionMeta>,
+    meta_flight: Option<(u64, Receiver<Option<VersionMeta>>)>,
     folders: folders::Browser,
     wake: rune::Waker,
 }
@@ -247,6 +282,13 @@ impl Launcher {
             visits: Visits::default(),
             connection: None,
             authentication_required: false,
+            custom_names: Vec::new(),
+            removed_recents: Vec::new(),
+            recent_save_job: None,
+            pending_recent_save: None,
+            last_patched_recents: None,
+            recent_menu: Default::default(),
+            open_recent_menu: None,
             catalogue_watch: None,
             catalogue_generation: 0,
             workspace_stream_generation: 0,
@@ -288,6 +330,8 @@ impl Launcher {
             managed_renewal_attempts: 0,
             projects_stale: false,
             projects_refresh: None,
+            version_meta: None,
+            meta_flight: None,
             folders: Default::default(),
             wake,
         }
@@ -423,8 +467,212 @@ pub(crate) fn session_loaded(s: &State) -> bool {
         || s.status_permissions.writing()
 }
 
+pub(crate) fn recent_menu_state(
+    s: &mut State,
+) -> Option<&mut rune_theme_codenomad::action_menu::State<State>> {
+    s.screen.launcher_mut().map(|l| &mut l.recent_menu)
+}
+
+pub(crate) fn recent_menu_open(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.open_recent_menu.is_some())
+}
+
+pub(crate) fn dismiss_recent_menu(s: &mut State, tx: &mut Tx) {
+    let open = s.screen.launcher().and_then(|l| l.open_recent_menu.clone());
+    if let Some(key) = open {
+        rune_theme_codenomad::action_menu::clear(s, recent_menu_state, &key, tx);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.open_recent_menu = None;
+        }
+    }
+}
+
+fn current_recent_rows(s: &State) -> Option<Vec<serde_json::Value>> {
+    s.screen
+        .launcher()
+        .and_then(|l| l.last_patched_recents.clone())
+        .or_else(|| crate::settings::recent_folders_raw(s))
+}
+
+fn spawn_recent_folders_patch(s: &mut State, next_rows: Vec<serde_json::Value>) {
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    let Some(backend) = l.connection.clone() else {
+        return;
+    };
+    let generation = l.connection_generation;
+    let wake = l.wake.clone();
+    let (tx, rx) = bounded(1);
+    l.recent_save_job = Some((generation, rx));
+    let patch = serde_json::json!({ "recentFolders": next_rows });
+    crate::platform::spawn(async move {
+        let outcome = codenomad_client::settings::Owner::State
+            .patch(&backend, &patch, false)
+            .await;
+        let _ = tx.send(outcome).await;
+        wake();
+    });
+}
+
+fn queue_recent_folders_patch(s: &mut State, next_rows: Vec<serde_json::Value>) {
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.connection.is_none() {
+        return;
+    }
+    l.last_patched_recents = Some(next_rows.clone());
+    if l.recent_save_job.is_some() {
+        l.pending_recent_save = Some(next_rows);
+    } else {
+        spawn_recent_folders_patch(s, next_rows);
+    }
+}
+
+pub(crate) fn persist_recent_name(s: &mut State, folder: &str, custom_name: Option<&str>) {
+    let trimmed = custom_name.map(str::trim).filter(|n| !n.is_empty());
+    if folder.trim().is_empty() {
+        return;
+    }
+    if let Some(l) = s.screen.launcher_mut() {
+        l.custom_names
+            .retain(|(path, _)| !codenomad_client::same_server_path(path, folder));
+        if let Some(name) = trimmed {
+            l.custom_names.push((folder.to_owned(), name.to_owned()));
+        }
+    }
+    if let Some(mut rows) = current_recent_rows(s) {
+        let mut updated = false;
+        for row in &mut rows {
+            if row
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| codenomad_client::same_server_path(path, folder))
+                && let Some(obj) = row.as_object_mut()
+            {
+                match trimmed {
+                    Some(name) => {
+                        let next = serde_json::Value::String(name.to_owned());
+                        if obj.get("projectName") != Some(&next) {
+                            obj.insert("projectName".into(), next);
+                            updated = true;
+                        }
+                    }
+                    None => {
+                        if obj.remove("projectName").is_some() {
+                            updated = true;
+                        }
+                    }
+                }
+            }
+        }
+        if updated {
+            queue_recent_folders_patch(s, rows);
+        }
+    }
+}
+
+pub(crate) fn rename_recent(s: &mut State, folder: &str, raw_name: &str) {
+    let trimmed = raw_name.trim();
+    if folder.trim().is_empty() || trimmed.is_empty() {
+        return;
+    }
+    crate::workspace::rename_folder(s, folder, trimmed);
+    persist_recent_name(s, folder, Some(trimmed));
+}
+
+pub(crate) fn remove_recent(s: &mut State, folder: &str, tx: &mut Tx) {
+    dismiss_recent_menu(s, tx);
+    if let Some(l) = s.screen.launcher_mut() {
+        l.custom_names
+            .retain(|(path, _)| !codenomad_client::same_server_path(path, folder));
+        if !l
+            .removed_recents
+            .iter()
+            .any(|path| codenomad_client::same_server_path(path, folder))
+        {
+            l.removed_recents.push(folder.to_owned());
+        }
+    }
+    crate::workspace::remove_closed_recent(s, folder);
+    if let Some(mut rows) = current_recent_rows(s) {
+        let before = rows.len();
+        rows.retain(|row| {
+            !row.get("path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| codenomad_client::same_server_path(path, folder))
+        });
+        if rows.len() != before {
+            queue_recent_folders_patch(s, rows);
+        }
+    }
+    tx.instant();
+}
+
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
+    let menu_unavailable = !crate::shell::launcher_replaces_project(s)
+        || s.screen
+            .launcher()
+            .is_none_or(|l| l.connection.is_none() || l.authentication_required);
+    if menu_unavailable && recent_menu_open(s) {
+        dismiss_recent_menu(s, tx);
+    }
+    let menu_changed = rune_theme_codenomad::action_menu::poll(s, recent_menu_state, tx);
+    let save_outcome = s.screen.launcher_mut().and_then(|l| {
+        let (generation, rx) = l.recent_save_job.as_ref()?;
+        let outcome = rx.try_recv().ok()?;
+        let current = l.connection_generation;
+        let same_gen = *generation == current;
+        l.recent_save_job = None;
+        same_gen.then_some(outcome)
+    });
+    let save_changed = save_outcome.is_some();
+    if let Some(outcome) = save_outcome {
+        match outcome {
+            codenomad_client::settings::PatchOutcome::Applied(value) => {
+                let next_queued = s
+                    .screen
+                    .launcher_mut()
+                    .and_then(|l| l.pending_recent_save.take());
+                if let Some(next_rows) = next_queued {
+                    spawn_recent_folders_patch(s, next_rows);
+                } else {
+                    if let Some(l) = s.screen.launcher_mut() {
+                        l.custom_names.clear();
+                        l.removed_recents.clear();
+                        l.last_patched_recents = None;
+                    }
+                    crate::settings::apply_recent_folders_snapshot(s, &value);
+                }
+            }
+            codenomad_client::settings::PatchOutcome::Rejected
+            | codenomad_client::settings::PatchOutcome::Uncertain => {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.pending_recent_save = None;
+                    l.last_patched_recents = None;
+                    l.custom_names.clear();
+                    l.removed_recents.clear();
+                }
+                crate::settings::invalidate_state_snapshot(s);
+                let loc = crate::settings::app_locale(s);
+                crate::strings::with_locale(loc, || {
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Settings,
+                        None,
+                        crate::strings::t("settings.preferenceSaveFailed"),
+                        true,
+                    );
+                });
+            }
+        }
+    }
+    let browser_changed = menu_changed
+        | save_changed
+        | (cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s)));
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let stream_update = s.screen.launcher_mut().and_then(|l| {
         let watch = l.catalogue_watch.as_ref()?;
@@ -702,6 +950,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if connection::poll_projects_refresh(s) | folders::poll(s) {
         relayed = true;
     }
+    if let Some(l) = s.screen.launcher_mut()
+        && let Some((generation, rx)) = &l.meta_flight
+        && let Ok(meta) = rx.try_recv()
+    {
+        let current = l.connection_generation;
+        let same_gen = *generation == current;
+        l.meta_flight = None;
+        if same_gen && meta.is_some() {
+            l.version_meta = meta;
+            relayed = true;
+        }
+    }
     let blocked = !can_change_session(s)
         || s.screen
             .launcher()
@@ -812,6 +1072,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 return true;
             }
             l.folder = TextEdit::new(&project.path);
+            l.removed_recents
+                .retain(|path| !codenomad_client::same_server_path(path, &project.path));
             set_project(l, Some(project.clone()));
             l.linked = Default::default();
             l.creation_uncertain = false;
@@ -1374,9 +1636,39 @@ fn apply_connected(
     l.managed_renewal_attempts = 0;
     l.projects_refresh = None;
     l.folders = Default::default();
+    let connection_changed = !reauthenticated
+        && l.connection
+            .as_ref()
+            .is_some_and(|prev| !prev.client.same_connection(&b.client));
+    if connection_changed {
+        l.custom_names.clear();
+        l.removed_recents.clear();
+        l.recent_save_job = None;
+        l.pending_recent_save = None;
+        l.last_patched_recents = None;
+        l.version_meta = None;
+        l.meta_flight = None;
+    }
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);
     l.server_id = Some(server_id);
+    if l.version_meta.is_none()
+        && let Some(backend) = l.connection.clone()
+    {
+        l.meta_flight = None;
+        let generation = l.connection_generation;
+        let wake = l.wake.clone();
+        let (out, rx) = bounded(1);
+        l.meta_flight = Some((generation, rx));
+        crate::platform::spawn(async move {
+            let meta = codenomad_client::settings::info::metadata(&backend)
+                .await
+                .ok()
+                .and_then(|value| VersionMeta::from_json(&value));
+            let _ = out.send(meta).await;
+            wake();
+        });
+    }
     if let Some(projects) = projects {
         l.projects = projects;
         l.projects_stale = false;
@@ -1388,6 +1680,9 @@ fn apply_connected(
     let has_project = l.project.is_some();
     let job_pending = l.pending;
     l.openings.retry_cleanup(l.connection.as_ref());
+    if connection_changed {
+        dismiss_recent_menu(s, tx);
+    }
     crate::workspace::connected(s);
     if reauthenticated {
         crate::workspace::renew_connection(s);
