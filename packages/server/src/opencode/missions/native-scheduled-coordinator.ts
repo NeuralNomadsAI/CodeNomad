@@ -80,6 +80,12 @@ async function assertCoordinatorFree(ctx: Plugin.Context, run: MissionNativeRunn
   if (running) throw new Error("Coordinator runs another passage")
 }
 
+function isMissingSession(error: unknown): boolean {
+  if (isSessionNotFoundError(error)) return true
+  const tag = error && typeof error === "object" && "_tag" in error ? (error as { _tag?: unknown })._tag : undefined
+  return tag === "Session.NotFoundError"
+}
+
 /** Called only after the archive CAS. Clearing the exact old marker releases
  * ordinary conversation use independently of the history retention window. */
 export async function releaseNativeScheduledCoordinator(ctx: Plugin.Context, run: MissionNativeRunner, native: MissionNativeService,
@@ -90,7 +96,7 @@ export async function releaseNativeScheduledCoordinator(ctx: Plugin.Context, run
   current()
   const read = async () => {
     try { const session = await native.get({ sessionID: pending.coordinatorSessionID }, { signal }); current(); return session }
-    catch (error) { current(); if (isSessionNotFoundError(error) && absent) return undefined; throw error }
+    catch (error) { current(); if (isMissingSession(error) && absent) return undefined; throw error }
   }
   const matches = (session: NativeMissionSession) => {
     const marker = session.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: unknown } | undefined

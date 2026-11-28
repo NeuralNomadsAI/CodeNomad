@@ -25,6 +25,7 @@ import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { missionScheduleAvailableActions } from "../../missions/mission-schedule-display"
+import { compactNativeMissionDocumentDeletion } from "./native-mission-schedule-deletion"
 
 const current = () => true as const, at = Date.parse("2026-10-01T00:00:00Z")
 
@@ -48,7 +49,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const nativeKey = (key: string) => namespace + key
   let transaction = false, sends = 0, environments = 0, enabled = true, disableAtEnvironment = false
-  let failRelease = false, loseReleaseACK = false, releaseWrites = 0
+  let failRelease = false, loseReleaseACK = false, releaseWrites = 0, missingSessionError: unknown = { _tag: "Session.NotFoundError" }
   const directory = path.resolve("scheduled-passage-runtime-isolated-unit")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const sessions = new Map<string, Session.Info>(), messages = new Map<string, typeof SessionMessage.Info.Type>(), active = new Set<string>()
@@ -82,7 +83,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     get: (id: string) => Effect.suspend(() => {
       assert.equal(transaction, false)
       const session = sessions.get(id)
-      return session ? Effect.succeed(session) : Effect.fail(Object.assign(new Error("Not found"), { _tag: "SessionNotFoundError", sessionID: id }))
+      return session ? Effect.succeed(session) : Effect.fail(missingSessionError)
     }),
     create: (input: NativeCreateInput) => Effect.sync(() => {
       assert.equal(transaction, false)
@@ -481,6 +482,36 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.ok(actions.includes("resume"))
       assert.equal(sends, beforeSends)
       assert.equal(sessions.size, beforeSessions)
+    })
+    await t.test("deleting schedule releases a missing reused coordinator on native Session.NotFoundError and compacts, while transient errors stay fail-closed", async () => {
+      let deletingDoc = await owner!.create("deleting_missing_release", { ...configuration, coordinatorSessionID: "ses_already_deleted" }, at, current)
+      deletingDoc = await owner!.change(deletingDoc.id, deletingDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation, slots: [], retired: [] }
+        next.blocked = "failed"
+        next.coordinatorReleases = [{ id: "psg_gone_1", missionID: "msn_gone_1", coordinatorSessionID: "ses_already_deleted" }]
+        changes.requestDeletion(next, "req_delete_missing_release", at + 50, { expectedRevision: 0, deleteManagedSessions: false })
+        next.synchronization = null
+      })
+      // A non-not-found native error must leave coordinatorReleases intact and hold off compaction.
+      missingSessionError = new Error("Transient database error")
+      try {
+        assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: deletingDoc.id })), "idle")
+        assert.equal((await owner!.read(deletingDoc.id) as MissionDocument).coordinatorReleases.length, 1)
+        const held = await compactNativeMissionDocumentDeletion(ctx, owner!, deletingDoc.id, effect => Effect.runPromiseWith(graph)(effect), current)
+        assert.deepEqual(held, { compacted: false, managedOrReleasePending: true })
+        // Native @opencode/Session.get fails with _tag: "Session.NotFoundError" (with dot).
+        missingSessionError = { _tag: "Session.NotFoundError" }
+        assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: deletingDoc.id })), "idle")
+        const released = await owner!.read(deletingDoc.id) as MissionDocument
+        assert.equal(released.coordinatorReleases.length, 0)
+        const compacted = await compactNativeMissionDocumentDeletion(ctx, owner!, deletingDoc.id, effect => Effect.runPromiseWith(graph)(effect), current)
+        assert.deepEqual(compacted, { compacted: true, managedOrReleasePending: false })
+        const tombstone = await owner!.read(deletingDoc.id)
+        assert.ok(tombstone && "deletedAt" in tombstone)
+        assert.equal(tombstone.requestID, "req_delete_missing_release")
+      } finally {
+        missingSessionError = { _tag: "Session.NotFoundError" }
+      }
     })
   } finally { db.close() }
 })
