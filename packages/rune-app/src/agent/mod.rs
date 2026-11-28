@@ -9,6 +9,8 @@ mod tests;
 pub(crate) mod view;
 #[cfg(test)]
 mod viewport_tests;
+#[cfg(test)]
+mod visual_parity_tests;
 use crate::{
     agent_api::{Action, Form, FormsSnapshot, Model, Permission, Snapshot},
     agent_forms::{self, Drafts},
@@ -137,10 +139,13 @@ pub(crate) fn focused_control_key(
     if matches!(key, "pending-prev" | "pending-next") && a.ids().len() > 1 {
         return Some((key.to_string(), None));
     }
-    if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected)
-        && (key == "reject" || (p.supported && matches!(key, "allow_once" | "allow_always")))
-    {
-        return Some((key.to_string(), None));
+    if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected) {
+        if key == "reject" || (p.supported && matches!(key, "allow_once" | "allow_always")) {
+            return Some((key.to_string(), None));
+        }
+        if !p.action.is_empty() && key == rune_theme_codenomad::form_controls::FORM_FOCUS_ANCHOR {
+            return Some((key.to_string(), Some(format!("pending-content-{}", p.id))));
+        }
     }
     if matches!(key, "answer-question" | "cancel-question")
         && a.forms.iter().any(|f| f.id == a.selected)

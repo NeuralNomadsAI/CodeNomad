@@ -22,8 +22,8 @@
     "user-files.ts", "user-file-contract.ts", "user-file-reference.ts", "permission-rules-contract.ts"
   ],
   "dependencies": {
-    "@opencode/plugin": "2.4.1",
-    "@opencode/schema": "2.4.1",
+    "@opencode/plugin": "2.4.2",
+    "@opencode/schema": "2.4.2",
     "zod": "^4.6.6"
   }
 }

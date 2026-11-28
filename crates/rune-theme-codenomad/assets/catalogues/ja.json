@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "利用できない対象: {source}",
   "missions.scheduling.sourcesUnavailable": "対象を読み取れません。",
   "missions.scheduling.startOnCreation": "自動的に開始",
+  "missions.scheduling.stop": "スケジュールを完全に停止",
+  "missions.scheduling.stopConfirm": "このスケジュールを完全に停止しますか？以後の起動は行われません。ミッションは一覧に残ります。",
   "missions.scheduling.title": "スケジュール",
   "missions.scheduling.uncertain": "この変更は未確認です。",
   "missions.scheduling.uncertainOther": "このウィンドウの別の変更が未確認です。",

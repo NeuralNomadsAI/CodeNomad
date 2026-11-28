@@ -287,12 +287,10 @@ the original request, for replay; tool replies project that metadata only as
 even when its model is inherited; an absent judge slot inherits the coordinator's
 origin. These are saved requested selectors; catalog validation and native
 execution checks establish availability and actual execution separately.
-`inspect({ start })` uses the caller as coordinator and requires its existing
-native profile to match the resolved coordinator selection. A mismatch whose
-coordinator origin is `preference` advises passing `profiles.coordinator`
-(for example `{}`) to override that preference; the existing native-profile
-check still applies. An explicit-profile mismatch keeps the generic
-native-profile error.
+`inspect({ start })` uses the caller as coordinator. A conversation that coordinates,
+the caller's or one a creation names, is put on the resolved coordinator agent and
+model (`switchAgent`, `switchModel`); one that cannot be changed coordinates as it is.
+A chosen conversation is never refused for the agent or model it runs.
 
 `inspect({ start })` reads preferences before entering the project mutation
 lane. Admission rereads creation events and document defaults under that lane;

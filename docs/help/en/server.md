@@ -8,7 +8,7 @@ Browser and tablet access do not move execution off the host.
 
 1. Install Node.js 24 LTS and npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: **2.4.0** is the required minimum. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: **2.4.2** is the required minimum. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).

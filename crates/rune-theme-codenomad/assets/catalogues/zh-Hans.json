@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "来源不可用：{source}",
   "missions.scheduling.sourcesUnavailable": "无法读取来源。",
   "missions.scheduling.startOnCreation": "自动启动",
+  "missions.scheduling.stop": "永久停止计划",
+  "missions.scheduling.stopConfirm": "永久停止此计划？之后不会再启动。任务保留在列表中。",
   "missions.scheduling.title": "计划",
   "missions.scheduling.uncertain": "此更改尚未确认。",
   "missions.scheduling.uncertainOther": "此窗口中的另一个更改尚未确认。",

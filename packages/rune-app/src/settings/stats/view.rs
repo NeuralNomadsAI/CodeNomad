@@ -78,7 +78,8 @@ pub(in crate::settings) fn view<S: 'static>(
         body = body.child(status("settings.usage.cached", "status"));
     }
     if stats.failed {
-        body = body.child(status("settings.usage.error", "alert"));
+        let label = t("settings.usage.error");
+        body = body.child(chrome::palette::save_error(label).label(label));
     }
     if let Some(snapshot) = &stats.snapshot {
         let hint = t("settings.usage.costHint");

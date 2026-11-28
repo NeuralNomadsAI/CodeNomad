@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Unavailable source: {source}",
   "missions.scheduling.sourcesUnavailable": "Sources could not be read.",
   "missions.scheduling.startOnCreation": "Start automatically",
+  "missions.scheduling.stop": "Stop scheduling permanently",
+  "missions.scheduling.stopConfirm": "Stop this scheduling permanently? No further launch will start. The mission stays in the list.",
   "missions.scheduling.title": "Scheduling",
   "missions.scheduling.uncertain": "This change is unconfirmed.",
   "missions.scheduling.uncertainOther": "Another change from this window is unconfirmed.",

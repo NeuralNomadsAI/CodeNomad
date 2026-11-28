@@ -6,6 +6,7 @@ use crate::{
 use codenomad_client::{Receiver, backend::Backend, bounded, settings::memory};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
+    Space,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -372,6 +373,7 @@ pub(super) fn view<S: 'static>(
     chrome::card(
         col()
             .full_width()
+            .separate(Space::Sm)
             .child(chrome::setting_row_with_info(
                 title,
                 Some(info),
@@ -379,11 +381,9 @@ pub(super) fn view<S: 'static>(
             ))
             .children(setting.failed.then(|| {
                 layout::action_row()
-                    .child(
-                        text(t("settings.memory.error.unavailable"))
-                            .wrap()
-                            .role("alert"),
-                    )
+                    .child(chrome::palette::save_error(t(
+                        "settings.memory.error.unavailable",
+                    )))
                     .child(layout::button(
                         t("settings.memory.retry"),
                         !verified || setting.busy(),
@@ -392,7 +392,7 @@ pub(super) fn view<S: 'static>(
             }))
             .children(
                 help.failed()
-                    .then(|| text(t("commands.openHelp.failed")).role("alert").wrap()),
+                    .then(|| chrome::palette::save_error(t("commands.openHelp.failed"))),
             )
             .children(
                 (setting.current == Some(true) && prefs.can_retry()).then(|| {

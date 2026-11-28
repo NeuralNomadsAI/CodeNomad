@@ -483,15 +483,17 @@ async fn admit_non_git(root: &Path, resolved: &Path, target_exists: bool, strict
 /// In strict discovery, distinguish a confirmed non-owner from an unreadable checkout.
 pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: bool) -> Result<Option<Owned>, ()> {
     let root = &w.path;
-    if !crate::files::paths::under(&app.scope, Path::new(directory)) {
+    if !crate::files::paths::local_absolute(directory) {
         return Ok(None);
     }
     let target = match dunce::canonicalize(directory) {
         Ok(path) => Some(path),
-        Err(error) if strict && error.kind() != std::io::ErrorKind::NotFound => return Err(()),
+        Err(error) if strict && error.kind() != std::io::ErrorKind::NotFound => {
+            return if crate::files::paths::under(&app.scope, Path::new(directory)) { Err(()) } else { Ok(None) };
+        }
         Err(_) => None,
     };
-    if target.as_ref().is_some_and(|path| !path.starts_with(&app.scope)) {
+    if target.as_ref().is_some_and(|path| !crate::files::paths::under(&app.scope, path)) {
         return Ok(None);
     }
     if target.as_deref() == Some(root.as_path()) {
@@ -513,7 +515,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         }
     }
     let resolved = resolve_directory(directory).ok_or(())?;
-    if !resolved.starts_with(&app.scope) {
+    if !crate::files::paths::under(&app.scope, &resolved) {
         return Ok(None);
     }
     let hit = match crate::worktrees::linked::http_read(app, w, crate::worktrees::linked::ReadMode::Validated).await {

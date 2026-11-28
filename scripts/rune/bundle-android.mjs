@@ -29,8 +29,8 @@ await copyFile(values.lib, path.join(libraries, values.abi, 'libmain.so'))
 const project = path.join(root, 'packages/rune-app/android')
 const gradle = process.env.RUNE_GRADLE ?? 'gradle'
 // One build per call: no Gradle or Kotlin daemon stays behind holding the output directory.
-const kotlin = path.join(runeSource(root), 'android/src/main/kotlin')
-await access(path.join(kotlin, 'ly/anoma/rune/RuneActivity.kt')).catch(() => assert.fail('The locked Rune has no Android host: the workspace must follow a Rune that ships one'))
+const kotlin = path.join(runeSource(root), 'android/src/main/java')
+await access(path.join(kotlin, 'dev/rune/RuneActivity.kt')).catch(() => assert.fail('The locked Rune has no Android host: the workspace must follow a Rune that ships one'))
 // Gradle's caches and Kotlin's session files stay under the output, out of the source tree.
 const args = ['--quiet', '--no-daemon', '-Pkotlin.compiler.execution.strategy=in-process', `-Pkotlin.project.persistent.dir=${path.join(out, 'kotlin')}`,
   '--project-dir', project, '--project-cache-dir', path.join(out, 'gradle-cache'),

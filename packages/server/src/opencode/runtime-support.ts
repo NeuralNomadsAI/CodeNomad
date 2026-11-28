@@ -1,24 +1,21 @@
 /**
- * CodeNomad's Images gallery, Design agent and Images settings consume the image
- * tool contract of upstream anomalyco/opencode#60258: one name,
- * `experimental_image_generate`, for the tool, its permission action, its job type
- * and its completion notice's `metadata.source`, and the tool on unless
+ * CodeNomad's Images gallery, Design agent and Images settings consume the
+ * OpenCode 2.4.2 Code Mode `generate_image` contract (upstream #66465; gallery
+ * reads also remain compatible with historical direct `generate_image` and
+ * `experimental_image_generate` transcripts), with the tool on unless
  * `experimental.image_generate` is `false`. The minimum also provides the native
  * replay contract read by the pinned client reducer and codecs (`native` provider
- * data, `metadata.keepID` compactions, `native.messages` windows) and Code Mode
- * jobs that keep JavaScript run-to-completion (scripts/test-codemode-jobs-native.mjs).
- * CodeNomad qualifies only the 2.3 subagent contract: every subagent runs in the
- * background and delivers synthetic `<subagent>` reports to its parent
- * (scripts/test-missions-native-trajectory.mjs, scripts/test-subagent-nesting-native.mjs).
- * The native Automation contract backs Mission calendars. OpenCode 2.4.0 adds the
- * browser tools' permission hook: 2.3 accepts the same `experimental.browser`
- * attachment, but its blanket session grant overrides a configured `browser` deny,
- * so the session preview would serve agents their rules refuse. See
- * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
+ * data, `metadata.keepID` compactions, `native.messages` windows), Code Mode
+ * jobs that keep JavaScript run-to-completion (scripts/test-codemode-jobs-native.mjs),
+ * background subagent reports (scripts/test-missions-native-trajectory.mjs,
+ * scripts/test-subagent-nesting-native.mjs), the browser tools' permission hook,
+ * resilient Automations (upstream #66422, #65626), and native family-cascading
+ * `Session.move` (upstream #66215). See dev-docs/OPENCODE_COMPATIBILITY.md for
+ * the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.4.0"
+export const MINIMUM_OPENCODE_VERSION = "2.4.2"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.4.1"
+export const RECOMMENDED_OPENCODE_VERSION = "2.4.2"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {

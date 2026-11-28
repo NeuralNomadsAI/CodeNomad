@@ -9,7 +9,7 @@ use codenomad_client::{
     bounded,
     settings::memory::{self, Entry, List, Scope},
 };
-use rune_theme_codenomad::Space;
+use rune_theme_codenomad::{Space, TextRole};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -829,14 +829,23 @@ impl Review {
             )
             .children(
                 (self.tidy_state[scope_slot(scope)] == TidyState::Failed)
-                    .then(|| text(t("settings.memory.tidyFailed")).role("alert").wrap()),
+                    .then(|| chrome::palette::save_error(t("settings.memory.tidyFailed"))),
             );
         if scope == Scope::Project {
             match project {
-                None => return panel.child(text(t("settings.memory.noProject")).role("status")),
+                None => {
+                    return panel.child(
+                        text(t("settings.memory.noProject"))
+                            .text_role(TextRole::Small)
+                            .role("status"),
+                    );
+                }
                 Some(target) if !target.online() => {
-                    return panel
-                        .child(text(t("settings.memory.error.unavailable")).role("status"));
+                    return panel.child(
+                        text(t("settings.memory.error.unavailable"))
+                            .text_role(TextRole::Small)
+                            .role("status"),
+                    );
                 }
                 _ => {}
             }
@@ -845,7 +854,7 @@ impl Review {
             let retry = act.clone();
             panel = panel.child(
                 layout::action_row()
-                    .child(text(t(error)).wrap().role("alert"))
+                    .child(chrome::palette::save_error(t(error)))
                     .child(layout::button(
                         t("settings.memory.retry"),
                         self.flight.is_some(),
@@ -854,18 +863,18 @@ impl Review {
             );
         }
         let Some(list) = &self.snapshot else {
-            return panel.children(
-                self.flight
-                    .is_some()
-                    .then(|| text(t("settings.memory.loading")).role("status")),
-            );
+            return panel.children(self.flight.is_some().then(|| {
+                text(t("settings.memory.loading"))
+                    .text_role(TextRole::Small)
+                    .role("status")
+            }));
         };
         if list.entries.is_empty() {
-            return panel.children(
-                self.failed
-                    .is_none()
-                    .then(|| text(t("settings.memory.empty")).role("status")),
-            );
+            return panel.children(self.failed.is_none().then(|| {
+                text(t("settings.memory.empty"))
+                    .text_role(TextRole::Small)
+                    .role("status")
+            }));
         }
         let count = t("settings.memory.count")
             .replace("{count}", &list.entries.len().to_string())
@@ -913,13 +922,15 @@ impl Review {
                             })
                             .content_direction(),
                         )
-                        .child(text(kind))
+                        .child(text(kind).text_role(TextRole::Small))
                         .children(
                             self.seen
                                 .badge(key.owner.seen_key(), list, entry)
-                                .map(|badge| text(t(badge))),
+                                .map(|badge| text(t(badge)).text_role(TextRole::Small)),
                         )
-                        .children(entry.flagged.then(|| text(t("settings.memory.flagged")))),
+                        .children(entry.flagged.then(|| {
+                            text(t("settings.memory.flagged")).text_role(TextRole::Small)
+                        })),
                 );
             }
         }

@@ -33,6 +33,7 @@ mod storage;
 mod subagent_depth;
 mod temporary_workspaces;
 mod usage;
+mod workspace_clone;
 mod workspaces;
 mod worktrees;
 

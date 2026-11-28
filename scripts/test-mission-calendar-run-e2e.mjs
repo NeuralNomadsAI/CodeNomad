@@ -14,6 +14,8 @@
 // 7. A programming saved with a prepared Mission launches by starting that Mission.
 // 8. A schedule the recurring engine left in the plugin's storage is read without that engine
 //    and left deleted the way the engine deletes one.
+// 9. A conversation chosen to coordinate, on another agent, model and thinking than the coordinator's,
+//    is put on the coordinator's and coordinates the launch.
 // Usage: node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-opencode-cli>
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
@@ -125,7 +127,7 @@ await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   automations: true, plugins: [pluginDir], model: "fixture/fixture",
   providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
-    settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} } } },
+    settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {}, other: { variants: [{ id: "high" }] } } } },
 })
 
 const location = { directory: root }, callOpts = { location, headers: { "x-opencode-directory": root } }
@@ -294,6 +296,20 @@ try {
   assert.deepEqual([(await calendars().list())[0].last?.outcome, (await calendars().list())[0].last?.missionID], ["launched", prepared.id])
   console.log("PASS 7 (a programming saved with a prepared Mission launches by starting that Mission)")
   await calendars().delete("cal_prepared")
+
+  const named = await daemon.client.session.create({ title: "Named conversation", location, agent: "plan", model: { providerID: "fixture", id: "other", variant: "high" } })
+  assert.deepEqual([named.agent, named.model], ["plan", { providerID: "fixture", id: "other", variant: "high" }])
+  await calendars().save("cal_named", [rule("cal_named", { objective: OBJECTIVE, title: "Named E2E", template: "custom", coordinatorSessionID: named.id,
+    profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "fixture" } } } })])
+  const chosen = { id: (await calendars().list())[0].rules[0].automationID }
+  const inNamed = (await until("the named conversation's Mission", () => missions(daemon), list => list.some(mission => mission.title === "Named E2E"), 150_000).catch(async error => {
+    throw new Error(`${error.message}\nautomation: ${JSON.stringify(await daemon.client.experimental.automation.get({ automationID: chosen.id }).catch(() => null))?.slice(0, 1500)}`)
+  })).find(mission => mission.title === "Named E2E")
+  assert.equal(inNamed.coordinatorSessionId, named.id, "the launch coordinates in the conversation it names")
+  const adopted = await daemon.client.session.get({ sessionID: named.id })
+  assert.deepEqual([adopted.agent, adopted.model.providerID, adopted.model.id, adopted.model.variant ?? "default"], ["build", "fixture", "fixture", "default"])
+  console.log("PASS 9 (a named conversation on another agent, model and thinking takes the coordinator's and coordinates)")
+  await calendars().delete("cal_named")
 } finally {
   console.log("seen:", JSON.stringify({ ...seen, delegated: [...seen.delegated] }))
   if (daemon) await daemon.stop().catch(() => {})

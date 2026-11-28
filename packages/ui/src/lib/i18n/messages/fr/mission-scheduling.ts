@@ -182,7 +182,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "Ce calendrier n’a aucun créneau à venir.",
   "missions.scheduling.error.capability": "Programmation indisponible. Conservez le brouillon ou retirez les critères de lancement.",
   "missions.scheduling.error.unsupported": "Ces critères de lancement ne peuvent pas être programmés.",
-  "missions.scheduling.error.coordinatorProfile": "La conversation existante n’utilise pas l’agent, le modèle et la réflexion du coordinateur. Accordez-les, ou utilisez une nouvelle session.",
   "missions.scheduleList.activationRefused.layer.project": "Configuration du projet",
   "missions.scheduleList.activationRefused.layer.global": "Configuration globale",
   "missions.scheduleList.activationRefused.layer.inherited": "Configuration héritée",

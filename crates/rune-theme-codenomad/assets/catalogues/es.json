@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Fuente no disponible: {source}",
   "missions.scheduling.sourcesUnavailable": "No se pudieron leer las fuentes.",
   "missions.scheduling.startOnCreation": "Iniciar automáticamente",
+  "missions.scheduling.stop": "Detener programación definitivamente",
+  "missions.scheduling.stopConfirm": "¿Detener esta programación permanentemente? No se iniciará ningún otro lanzamiento. La misión permanece en la lista.",
   "missions.scheduling.title": "Programación",
   "missions.scheduling.uncertain": "Este cambio no está confirmado.",
   "missions.scheduling.uncertainOther": "Otro cambio de esta ventana no está confirmado.",

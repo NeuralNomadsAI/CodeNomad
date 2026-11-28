@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Source indisponible : {source}",
   "missions.scheduling.sourcesUnavailable": "Lecture des sources impossible.",
   "missions.scheduling.startOnCreation": "Démarrer automatiquement",
+  "missions.scheduling.stop": "Arrêter définitivement la programmation",
+  "missions.scheduling.stopConfirm": "Arrêter définitivement cette programmation ? Plus aucun lancement ne partira. La mission reste dans la liste.",
   "missions.scheduling.title": "Programmation",
   "missions.scheduling.uncertain": "Cette modification reste non confirmée.",
   "missions.scheduling.uncertainOther": "Une autre modification de cette fenêtre reste non confirmée.",

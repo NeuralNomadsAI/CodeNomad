@@ -162,17 +162,23 @@ function logs(input) {
     const relative = path.relative(realpathSync.native(input.root), realpathSync.native(dir))
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw Error()
     listing = opendirSync(dir)
+    const names = []
     for (let index = 0; index < 17; index++) {
       const item = listing.readSync(); if (!item) break
-      if (index === 16 || !remaining) { output.truncated = true; break }
+      if (index === 16) { output.truncated = true; break }
       if (!item.isFile() || !item.name.endsWith(".log")) continue
+      names.push(item.name)
+    }
+    names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    for (const name of names) {
+      if (!remaining) { output.truncated = true; break }
       try {
-        const evidence = ownedFile(input.root, path.join(dir, item.name), remaining, true)
+        const evidence = ownedFile(input.root, path.join(dir, name), remaining, true)
         remaining -= evidence.bytes.length
         // Free text has arbitrary reversible encodings; export only file metadata.
-        output.files.push({ observedBytes: evidence.observedBytes,
+        output.files.push({ name, observedBytes: evidence.observedBytes,
           truncated: evidence.truncated, error: evidence.truncated ? "log-truncated-content-omitted" : "log-private-content-omitted" })
-      } catch { output.files.push({ error: "log-unavailable" }) }
+      } catch { output.files.push({ name, error: "log-unavailable" }) }
     }
     if (!output.files.length) output.error = "logs-unavailable"
   } catch { output.error = "logs-unavailable" }

@@ -1,6 +1,6 @@
 use crate::{
     State,
-    agent_api::Form,
+    agent_api::{Form, FormOwner},
     agent_forms,
     components::button,
     strings::{locale, t},
@@ -289,14 +289,21 @@ fn fields_with_eval(s: &State, form: &Form, eval: &agent_forms::FormEvaluation<'
         && field_title(visible[0].0).is_none()
         && !display_title.trim().is_empty()
         && agent_forms::field_required(visible[0].0);
+    let eyebrow = match form.owner {
+        FormOwner::Global(_) => t("interruption.projectRequest"),
+        FormOwner::Session => t("permissionApproval.kind.question"),
+    };
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
         .child(form_controls::form_header(
-            t("permissionApproval.kind.question"),
+            eyebrow,
             display_title,
             header_required,
         ));
+    if let Some(status) = super::view::offline_status(a) {
+        body = body.child(status);
+    }
     if !eval.supported || eval.has_unanswerable_active || eval.has_invalid_hidden_active {
         body = body.child(form_controls::form_error(t("rune.unsupported_question")))
     }

@@ -330,7 +330,7 @@ fn owns(ui: &Ui, directory: &str, path: &str) -> bool {
         && ui.rows.iter().any(|row| row.entry.path == path)
 }
 
-fn has_session(s: &State) -> bool {
+pub(super) fn has_session(s: &State) -> bool {
     !s.screen.is_launcher()
         && crate::workspace::active_session(s).is_some_and(|id| !matches!(id, "" | "info"))
         && !s

@@ -22,6 +22,8 @@ async function fixture() {
     create: async (input: any) => { const value = { ...input, projectID, time: { created: 100 } }; sessions.set(input.id, value); return value },
     environment: async () => {}, instructions: { entry: { put: async () => {}, remove: async () => {} } },
     prompt: async () => ({}), synthetic: async () => ({}), hook: async () => ({ dispose: async () => {} }),
+    switchAgent: async ({ sessionID, agent }: any) => { sessions.set(sessionID, { ...sessions.get(sessionID), agent }) },
+    switchModel: async ({ sessionID, model }: any) => { sessions.set(sessionID, { ...sessions.get(sessionID), model }) },
   }
   const row = (automationID: string) => automations.find(item => item.id === automationID)
   const client: any = {
@@ -207,19 +209,14 @@ test("a schedule whose launch criteria do not carry over becomes an ordinary pre
 
 const conversation = (id: string, variant?: string) => ({ id, projectID, location: { directory }, agent: profile.agent, model: { ...profile.model, ...(variant ? { variant } : {}) } })
 
-test("a conversation that does not run the coordinator's agent and model is refused when the programming is saved", async () => {
+test("a conversation on another model is saved as the programmed Mission's and takes the coordinator's agent and model", async () => {
   const f = await fixture()
   try {
-    f.sessions.set("ses_named", conversation("ses_named", "high"))
-    const named = { configuration: { ...configuration(), coordinatorSessionID: "ses_named" } }
-    const refused = await f.call("PUT", "/cal_named", named)
-    assert.deepEqual([refused.status, refused.body.code], [422, "calendar-coordinator-profile"])
-    assert.deepEqual([f.automations.length, (await f.missions()).length], [0, 0], "nothing is saved")
-    assert.equal((await f.agent({ action: "save", id: "cal_named", ...named })).refused, "calendar-coordinator-profile")
-    f.sessions.set("ses_named", conversation("ses_named"))
-    const saved = await f.call("PUT", "/cal_named", named)
+    f.sessions.set("ses_named", { ...conversation("ses_named", "high"), agent: "other" })
+    const saved = await f.call("PUT", "/cal_named", { configuration: { ...configuration(), coordinatorSessionID: "ses_named" } })
     assert.equal(saved.status, 200, JSON.stringify(saved.body))
     assert.equal((await f.mission(saved.body.calendars[0].missionID)).coordinatorSessionId, "ses_named")
+    assert.deepEqual([f.sessions.get("ses_named").agent, f.sessions.get("ses_named").model], [profile.agent, profile.model])
   } finally { await f.close() }
 })
 
@@ -232,13 +229,13 @@ test("a paused programmed Mission whose Mission is gone has one prepared again; 
     const gone = Object.fromEntries(calendars.map((item: any) => [item.id, item.missionID]))
     for (const missionID of Object.values(gone) as string[])
       await f.rpc.delete({ missionID, expectedRevision: (await f.mission(missionID)).revision, requestID: `gone_${missionID}`, deleteManagedSessions: false })
-    // The conversation it names has changed model since: its Mission is prepared in another one.
+    // The conversation it names has changed model since: it takes the coordinator's again.
     f.sessions.set("ses_named", conversation("ses_named", "high"))
     const read = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item]))
     const restored = await f.mission(read.cal_lost.missionID)
     assert.notEqual(read.cal_lost.missionID, gone.cal_lost)
     assert.deepEqual([restored.runState, read.cal_lost.mission.objective, restored.coordinatorSessionId === "ses_named", read.cal_lost.paused, read.cal_lost.mission.coordinatorSessionID],
-      ["prepared", "Lost", false, true, "ses_named"])
+      ["prepared", "Lost", true, true, "ses_named"])
     assert.equal(read.cal_running.missionID, gone.cal_running, "a run may be replacing it")
     const again = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item.missionID]))
     assert.equal(again.cal_lost, read.cal_lost.missionID, "prepared once")

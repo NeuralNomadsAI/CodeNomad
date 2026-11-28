@@ -3,7 +3,10 @@ use crate::{State, platform, screen, strings::t};
 use rune::{El, Tx};
 use rune_theme_codenomad::{
     action_menu::{self, Item, Menu},
-    git_panel::overflow_trigger,
+    file_row_actions::icons as file_icons,
+    git_panel::{self, overflow_trigger},
+    shell::icons as shell_icons,
+    workspace_tree::{self, icons as tree_icons},
 };
 use std::rc::Rc;
 
@@ -55,9 +58,10 @@ pub(crate) fn jump_key(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bo
 
 pub(crate) fn view(s: &State) -> (El, Option<El>) {
     let scope = &s.input_scope;
+    let queues_follow_ups = crate::settings::queues_follow_ups(s);
     let mut queue = Item::new(
         "queue",
-        t(if crate::settings::queues_follow_ups(s) {
+        t(if queues_follow_ups {
             "promptQueue.actions.steer"
         } else {
             "promptInput.send.queueAriaLabel"
@@ -70,23 +74,41 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
             }
         }),
     );
+    let queue_glyph = if queues_follow_ups {
+        &shell_icons::FORWARD
+    } else {
+        &git_panel::ROWS
+    };
+    queue.icon = Some(Rc::new(move || workspace_tree::action_glyph(queue_glyph)));
     queue.disabled = !can_queue(s);
     queue.description = (!s.composer.shell_mode)
         .then(|| super::shortcuts::Action::Alternate.label(s))
         .flatten();
+    let device_busy = s.composer.device.busy();
     let mut attach = Item::new(
         "attach",
-        t(if s.composer.device.busy() {
+        t(if device_busy {
             "promptInput.attachFiles.reading"
         } else {
             "promptInput.attachFiles.title"
         }),
         screen::action_tx(scope, platform::device_picker::choose),
     );
-    attach.disabled = !device::available(s) || s.composer.device.busy();
-    if !s.composer.picker.attachments_supported() {
-        attach.description = Some(t("rune.attachments_unavailable").into());
-    }
+    let attach_glyph = if device_busy {
+        &shell_icons::HOURGLASS
+    } else {
+        &tree_icons::FILE
+    };
+    attach.icon = Some(Rc::new(move || workspace_tree::action_glyph(attach_glyph)));
+    attach.disabled = !device::available(s) || device_busy;
+    attach.description = Some(
+        t(if s.composer.picker.attachments_supported() {
+            "promptInput.attachFiles.help"
+        } else {
+            "rune.attachments_unavailable"
+        })
+        .into(),
+    );
     // Browser file selection must run in the original input gesture.
     attach.select_before_close = true;
     let mut items = vec![Rc::new(queue), Rc::new(attach)];
@@ -145,6 +167,7 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         t("promptInput.clear.title"),
         screen::action_tx(scope, clear),
     );
+    clear.icon = Some(Rc::new(|| workspace_tree::action_glyph(&file_icons::TRASH)));
     clear.disabled = !can_clear(s);
     clear.description = super::shortcuts::Action::Clear.label(s);
     clear.select_before_close = true;
