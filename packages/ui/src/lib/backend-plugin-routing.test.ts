@@ -169,7 +169,7 @@ test("local consumers preserve the baseline request bytes", async t => {
   const baseline = new SDKManager({ url: path => `https://local.invalid${path}`, fetch: localBackend.fetch }).createClient("baseline", "/workspaces/w%2F1/instance")
   for (const call of [() => baseline.mcp.list({ location }), () => baseline.plugin.check({ location, target: "example-plugin" }),
     () => baseline.plugin.update({ location, targets: ["example-plugin"] }),
-    () => baseline.mcp.connect({ server: "example", location }), () => baseline.mcp.disconnect({ server: "example", location }),
+    () => baseline.experimental.mcp.connect({ server: "example", location }), () => baseline.experimental.mcp.disconnect({ server: "example", location }),
     () => baseline.skill.list({ location })]) await assert.rejects(call())
   assert.deepEqual(routed, calls)
   assert.equal(backendOf("w/1"), localBackend)
@@ -184,7 +184,7 @@ test("revocation after awaits fences plugin publications, MCP refresh and skill 
   t.mock.method(owner.backend.api, "setPluginActivation", wait)
   t.mock.method(owner.backend.api, "addPluginSource", wait)
   t.mock.method(owner.backend.api, "removePluginSource", wait)
-  t.mock.method(owner.backend.sdk, "createClient", () => ({ mcp: { connect: wait }, skill: { list: wait }, plugin: { update: wait } }) as any)
+  t.mock.method(owner.backend.sdk, "createClient", () => ({ experimental: { mcp: { connect: wait } }, skill: { list: wait }, plugin: { update: wait } }) as any)
   const read = pluginControlsCache.load(id, location)
   const mutate = pluginControlsCache.mutate(id, location, "id", "global", false)
   const add = pluginSourcesStore.add(id, location, "global", "example-plugin")

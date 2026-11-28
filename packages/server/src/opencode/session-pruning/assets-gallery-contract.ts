@@ -7,7 +7,7 @@ const Id = z.string().min(1).max(256)
 const Key = z.string().regex(/^[\w-]{22}$/)
 export const GALLERY_RESPONSE_LIMIT = 1024 * 1024
 export const generationTargetSchema = z.object({ messageID: Id, part: z.number().int().min(0).max(100000),
-  digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+  call: z.number().int().min(0).max(100000).optional(), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 export const imagesInputSchema = z.object({ sessionID: Id, cursor: z.string().max(4096).optional(), prompts: z.boolean().optional() }).strict()
 export const imageReadInputSchema = z.object({ sessionID: Id, target: assetTargetSchema }).strict()
 export const imageReferenceInputSchema = z.object({ sessionID: Id, target: z.union([assetTargetSchema, generationTargetSchema]) }).strict()

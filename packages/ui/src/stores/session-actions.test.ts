@@ -142,11 +142,15 @@ describe("native undo settlement", () => {
     const calls: string[] = []
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
-    seed({ session: {
-      revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
-      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
-      wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
-    } })
+    seed({
+      session: {
+        revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
+        interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
+      },
+      experimental: { session: {
+        wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
+      } },
+    })
     const undo = stageSessionRevert(instanceId, sessionId, "message")
     await tick()
     assert.deepEqual(calls, ["stage", "interrupt", "wait"])
@@ -158,14 +162,18 @@ describe("native undo settlement", () => {
   for (const failure of ["interrupt", "wait", "retry", "other-error", "replacement"] as const) {
     it(`does not claim successful undo after ${failure}`, async () => {
       let stages = 0, interrupts = 0
-      seed({ session: {
-        revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
-        interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
-        wait: async () => {
-          if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
-          if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+      seed({
+        session: {
+          revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
+          interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
         },
-      } })
+        experimental: { session: {
+          wait: async () => {
+            if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
+            if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+          },
+        } },
+      })
       await assert.rejects(stageSessionRevert(instanceId, sessionId, "message"))
       assert.equal(stages, failure === "retry" ? 2 : 1)
       assert.equal(interrupts, failure === "other-error" ? 0 : 1)

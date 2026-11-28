@@ -8,7 +8,7 @@ Tarayıcı ve tablet erişimi, yürütmeyi ana bilgisayarın dışına taşımaz
 
 1. Node.js 24 LTS ve npm'yi yükleyin.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
-3. OpenCode'u yükleyin veya seçin: **2.4.0** gerekli minimum değer. Bkz. [OpenCode kurulumu](opencode.md).
+3. OpenCode'u yükleyin veya seçin: **2.4.2** gerekli minimum değer. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.
 
 Git olmadan, konuşmalar yalnızca açıkça açılan fiziksel klasörde kullanılabilir durumda kalır; Git ve çalışma ağacı işlemleri başarısız oluyor. Git'i yükleyin ve PATH değişikliğinden sonra arka ucu yeniden başlatın. Çalışma alanı kökü, aracının yürütülmesini değil, açmayı/göz atmayı sınırlar: bkz. [Güvenlik](security.md).

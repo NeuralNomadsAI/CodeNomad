@@ -2,7 +2,7 @@
 
 ## Background shell inventory
 
-Status consumes `GET /api/experimental/job?kind=shell&status=running` through the authenticated runtime transport, with a ten-second request lifetime and 4 MiB response bound. The pinned client lacks this operation, so `opencode/background-shells.ts` validates its shell-ID projection. The selected Location's `shell.list` supplies command metadata; the owned `/api/workspaces/:id/background-shells` route intersects the records and checks session ownership. Missing or invalid inventory produces a panel load error. Output/removal retain native Shell routes and cursors. Runtime admission remains governed by the required contracts below.
+Status calls `experimental.job.list({ kind: "shell", status: "running" })` through the authenticated, generation-fenced runtime client with a ten-second request lifetime (`opencode/background-shells.ts`). The selected Location's `shell.list` supplies command metadata; the owned `/api/workspaces/:id/background-shells` route intersects the records and checks session ownership. Missing or invalid inventory produces a panel load error. Output/removal retain native Shell routes and cursors. Runtime admission remains governed by the required contracts below.
 
 ## Qualification policy
 
@@ -28,27 +28,29 @@ serving the pinned client contract. Test runtime versions come from
 range, so changing the minimum edits only `runtime-support.ts`. Version-refusal
 scenarios supply their explicit incompatible identity.
 
-Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.4.1**
-client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries the
-browser tools' permission hook: 2.3 accepts the same `experimental.browser` attachment
-(`BROWSER_AUTOMATION.md`), but its blanket session grant overrides a configured
-`browser` deny. CodeNomad
-qualifies background subagent delivery: every subagent call returns at once
+Minimum and recommended runtime **2.4.2** (`runtime-support.ts`), with **2.4.2**
+client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries
+the browser tools' permission hook, resilient Automations (upstream
+[#66422](https://github.com/anomalyco/opencode/pull/66422),
+[#65626](https://github.com/anomalyco/opencode/pull/65626)), native
+family-cascading `Session.move` (upstream
+[#66215](https://github.com/anomalyco/opencode/pull/66215)) and Code Mode
+`generate_image` (upstream [#66465](https://github.com/anomalyco/opencode/pull/66465)).
+CodeNomad qualifies background subagent delivery: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
 synthetic `<subagent sessionID state …>` or `<background-result kind="subagent" sessionID state …>`
 messages, one per idle period, tagged
 `running` while background work remains (the subagent card in `TRANSCRIPT.md`,
 `scripts/test-missions-native-trajectory.mjs`,
-`scripts/test-subagent-nesting-native.mjs`). The minimum also carries the image tool contract of
-upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
-the Images gallery, the Design agent and skills and the Images settings: one
-name per runtime, `experimental_image_generate` or `generate_image`, for the tool, its
-permission action, its job type and its completion notices' `metadata.source`
-(`isImageTool` in `session-pruning/assets-gallery-proof.ts` recognizes both; the
-Design agent names `generate_image` with the other as fallback), and the tool offered while an image
-model is available unless `experimental.image_generate` is `false`
-(`image-settings.ts` reads it that way). Notices wrap their text in
-`<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
+`scripts/test-subagent-nesting-native.mjs`). The Images gallery, the Design
+agent and skills and the Images settings consume `generate_image` inside Code
+Mode (`execute`, `metadata.toolCalls`), while the gallery continues to read
+stored historical direct `generate_image` and `experimental_image_generate` tool
+parts (`isImageTool` in `session-pruning/assets-gallery-proof.ts`). The tool is
+offered while an image model is available unless `experimental.image_generate`
+is `false` (`image-settings.ts` reads it that way). Completion notices carry
+`metadata.source`, `metadata.jobID`, `metadata.state`, `metadata.path` and the
+`Saved image: <path> (<model>)` line.
 The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.

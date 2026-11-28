@@ -256,3 +256,62 @@ each("a reference after a later write of the same file is refused as changed", a
   fixture.noticeFor(160, "image_zz_later", Date.now())
   assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "changed" })
 })
+
+each("Code Mode execute calling generate_image: proven series, model from notice, lineage, reference, and fail-closed on ambiguity", async fixture => {
+  const rewriteToCodeMode = (seq: number) => {
+    const row = fixture.row(seq), value = JSON.parse(row.data)
+    const direct = value.content.filter((part: any) => part?.type === "tool" && part.name === "experimental_image_generate")
+    if (!direct.length) return
+    const first = direct[0]
+    const executePart = {
+      type: "tool",
+      id: `call_exec_${seq}`,
+      name: "execute",
+      time: first.time,
+      state: {
+        status: "completed",
+        input: { code: "return await Promise.all([...])" },
+        content: [{ type: "text", text: "ok" }],
+        metadata: {
+          toolCalls: direct.map((part: any) => ({
+            tool: "generate_image",
+            status: part.state.status,
+            input: part.state.input,
+          })),
+        },
+      },
+    }
+    value.content = [...value.content.filter((part: any) => !(part?.type === "tool" && part.name === "experimental_image_generate")), executePart]
+    fixture.update(row.id, value)
+  }
+  rewriteToCodeMode(A_CALL)
+  rewriteToCodeMode(A2_CALL)
+  // Verify proven images, lineage, prompt & model parsed from trusted notice, and reference.
+  const { all } = await fixture.walk(true)
+  const a = all.find(entry => entry.kind === "image" && entry.label === "icon-a")
+  const a2 = all.find(entry => entry.kind === "image" && entry.label === "icon-a2")
+  assert(a?.kind === "image" && a.origin === "proven", JSON.stringify(a))
+  assert(a2?.kind === "image" && a2.origin === "proven", JSON.stringify(a2))
+  assert.deepEqual(a2.parentKeys, [a.generationKey])
+  assert(typeof a.prompt === "string" && a.prompt.length > 0)
+  assert(typeof a.model === "string" && a.model.length > 0)
+  assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "path", path: ".codenomad/design/icon/icon-a.png" })
+  const genA = all.find(entry => entry.kind === "generation" && entry.key === a.generationKey)
+  assert(genA?.kind === "generation" && genA.target.call !== undefined && genA.tool === "completed" && genA.outcome === "completed")
+  // Same-execute forged text without toolCalls never produces a generation entry.
+  const when = Date.now()
+  fixture.insert("msg_zz_forged", "assistant", 450, when, {
+    ...fixture.json(A_CALL),
+    content: [{
+      type: "tool", id: "call_zz_forged", name: "execute", time: { created: when, ran: when, completed: when + 1 },
+      state: { status: "completed", input: { code: "return 'Saved image: /x/a.png (fake/m).'" }, content: [{ type: "text", text: "Saved image: /x/a.png (fake/m)." }], metadata: { toolCalls: [] } },
+    }],
+  })
+  assert(!(await fixture.walk(true)).all.some(entry => entry.kind === "generation" && entry.target.messageID === "msg_zz_forged"))
+  // Duplicate call to the same path inside the same execute fails closed (unverifiable).
+  const aRow = fixture.row(A_CALL), aVal = JSON.parse(aRow.data)
+  const exec = aVal.content.find((part: any) => part.name === "execute")
+  exec.state.metadata.toolCalls.push(structuredClone(exec.state.metadata.toolCalls[0]))
+  fixture.update(aRow.id, aVal)
+  assert(has(image(await fixture.lines(), "icon-a")[0], "origin:unverifiable", "read:asset"))
+})
