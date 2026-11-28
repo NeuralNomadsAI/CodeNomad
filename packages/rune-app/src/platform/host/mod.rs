@@ -6,7 +6,7 @@ mod service_start;
 use codenomad_client::backend::Backend;
 use codenomad_host_process::OwnedProcess;
 pub use config::LaunchConfig;
-pub(crate) use config::profile_name;
+pub(crate) use config::{discover_sibling_server, profile_name};
 use std::{
     io::{self, BufReader, Write},
     sync::{
