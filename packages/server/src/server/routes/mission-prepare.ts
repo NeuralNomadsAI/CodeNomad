@@ -16,8 +16,6 @@ import { missionPreparationSource } from "../../missions/coordinator-actions"
 import { automaticMissionStartID, recoveredPreparation, type PreparationResult } from "../../missions/preparation-result"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
 import { missionPreparationOptionsSchema, normalizedPreparationOptions } from "../../missions/preparation-input"
-import { prepareScheduledCoordinatorMission, type ScheduledPreparationDeps } from "./mission-prepare-scheduled"
-import type { ScheduledMissionManager } from "./mission-scheduled-admission"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
@@ -32,15 +30,15 @@ const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
 }).strict() }).strict()
 
 type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
-  & Partial<Pick<WorkspaceManager, "getServiceWslDistro" | "getServicePathStyle">>
 
 /** Fresh creation alone may continue the explicit first-Play intention.
  * Native lifecycle consumes it durably before any effect. */
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
-  signal: AbortSignal, scheduled: ScheduledPreparationDeps = {}, permissionModes?: SessionPermissionModes): Promise<PreparationResult> {
+  signal: AbortSignal, permissionModes?: SessionPermissionModes): Promise<PreparationResult> {
   const { input } = commandSchema.parse(command)
   const options = normalizedPreparationOptions(input)
-  if (options.kind === "one-time" && options.coordinatorSessionID) throw refusal("prepare-refused")
+  // A repeating schedule or an event makes a programmed Mission: `mission.program` saves it.
+  if (options.kind !== "one-time" || options.coordinatorSessionID) throw refusal("prepare-refused")
   let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
   try {
     if (hasMissionPreparationHold(fence, input.requestID)) throw refusal("prepare-uncertain")
@@ -61,15 +59,7 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
     }) as MissionSnapshot
     const get = (sessionID: string) => connection.client.session.get({ sessionID }, { signal })
     const source = await missionPreparationSource(snapshot, coordinator, get)
-    if (source?.id !== input.missionID && !(input.observeOnly && options.kind === "schedule")) {
-      throw refusal("prepare-refused")
-    }
-    if (options.kind === "schedule") {
-      if (!manager.getServiceWslDistro) throw refusal("prepare-refused")
-      return prepareScheduledCoordinatorMission({ manager: manager as ScheduledMissionManager, fence, workspaceID: workspace.id,
-        authorSessionID: coordinatorID, input: { ...input, creationDefaults: input.creationDefaults === undefined
-          ? undefined : parseMissionCreationDefaults(input.template, input.creationDefaults) }, signal, ...scheduled })
-    }
+    if (source?.id !== input.missionID) throw refusal("prepare-refused")
     creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal, permissionModes,
       expectedProjectID: coordinator.projectID, preparedBy: { ...(source ? { missionID: source.id } : {}), coordinatorSessionID: coordinatorID },
       startOnCreation: input.startOnCreation === true,

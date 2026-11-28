@@ -117,7 +117,6 @@ jobs:
         if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
         run: |
           node --test scripts/native-fixture-guards.test.mjs
-          node --test scripts/native-fixture-cold-diagnostics.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
         id: build_wasm

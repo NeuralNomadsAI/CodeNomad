@@ -16,10 +16,7 @@ import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX, MISSION_LATE_REPORT_ROWS
   MISSION_TASK_REPORT_ROWS } from "./mission-panel-map"
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
-import { recurrenceCurrentContentWire } from "./recurrence-current"
-import { missionCurrentSourceWire } from "./mission-current-source"
-import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
-import { missionScheduleRpcMethods } from "./mission-schedule-contract"
+import { missionDocumentSummaryWire } from "./mission-document-wire"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -302,31 +299,11 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: { json: { type: "string", maxLength: 100_000 } }, required: ["json"], additionalProperties: false },
       errors: missionMutationErrors,
     },
-    ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
-      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true },
-        agentSchedulePreparation: { const: true }, agentScheduleControl: { const: true }, rootPermissions: { const: true },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true }, rootPermissions: { const: true },
       }, required: ["version"], additionalProperties: false },
     },
-    documentActivation: {
-      input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
-        expectedRevision: { type: "integer", minimum: 0 }, action: { type: "string", enum: ["read", "prepare", "ready", "failed"] },
-        authority: { type: "string" }, targets: missionScheduleActivationWire.properties.targets,
-        effectiveOrigin: { type: ["string", "null"] }, errorCode: { type: "string" } },
-        required: ["missionID", "requestID", "expectedRevision", "action"], additionalProperties: false },
-      output: { type: "object", properties: { document: missionDocumentSummaryWire }, required: ["document"], additionalProperties: false },
-    },
-    recurrenceCurrent: {
-      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 }, owner: { type: "string", const: "scheduled" } }, required: ["scheduleID"], additionalProperties: false },
-      output: { type: "object", properties: {
-        version: { type: "integer", const: 1 }, projectID: { type: "string" }, projectCanonical: { type: "string" }, location,
-        ownerRevision: { type: "integer", minimum: 0 }, scheduleID: { type: "string", minLength: 3, maxLength: 100 }, passageID: { type: ["string", "null"], minLength: 3, maxLength: 100 }, source: missionCurrentSourceWire,
-      }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID", "ownerRevision"], additionalProperties: false },
-    },
-    recurrenceCurrentPage: { input: { type: "object", properties: { source: missionCurrentSourceWire, selector: missionPanelPageInputSchema,
-      body: { type: "object" } }, required: ["source", "selector"], additionalProperties: false }, output: missionPanelPageOutputSchema },
-    recurrenceCurrentContent: recurrenceCurrentContentWire,
     recover: {
       input: {
         type: "object", properties: {

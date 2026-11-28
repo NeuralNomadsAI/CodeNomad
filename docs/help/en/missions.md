@@ -14,7 +14,7 @@ Remote connections use the same form and controls. Prefer HTTPS to protect netwo
 
 Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
-Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes that new Mission's first start; recovery reads the original result. Agents can also list, inspect, start, pause, stop, resume, **Run now**, check, edit and delete any schedule in this project, including one you created in the editor. The same revision and admission checks apply; explicit scheduling OFF is preserved. An unconfirmed action keeps its original request for read-only status recovery.
+Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes that new Mission's first start; recovery reads the original result. Agents can also list, save, pause, resume and delete the scheduled Missions of this project, including those you created in the editor. An unconfirmed action keeps its original request for read-only status recovery.
 
 ### Configuration {#saved-briefs}
 

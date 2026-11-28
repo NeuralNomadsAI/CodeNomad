@@ -1,5 +1,4 @@
 import { z } from "zod"
-import { scheduleToolConfiguration, scheduleToolWire } from "./schedule-tool"
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 const request = z.string().trim().min(1).max(128)
@@ -19,17 +18,14 @@ export const projectControlInput = z.object({
     c.addIssue({ code: "custom", message: "Invalid Mission control fields" })
 })
 export const projectConfigureInput = z.object({
-  ...common, expectedRevision: z.number().int().nonnegative().safe().optional(),
-  action: z.enum(["read", "save"]), objective: z.string().trim().min(1).max(20_000).optional(),
-  notes: z.string().max(20_000).optional(), configuration: scheduleToolConfiguration.optional(),
+  ...common, action: z.enum(["read", "save"]), objective: z.string().trim().min(1).max(20_000).optional(),
+  notes: z.string().max(20_000).optional(),
 }).strict().superRefine((v, c) => {
-  if (v.action === "save" && (!v.requestID || v.expectedRevision === undefined || !v.configuration && !v.expectedRevision
-      || (v.configuration === undefined) === (v.objective === undefined))
-    || v.configuration !== undefined && (v.objective !== undefined || v.notes !== undefined)
-    || v.action === "read" && (v.configuration !== undefined || v.objective !== undefined || v.notes !== undefined || v.retry)
+  if (v.action === "save" && (!v.requestID || !v.expectedRevision || v.objective === undefined)
+    || v.action === "read" && (v.objective !== undefined || v.notes !== undefined)
     || v.action === "read" && v.expectedRevision !== undefined && !v.requestID
-    || v.retry && !v.configuration)
-    c.addIssue({ code: "custom", message: "Supply text or a complete structural configuration" })
+    || v.retry)
+    c.addIssue({ code: "custom", message: "Supply the Mission's text" })
 })
 export const projectDeleteInput = z.object({
   ...common, action: z.enum(["read", "delete"]), deleteManagedSessions: z.boolean().optional(),
@@ -54,9 +50,8 @@ export const projectControlWire = { type: "object", properties: {
   language: { type: "string", enum: ["en", "de", "es", "fr", "he", "ja", "ne", "ru", "tr", "zh-Hans"] },
 }, required: ["missionID", "action"], additionalProperties: false } as const
 export const projectConfigureWire = { type: "object", properties: {
-  ...wireCommon, expectedRevision: { ...wireCommon.expectedRevision, minimum: 0 }, action: { type: "string", enum: ["read", "save"] },
+  ...wireCommon, action: { type: "string", enum: ["read", "save"] },
   objective: { type: "string", minLength: 1, maxLength: 20_000 }, notes: { type: "string", maxLength: 20_000 },
-  configuration: scheduleToolWire.properties.configuration,
 }, required: ["missionID", "action"], additionalProperties: false } as const
 export const projectDeleteWire = { type: "object", properties: { ...wireCommon,
   action: { type: "string", enum: ["read", "delete"] }, deleteManagedSessions: { type: "boolean" },
