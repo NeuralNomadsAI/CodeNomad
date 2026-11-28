@@ -181,28 +181,31 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         .child(input.remaining())
         .children(model.minimum_hint().map(rune::text));
     let body_scroll = model.body_scroll.0.clone();
-    let mut frame = search::body()
-        .key(BODY)
-        .drawn_rect_into(&model.body_frame.0)
-        .on_scroll_offset(move |at| {
-            body_scroll.set((at, None));
-        })
-        .child(header)
-        .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
-            layout::action_row()
-                .child(button(
-                    s,
-                    "history-search-prev",
-                    "messageSection.search.previousAriaLabel",
-                    |s, tx| super::move_match(s, tx, false),
-                ))
-                .child(button(
-                    s,
-                    "history-search-next",
-                    "messageSection.search.nextAriaLabel",
-                    |s, tx| super::move_match(s, tx, true),
-                ))
-        }));
+    let mut frame = crate::chat::reading::track_other_scroller_hover(
+        search::body()
+            .key(BODY)
+            .drawn_rect_into(&model.body_frame.0)
+            .on_scroll_offset(move |at| {
+                body_scroll.set((at, None));
+            }),
+        crate::chat::reading::HOVER_SEARCH_BODY,
+    )
+    .child(header)
+    .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
+        layout::action_row()
+            .child(button(
+                s,
+                "history-search-prev",
+                "messageSection.search.previousAriaLabel",
+                |s, tx| super::move_match(s, tx, false),
+            ))
+            .child(button(
+                s,
+                "history-search-next",
+                "messageSection.search.nextAriaLabel",
+                |s, tx| super::move_match(s, tx, true),
+            ))
+    }));
     if model.flight.is_some() {
         frame = frame.child(rune::text(t("messageSection.search.searching")).role("status"));
     }

@@ -117,6 +117,7 @@ pub(super) struct Signals {
     providers: Mutex<CatalogueChanges>,
     provider_locations: Mutex<CatalogueChanges>,
     provider_moves: Mutex<ProviderMoves>,
+    mission_catalog: Mutex<CatalogueChanges>,
     integrations: Mutex<CatalogueChanges>,
     integration_sessions: Mutex<SessionCatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
@@ -146,6 +147,7 @@ impl Signals {
         if self.mark(&self.pending, None)
             | self.mark(&self.providers, None)
             | self.mark(&self.provider_locations, None)
+            | self.mark(&self.mission_catalog, None)
             | self.mark(&self.integrations, None)
             | mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None)
             | workspace
@@ -158,6 +160,7 @@ impl Signals {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
         self.mark(&self.provider_locations, None);
+        self.mark(&self.mission_catalog, None);
         self.mark(&self.integrations, None);
         mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None);
         self.generation.fetch_add(1, SeqCst);
@@ -343,6 +346,8 @@ impl Signals {
                 .is_some_and(|id| self.mark(&self.provider_locations, Some(id))))
             | session_moved
             | account_config_changed;
+        let mission_catalog_changed = crate::settings::mission_catalog_change(frame)
+            .is_some_and(|id| self.mark(&self.mission_catalog, Some(id)));
         let integration_changed = match crate::settings::integrations::change_event(frame) {
             Some((ws, None)) => self.mark(&self.integrations, Some(ws)),
             Some((ws, Some(ses))) => mark_session_changes(
@@ -359,7 +364,8 @@ impl Signals {
             _ => &frame["instanceId"],
         };
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
-            if workspace_event || provider_changed || integration_changed {
+            if workspace_event || provider_changed || mission_catalog_changed || integration_changed
+            {
                 (self.wake)();
             }
             return;
@@ -420,6 +426,7 @@ impl Signals {
         };
         if (invalidates && self.mark(&self.pending, Some(id)))
             | provider_changed
+            | mission_catalog_changed
             | integration_changed
             | workspace_event
             | stopped
@@ -515,6 +522,7 @@ impl CatalogueWatch {
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
+            mission_catalog: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -664,6 +672,10 @@ impl CatalogueWatch {
             std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
             self.signals.generation.load(SeqCst),
         )
+    }
+
+    pub fn take_mission_catalog_changes(&self) -> CatalogueChanges {
+        std::mem::take(&mut *self.signals.mission_catalog.lock().unwrap())
     }
 
     pub fn take_provider_location_changes(&self) -> CatalogueChanges {
@@ -875,6 +887,7 @@ mod tests {
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
+            mission_catalog: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -956,6 +969,7 @@ mod tests {
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
+            mission_catalog: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -1030,6 +1044,7 @@ mod tests {
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
+            mission_catalog: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -1075,6 +1090,7 @@ mod tests {
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
+            mission_catalog: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
@@ -1107,6 +1123,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             provider_locations: Mutex::default(),
+            mission_catalog: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),

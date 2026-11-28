@@ -86,6 +86,7 @@ pub(super) fn provider_stopped(s: &State, workspace: &str) {
             .is_some_and(|target| target.is_workspace(workspace))
         {
             prefs.provider_target = None;
+            prefs.missions.revoke_location();
             if let Some(wake) = &prefs.window_wake {
                 wake();
             }
@@ -121,11 +122,15 @@ fn provider_session_moved(s: &State, workspace: &str, session: &str) {
         return;
     }
     let mut prefs = s.settings.shared.borrow_mut();
-    if prefs.provider_target.as_mut().is_some_and(|target| {
-        target.session_moved(workspace, session)
-            | target.integrations_hint(workspace, Some(session))
-    }) && let Some(wake) = &prefs.window_wake
-    {
+    let mut moved = false;
+    let changed = prefs.provider_target.as_mut().is_some_and(|target| {
+        moved = target.session_moved(workspace, session);
+        moved | target.integrations_hint(workspace, Some(session))
+    });
+    if moved {
+        prefs.missions.revoke_location();
+    }
+    if changed && let Some(wake) = &prefs.window_wake {
         wake();
     }
 }
@@ -161,6 +166,23 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
+        Event::Workspace(WorkspaceEvent::MissionCatalogChanged { workspace_id }) => {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
+            {
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            if prefs
+                .provider_target
+                .as_mut()
+                .is_some_and(|target| target.mission_catalog_hint(workspace_id))
+                && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
         Event::Workspace(WorkspaceEvent::NativeStreamStatus {
             workspace_id,
             connected,
@@ -169,6 +191,19 @@ pub(crate) fn connection_event(
                 .launcher()
                 .is_some_and(|l| l.catalogue_watch.is_some())
             {
+                let prefs = s.settings.shared.borrow();
+                if prefs
+                    .provider_target
+                    .as_ref()
+                    .is_some_and(|target| target.is_workspace(workspace_id))
+                {
+                    if !*connected {
+                        prefs.missions.revoke_location();
+                    }
+                    if let Some(wake) = &prefs.window_wake {
+                        wake();
+                    }
+                }
                 return;
             }
             let mut prefs = s.settings.shared.borrow_mut();
@@ -186,7 +221,7 @@ pub(crate) fn connection_event(
             {
                 prefs.set_pending_native_outage(true);
             }
-            if prefs.provider_target.as_mut().is_some_and(|target| {
+            let matched = prefs.provider_target.as_mut().is_some_and(|target| {
                 if !target.is_workspace(workspace_id) {
                     return false;
                 }
@@ -196,9 +231,14 @@ pub(crate) fn connection_event(
                     target.invalidate_location();
                 }
                 true
-            }) && let Some(wake) = &prefs.window_wake
-            {
-                wake();
+            });
+            if matched {
+                if !*connected {
+                    prefs.missions.revoke_location();
+                }
+                if let Some(wake) = &prefs.window_wake {
+                    wake();
+                }
             }
         }
         Event::Workspace(WorkspaceEvent::IntegrationsChanged {
@@ -216,6 +256,17 @@ pub(crate) fn connection_event(
                 .provider_target
                 .as_mut()
                 .is_some_and(|target| target.integrations_hint(workspace_id, session_id.as_deref()))
+                && let Some(wake) = &prefs.window_wake
+            {
+                wake();
+            }
+        }
+        Event::Workspace(WorkspaceEvent::WorktreesChanged { workspace_id }) => {
+            let prefs = s.settings.shared.borrow();
+            if prefs
+                .provider_target
+                .as_ref()
+                .is_some_and(|target| target.is_workspace(workspace_id))
                 && let Some(wake) = &prefs.window_wake
             {
                 wake();
@@ -288,6 +339,8 @@ fn provider_transport(s: &State, online: bool) {
         target.transport(online);
         if online {
             target.native_transport(true);
+        } else {
+            prefs.missions.revoke_location();
         }
         if let Some(wake) = &prefs.window_wake {
             wake();

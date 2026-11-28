@@ -470,11 +470,15 @@ fn drain_chat(
                     s.status_permissions.synchronized();
                     s.status_services.synchronized();
                 }
-                if chat::reader::reconcile_bookmark(s, &page) {
-                    s.revision += 1;
-                    changed = true;
-                    continue;
-                }
+                let fallback_bookmark = match chat::reader::reconcile_bookmark_for_sync(s, &page) {
+                    chat::reader::Reconcile::Refetch => {
+                        s.revision += 1;
+                        changed = true;
+                        continue;
+                    }
+                    chat::reader::Reconcile::Keep => None,
+                    chat::reader::Reconcile::FallbackBookmark(bookmark) => Some(bookmark),
+                };
                 let sync_undo = if let Some(version) = reader_version
                     && !s.messages.is_empty()
                     && s.reader
@@ -510,6 +514,7 @@ fn drain_chat(
                     None
                 };
                 let had_sync_undo = sync_undo.is_some();
+                let saved_scroll = s.transcript_display.reading().scroll_snapshot();
                 if let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                     if let Some((
@@ -530,6 +535,8 @@ fn drain_chat(
                             prev_detached,
                             trimmed_older,
                             trimmed_newer,
+                            fallback_bookmark,
+                            saved_scroll,
                             clock,
                         );
                     }
@@ -730,6 +737,9 @@ fn drain_chat(
                     reader.clear_sync_undo();
                 }
                 s.messages = messages;
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
                 s.phase = Phase::Ready;
                 s.stream_offline = false;
@@ -744,6 +754,9 @@ fn drain_chat(
                 } else {
                     s.messages.push(m.into());
                 }
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
             }
             Event::Inbox {
@@ -797,7 +810,14 @@ fn drain_chat(
                     continue;
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
+                let replay_replacement = s
+                    .transcript_display
+                    .reading()
+                    .queue_replay_replacement(s.transcript_display.queue.items(), &next);
                 s.transcript_display.queue.apply_preview(next);
+                s.transcript_display
+                    .reading_mut()
+                    .note_queue_layout_change(replay_replacement);
                 composer::reconcile(s);
             }
             Event::InboxFailed => {
@@ -811,6 +831,7 @@ fn drain_chat(
             }
             Event::Text(id, event) => {
                 let mut touched = false;
+                let mut applied = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
                     touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
@@ -823,6 +844,9 @@ fn drain_chat(
                             })
                             .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
+                        Ok(content::TextFit::Applied | content::TextFit::Settlement) => {
+                            applied = true
+                        }
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
@@ -830,15 +854,25 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    if applied {
+                        s.transcript_display
+                            .reading_mut()
+                            .note_content_layout_change();
+                    }
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
-                if s.messages.iter().any(|m| m.id == id)
-                    && let Some(reader) = &mut s.reader
-                {
-                    reader.clear_sync_undo();
+                if s.messages.iter().any(|m| m.id == id) {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
@@ -856,8 +890,13 @@ fn drain_chat(
                     touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Tool(id, tool) => {
@@ -885,8 +924,13 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,

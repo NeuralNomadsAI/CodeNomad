@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "मापदण्ड {number} सार्नुहोस्",
   "missions.scheduling.error.author": "मान्य लेखक लेख्नुहोस्।",
   "missions.scheduling.error.capability": "समयतालिका उपलब्ध छैन। मस्यौदा राख्नुहोस् वा सुरु गर्ने मापदण्डहरू हटाउनुहोस्।",
+  "missions.scheduling.error.coordinatorProfile": "विद्यमान कुराकानीले समन्वयकर्ताको एजेन्ट, मोडेल र सोचाइ प्रयोग गर्दैन। तिनलाई मिलाउनुहोस् वा नयाँ सत्र प्रयोग गर्नुहोस्।",
   "missions.scheduling.error.count": "धेरै मापदण्डहरू: बढीमा आठ समयतालिका (घटना छुट्टै जाँचिँदा सात) र आठ घटना।",
   "missions.scheduling.error.cron": "हरेक मिनेटमा एउटा सेकेन्ड स्थान भएको मान्य नेटिभ cron प्रविष्ट गर्नुहोस्।",
   "missions.scheduling.error.days": "कम्तीमा एउटा बार छान्नुहोस्।",

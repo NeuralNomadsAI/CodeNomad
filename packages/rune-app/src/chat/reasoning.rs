@@ -430,40 +430,43 @@ fn body(
     totals: (usize, usize),
     query: Option<Query<'_>>,
 ) -> El {
-    markdown::tool_pane(
-        document::window_with_total(
-            s,
-            format!("{key}-body"),
-            &[body_text],
-            document::search_limit_for(s, key, query),
-            Some(totals),
-            |shown, units| {
-                let build = || {
-                    rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
-                        .full_width()
-                        .wrap()
-                        .content_direction()
-                        .selectable(true)
-                };
-                if part.provenance != TextProvenance::Closed && units > document::TOOL_LIMIT {
-                    markdown::hold_frame(
-                        format!("{key}-stream"),
-                        (
-                            s.transcript_display.stream_version(),
-                            s.transcript_display.steps(&format!("{key}-body")),
-                            std::rc::Rc::as_ptr(&s.input_scope) as usize,
-                            query.is_some_and(|q| q.claimed.is_some_and(|c| c.get())),
-                            s.transcript_display
-                                .search_highlight
-                                .as_ref()
-                                .filter(|hit| hit.message == message),
-                        ),
-                        build,
-                    )
-                } else {
-                    build()
-                }
-            },
+    crate::chat::reading::inner_scroller(
+        markdown::tool_pane(
+            document::window_with_total(
+                s,
+                format!("{key}-body"),
+                &[body_text],
+                document::search_limit_for(s, key, query),
+                Some(totals),
+                |shown, units| {
+                    let build = || {
+                        rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
+                            .full_width()
+                            .wrap()
+                            .content_direction()
+                            .selectable(true)
+                    };
+                    if part.provenance != TextProvenance::Closed && units > document::TOOL_LIMIT {
+                        markdown::hold_frame(
+                            format!("{key}-stream"),
+                            (
+                                s.transcript_display.stream_version(),
+                                s.transcript_display.steps(&format!("{key}-body")),
+                                std::rc::Rc::as_ptr(&s.input_scope) as usize,
+                                query.is_some_and(|q| q.claimed.is_some_and(|c| c.get())),
+                                s.transcript_display
+                                    .search_highlight
+                                    .as_ref()
+                                    .filter(|hit| hit.message == message),
+                            ),
+                            build,
+                        )
+                    } else {
+                        build()
+                    }
+                },
+            ),
+            false,
         ),
         false,
     )

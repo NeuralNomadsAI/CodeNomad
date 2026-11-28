@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "条件 {number} を移動",
   "missions.scheduling.error.author": "有効な作成者を入力してください。",
   "missions.scheduling.error.capability": "スケジュールを利用できません。下書きを保持するか、起動条件を削除してください。",
+  "missions.scheduling.error.coordinatorProfile": "既存の会話は、コーディネーターのエージェント、モデル、思考を使用していません。一致させるか、新しいセッションを使用してください。",
   "missions.scheduling.error.count": "条件が多すぎます。スケジュールは最大8件（イベントを別途確認する場合は7件）、イベントは最大8件です。",
   "missions.scheduling.error.cron": "1分につき秒の位置が1つの有効なネイティブ cron 式を入力してください。",
   "missions.scheduling.error.days": "曜日を1つ以上選択してください。",

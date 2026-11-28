@@ -10,7 +10,12 @@ use codenomad_client::missions::{
 };
 use rune::{El, col, edit::TextEdit, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, field_kit, git_panel as theme,
+    Space, TextRole, catalogue, field_kit,
+    file_row_actions::icons as row_icons,
+    git_panel::{
+        self as theme,
+        ButtonLook::{Flat, Submit, WithIcon},
+    },
     layout::{self, Layout},
     settings as chrome,
 };
@@ -94,19 +99,22 @@ pub(super) fn editor_view<S: 'static>(editor: &CalendarEditor, busy: bool, owner
                 "status",
             ))
             .child(
-                layout::button_tx(
-                    t("missions.scheduling.retained.replace"),
-                    busy,
-                    move |state, tx| {
-                        if let Some(panel) = replace_owner.get(state).0
-                            && let Some(ed) = panel.calendars.editor.as_mut()
-                        {
-                            ed.replace_retained();
-                            tx.instant();
-                        }
-                    },
-                )
-                .key("mission-calendar-replace-retained"),
+                layout::action_row().child(
+                    theme::button(
+                        t("missions.scheduling.retained.replace"),
+                        Flat,
+                        busy,
+                        move |state, tx| {
+                            if let Some(panel) = replace_owner.get(state).0
+                                && let Some(ed) = panel.calendars.editor.as_mut()
+                            {
+                                ed.replace_retained();
+                                tx.instant();
+                            }
+                        },
+                    )
+                    .key("mission-calendar-replace-retained"),
+                ),
             );
     } else {
         let structure = preview_structure(&editor.criteria);
@@ -124,19 +132,22 @@ pub(super) fn editor_view<S: 'static>(editor: &CalendarEditor, busy: bool, owner
         }
         let add_owner = owner.clone();
         form = form.child(
-            layout::button_tx(
-                t("missions.scheduling.addCriterion"),
-                busy || count >= MISSION_LAUNCH_CRITERIA_MAX,
-                move |state, tx| {
-                    if let Some(panel) = add_owner.get(state).0
-                        && let Some(ed) = panel.calendars.editor.as_mut()
-                    {
-                        ed.add_criterion();
-                        tx.instant();
-                    }
-                },
-            )
-            .key("mission-calendar-add-criterion"),
+            layout::action_row().child(
+                theme::button(
+                    t("missions.scheduling.addCriterion"),
+                    WithIcon(&theme::PLUS),
+                    busy || count >= MISSION_LAUNCH_CRITERIA_MAX,
+                    move |state, tx| {
+                        if let Some(panel) = add_owner.get(state).0
+                            && let Some(ed) = panel.calendars.editor.as_mut()
+                        {
+                            ed.add_criterion();
+                            tx.instant();
+                        }
+                    },
+                )
+                .key("mission-calendar-add-criterion"),
+            ),
         );
     }
 
@@ -149,21 +160,31 @@ pub(super) fn editor_view<S: 'static>(editor: &CalendarEditor, busy: bool, owner
     form.child(
         layout::action_row()
             .child(
-                layout::button_tx(t("missions.control.save"), busy, move |state, tx| {
-                    if let Some(panel) = save_owner.get(state).0 {
-                        panel.save_calendar_editor();
-                        tx.instant();
-                    }
-                })
+                theme::button(
+                    t("missions.control.save"),
+                    Submit,
+                    busy,
+                    move |state, tx| {
+                        if let Some(panel) = save_owner.get(state).0 {
+                            panel.save_calendar_editor();
+                            tx.instant();
+                        }
+                    },
+                )
                 .key("mission-calendar-save"),
             )
             .child(
-                layout::button_tx(t("missions.control.cancel"), busy, move |state, tx| {
-                    if let Some(panel) = cancel_owner.get(state).0 {
-                        panel.calendars.close_editor();
-                        tx.instant();
-                    }
-                })
+                theme::button(
+                    t("missions.control.cancel"),
+                    Flat,
+                    busy,
+                    move |state, tx| {
+                        if let Some(panel) = cancel_owner.get(state).0 {
+                            panel.calendars.close_editor();
+                            tx.instant();
+                        }
+                    },
+                )
                 .key("mission-calendar-cancel"),
             ),
     )
@@ -274,21 +295,24 @@ fn criterion_card<S: 'static>(
         &[("number", &number)],
     );
     header_actions = header_actions.child(
-        layout::button_tx(&remove_label, busy || total <= 1, move |state, tx| {
-            if let Some(panel) = remove_owner.get(state).0
-                && let Some(ed) = panel.calendars.editor.as_mut()
-            {
-                ed.remove_criterion(index);
-                tx.instant();
-            }
-        })
+        theme::icon_button(
+            &row_icons::TRASH,
+            remove_label,
+            busy || total <= 1,
+            None,
+            move |state, tx| {
+                if let Some(panel) = remove_owner.get(state).0
+                    && let Some(ed) = panel.calendars.editor.as_mut()
+                {
+                    ed.remove_criterion(index);
+                    tx.instant();
+                }
+            },
+        )
         .key(format!("mission-calendar-criterion-remove-{index}")),
     );
 
-    let card = col()
-        .full_width()
-        .pad(Space::Xs)
-        .separate(Space::Xs)
+    let card = theme::context()
         .key(format!("mission-calendar-criterion-{index}"))
         .child(text(title_line).text_role(TextRole::Small).wrap_anywhere())
         .child(header_actions);

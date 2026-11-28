@@ -98,6 +98,10 @@ impl Panels {
         ]
     }
 
+    pub(crate) fn docked_left(&self) -> bool {
+        self.floating != Some(0) && self.docked(self.wanted())[0].is_some()
+    }
+
     fn has_room(&self, index: usize) -> bool {
         let mut wanted = self.wanted();
         wanted[index] = true;

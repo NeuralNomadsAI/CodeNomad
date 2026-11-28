@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Kriterium {number} verschieben",
   "missions.scheduling.error.author": "Geben Sie einen gültigen Autor ein.",
   "missions.scheduling.error.capability": "Zeitplanung ist nicht verfügbar. Behalten Sie den Entwurf oder entfernen Sie die Startkriterien.",
+  "missions.scheduling.error.coordinatorProfile": "Die vorhandene Unterhaltung verwendet nicht Agent, Modell und Denken des Koordinators. Gleichen Sie sie an oder verwenden Sie eine neue Sitzung.",
   "missions.scheduling.error.count": "Zu viele Kriterien: höchstens acht Zeitpläne (sieben bei separat geprüften Ereignissen) und acht Ereignisse.",
   "missions.scheduling.error.cron": "Geben Sie einen gültigen nativen Cron-Ausdruck mit einer Sekundenposition pro Minute ein.",
   "missions.scheduling.error.days": "Wählen Sie mindestens einen Wochentag.",

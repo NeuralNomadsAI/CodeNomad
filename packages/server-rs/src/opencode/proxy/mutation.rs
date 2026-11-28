@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::guards::{
     carrier_denied, directory_identity, foreign, is_account_mutation, is_account_no_store_route, is_json_content_type,
-    marker, one_location, same_target, schedule_input,
+    is_mcp_toggle, is_workspace_location_mutation, marker, one_location, same_target, schedule_input,
 };
 use crate::missions::human_answer;
 use crate::opencode::{Endpoint, controls, upstream_error};
@@ -109,6 +109,7 @@ pub(super) struct MutationContext<'a> {
     pub control: Option<controls::Control<'a>>,
     pub send_input: bool,
     pub command: bool,
+    pub shell: bool,
     pub body_limit: usize,
     pub declared: Option<usize>,
     pub pending_body: &'a mut Option<Body>,
@@ -142,6 +143,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         control,
         send_input,
         command,
+        shell,
         body_limit,
         declared,
         pending_body,
@@ -162,6 +164,8 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
     let background =
         route.starts_with("/api/session/") && route.ends_with("/background") && head.method == Method::POST;
     let account_mutation = is_account_mutation(route, &head.method);
+    let location_mutation = is_workspace_location_mutation(route, &head.method);
+    let scoped_mutation = account_mutation || location_mutation;
     let inbox_patch = session.is_some()
         && head.method == Method::PATCH
         && route.strip_prefix("/api/session/").and_then(|r| r.split_once("/inbox/")).is_some_and(|(sid, item)| {
@@ -200,7 +204,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 if !is_json_content_type(&head.headers) {
                     return Err(if control.is_some() {
                         controls::invalid("Invalid session control")
-                    } else if account_mutation {
+                    } else if scoped_mutation {
                         error(Status::BAD_REQUEST, "Invalid request body")
                     } else {
                         error(Status::BAD_REQUEST, "Session request requires a JSON object")
@@ -217,18 +221,22 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             if head.method != Method::DELETE {
                 input = Some(data);
             }
-        } else if account_mutation {
+        } else if scoped_mutation {
             let Value::Object(mut data) = data else {
                 return Err(error(Status::BAD_REQUEST, "Invalid request body"));
             };
             if schedule_input(&data) {
                 return Err(carrier_denied());
             }
-            let is_credential = route.starts_with("/api/credential/");
+            let is_credential = account_mutation && route.starts_with("/api/credential/");
             let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
             let resolved =
                 resolve_account_locations(app, workspace, &data, opened, requested_dirs, location_context_dir).await?;
-            validate_account_body(route, &head.method, &data, body_empty)?;
+            if account_mutation {
+                validate_account_body(route, &head.method, &data, body_empty)?;
+            } else {
+                validate_workspace_location_body(route, &head.method, &data, body_empty)?;
+            }
             if !is_credential {
                 account_query_resolved = resolved.queries.first().map(|loc| loc.owned.directory.clone());
                 account_body_resolved = resolved.body.as_ref().map(|loc| loc.owned.directory.clone());
@@ -237,9 +245,9 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
                 }
                 has_body_location = resolved.body.is_some();
             }
-            // Native OpenCode account endpoints never take `location` in the JSON body
-            // (including `location: null`); integration routes carry it in `location[directory]`
-            // or `x-opencode-directory`, while global credential mutations consume it only for
+            // Native OpenCode account, MCP toggle, and plugin package endpoints take
+            // `location[directory]` or `x-opencode-directory` rather than a body `location`
+            // (including `location: null`); global credential mutations consume it only for
             // workspace authority and deletion fencing.
             data.remove("location");
             account_verified_locs.extend(resolved.queries);
@@ -249,7 +257,10 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             if account_verified_locs.is_empty() && !is_credential {
                 account_verified_locs.push(capture_account_location(app, workspace, opened.to_owned()).await?);
             }
-            if head.method != Method::DELETE && !body_empty && !(is_credential && head.method == Method::POST) {
+            let omit_empty_body = body_empty
+                || (is_credential && head.method == Method::POST)
+                || (is_mcp_toggle(route, &head.method) && data.is_empty());
+            if head.method != Method::DELETE && !omit_empty_body {
                 input = Some(Value::Object(data));
             }
         } else {
@@ -302,7 +313,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
             {
                 return Err(error(Status::BAD_REQUEST, "Invalid inbox delivery"));
             }
-            if send_input {
+            if send_input && !shell {
                 crate::opencode::prompt::validate(app, workspace, &data).await?;
             }
             if create {
@@ -480,18 +491,20 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         if !response.status().is_success() {
             return Err(unavailable());
         }
-        // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
-        crate::memory::sync(app, endpoint, session, || async { recheck.verify().await.is_ok() }).await;
-        match crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
-            dir == directory && recheck.verify().await.is_ok()
-        })
-        .await
-        {
-            Ok(()) => {}
-            Err(e) if e.0 == Status::UNAUTHORIZED => {
-                return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+        if !shell {
+            // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
+            crate::memory::sync(app, endpoint, session, || async { recheck.verify().await.is_ok() }).await;
+            match crate::provider_usage::selection::before_send(app, endpoint, principal, session, |dir| async move {
+                dir == directory && recheck.verify().await.is_ok()
+            })
+            .await
+            {
+                Ok(()) => {}
+                Err(e) if e.0 == Status::UNAUTHORIZED => {
+                    return Ok(MutationOutcome::Early(crate::auth::unauthorized_before_dispatch()));
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
         }
         let fresh = match recheck.verify().await {
             Ok(fresh) => fresh,
@@ -543,7 +556,7 @@ pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<Mutatio
         }
         target.query_pairs_mut().clear().extend_pairs(pairs);
     }
-    if account_mutation
+    if scoped_mutation
         && !route.starts_with("/api/credential/")
         && !explicit
         && account_context_dir.is_none()
@@ -778,6 +791,20 @@ async fn resolve_account_locations(
         None
     };
 
+    let top_dir_raw: Option<String> = if let Some(dir_val) = data.get("directory") {
+        let dir = if dir_val.is_null() {
+            opened
+        } else {
+            dir_val
+                .as_str()
+                .filter(|s| !s.trim().is_empty() && !s.contains('\0') && s.encode_utf16().count() <= 4096)
+                .ok_or_else(invalid_loc)?
+        };
+        Some(dir.to_owned())
+    } else {
+        None
+    };
+
     let mut queries = Vec::with_capacity(requested_dirs.len());
     for raw in requested_dirs {
         queries.push(capture_account_location(app, workspace, raw.clone()).await?);
@@ -790,9 +817,13 @@ async fn resolve_account_locations(
         Some(raw) => Some(capture_account_location(app, workspace, raw).await?),
         None => None,
     };
+    let top_dir = match top_dir_raw {
+        Some(raw) => Some(capture_account_location(app, workspace, raw).await?),
+        None => None,
+    };
 
     let mut canonical: Option<&str> = None;
-    for item in queries.iter().chain(context.iter()).chain(body.iter()) {
+    for item in queries.iter().chain(context.iter()).chain(body.iter()).chain(top_dir.iter()) {
         if let Some(prev) = canonical
             && prev != item.owned.directory
         {
@@ -927,4 +958,52 @@ fn validate_account_body(
         }
         _ => Err(invalid()),
     }
+}
+
+fn validate_workspace_location_body(
+    route: &str,
+    method: &Method,
+    data: &serde_json::Map<String, Value>,
+    body_empty: bool,
+) -> Result<(), Error> {
+    let invalid = || error(Status::BAD_REQUEST, "Invalid request body");
+    let valid_spec = |v: &Value| {
+        v.as_str().is_some_and(|s| {
+            !s.trim().is_empty()
+                && s.encode_utf16().count() <= 512
+                && !s.contains('\0')
+                && !s.chars().any(|c| c.is_ascii_control())
+        })
+    };
+    if is_mcp_toggle(route, method) {
+        if !body_empty && data.keys().any(|k| k != "location") {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
+    if *method == Method::POST && route == "/api/plugin/check" {
+        if !body_empty && data.keys().any(|k| !matches!(k.as_str(), "target" | "location")) {
+            return Err(invalid());
+        }
+        if let Some(v) = data.get("target")
+            && !v.is_null()
+            && !valid_spec(v)
+        {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
+    if *method == Method::POST && route == "/api/plugin/update" {
+        if !body_empty && data.keys().any(|k| !matches!(k.as_str(), "targets" | "location")) {
+            return Err(invalid());
+        }
+        if let Some(v) = data.get("targets")
+            && !v.is_null()
+            && !v.as_array().is_some_and(|items| items.len() <= 128 && items.iter().all(valid_spec))
+        {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
+    Err(invalid())
 }

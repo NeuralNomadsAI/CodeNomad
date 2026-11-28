@@ -38,6 +38,7 @@ struct Read {
     queued: bool,
     failed: bool,
     reattach: bool,
+    authoritative_required: bool,
     recheck: bool,
     fresh_for_write: bool,
 }
@@ -116,12 +117,31 @@ impl Document {
         std::mem::take(&mut self.notification_failure)
     }
     pub(super) fn refreshing(&self) -> bool {
-        self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
+        self.read.queued
+            || self.read.reattach
+            || (self.read.authoritative_required && !self.read.failed)
+            || self.flight.is_some()
+            || self.barrier.is_some()
+    }
+
+    pub(super) fn read_refreshing(&self) -> bool {
+        self.read.queued
+            || self.read.reattach
+            || (self.read.authoritative_required && !self.read.failed)
+            || matches!(
+                self.flight.as_ref().map(|flight| &flight.operation),
+                Some(Operation::Read { .. })
+            )
+            || matches!(
+                self.barrier.as_ref().map(|flight| &flight.operation),
+                Some(Operation::Read { .. })
+            )
     }
 
     pub(super) fn confirmed(&self) -> Option<&Value> {
         if self.read.queued
             || self.read.reattach
+            || self.read.authoritative_required
             || self.read.failed
             || self.flight.is_some()
             || self.barrier.is_some()
@@ -150,6 +170,12 @@ impl Document {
 
     pub(super) fn invalidate(&mut self) {
         self.read.queued = true;
+        self.invalidation_seq.fetch_add(1, Ordering::Release);
+    }
+
+    pub(super) fn invalidate_authoritative(&mut self) {
+        self.read.queued = true;
+        self.read.authoritative_required = true;
         self.invalidation_seq.fetch_add(1, Ordering::Release);
     }
 
@@ -182,6 +208,28 @@ impl Document {
 
     pub(super) fn read_failed(&self) -> bool {
         self.read.failed
+    }
+
+    pub(super) fn write_authority(&self) -> (Arc<AtomicU64>, u64) {
+        (self.epoch_guard.clone(), self.transport_epoch)
+    }
+
+    pub(super) fn busy_for_external_write(&self) -> bool {
+        self.refreshing()
+            || !self.write.pending.is_empty()
+            || self.next_transcript_ready()
+            || !self.write.retry.is_empty()
+            || !self.write.uncertain.is_empty()
+            || self.confirmed_epoch != self.transport_epoch
+            || self.read.failed
+    }
+
+    #[cfg(test)]
+    pub(super) fn seed_external_snapshot(&mut self, snapshot: Value) {
+        self.snapshot = Some(snapshot);
+        self.read.failed = false;
+        self.read.authoritative_required = false;
+        self.invalidation_seq.fetch_add(1, Ordering::Release);
     }
 
     pub(super) fn awaiting_initial_read(&self) -> bool {
@@ -617,6 +665,7 @@ impl Document {
         current_rev: Option<u64>,
         retry_failed: bool,
         atomic: bool,
+        external_unconfirmed: bool,
     ) {
         let reading_rev = self.flight.as_ref().and_then(|flight| {
             (matches!(flight.operation, Operation::Read { .. })
@@ -632,11 +681,15 @@ impl Document {
             self.invalidate();
         }
         if let Some(rev) = current_rev
-            && self.has_unconfirmed()
+            && (self.has_unconfirmed() || external_unconfirmed)
             && rev != self.snapshot_rev
             && reading_rev != Some(rev)
         {
-            self.invalidate();
+            if external_unconfirmed {
+                self.invalidate_authoritative();
+            } else {
+                self.invalidate();
+            }
         }
     }
 

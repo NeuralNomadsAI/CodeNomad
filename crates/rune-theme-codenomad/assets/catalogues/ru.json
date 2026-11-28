@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Переместить критерий {number}",
   "missions.scheduling.error.author": "Укажите допустимого автора.",
   "missions.scheduling.error.capability": "Планирование недоступно. Сохраните черновик или удалите критерии запуска.",
+  "missions.scheduling.error.coordinatorProfile": "Существующий разговор не использует агента, модель и мышление координатора. Приведите их в соответствие или используйте новую сессию.",
   "missions.scheduling.error.count": "Слишком много критериев: не более восьми расписаний (семи при отдельной проверке событий) и восьми событий.",
   "missions.scheduling.error.cron": "Введите корректный нативный cron с одной позицией секунды в минуте.",
   "missions.scheduling.error.days": "Выберите хотя бы один день недели.",

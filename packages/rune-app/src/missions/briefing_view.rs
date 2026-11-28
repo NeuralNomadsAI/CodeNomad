@@ -6,11 +6,11 @@ use super::{
     briefing::{BriefingGesture, BriefingKey, BriefingPhase, BriefingRequests},
 };
 use crate::{State, strings::t};
-use rune::{El, Tx, col};
+use rune::{El, Tx};
 use rune_theme_codenomad::{
     document_reader::editor,
-    git_panel as theme,
-    layout::{self, Layout},
+    git_panel::{self as theme, ButtonLook::Flat},
+    layout, shell,
 };
 
 pub(crate) type BriefingAct = fn(&mut State, &str, &BriefingKey, BriefingGesture);
@@ -81,9 +81,11 @@ fn controls_body<S: 'static>(
 
     let coord_open = coordinator.clone();
     row = row.child(
-        layout::button_tx(
+        theme::icon_button(
+            &shell::icons::CONVERSATION,
             t("missionsPanel.action.openConversation"),
             false,
+            None,
             move |s: &mut S, tx| {
                 open(s, coord_open.clone(), tx);
                 tx.instant();
@@ -92,7 +94,7 @@ fn controls_body<S: 'static>(
         .key("mission-open-coordinator"),
     );
 
-    let mut view = col().full_width().child(row);
+    let mut view = theme::context().child(row);
 
     if let Some(phase) = phase
         && let Some(msg_key) = phase.message_key()
@@ -106,8 +108,9 @@ fn controls_body<S: 'static>(
             let followup_new_disabled = !available || messaging_disabled;
             let followup = layout::action_row()
                 .child(
-                    layout::button_tx(
+                    theme::button(
                         t("missions.control.openCoordinator"),
+                        Flat,
                         false,
                         move |s: &mut S, tx| {
                             if !messaging_disabled {
@@ -121,8 +124,9 @@ fn controls_body<S: 'static>(
                     .key("mission-briefing-open-coordinator"),
                 )
                 .child(
-                    layout::button_tx(
+                    theme::button(
                         t("missions.briefing.newRequest"),
+                        Flat,
                         false,
                         move |s: &mut S, tx| {
                             if !followup_new_disabled {
@@ -246,7 +250,12 @@ mod tests {
         assert!(by_key(&rt, "mission-briefing-request").is_some());
         let feedback = by_key(&rt, "mission-briefing-feedback").expect("feedback note");
         assert_eq!(feedback.role, "alert");
-        assert!(by_key(&rt, "mission-open-coordinator").is_some());
+        let open_coord = by_key(&rt, "mission-open-coordinator").expect("open coordinator icon");
+        assert!(
+            open_coord.rect[2] <= 36.0 && open_coord.rect[3] <= 36.0,
+            "mission-open-coordinator must be a compact icon button: {:?}",
+            open_coord.rect
+        );
         assert!(by_key(&rt, "mission-briefing-open-coordinator").is_some());
         assert!(by_key(&rt, "mission-briefing-new-request").is_some());
 

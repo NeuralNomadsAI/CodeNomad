@@ -55,6 +55,7 @@ pub(super) struct Window {
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    missions: super::missions::Missions,
     integrations: super::integrations::Panel,
     stats: super::stats::Dashboard,
     remote: remote::Remote,
@@ -85,6 +86,7 @@ enum Section {
     OpenCode,
     Notifications,
     Providers,
+    Missions,
     Integrations,
     Shortcuts,
     Stats,
@@ -190,6 +192,9 @@ impl Window {
         if self.section != Section::Providers {
             self.providers.suspend();
         }
+        if self.section != Section::Missions {
+            self.missions.close();
+        }
         if self.section != Section::Integrations {
             self.integrations.suspend();
         }
@@ -235,6 +240,7 @@ impl Window {
         }
         self.logging.close();
         self.remote.close();
+        self.missions.close();
         self.providers.suspend();
         self.integrations.suspend();
         if self.config_files.dirty() {
@@ -312,6 +318,7 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.missions.close();
         self.providers.suspend();
         self.integrations.suspend();
         {
@@ -346,6 +353,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
+        let missions_label = t("settings.nav.missions");
         let integrations_label = t("settings.nav.integrations");
         let stats_label = t("settings.usage.title");
         let conversation_label = t("settings.nav.chat");
@@ -360,6 +368,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
+            Section::Missions => missions_label,
             Section::Integrations => integrations_label,
             Section::Shortcuts => shortcuts_label,
             Section::Stats => stats_label,
@@ -396,6 +405,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-providers",
                     providers_label,
                     s.section == Section::Providers,
+                ),
+                (
+                    "settings-missions",
+                    missions_label,
+                    s.section == Section::Missions,
                 ),
                 (
                     "settings-integrations",
@@ -441,6 +455,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
+                    "settings-missions" => Section::Missions,
                     "settings-integrations" => Section::Integrations,
                     "settings-hotkeys" => Section::Shortcuts,
                     "settings-stats" if super::stats::supported(&s.shared.borrow()) => {
@@ -592,6 +607,18 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .as_ref()
                             .is_some_and(providers::Target::online),
                     &mut layers,
+                ),
+            ),
+            Section::Missions => (
+                "missions",
+                s.missions.view(
+                    &s.shared,
+                    !s.closing && s.confirm_close.is_none(),
+                    &mut layers,
+                    |s: &mut Window| {
+                        (s.section == Section::Missions && !s.closing && s.confirm_close.is_none())
+                            .then_some(&mut s.missions)
+                    },
                 ),
             ),
             Section::Integrations => (

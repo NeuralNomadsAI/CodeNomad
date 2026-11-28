@@ -110,26 +110,25 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
     let body = if ui.mode == Mode::Workspace {
         workspace
     } else if ui.repository() == Repository::Uninitialized {
-        theme::header()
-            .child(
-                text(t("filesPanel.gitInit.notRepository"))
-                    .text_role(TextRole::Small)
-                    .wrap(),
-            )
-            .child(
-                button(
-                    s,
-                    t(if ui.requests.mutation == Some(MutationKind::Init) {
-                        "filesPanel.gitInit.pending"
-                    } else {
-                        "filesPanel.gitInit.action"
-                    }),
-                    WithIcon(&theme::BRANCH),
-                    !ui.can_mutate(),
-                    |ui, _| ui.initialize(),
-                )
-                .key("git-init"),
-            )
+        let mut init = button(
+            s,
+            t(if ui.requests.mutation == Some(MutationKind::Init) {
+                "filesPanel.gitInit.pending"
+            } else {
+                "filesPanel.gitInit.action"
+            }),
+            WithIcon(&theme::BRANCH),
+            !ui.can_mutate(),
+            |ui, _| ui.initialize(),
+        )
+        .key("git-init");
+        if let Some(directory) = ui.tree().map(|tree| tree.directory.as_str()) {
+            init = init.help(directory).description(directory);
+        }
+        col()
+            .full_width()
+            .child(theme::note(t("filesPanel.gitInit.notRepository"), "status"))
+            .child(layout::action_row().pad(Space::Md).child(init))
     } else if ui.inventory.is_none() || ui.repository() == Repository::NoGit {
         if ui.loading() {
             theme::note(t("instanceInfo.loading"), "status")

@@ -23,6 +23,7 @@ enum Section {
     Notifications,
     Shortcuts,
     Providers,
+    Missions,
     Integrations,
     Stats,
     Remote,
@@ -40,6 +41,7 @@ impl Section {
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
+            Self::Missions => "settings.nav.missions",
             Self::Integrations => "settings.nav.integrations",
             Self::Stats => "settings.usage.title",
             Self::Remote => "settings.nav.remote",
@@ -75,6 +77,7 @@ pub(super) struct Panel {
     transcript_picker: Option<super::TranscriptRow>,
     announced_transcript_error: Option<&'static str>,
     catalog: Catalog,
+    missions: super::missions::Missions,
     integrations: super::integrations::Panel,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
@@ -222,6 +225,11 @@ impl Panel {
         let editor = prefs
             .memory
             .poll_editor(prefs.backend.as_ref(), &mut self.memory_editor);
+        let missions = self.missions.poll(
+            prefs,
+            wake,
+            self.shown && paired && self.section == Section::Missions,
+        );
         let mut palette_settled = self.general.settle_save(prefs);
         if !self.general.dirty() {
             if self.confirm_palette_close || self.pending_section.is_some() {
@@ -271,6 +279,7 @@ impl Panel {
             | scope_changed
             | environment
             | opencode
+            | missions
             | self.poll_notification_permission()
             | (self.shown && paired && self.section == Section::Info && self.info.poll(prefs, wake))
             | (self.section == Section::Remote
@@ -369,7 +378,9 @@ pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
 pub(super) fn open(s: &mut State) {
     s.shell.leave_project();
     let target = Target::capture(s);
+    let opener = super::missions::opener_directory(s);
     let mut prefs = s.settings.shared.borrow_mut();
+    prefs.missions.capture_opener(opener, target.as_ref());
     prefs.provider_target = target;
     prefs
         .memory
@@ -404,6 +415,7 @@ pub(super) fn open_providers(s: &mut State) {
     panel.section = Section::Providers;
     panel.general.close();
     panel.behavior.close();
+    panel.missions.close();
     panel.integrations.suspend();
     panel.transcript_picker = None;
     panel.advanced_help = None;
@@ -464,6 +476,7 @@ fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.logging.close();
     panel.remote.close();
     panel.info.close();
+    panel.missions.close();
     panel.recording_shortcut = false;
     panel.shortcut_capture = Default::default();
     if panel.notification_permission.get() != PermissionRequest::Pending {
@@ -526,6 +539,7 @@ pub(super) fn view(
         Section::Notifications,
         Section::Shortcuts,
         Section::Providers,
+        Section::Missions,
         Section::Integrations,
         Section::Stats,
         Section::Remote,
@@ -706,6 +720,17 @@ pub(super) fn view(
             let panel = &mut s.settings.web;
             (panel.shown && panel.section == Section::Stats).then_some(&mut panel.stats)
         }),
+        Section::Missions => panel.missions.view(
+            &s.settings.shared,
+            panel.shown && panel.section == Section::Missions,
+            &mut layers,
+            |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
+                let panel = &mut s.settings.web;
+                (paired && panel.shown && panel.section == Section::Missions)
+                    .then_some(&mut panel.missions)
+            },
+        ),
         Section::Notifications => col()
             .full_width()
             .child(notification_settings::view(
@@ -1009,6 +1034,9 @@ pub(super) fn view(
 }
 
 fn close_or_dismiss_overlay(s: &mut State) {
+    if s.settings.web.section == Section::Missions && s.settings.web.missions.cancel_confirm() {
+        return;
+    }
     if s.settings.web.section == Section::Integrations
         && s.settings.web.integrations.dismiss_overlay()
     {
@@ -1029,6 +1057,9 @@ fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Sectio
     }
     if panel.section != Section::Providers {
         panel.catalog.suspend();
+    }
+    if panel.section != Section::Missions {
+        panel.missions.close();
     }
     if panel.section != Section::Integrations {
         panel.integrations.suspend();

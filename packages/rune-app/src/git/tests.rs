@@ -1978,3 +1978,94 @@ fn stored_git_errors_and_mutation_messages_follow_live_locale_switches() {
         );
     });
 }
+
+#[test]
+fn git_visual_parity_uninitialized_and_diff_header_tooltips_and_padded_retry() {
+    use rune::{Env, Runtime};
+
+    // 1. Uninitialized repository: muted status note + left-aligned git-init button carrying directory tooltip.
+    let mut s = crate::init();
+    let mut owner = ui();
+    owner.online = true;
+    owner.shown = true;
+    owner.mode = Mode::Changes;
+    owner.inventory = Some(Worktrees {
+        repository: Repository::Uninitialized,
+        trees: vec![Worktree {
+            slug: "root".into(),
+            label: None,
+            directory: "/repo/uninit".into(),
+            service_directory: None,
+            branch: None,
+            head: None,
+            missing: false,
+        }],
+    });
+    s.git.owner = Some(owner);
+
+    let mut rt = Runtime::new(
+        s,
+        |s, _| crate::strings::with_locale("en", || super::view::panel(s, 360.0, rune::el())),
+        (360.0, 480.0),
+        Env::new(true, 1.0),
+    );
+    rt.frame(0.0);
+    let init_el = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some("git-init"))
+        .expect("git-init button");
+    assert_eq!(init_el.help.as_deref(), Some("/repo/uninit"));
+    assert!(
+        init_el.rect[0] >= 8.0 && init_el.rect[2] < 320.0,
+        "git-init button must be padded and not stretched full-width: {:?}",
+        init_el.rect
+    );
+
+    // 2. Diff reader header carries path & directory tooltips, and error retry is padded away from x=0.
+    let mut s = crate::init();
+    let mut owner = ui();
+    owner.online = true;
+    owner.shown = true;
+    owner.mode = Mode::Changes;
+    owner.preview = Some(Preview {
+        source: Source::Local(Section::Unstaged),
+        path: "src/components/very-long-component-name.tsx".into(),
+        original_path: None,
+    });
+    owner.read_failed(
+        Lane::Preview,
+        codenomad_client::git::GitError::UnexpectedResponse.into(),
+    );
+    s.git.owner = Some(owner);
+
+    let mut rt = Runtime::new(
+        s,
+        |s, _| crate::strings::with_locale("en", || super::view::reader(s)),
+        (640.0, 480.0),
+        Env::new(true, 1.0),
+    );
+    rt.frame(0.0);
+    let elements = rt.elements();
+    assert!(
+        elements
+            .iter()
+            .any(|el| el.help.as_deref() == Some("src/components/very-long-component-name.tsx")),
+        "diff header path must expose hover tooltip"
+    );
+    assert!(
+        elements
+            .iter()
+            .any(|el| el.help.as_deref() == Some("D:/repo")),
+        "diff header subtitle must expose worktree directory tooltip"
+    );
+    let retry = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some("git-diff-retry"))
+        .expect("git-diff-retry button");
+    assert!(
+        retry.rect[0] >= 8.0,
+        "git-diff-retry must be padded away from panel left edge: {:?}",
+        retry.rect
+    );
+}

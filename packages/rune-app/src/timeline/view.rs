@@ -117,22 +117,23 @@ pub(crate) fn observe_history_wheel(
     }
     let wheel_scroll = s.transcript_display.timeline.scroll.clone();
     let mut state = wheel_scroll.get();
+    let (dx, dy) = crate::chat::reading::effective_wheel_delta(event);
     state.rail_wheel.note_phase(event.phase, tx);
     state.transcript_wheel_momentum = false;
     state.last_hand_rail = false;
-    if event.dy != 0.0 {
+    if dy != 0.0 {
         state.wheel_last_rail = Some(false);
         state.wheel_pending_commit = Some(tx.clock());
     }
     wheel_scroll.set(state);
     super::navigation::hand_scrolled(s, false);
-    if event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
-        let direction = if event.dy > 0.0 { Before } else { After };
+    if dy != 0.0 && dy.abs() > dx.abs() {
+        let direction = if dy > 0.0 { Before } else { After };
         turn_page_gesture(s, direction);
         if allow_edge_page
             && !s.history_error
             && !event.momentum
-            && let Some(edge) = boundary(wheel_scroll.get().viewport, -event.dy)
+            && let Some(edge) = boundary(wheel_scroll.get().viewport, -dy)
             && crate::chat::reader::request_page(s, edge)
         {
             crate::chat::reader::announce_paging(tx);
@@ -355,6 +356,16 @@ fn rail_scroll(s: &State, el: El) -> El {
                 wake();
             }
         })
+        .on_hover_change(|s: &mut State, hovered, tx| {
+            if hovered {
+                s.tool_diff_preferences.hovered_other_scrollers |=
+                    crate::chat::reading::HOVER_TIMELINE;
+            } else {
+                s.tool_diff_preferences.hovered_other_scrollers &=
+                    !crate::chat::reading::HOVER_TIMELINE;
+            }
+            tx.live_only();
+        })
 }
 
 pub(crate) fn notice_key(s: &State) -> Option<&'static str> {
@@ -375,6 +386,7 @@ pub(crate) fn notice_key(s: &State) -> Option<&'static str> {
 
 pub(crate) fn view(
     s: &State,
+    cx: &rune::Cx<State>,
     history: El,
     layout: rune_theme_codenomad::interruption::SessionLayout,
 ) -> El {
@@ -400,29 +412,29 @@ pub(crate) fn view(
         )
     });
     let scroll_controls = transcript::scroll_controls(locale, oldest, latest);
+    let measured_fits = cx.layout_with("conversation-history", |rect| timeline::fits(rect[2]));
+    let threshold_probe = measured_fits
+        .filter(|&fits| fits != timeline::fits(t.width))
+        .and_then(|fits| {
+            let width = layout::layout_rect(cx, "conversation-history")?[2];
+            let scope = s.input_scope.clone();
+            let key = if fits {
+                "timeline-width-fits"
+            } else {
+                "timeline-width-narrow"
+            };
+            Some(
+                layout::layout_probe(key).on_layout_tx(move |s: &mut State, _, tx| {
+                    if !s.current_scope(&scope) || !super::apply_width(s, width, tx) {
+                        tx.live_only();
+                    }
+                }),
+            )
+        });
     let mut area = timeline::conversation(layout)
         .key("conversation-history")
         .on_layout_tx(move |s: &mut State, [_, _, width, _], tx| {
-            if s.current_scope(&scope) && super::owner(s).width != width {
-                let was_shown = super::owner(s).rail_shown;
-                super::owner(s).width = width;
-                let shown = super::demanded(s)
-                    && (super::owner(s).has_raw_markers || !super::owner(s).markers.is_empty());
-                if shown != was_shown {
-                    super::owner(s).rail_shown = shown;
-                    if super::owner(s).jump.align.is_none() {
-                        if super::owner(s).poll_input_waiting
-                            || super::owner(s).scroll.get().wheel_last_rail == Some(false)
-                        {
-                            super::defer_keep_passage(s, tx);
-                        } else {
-                            tx.instant();
-                            crate::chat::reading::keep_passage(s, tx);
-                        }
-                    }
-                }
-                (s.wake)();
-            } else {
+            if !s.current_scope(&scope) || !super::apply_width(s, width, tx) {
                 tx.live_only();
             }
         })
@@ -453,6 +465,7 @@ pub(crate) fn view(
     {
         area = area.child(timeline::rail_slot(rail_scroll(s, rail)));
     }
+    area = area.children(threshold_probe);
     let notice = match notice_key(s) {
         Some("timeline-destination-filtered") => Some(
             rune::text(crate::strings::t("history.destinationFiltered"))

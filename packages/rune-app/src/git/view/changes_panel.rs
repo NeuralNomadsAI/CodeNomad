@@ -73,8 +73,9 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
                 );
                 group = group.child(
                     layout::action_row()
-                        .pad(Space::Xs)
-                        .child(text(label).text_role(TextRole::Label))
+                        .pad(Space::Sm)
+                        .inset_surface()
+                        .child(theme::count(label))
                         .child(
                             button(
                                 s,
@@ -101,7 +102,7 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
 }
 
 fn commit_box(s: &State, ui: &Ui) -> El {
-    let mut group = theme::header().role("group").label(t("gitPanel.actions"));
+    let mut group = theme::context().role("group").label(t("gitPanel.actions"));
     for section in SECTIONS {
         let actions = ui.changes.action_rows(section);
         if let Some(first) = actions.first() {

@@ -41,7 +41,11 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         #[cfg(not(target_arch = "wasm32"))]
         body
     })
-    .on_window_focus(shell::notifications::focus_changed);
+    .on_window_focus(shell::notifications::focus_changed)
+    .on_hover_change(|s: &mut State, _inside, tx| {
+        s.transcript_display.reading_mut().end_wheel_gesture();
+        tx.live_only();
+    });
     // Elsewhere the shell fills the window.
     #[cfg(not(target_os = "android"))]
     let shell = shell.on_layout_tx(measure);

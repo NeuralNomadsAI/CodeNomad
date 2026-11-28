@@ -7,6 +7,11 @@ mod custom_palettes;
 mod events;
 mod info;
 mod memory;
+mod missions;
+mod missions_regressions;
+mod missions_regressions_depth;
+mod missions_regressions_events;
+mod missions_regressions_lifecycle;
 mod notifications;
 mod opencode;
 mod providers;
@@ -872,6 +877,13 @@ async fn try_read_request(
 impl Request {
     async fn reply(mut self, status: u16, data: Value) {
         self.reply_with_headers(status, data, "").await;
+    }
+
+    async fn reply_no_content(mut self) {
+        self.socket
+            .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
     }
 
     async fn reply_with_headers(&mut self, status: u16, data: Value, headers: &str) {

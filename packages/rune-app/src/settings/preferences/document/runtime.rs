@@ -256,6 +256,7 @@ impl Document {
         active_client_ids: &[String],
         seen_drops: u64,
         prefs_transport_lost: bool,
+        external_write_in_flight: bool,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> (bool, bool) {
@@ -377,8 +378,10 @@ impl Document {
                         && !uncertain_transport
                         && !self.read.queued
                         && flight.transport_epoch == self.transport_epoch
-                        && !rev_changed;
+                        && !rev_changed
+                        && !drops_changed;
                     let has_snapshot = snapshot.is_some();
+                    let is_read = matches!(flight.operation, Operation::Read { .. });
                     self.settle(
                         flight.operation,
                         patched,
@@ -389,11 +392,17 @@ impl Document {
                     );
                     if has_snapshot && fresh_publish {
                         self.snapshot_rev = read_rev;
+                        if is_read {
+                            self.read.authoritative_required = false;
+                        }
                     }
                 }
                 changed = true;
                 settled = true;
             }
+        }
+        if external_write_in_flight {
+            return (changed, settled);
         }
         let writes_allowed = !self.read.failed && self.confirmed_epoch == self.transport_epoch;
         let atomic = backend.client.supports_atomic_settings_patches();
@@ -422,18 +431,15 @@ impl Document {
             Operation::Read {
                 retry: std::mem::take(&mut self.write.retry),
             }
-        } else if std::mem::take(&mut self.read.reattach) {
-            self.read.queued = false;
-            Operation::Read {
-                retry: BTreeSet::new(),
-            }
-        } else if writes_allowed
-            && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
-                || ((needs_fresh_on_disk || binaries_need_fresh || palette_needs_fresh)
-                    && !self.read.fresh_for_write)
-                || ((binaries_need_fresh || palette_needs_fresh)
-                    && (self.read.queued || sse_stale))
-                || (!self.write.uncertain.is_empty() && self.read.queued))
+        } else if std::mem::take(&mut self.read.reattach)
+            || (self.read.authoritative_required && (!self.read.failed || self.read.queued))
+            || (writes_allowed
+                && ((needs_fresh_on_stale && (self.read.queued || sse_stale))
+                    || ((needs_fresh_on_disk || binaries_need_fresh || palette_needs_fresh)
+                        && !self.read.fresh_for_write)
+                    || ((binaries_need_fresh || palette_needs_fresh)
+                        && (self.read.queued || sse_stale))
+                    || (!self.write.uncertain.is_empty() && self.read.queued)))
         {
             self.read.queued = false;
             Operation::Read {
