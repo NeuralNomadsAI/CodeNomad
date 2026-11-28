@@ -133,26 +133,103 @@ impl Request {
         })())
     }
 }
+enum BootPlan {
+    Isolated(Request),
+    Desktop { executable: PathBuf },
+}
+
+struct BootInputs<'a> {
+    backend: Option<String>,
+    server_bin: Option<String>,
+    host_root: Option<String>,
+    profile: Option<String>,
+    persistent: Option<String>,
+    no_autolaunch: Option<String>,
+    headless: bool,
+    args: &'a [String],
+    current_exe: Option<PathBuf>,
+}
+
+fn autolaunch_disabled(no_autolaunch: Option<&str>, headless: bool, args: &[String]) -> bool {
+    if headless {
+        return true;
+    }
+    if no_autolaunch.is_some_and(|raw| {
+        matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        )
+    }) {
+        return true;
+    }
+    args.iter().any(|arg| {
+        arg == "--snap"
+            || arg.starts_with("--snap=")
+            || arg == "--tree"
+            || arg.starts_with("--tree=")
+            || arg == "--scene"
+            || arg.starts_with("--scene=")
+            || arg == "--test-support-info"
+            || arg.starts_with("--gallery-")
+            || arg.starts_with("--probe-")
+    })
+}
+
+fn resolve_boot_plan(inputs: BootInputs<'_>) -> Option<Result<BootPlan>> {
+    if inputs.backend.is_some() {
+        return None;
+    }
+    if let Some(request) = Request::parse(
+        inputs.server_bin,
+        inputs.host_root,
+        inputs.profile,
+        inputs.persistent,
+    ) {
+        return Some(request.map(BootPlan::Isolated));
+    }
+    if autolaunch_disabled(
+        inputs.no_autolaunch.as_deref(),
+        inputs.headless,
+        inputs.args,
+    ) {
+        return None;
+    }
+    let current_exe = inputs.current_exe?;
+    let executable = crate::host::discover_sibling_server(&current_exe)?;
+    Some(Ok(BootPlan::Desktop { executable }))
+}
+
 pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>> {
-    let request = Request::parse(
-        super::setting("RUNE_SERVER_BIN"),
-        super::setting("RUNE_HOST_ROOT"),
-        super::setting("CODENOMAD_PROFILE"),
-        super::setting("RUNE_HOST_PERSISTENT"),
-    )?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let plan = resolve_boot_plan(BootInputs {
+        backend: super::setting("RUNE_BACKEND"),
+        server_bin: super::setting("RUNE_SERVER_BIN"),
+        host_root: super::setting("RUNE_HOST_ROOT"),
+        profile: super::setting("CODENOMAD_PROFILE"),
+        persistent: super::setting("RUNE_HOST_PERSISTENT"),
+        no_autolaunch: super::setting("RUNE_NO_AUTOLAUNCH"),
+        headless: rune_theme_codenomad::shell::is_headless(),
+        args: &args,
+        current_exe: std::env::current_exe().ok(),
+    })?;
     let (out, input) = codenomad_client::bounded(1);
     let stopping = Arc::new(AtomicBool::new(false));
     let (commands, rx) = mpsc::channel();
     let registry_stopping = stopping.clone();
     let registry_commands = commands.clone();
     let worker = std::thread::spawn(move || {
-        let result = request.and_then(|request| {
-            let configure = if request.persistent {
-                crate::host::LaunchConfig::persistent
-            } else {
-                crate::host::LaunchConfig::trial
+        let result = plan.and_then(|plan| {
+            let config = match plan {
+                BootPlan::Isolated(request) => {
+                    let configure = if request.persistent {
+                        crate::host::LaunchConfig::persistent
+                    } else {
+                        crate::host::LaunchConfig::trial
+                    };
+                    configure(request.executable, &request.root, &request.profile)?
+                }
+                BootPlan::Desktop { executable } => crate::host::LaunchConfig::desktop(executable)?,
             };
-            let config = configure(request.executable, &request.root, &request.profile)?;
             let state_directory = config.state_directory();
             let controller = crate::host::Controller::default();
             let mut child = controller.launch(config)?;
@@ -294,5 +371,122 @@ mod tests {
         });
         Workers(vec![(stopping, commands, worker)]).finish();
         assert_eq!(result.try_recv(), Ok(()));
+    }
+
+    #[test]
+    fn autonomous_launch_discovers_sibling_and_respects_all_opt_out_guards() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/host-tests")
+            .join(format!(
+                "boot-sibling-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_exe = dir.join(if cfg!(windows) {
+            "codenomad-rune.exe"
+        } else {
+            "codenomad-rune"
+        });
+        std::fs::write(&fake_exe, b"rune").unwrap();
+
+        fn make_inputs<'a>(fake_exe: &std::path::Path, args: &'a [String]) -> BootInputs<'a> {
+            BootInputs {
+                backend: None,
+                server_bin: None,
+                host_root: None,
+                profile: None,
+                persistent: None,
+                no_autolaunch: None,
+                headless: false,
+                args,
+                current_exe: Some(fake_exe.to_path_buf()),
+            }
+        }
+
+        // 1. Absent sibling server -> None (manual Connect screen).
+        assert!(resolve_boot_plan(make_inputs(&fake_exe, &[])).is_none());
+
+        // 2. Directory named like the server binary -> ignored.
+        let sibling = dir.join(if cfg!(windows) {
+            "codenomad-rs.exe"
+        } else {
+            "codenomad-rs"
+        });
+        std::fs::create_dir(&sibling).unwrap();
+        assert!(resolve_boot_plan(make_inputs(&fake_exe, &[])).is_none());
+        std::fs::remove_dir(&sibling).unwrap();
+
+        // 3. Symlink pointing outside exe dir -> ignored on Unix.
+        #[cfg(unix)]
+        {
+            let outside = dir.join("outside.bin");
+            std::fs::write(&outside, b"outside").unwrap();
+            std::os::unix::fs::symlink(&outside, &sibling).unwrap();
+            assert!(resolve_boot_plan(make_inputs(&fake_exe, &[])).is_none());
+            std::fs::remove_file(&sibling).unwrap();
+            std::fs::remove_file(&outside).unwrap();
+        }
+
+        // 4. Plain regular sibling file -> BootPlan::Desktop with exact path.
+        std::fs::write(&sibling, b"server").unwrap();
+        match resolve_boot_plan(make_inputs(&fake_exe, &[])) {
+            Some(Ok(BootPlan::Desktop { executable })) => assert_eq!(executable, sibling),
+            other => panic!("expected BootPlan::Desktop, got {}", other.is_some()),
+        }
+
+        // 5. Explicit RUNE_BACKEND suppresses autonomous launch.
+        let mut with_backend = make_inputs(&fake_exe, &[]);
+        with_backend.backend = Some("http://127.0.0.1:9899/".into());
+        assert!(resolve_boot_plan(with_backend).is_none());
+
+        // 6. Explicit RUNE_NO_AUTOLAUNCH opt-out suppresses autonomous launch.
+        for val in ["1", "true", "YES"] {
+            let mut opt_out = make_inputs(&fake_exe, &[]);
+            opt_out.no_autolaunch = Some(val.into());
+            assert!(resolve_boot_plan(opt_out).is_none(), "{val}");
+        }
+
+        // 7. Headless and qualification/offscreen CLI flags suppress autonomous launch.
+        let mut headless = make_inputs(&fake_exe, &[]);
+        headless.headless = true;
+        assert!(resolve_boot_plan(headless).is_none());
+        for flag in [
+            "--snap",
+            "--snap=out.png",
+            "--tree",
+            "--tree=out.json",
+            "--scene",
+            "--scene=synthetic",
+            "--test-support-info",
+            "--gallery-shell",
+            "--probe-window-restore",
+        ] {
+            let args = vec![flag.to_owned()];
+            assert!(
+                resolve_boot_plan(make_inputs(&fake_exe, &args)).is_none(),
+                "{flag}"
+            );
+        }
+
+        // 8. Explicit trial inputs still route to BootPlan::Isolated, never Desktop.
+        let trial_root = dir.join("fresh-trial-root");
+        let isolated = resolve_boot_plan(BootInputs {
+            backend: None,
+            server_bin: Some(sibling.to_string_lossy().into_owned()),
+            host_root: Some(trial_root.to_string_lossy().into_owned()),
+            profile: Some("trial-keep-contract".into()),
+            persistent: None,
+            no_autolaunch: None,
+            headless: false,
+            args: &[],
+            current_exe: Some(fake_exe),
+        });
+        assert!(matches!(isolated, Some(Ok(BootPlan::Isolated(_)))));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
