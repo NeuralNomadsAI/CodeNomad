@@ -6,7 +6,6 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionSnapshot } from "../../missions/model"
 import { ownedMissionAgent } from "./mission-agent-owner"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
-import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import type { MissionRouteDeps } from "./missions"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { SettingsService } from "../../settings/service"
@@ -36,23 +35,6 @@ export async function controlAgentMission(deps: Deps, sessionID: string, raw: un
   let { input: command } = commandSchema.parse(raw)
   const agent = await ownedMissionAgent(deps.workspaceManager, sessionID, signal)
   if (!deps.bridgeToken || !deps.worktreeDeletionFence) throw new Error("Mission project control unavailable")
-  if (command.tool === "configure" && command.input.configuration) {
-    const { objective: _objective, notes: _notes, ...configuration } = command.input
-    return controlAgentMissionSchedule(deps, sessionID, { kind: "schedule", input: {
-      ...configuration, action: "configure",
-    } }, signal)
-  }
-  if (command.tool === "configure" && command.input.action === "read") {
-    // Structural receipts are owned by the ordinary schedule configuration path.
-    // Point reads expose both representations without dispatching either.
-    const schedule = await controlAgentMissionSchedule(deps, sessionID, { kind: "schedule", input: {
-      action: "read", missionID: command.input.missionID, requestID: command.input.requestID,
-    } }, signal)
-    const structural = schedule as { document?: { control?: { requestID?: string; action?: string } } | null }
-    if (command.input.requestID && structural.document?.control?.requestID === command.input.requestID
-      && structural.document.control.action === "configure") return { schedule }
-    return { schedule, ...await execute(command) }
-  }
   return execute(command)
 
   async function execute(selected: typeof command) {

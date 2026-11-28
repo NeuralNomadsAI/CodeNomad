@@ -124,7 +124,6 @@ async function setup(missing = false) {
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" },
       capability: { minimum: 0 }, effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       reached.release(); await held.promise
@@ -166,14 +165,14 @@ async function read(page: Page, id: string) {
   await toggleMissionOverview(page, `Objective ${id}`)
 }
 
-test("same-URL schedule network aborts and missing, unknown or reused identities remain failures", async t => {
+test("same-URL network aborts and missing, unknown or reused identities remain failures", async t => {
   const state = await setup(), { page, networkErrors, missionReads } = state
-  const endpoint = new URL("/api/workspaces/fixture/missions/A/schedule?directory=%2Ffixture", url).href
+  const endpoint = new URL("/api/workspaces/fixture/sessions/A/permission-receipts?unanchored=true", url).href
   let observedId = ""
   page.on("request", request => { if (request.url() === endpoint && request.headers()[MISSION_READ_HEADER]) observedId = request.headers()[MISSION_READ_HEADER] })
-  await page.route("**/missions/A/schedule?*", route => route.abort("aborted"))
+  await page.route("**/sessions/A/permission-receipts?*", route => route.abort("aborted"))
   try {
-    const network = await page.evaluate(() => window.fixtureScheduleNetworkProbe())
+    const network = await page.evaluate(() => window.fixtureReadNetworkProbe())
     assert.deepEqual(network, { aborted: false, error: "TypeError" })
     await settled(page); await missionReads.drain()
     assert.equal(networkErrors.length, 1, "an actual API network abort has no originating aborted signal")

@@ -7,17 +7,12 @@ import type { MissionBodyRef } from "./mission-content-store"
 const fixture = {
   inventories: [] as any[], calls: [] as { backend: string; method: string; args: any[] }[],
   signals: new Map<string, AbortSignal>(), instances: new Map<string, any>(),
-  read: async (_backend: string, method: string, _args: any[]): Promise<any> => {
-    if (method === "fetchMissionSchedules") return { version: 1, projectID: "project", schedules: [] }
-    if (method === "fetchMissionSchedule") return { pending: false, document: null }
-    if (method === "fetchMissionCurrentPassage") return { version: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", source: { missionID: "execution" } }
-    return { available: false }
-  },
+  read: async (_backend: string, _method: string, _args: any[]): Promise<any> => ({ available: false }),
 }
 ;(globalThis as any).__missionRouting = fixture
 const hooks = registerHooks({ resolve(specifier, context, next) {
   if (specifier === "solid-js") return next("solid-js/dist/solid.js", context)
-  if (!context.parentURL?.match(/\/(missions|mission-content|mission-schedules|mission-recurrence)\.ts$/)) return next(specifier, context)
+  if (!context.parentURL?.match(/\/(missions|mission-content)\.ts$/)) return next(specifier, context)
   const sources: Record<string, string> = {
     "../lib/backend-client": `const f = globalThis.__missionRouting; export function backendOf(id) {
       const backend = id.includes('~') ? id.split('~')[0] : 'local';

@@ -84,8 +84,6 @@ import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
-import { NativeScheduleSettingsActivation } from "../opencode/native-schedule-settings-activation"
-import { NativeScheduleCapabilityReader } from "../opencode/native-schedule-capability"
 import { createOpenCodeLoginStart } from "../host-lifetime/opencode-login-start"
 import { registerOpenCodeLoginStartRoutes } from "./routes/opencode-login-start"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
@@ -556,7 +554,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
   const permissionModes = deps.sessionPermissions?.modes ?? new SessionPermissionModes(deps.settings)
-  const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
     permissionModes,
     subagentDepth,
@@ -569,8 +566,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
-    scheduleSettingsActivation,
-    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
@@ -583,8 +578,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => stopMissionActivityCache())
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings, activityCache: missionActivityCache,
     permissionModes,
-    scheduleSettingsActivation,
-    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
@@ -1464,7 +1457,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         const client = await clientForRequest()
         const current = () => { signal.throwIfAborted(); connection?.assertCurrent() }
         const guard = async (session: NonNullable<typeof authorizedSession>) => {
-          await wait(assertOrdinaryMissionScheduleSession(client, session, { signal, current }))
+          assertOrdinaryMissionScheduleSession(session)
           const fresh = await wait(client.session.get({ sessionID: session.id }, { signal }))
           current()
           if (fresh.id !== session.id || !sameLocation(readLocationRef(fresh.location), readLocationRef(session.location))
@@ -1474,11 +1467,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
         }
         if (authorizedSession) await guard(authorizedSession)
-        else if (targetSessionId) {
-          // A supplied create/import ID absent natively still needs the exact
-          // durable reverse-mapping read in the admitted project.
-          await wait(assertOrdinaryMissionScheduleSession(client, { id: targetSessionId, location: runtimeLocation }, { signal, current }))
-        }
+        // A supplied create/import ID may be absent natively: its namespace is still checked.
+        else if (targetSessionId) assertOrdinaryMissionScheduleSession({ id: targetSessionId })
         current()
       } catch (error) {
         if (error instanceof MissionScheduleInputError) {

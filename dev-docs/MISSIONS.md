@@ -6,46 +6,11 @@ dependency-aware tasks, human controls and results.
 Native integration boundaries, private Core service shapes and per-invocation
 lifetime requirements: [Missions native contracts](MISSIONS_NATIVE_CONTRACTS.md).
 
-Recurring passages run in the OpenCode service with CodeNomad closed; never run them
-through a persistent CodeNomad backend. Native qualification: §Validation and
-`MISSIONS_RECURRING_QUALIFICATION.md`.
-
-Unified native schedule controls and passage admission are described in
-[Recurring Missions](MISSIONS_RECURRING.md#unified-native-schedules). Their technical
-schedule RPC and business bridge stay registered independently of desktop presence.
-The calendar owner shares project document exclusion with admission and controls;
-the execution journal retains its task, report and lifecycle contracts. Native
-calendars run only through Code Mode; owned prompt rows can be paused, stopped or
-deleted and must be recreated to run.
-
-## Activation
-
-The **Missions** checkbox in **Customize right panel** uses the regular tab
-visibility preference. The gesture also writes `codenomad.missions` when shown
-or `-codenomad.missions` after confirming hide, in the connected OpenCode
-server's Global configuration. The checkbox takes direct input outside the
-visibility sweep. Closing the panel cancels an open confirmation. A failed write
-sends an app notification and retains the layout choice. The gesture requires a
-direct Global file so OpenCode can observe the write. Reset only changes the
-layout. Project rules still take precedence.
-Other Missions surfaces use their ordinary availability handling.
-
-## Backend routing
-
-The Mission panel, reader, editor and controls resolve the project's `backendOf(instanceId)` for all Mission, schedule, recurrence and passage requests. Playbooks belong to that backend; native profile catalogues and Wayfinder Forms use its root SDK client. Workspace HTTP paths carry the raw workspace ID; presentation uses the qualified occurrence's `instanceId`, completion acknowledgements retain backend-qualified project scope, and request directories remain physical paths. Missing owners fail closed. Attachment and request generations fence reads, follow-up effects and publication; in-flight deduplication and busy cleanup retain their exact operation owner. Dispatched mutations retain their selected backend and durable request identity for explicit reconciliation.
-
-## Ownership
-
-| Concern | Owner |
-| --- | --- |
-| Root sessions, prompts, durable inbox, execution, Forms, permissions | OpenCode V2 |
-| Mission map and role context | Bundled `codenomad.missions` plugin; project-scoped native storage |
-| Workspace/location authorization and browser access | CodeNomad |
-| Checkout isolation and Git policy | Existing CodeNomad worktree/Git modules |
-| Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
+Programmed Missions run in the OpenCode service with CodeNomad closed (§Mission calendar tool); never run them
+through a persistent CodeNomad backend.
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.schedule`,
+`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.program`,
 `mission.control`, `mission.configure`, `mission.delete` and `mission.settings`.
 The coordinator is the topology writer.
 Native RPC schemas use the decoder's portable primitives; strict server codecs
@@ -235,12 +200,8 @@ template and requested choices even after human edits.
 | Coordinator session | `prepare.coordinatorSessionID` selects an eligible idle root for calendar-backed work; omission selects a fresh root per passage. |
 | Followed conversations | `prepare.watchedConversationIDs` carries followed context; a `conversation-message` criterion also supplies its selected conversation. |
 
-Repository activity, GitHub account events, local branch commits, new conversation
-messages, file changes and another Mission's success use the shared
+Repository activity, GitHub account events, local branch commits and file changes use the shared
 [launch-criteria contract](MISSIONS_RECURRING.md#launch-criteria).
-`mission.schedule` lists, reads and controls every calendar-backed document in the
-caller's project, including documents created in the editor. Any owned project session
-may Play, Pause, Stop, Resume, Run now, Check, configure or delete.
 
 `mission.inspect({ configurations: true })` lists the owning backend's saved
 configuration IDs, names and templates. `configurations: "<id>"` reads one complete
@@ -368,15 +329,9 @@ selects an eligible root for a schedule, with a fresh root per passage as the de
 Calendar profiles resolve to complete explicit agent/model selections and pass the
 native catalog check. Launch policy, followed sources, coordinator choice, target kind
 and automatic start participate in the original immutable retry identity.
-Scheduled creation and its first automatic Play use an authenticated agent principal
-bound to that author, creation request and document. The first-Play intent CAS consumes
-the single automatic-start slot. Explicit OFF, missing capabilities and incompatible
-settings refuse activation while keeping the prepared target visible.
+The first-Play intent CAS consumes the single automatic-start slot.
 Document recovery reads the backend's exact retained receipt to release its physical
 permit; its internal observation-only path keeps absent or partial receipts uncertain.
-Before first scheduled dispatch, preparation reads document existence without a
-request selector; held and observation-only recovery reads the exact original receipt.
-Project controls use `mission.schedule` independently of preparation provenance.
 
 ### Agent one-time controls
 
@@ -471,54 +426,22 @@ equivalent agent surfaces:
 | Load a configuration; save instructions; replace/rename, remove or repair a configuration | `inspect.configurations`; `settings` / `configurations` |
 | Global/playbook defaults, role inheritance, resets and deletion preference | `settings` / `preferences` |
 | Project depth, Inherit, empty experimental repair and refresh | `settings` / `depth` |
-| Add/remove/reorder schedule criteria, followed conversations, choose an eligible existing scheduled coordinator | `prepare.launch`; `schedule.configure` or `configure.configuration` |
+| Launch criteria, the coordinator conversation of a programmed Mission; followed conversations of a one-time Mission | `program`; `prepare` |
 | Discover branches, conversations, coordinator candidates and forge | `inspect.project` / `sources`; ordinary file tools for relative file criteria |
 | Read playbook steps, roles and complete instructions | `inspect.project` / `playbook`, with template and optional taskMode |
-| Read lists, tasks, reports, plan changes, passages, history and cleanup | `inspect`, its bounded project views and content/page continuations; `schedule.read` |
+| Read lists, tasks, reports, plan changes, passages, history and cleanup | `inspect`, its bounded project views and content/page continuations |
 | One-time Start/Resume, graceful Pause, Interrupt now, Stop | `control` |
 | Recover coordination or a missing report; request an update | `control` |
-| Edit text or eligible structural configuration, convert immediate/calendar | `configure`; `schedule.configure` |
-| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure`/`schedule` exact receipt reads and `retry` |
-| Schedule Start/Pause/Resume/Stop, Run now, Check and activation/diagnostic | `schedule` |
+| Edit text | `configure` |
+| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure` exact receipt reads and `retry` |
+| Save, pause, resume or delete a programmed Mission | `program` |
 
 Presentation gestures (selection, copy, mark read, opening conversations) remain
 window-local. Authenticated human answers use the human question gate. Scheduled
 preparations can explicitly select the agent's own eligible root. One-time
 preparation uses a fresh root, while `inspect.start` attaches the calling root.
 
-### Agent schedule controls
-
-`mission.schedule({ action: "list", after?, limit? })` reads a bounded project page
-(at most eight entries); `read` takes `missionID` and optional `requestID` for its exact
-receipt. Every mutation takes `missionID`, `action`, a stable `requestID` and
-`expectedRevision` from the current read. `configure` supplies the editor's complete
-configuration, with `missionCriteriaLaunchPolicySchema`, explicit frozen profiles,
-task mode and followed conversations; the backend supplies execution roots and profile
-identity. Its persisted `coordinatorSelectionAuthor` applies the idle-root adoption
-guards at configuration and passage admission, including for human-created documents.
-
-The private bridge discovers exactly one owning backend and revalidates the native
-caller, project, Location, connection and physical checkout. Its signed project-agent
-principal carries the actual session; preparation continuations retain their separate
-creation/request/digest scope. Mutation dispatch requires the native document's positive
-`agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
-same physical holds, payload identity, native CAS, receipt settlement and single-passage
-Run now as public human controls. Play/Resume share settings preparation and preserve
-explicit OFF. Exact completed Play, Pause, Stop, Resume, Run now, configure and delete
-replays read their own retained receipt with no document write or revision change.
-Check always reconciles. Missing, evicted or partial calendar, actor or admission
-proofs retain their original reconciliation path and uncertainty. Changed inputs
-conflict. Lost acknowledgements retain the original hold: read that request's receipt
-without resending or choosing another identity. Deletion replays read the tombstone.
-Public HTTP mutations authenticate their human principal before admission.
-
-`capabilities` shares the panel's passive capability and activation-plan reader.
-`activate` prepares native settings under its stable request and document revision;
-`activation-read` observes that exact preparation without Play. Explicit OFF keeps
-its structured refusal. `configure` also admits eligible one-time documents and
-their editor conversion guard. `retry: true` resumes only an explicitly read partial
-original configure, retaining its request, payload and revision through the shared
-schedule hold.
+### Preparation identity
 
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.
@@ -1593,7 +1516,7 @@ Independent roots use only their own native agent/project permissions.
 The content-addressed bundle is provisioned into the authenticated daemon's
 `config.get` discovery root; backend leases live outside that watched root. Tools,
 their context hook and the passage prompt hook register once at plugin load,
-independently of presence ([MISSIONS_RECURRING.md](MISSIONS_RECURRING.md)); the typed
+independently of presence; the typed
 RPC and the ordinary one-time route register through backend presence, for the
 steps of a calendar run that need them (§Mission calendar tool), and at activation
 when the project's `codenomad-missions/registered-v1/<project>` key exists and a
@@ -1654,7 +1577,7 @@ The creation form (`components/mission-editor.tsx`) saves a Mission whose launch
 
 Agents reach the same operation (`runMissionCalendarOperation`, `server/routes/mission-calendars.ts`) through `mission.program` (`missions/program-tool.ts`, `server/routes/mission-agent-program.ts`): `list`, `save` under a stable `id`, `pause`, `resume` and `delete` for the programmed Missions of the calling conversation's directory, a refusal being an answer with its code. `mission.prepare` refuses launch criteria that repeat with `use-mission-program`.
 
-The schedules the recurring engine (`dev-docs/MISSIONS_RECURRING.md`) left in a directory are taken over by the calendar operations there, whoever asks (`runMissionCalendarOperation`), until none is left for the service connection. The plugin reads them from its storage without that engine (`legacySchedules`, `missions/legacy-schedules.ts`). Each becomes the programmed Mission of the same identity, saved paused; a named coordinator conversation that no longer exists is dropped, so the first launch opens another, and launch criteria no Automation carries make an ordinary prepared Mission instead. The schedule's own Automations are then deleted and its document replaced by the tombstone the engine writes for a deleted schedule (`retireLegacySchedule`, `legacyTombstone`), so the engine keeps reading its storage and a conversation one of its passages created coordinates ordinary Missions again. The programmed Mission is resumed last when the schedule ran with no failed passage holding it, so the two never launch together. A schedule already programmed is only deleted; one whose passage is under way waits for its end; one that fails is left as it is for the next operation. Past runs and counts start again.
+The schedule documents stored in a directory are taken over by the calendar operations there, whoever asks (`runMissionCalendarOperation`), until none is left for the service connection. The plugin reads them from its storage without that engine (`legacySchedules`, `missions/legacy-schedules.ts`). Each becomes the programmed Mission of the same identity, saved paused; a named coordinator conversation that no longer exists is dropped, so the first launch opens another, and launch criteria no Automation carries make an ordinary prepared Mission instead. The schedule's own Automations are then deleted and its document replaced by the tombstone the engine writes for a deleted schedule (`retireLegacySchedule`, `legacyTombstone`), so a conversation one of its passages created coordinates ordinary Missions again. The programmed Mission is resumed last when the schedule ran with no failed passage holding it, so the two never launch together. A schedule already programmed is only deleted; one that fails is left as it is for the next operation. Past runs and counts start again.
 
 `node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-isolated-opencode-cli>` (after `npm run build:missions --workspace @neuralnomads/codenomad`) qualifies it on a private runtime with the bundled plugin and no backend: launch and start with the coordinator `/goal` armed, later runs waiting, an independent task whose root is created, prompted and reported, the next launch replacing the first Mission in the same conversation and finishing after an OpenCode restart, a calendar that launches only once a commit lands on a local branch, and a programming whose first launch starts the Mission prepared with it.
 
@@ -1801,6 +1724,6 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 - Task rows use the session list's `virtua/solid` Virtualizer with the panel as their external scroll owner. `mission-virtual-viewport.ts` measures the start margin through preceding layout changes and zoom. Keep the selected/focused task mounted; other offscreen DOM rows are disposable, while their data pages remain in `mission-task-pages.ts`. Graph endpoints use the virtualizer's cached offsets/sizes for offscreen tasks and measured icon edges for the rail axis; unchanged coordinates and existing edge keys preserve rail nodes. Task continuation is automatic near its sentinel, with explicit Retry only after failure. Exclude that moving sentinel from browser scroll anchoring. Never repair task-tree scrolling to an old focused row after an asynchronous page or graph update. Viewport resize repair requires previously visible, connected focus in an active focused document, with CSS visibility, opacity, inert and ARIA-hidden guards; wheel input cancels its pending scroll adjustment. Keyed row moves share `lib/preserve-list-focus.ts` with SessionList and MissionRows: connected controls regain focus with `preventScroll`, respecting later user focus intent and hidden/inert surfaces. Creation alone uses `mission-panel-scroll.ts` to keep a form control clear of its footer. Validate native wheel scrolling, loaded-page reuse, rail identity, RTL/zoom and keyboard focus with the real components.
 - Directory continuation (`components/mission-list-paging.tsx`) is one automatic sentinel outside all task trees, shared by mission summaries and native schedules; it has no normal paging button or information icon. Read marks one bounded 16-mission window at a time only far enough to cover the loaded summary rows, under visible-panel demand. Hidden/covered trees stop that demand; a failed window parks until the directory's single Retry invokes its exact recovery. Actor-detail and persisted-field windows retain their separate explicit controls. Directory extension adds rows without dropping its earlier pages or changing the task selection.
 - One-time Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Every backend that publishes its loopback bridge provisions it, desktop or standalone. Bridge registrations name only `http://127.0.0.1`: the bridge reuses the HTTP listener only when bound to 127.0.0.1/0.0.0.0 (`acceptsIpv4Loopback`), otherwise (HTTP not requested, IPv6/`localhost`/LAN HTTP-only) it gets an unannounced private listener on a random 127.0.0.1 port. All listeners of one backend share a single `WorktreeDeletionFence` (with its mission holds), so a deletion through HTTPS drains bridge admissions. Window/browser automation stays desktop-only; without a desktop host the bridge's `browser-claim` answers only `purpose: "mission"`. The Missions snapshot distinguishes `host-unavailable` (no bridge, answered without reading OpenCode), `plugin-unavailable` (OpenCode has not loaded it) and `plugin-failed`; never tell users to reconnect CodeNomad for a plugin OpenCode must load. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Preserve authenticated admission, ownership/connection/worktree fences and per-send profile environment whenever a backend owns the coordinator; pass an `unowned` effect to `sendMissionInput` only for effects the plugin's public session API performs completely. One-time map update/control/delete/recovery routes share `server/routes/mission-map-mutation.ts`: creation's fenced connection and worktree-deletion admission, a fresh workspace/connection/location recheck after all preparation, and the permit held through the single unretried RPC. Validate one-time behavior with the isolated `scripts/test-missions-native.mjs` fixture.
-- One-time Missions use the journal `codenomad-missions/v2` with wire/schema version 1 and its one-time receipts. Never read, import, mutate, delete or initialize the `codenomad-missions/authority-*` namespaces, register a managed-owner observer, add `migrateLegacy` or add migration UI (`desktop-plugin.test.ts` traps that namespace access; `managed-owner-plugin.test.ts` keeps the managed-owner observer and authority modules out of the bundle). Rollout requires the qualification fixtures of `MISSIONS_RECURRING_QUALIFICATION.md`, the unified native protocols in `MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md` and §User-journey regression checks above.
+- One-time Missions use the journal `codenomad-missions/v2` with wire/schema version 1 and its one-time receipts. Never read, import, mutate, delete or initialize the `codenomad-missions/authority-*` namespaces, register a managed-owner observer, add `migrateLegacy` or add migration UI (`desktop-plugin.test.ts` traps that namespace access; `managed-owner-plugin.test.ts` keeps the managed-owner observer and authority modules out of the bundle).
 - `packages/server/src/host-lifetime/` holds the private-storage, process-identity and profile-scope primitives Missions uses (`storage`, `private-storage-sync`, `windows-storage`, `process-identity`, `protocol`); never add a persistent CodeNomad backend host to it. Never replace a native ownership gate with a no-op or environment flag, steal a live/unknown owner, log secrets, or include the shared OpenCode daemon in backend cleanup.
 - One-time lifecycle state and actions live in `createMissionLifecycle` (`components/mission-lifecycle-controls.tsx`), surfaced only as the toolbar's primary action and Stop, with Check status for an unresolved request; a read showing that exact request saved with nothing pending settles it without a resend, while its absence never does; family interruption lives in `missions/native-family-interrupt.ts` and follows Explicit execution controls above (`readNativeControlFamily`, never the 32-session display read; never claim a full stop without a complete `descendants` receipt). Do not turn notification recovery into a control-action runner.

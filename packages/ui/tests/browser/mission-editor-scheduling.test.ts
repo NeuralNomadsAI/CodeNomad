@@ -9,10 +9,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { installSourceScrollDelivery } from "./source-scroll-delivery"
 import { fixtureEventStream } from "./fixture-event-stream"
-import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
-import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
-import type { MissionDocument } from "../../../server/src/missions/mission-document"
-import type { MissionJsonValue, MissionMap } from "../../../server/src/missions/model"
+import type { MissionMap } from "../../../server/src/missions/model"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import type {} from "./fixtures/mission-editor-scheduling"
 
@@ -29,17 +26,10 @@ after(async () => { try { await browser?.close() } finally { await events?.close
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m", variant: "precise" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m", variant: "fast" } } } }
 const objective = "Objective"
-async function createDocument() {
-  const values = new Map<string, MissionJsonValue>()
-  const store = new NativeMissionDocumentStore({ get: async key => values.get(key), compareAndSet: async (key, value) => { values.set(key, value) } }, "project", "/fixture")
-  return store.create("msn_fixture", { title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", profiles,
-    taskMode: "native", watchedConversationIDs: [], roots: [{ mode: "directory-only", directory: "/fixture" }], profileID: "profile", executionHost: "local",
-    launch: { when: [{ kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }] } }, Date.now(), () => true)
-}
 async function setup(page: Page, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
   const errors: string[] = [], posts: Array<Record<string, any>> = [], deletions: Array<Record<string, any>> = [], reads: URL[] = []
-  let doc = await createDocument(), lose = false, proof = true, contentProof = true, original: Record<string, any> | undefined
+  let lose = false, proof = true, contentProof = true
   let journal: MissionMap = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/fixture",
     title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", status: "active", runState: "running",
     coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false,
@@ -70,46 +60,26 @@ async function setup(page: Page, locale = "en", theme = "dark", taskCount = 0) {
     }
     if (request.method() === "DELETE") { deletions.push({ path: pathname, posted: posts.length, ...request.postDataJSON() }); return route.fulfill({ json: {} }) }
     if (request.method() !== "GET") {
-      const body = request.postDataJSON(); posts.push(body); original = body
+      const body = request.postDataJSON(); posts.push(body)
       // A programmed Mission is saved under the identity the form names; its answer is the list.
-      if (pathname.includes("/missions/calendars/")) doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration } }
       if (pathname.includes("/missions/calendars/")) return lose ? route.abort("connectionreset") : route.fulfill({ json: { calendars: [{
         id: pathname.split("/").at(-1), title: body.configuration.title, paused: body.paused === true, missionID: "msn_fixture", launch: body.configuration.launch, mission: {}, rules: [] }] } })
       if (pathname.endsWith("/missions")) return lose ? route.abort("connectionreset")
         : route.fulfill({ json: { mission: { ...journal, objective: body.objective, notes: body.notes, title: body.title } } })
-      if (pathname.endsWith("/scheduled")) {
-        doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration }, revision: 0, state: "paused", firstPlayedAt: null, calendars: [] }
-      } else doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration }, revision: doc.revision + 1 }
-      if (lose) return route.abort("connectionreset")
-      return route.fulfill({ json: receipt(body) })
+      return lose ? route.abort("connectionreset") : route.fulfill({ json: {} })
     }
     reads.push(link)
     const content = missionContentFixture(request.url(), request.method(), contentProof ? [journal] : [])
     if (content) return route.fulfill({ json: content })
-    if (pathname.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/msn_fixture")) {
       const [mission] = panelMissions([proof ? journal : { ...journal, history: [] }])
       return route.fulfill({ json: { available: true, projectID: "project", mission, cleanups: [] } })
     }
-    if (pathname.endsWith("/schedule") || pathname.includes("/requests/")) {
-      const requestID = link.searchParams.get("requestID") ?? (pathname.includes("/requests/") ? pathname.split("/").at(-1) : undefined)
-      if (requestID && (!original || requestID !== original.requestID)) {
-        errors.push(`unexpected receipt requestID: ${requestID} (expected ${original?.requestID ?? "none"})`)
-        return route.fulfill({ status: 400, json: { error: "foreign requestID" } })
-      }
-      return route.fulfill({ json: requestID && original && requestID === original.requestID && proof
-        ? receipt(original) : { ...missionScheduleView(doc), ...(requestID ? { pending: true } : {}) } })
-    }
     return route.fulfill({ json: { available: true, projectID: "project", missions: [], cleanups: [], generatedAt: 1 } })
   })
-  function receipt(input: Record<string, any>) {
-    const result = missionScheduleView(doc)
-    return { ...result, pending: false, document: { ...result.document, control: { requestID: input.requestID,
-      action: input.action, expectedRevision: input.expectedRevision, pending: false } } }
-  }
   await page.goto(url)
   await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme)
-  return { errors, posts, deletions, reads, set prepared(value: boolean) { journal = { ...journal, runState: value ? "prepared" : "running" } }, get doc() { return doc }, set doc(value: MissionDocument) { doc = value },
+  return { errors, posts, deletions, reads, set prepared(value: boolean) { journal = { ...journal, runState: value ? "prepared" : "running" } },
     set lose(value: boolean) { lose = value }, set proof(value: boolean) { proof = value },
     set contentProof(value: boolean) { contentProof = value } }
 }

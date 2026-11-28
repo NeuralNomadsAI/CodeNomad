@@ -296,20 +296,17 @@ try {
     const preferred = { template: "all", profiles, taskMode: "independent" }
     uiPreferences = { settings: { missionProfileDefaults: [{ ...preferred, profiles: { ...profiles, coordinator: { agent: "reviewer" } } }] } }
     const before = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    const { DatabaseSync } = await import("node:sqlite")
-    const database = new DatabaseSync(process.env.OPENCODE_DB, { readOnly: true })
-    try {
-      database.exec("PRAGMA busy_timeout = 10000")
-      const rows = () => database.prepare("SELECT key, value FROM kv WHERE key LIKE ? ORDER BY key").all("%codenomad-missions/%")
-      const retained = rows(), reads = preferenceReads, turns = requests.length
-      await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
-        caller.id, "preferences-mismatch"), /Coordinator differs from the profile selected by Missions preferences\. Pass profiles\.coordinator \(for example \{\}\) to override that preference\./)
+    let adopted
+    {
+      // A conversation on another agent than the preferred coordinator takes that agent and coordinates.
+      const other = await client.session.create({ location, title: "Private preference adoption", agent: "build",
+        model: { providerID: "fixture", id: "fixture" } })
+      const reads = preferenceReads
+      adopted = await invoke("inspect", { start: { objective: "Adopt the preferred coordinator", template: "custom" } }, other.id, "preferences-mismatch")
       assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
-      const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-      assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)
-      assert.deepEqual(rows(), retained, "Coordinator mismatch writes no creation event, document or retained intent")
-      assert.equal(requests.length, turns, "Coordinator mismatch admits no provider turn")
-    } finally { database.close() }
+      assert.equal(adopted.selection.profiles.coordinator.agent, "reviewer")
+      assert.equal((await client.session.get({ sessionID: other.id })).agent, "reviewer", "The conversation takes the coordinator's agent")
+    }
     uiPreferences = { settings: { missionProfileDefaults: [preferred] } }
     const start = { objective: "Persist owning-backend preferences", template: "custom" }
     const selected = await invoke("inspect", { start }, caller.id, "preferences-create")
@@ -348,12 +345,12 @@ try {
     const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
       caller.id, "preferences-finish")
     assert.equal(finished.mission.status, "completed")
-    for (const mission of [prepared.mission, finished.mission]) {
+    for (const mission of [adopted.mission, prepared.mission, finished.mission]) {
       const deletion = { missionID: mission.id, requestID: `preferences-delete-${mission.id}`, expectedRevision: mission.revision }
       assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deletion, mission.objective)
     }
     assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.length, before.missions.length)
-    gate("nonempty owner preferences: coordinator mismatch has no effects, both creation paths persist profiles/policy/provenance and replay frozen choices")
+    gate("nonempty owner preferences: a conversation on another agent takes the coordinator's, both creation paths persist profiles/policy/provenance and replay frozen choices")
   }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
   assert.equal(inspected.selection.preferences, undefined, "The owning fixture backend supplied readable preferences")

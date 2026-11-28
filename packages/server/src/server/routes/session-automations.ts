@@ -102,13 +102,7 @@ async function resolveOwnedSession(
   const location = readLocationRef(session.location)
   if (!await manager.ownsLocation(workspaceId, location, client, { signal })) return { kind: "forbidden" as const }
   const verifyOrdinary = async (target: typeof session, targetLocation: ReturnType<typeof readLocationRef>) => {
-    await assertOrdinaryMissionScheduleSession(client, {
-      id: target.id,
-      location: targetLocation,
-      metadata: target.metadata,
-      model: target.model,
-      title: target.title,
-    }, { signal, current })
+    assertOrdinaryMissionScheduleSession(target)
   }
   try {
     await verifyOrdinary(session, location)

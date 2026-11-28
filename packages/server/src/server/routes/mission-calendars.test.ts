@@ -5,7 +5,7 @@ import { registerMissionRoutes } from "./missions"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { controlAgentMissionProgram } from "./mission-agent-program"
 import { missionProgramInput } from "../../missions/program-tool"
 import { legacyScheduleKey } from "../../missions/legacy-schedules"
 import { missionTombstoneSchema } from "../../missions/mission-document"
@@ -72,8 +72,8 @@ async function fixture() {
   const rpc = client.rpc(), mission = async (missionID: string) => (await rpc.mission({ missionID })).mission
   // An agent's conversation of the project: mission.program reaches the same operation through the private bridge.
   sessions.set("ses_agent", { id: "ses_agent", projectID, location: { directory } })
-  const agent = (program: object, sessionID = "ses_agent") => controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence,
-    settings: { getProfileScope: () => ({ key: "profile" }) } } as never, sessionID, { kind: "schedule", input: { program } }, new AbortController().signal) as Promise<any>
+  const agent = (program: object, sessionID = "ses_agent") => controlAgentMissionProgram({ workspaceManager: manager, worktreeDeletionFence: fence,
+    settings: { getProfileScope: () => ({ key: "profile" }) } } as never, sessionID, program, new AbortController().signal) as Promise<any>
   // A schedule the recurring engine left in the plugin's storage, with the native Automation that woke it.
   const legacy = (id: string, extra: Record<string, unknown> = {}, launch: unknown = configuration().launch) => {
     automations.push({ id: `aut_old_${id}`, sessionID: `ses_cn_schedule_${id}`, name: `cm_${id}`, status: "active", runCount: 3, tz: "UTC" })
@@ -174,19 +174,14 @@ test("the schedules the recurring engine left become programmed Missions, runnin
     const named = f.stored("msn_running"); named.configuration.coordinatorSessionID = "ses_deleted"
     const { calendars } = (await f.call("GET")).body
     assert.deepEqual(calendars.map((item: any) => [item.id, item.title, item.paused, item.mission.objective, item.mission.coordinatorSessionID]).sort(),
-      [["msn_held", "Old msn_held", true, "Old instructions", undefined], ["msn_paused", "Old msn_paused", true, "Old instructions", undefined],
+      [["msn_busy", "Old msn_busy", false, "Old instructions", undefined], ["msn_held", "Old msn_held", true, "Old instructions", undefined], ["msn_paused", "Old msn_paused", true, "Old instructions", undefined],
         ["msn_running", "Old msn_running", false, "Old instructions", undefined]])
-    assert.deepEqual(["msn_running", "msn_held", "msn_paused"].map(f.retired), [true, true, true], "the schedules are deleted")
-    const old = () => f.automations.map(item => String(item.id)).filter(id => id.startsWith("aut_old_"))
-    assert.deepEqual(old(), ["aut_old_msn_busy"], "their own Automations are gone")
+    assert.deepEqual(["msn_running", "msn_held", "msn_paused", "msn_busy"].map(f.retired), [true, true, true, true], "the schedules are deleted, the one whose passage was under way too")
+    assert.deepEqual(f.automations.map(item => String(item.id)).filter(id => id.startsWith("aut_old_")), [], "their own Automations are gone")
     assert.equal((await f.mission(calendars[0].missionID)).runState, "prepared")
-    assert.equal(f.retired("msn_busy"), false, "a schedule whose passage is under way waits for its end")
     const count = f.automations.length
     await f.call("GET")
     assert.equal(f.automations.length, count, "taken over once")
-    delete f.stored("msn_busy").pending
-    assert.equal((await f.call("GET")).body.calendars.length, 4)
-    assert.deepEqual([f.retired("msn_busy"), old()], [true, []])
   } finally { await f.close() }
 })
 
