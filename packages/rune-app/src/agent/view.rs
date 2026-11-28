@@ -1,10 +1,20 @@
 use crate::{Phase, State, components::button, strings::t};
 use rune::{Cx, El, col, text};
-use rune_theme_codenomad::interruption;
 use rune_theme_codenomad::{
-    Space, field_kit,
-    layout::{self, Layout, field, textarea},
+    Space, TextRole, field_kit, form_controls,
+    git_panel::{self, ButtonLook},
+    interruption,
+    layout::{self, Layout, textarea},
+    shell,
 };
+
+pub(crate) fn offline_status(a: &super::Ui) -> Option<El> {
+    (!a.online && a.known).then(|| {
+        form_controls::field_description(t("rune.reconnecting"))
+            .role("status")
+            .key("pending-offline-status")
+    })
+}
 pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> El {
     let Some(a) = &s.agent else { return rune::el() };
     let scope = s.input_scope.clone();
@@ -28,16 +38,19 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
         rune_theme_codenomad::layout::action_row()
             .key("agent-actions")
             .separate(Space::Sm)
-            .child(button(
-                "model-picker",
-                label,
-                a.busy,
-                crate::screen::action(&scope, |s: &mut State| {
-                    if let Some(a) = s.agent.as_mut() {
-                        a.toggle_picker()
-                    }
-                }),
-            ))
+            .child(
+                button(
+                    "model-picker",
+                    label,
+                    a.busy,
+                    crate::screen::action(&scope, |s: &mut State| {
+                        if let Some(a) = s.agent.as_mut() {
+                            a.toggle_picker()
+                        }
+                    }),
+                )
+                .expanded(a.picker),
+            )
             .child(button(
                 "controls-refresh",
                 t("rune.refresh_controls"),
@@ -60,7 +73,10 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             )),
     );
     if a.error {
-        body = body.child(text(t("rune.control_error")).key("agent-error"))
+        body = body.child(form_controls::field_error(
+            "agent-error",
+            t("rune.control_error"),
+        ));
     }
     if a.picker {
         let mut list = col().key("model-items").full_width().separate(Space::Xs);
@@ -71,19 +87,28 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             .filter(|m| m.label.to_lowercase().contains(&query))
         {
             let reference = model.reference.clone();
-            list = list.child(button(
-                &format!("model-{}", reference),
-                &model.label,
-                a.model_locked() || s.phase != Phase::Ready,
-                crate::screen::action(&scope, move |s: &mut State| {
-                    if let Some(a) = s.agent.as_mut() {
-                        a.choose_model(reference.clone())
-                    }
-                }),
-            ));
+            let selected = Some(&model.reference) == a.current.as_ref();
+            list = list.child(
+                git_panel::button(
+                    &model.label,
+                    if selected {
+                        ButtonLook::Neutral
+                    } else {
+                        ButtonLook::Flat
+                    },
+                    a.model_locked() || s.phase != Phase::Ready,
+                    crate::screen::action_tx(&scope, move |s: &mut State, _tx| {
+                        if let Some(a) = s.agent.as_mut() {
+                            a.choose_model(reference.clone())
+                        }
+                    }),
+                )
+                .checked(selected)
+                .key(format!("model-{}", model.reference)),
+            );
         }
         body = body.child(
-            field(&a.search)
+            layout::hinted_field(&a.search, t("rune.find_model"))
                 .label(t("rune.find_model"))
                 .input_mode(rune::InputMode::Search)
                 .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
@@ -104,54 +129,93 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
                 rune_theme_codenomad::layout::action_row()
                     .key("pending-navigation")
                     .separate(Space::Sm)
-                    .child(button(
-                        "pending-prev",
-                        t("interruption.previous"),
-                        i == 0,
-                        crate::screen::action(&scope, move |s| {
-                            if let Some(a) = &mut s.agent {
-                                a.select_request(prev.clone());
-                            }
-                        }),
-                    ))
-                    .child(text(format!("{} / {}", i + 1, ids.len())))
-                    .child(button(
-                        "pending-next",
-                        t("interruption.next"),
-                        i + 1 == ids.len(),
-                        crate::screen::action(&scope, move |s| {
-                            if let Some(a) = &mut s.agent {
-                                a.select_request(next.clone());
-                            }
-                        }),
-                    )),
+                    .child(
+                        git_panel::icon_button(
+                            &shell::icons::BACK,
+                            t("interruption.previous"),
+                            i == 0,
+                            None,
+                            crate::screen::action_tx(&scope, move |s: &mut State, _tx| {
+                                if let Some(a) = &mut s.agent {
+                                    a.select_request(prev.clone());
+                                }
+                            }),
+                        )
+                        .key("pending-prev"),
+                    )
+                    .child(
+                        form_controls::field_description(&format!("{} / {}", i + 1, ids.len()))
+                            .role("status")
+                            .key("pending-position"),
+                    )
+                    .child(
+                        git_panel::icon_button(
+                            &shell::icons::FORWARD,
+                            t("interruption.next"),
+                            i + 1 == ids.len(),
+                            None,
+                            crate::screen::action_tx(&scope, move |s: &mut State, _tx| {
+                                if let Some(a) = &mut s.agent {
+                                    a.select_request(next.clone());
+                                }
+                            }),
+                        )
+                        .key("pending-next"),
+                    ),
             );
         }
         let (content, footer) = if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected) {
-            let mut panel = col()
-                .separate(Space::Xs)
-                .full_width()
-                .child(text(t("permissionApproval.kind.permission")));
-            if !p.action.is_empty() {
-                panel = panel.child(text(&p.action));
+            let header = if p.action.is_empty() {
+                form_controls::form_title(t("permissionApproval.kind.permission"))
+                    .key("form-eyebrow")
+            } else {
+                form_controls::form_header(
+                    t("permissionApproval.kind.permission"),
+                    &p.action,
+                    false,
+                )
+            };
+            let mut panel = col().separate(Space::Sm).full_width().child(header);
+            if let Some(status) = offline_status(a) {
+                panel = panel.child(status);
             }
-            for resource in &p.resources {
-                panel = panel.child(text(resource).wrap().selectable(true))
+            if !p.resources.is_empty() {
+                let mut resources = col()
+                    .key("permission-resources")
+                    .full_width()
+                    .pad(Space::Sm)
+                    .separate(Space::Xs)
+                    .inset_surface();
+                for resource in &p.resources {
+                    resources = resources.child(
+                        text(resource)
+                            .text_role(TextRole::Mono)
+                            .wrap_anywhere()
+                            .selectable(true),
+                    );
+                }
+                panel = panel.child(resources);
             }
             if !p.message.is_empty() {
-                panel = panel.child(text(&p.message).wrap().selectable(true))
+                panel = panel.child(
+                    form_controls::field_description(&p.message)
+                        .selectable(true)
+                        .key("permission-message"),
+                );
             }
             let id = p.id.clone();
-            panel = panel.child(
-                textarea(&a.reasons[&p.id])
-                    .label(t("rune.reason"))
-                    .on_edit(crate::screen::edit(
-                        &scope,
-                        crate::screen::Editor::Reason(id),
-                    ))
-                    .build(&field_kit(layout::dark()))
-                    .key(format!("reason-{}", p.id)),
-            );
+            panel = panel
+                .child(form_controls::field_heading(t("rune.reason"), false).a11y_hidden())
+                .child(
+                    textarea(&a.reasons[&p.id])
+                        .label(t("rune.reason"))
+                        .on_edit(crate::screen::edit(
+                            &scope,
+                            crate::screen::Editor::Reason(id),
+                        ))
+                        .build(&field_kit(layout::dark()))
+                        .key(format!("reason-{}", p.id)),
+                );
             let mut actions = rune_theme_codenomad::layout::action_row().separate(Space::Sm);
             for (key, label, decision) in [
                 ("allow_once", "rune.allow_once", "once"),
