@@ -68,7 +68,6 @@ enum Operation {
 enum Refused {
     InputInvalid,
     Unsupported(Unsupported),
-    CoordinatorProfile,
 }
 
 enum Outcome {
@@ -164,13 +163,6 @@ fn outcome_response(outcome: Outcome) -> Result<Json<Value>, Error> {
                 "reason": reason.as_str(),
             })),
         )),
-        Outcome::Refused(Refused::CoordinatorProfile) => Err((
-            Status::UNPROCESSABLE_ENTITY,
-            Json(json!({
-                "error": "The conversation does not run the coordinator's agent and model",
-                "code": "calendar-coordinator-profile",
-            })),
-        )),
         Outcome::Refused(Refused::InputInvalid) => Err((
             Status::BAD_REQUEST,
             Json(json!({ "error": "Invalid Mission calendar configuration", "code": "calendar-input-invalid" })),
@@ -235,18 +227,6 @@ async fn save_calendar(
     };
     if let Err(reason) = mission_calendar_automations(&config, id, None) {
         return Ok(Some(Refused::Unsupported(reason)));
-    }
-    // Check coordinator profile upfront before creating or modifying anything.
-    if !restoring
-        && let Some(sid) = config["coordinatorSessionID"].as_str()
-        && let Ok((status, body)) =
-            scope.request(app, Method::GET, &format!("/api/session/{sid}"), &[], None, 10, 1024 * 1024).await
-        && status.is_success()
-    {
-        let named = body.get("data").unwrap_or(&body);
-        if !bridge::matches_execution(&config["profiles"]["coordinator"], named) {
-            return Ok(Some(Refused::CoordinatorProfile));
-        }
     }
     let existing = calendars.list().await?.into_iter().find(|item| item.id == id);
     let current = match existing.and_then(|item| item.mission_id) {
@@ -324,7 +304,7 @@ async fn take_over_legacy(ctx: &SaveContext<'_>, schedule: &Value) -> Result<(),
         let Ok(mut config) = parse_calendar_configuration(&Value::Object(stripped), false) else {
             return Ok(());
         };
-        if let Some(sid) = config["coordinatorSessionID"].as_str().map(str::to_owned)
+        if let Some(sid) = config["coordinatorSessionID"].as_str().filter(|s| *s != "." && *s != "..").map(str::to_owned)
             && let Ok((status, body)) =
                 scope.request(app, Method::GET, &format!("/api/session/{sid}"), &[], None, 10, 1024 * 1024).await
             && status == Status::NOT_FOUND
@@ -627,7 +607,6 @@ pub(super) async fn agent_program(app: Shared, scope: Scope, row: Value, raw: &V
         Outcome::Refused(Refused::Unsupported(reason)) => {
             json!({ "refused": "calendar-unsupported", "reason": reason.as_str() })
         }
-        Outcome::Refused(Refused::CoordinatorProfile) => json!({ "refused": "calendar-coordinator-profile" }),
         Outcome::Calendars(calendars) => {
             json!({ "programs": calendars.iter().map(agent_program_view).collect::<Vec<_>>() })
         }

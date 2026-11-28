@@ -558,63 +558,43 @@ async fn http_routes_lifecycle_profile_refusal_legacy_takeover_and_restore() {
     assert_eq!(unsup_body["code"], "calendar-unsupported");
     assert_eq!(unsup_body["reason"], "one-time");
 
-    // 3. Coordinator profile mismatch -> 422 calendar-coordinator-profile with zero side effects.
+    // 3. A named conversation running another model/variant is accepted (#1831),
+    // prepares the Mission in that conversation, and edits before first launch replace it.
     state.lock().unwrap().sessions.insert(
         "ses_named".into(),
         json!({
             "id": "ses_named", "projectID": "prj_cal", "parentID": null,
             "location": { "directory": dir_str },
-            "agent": "build", "model": { "providerID": "provider", "id": "model", "variant": "high" }
+            "agent": "other", "model": { "providerID": "provider", "id": "model", "variant": "high" }
         }),
     );
-    let mut named_cfg = sample_config("Named", cron.clone());
-    named_cfg["coordinatorSessionID"] = json!("ses_named");
-    let mismatch = client
-        .put(format!("{root}/cal_named"))
-        .json(&json!({ "configuration": named_cfg }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(mismatch.status(), Status::UNPROCESSABLE_ENTITY);
-    assert_eq!(mismatch.json::<Value>().await.unwrap()["code"], "calendar-coordinator-profile");
-    assert!(state.lock().unwrap().automations.is_empty());
-    assert!(state.lock().unwrap().missions.is_empty());
-
-    // Agent bridge returns refusal object directly (not error).
     state.lock().unwrap().sessions.insert(
         "ses_agent".into(),
         json!({ "id": "ses_agent", "projectID": "prj_cal", "parentID": null, "location": { "directory": dir_str } }),
     );
-    let agent_refused = bridge_program(
-        &app,
-        &secret,
-        "ses_agent",
-        json!({ "action": "save", "id": "cal_named", "configuration": named_cfg }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(agent_refused, json!({ "refused": "calendar-coordinator-profile" }));
-
-    // 4. Matching coordinator profile saves, prepares Mission, and edits replace pristine Mission reusing coordinator.
-    state.lock().unwrap().sessions.insert(
-        "ses_named".into(),
-        json!({
-            "id": "ses_named", "projectID": "prj_cal", "parentID": null,
-            "location": { "directory": dir_str },
-            "agent": "build", "model": { "providerID": "provider", "id": "model" }
-        }),
-    );
-    let saved: Value = client
+    let mut named_cfg = sample_config("Named", cron.clone());
+    named_cfg["coordinatorSessionID"] = json!("ses_named");
+    let saved_res = client
         .put(format!("{root}/cal_named"))
         .json(&json!({ "configuration": named_cfg }))
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    assert_eq!(saved_res.status(), Status::OK);
+    let saved: Value = saved_res.json().await.unwrap();
     let first_mid = saved["calendars"][0]["missionID"].as_str().unwrap().to_owned();
     assert_eq!(state.lock().unwrap().missions.get(&first_mid).unwrap()["coordinatorSessionId"], "ses_named");
+
+    // Agent bridge returns refusal object directly for unsupported criteria.
+    let agent_refused = bridge_program(
+        &app,
+        &secret,
+        "ses_agent",
+        json!({ "action": "save", "id": "cal_unsup", "configuration": sample_config("One-time", json!({ "when": [] })) }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(agent_refused, json!({ "refused": "calendar-unsupported", "reason": "one-time" }));
 
     // Edit before first launch deletes old pristine Mission and creates a new one in the same conversation.
     let edited: Value = client
