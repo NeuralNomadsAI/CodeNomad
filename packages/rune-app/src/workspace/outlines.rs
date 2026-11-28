@@ -303,3 +303,215 @@ pub(crate) fn invalidate(s: &mut State, backend: &Backend) {
     s.saved_outlines.invalidate(backend);
     (s.wake)();
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use codenomad_client::timeline::{Entry as TimelineEntry, Kind};
+    use std::{fs, path::PathBuf, time::Duration};
+
+    const ROOT: &str = "/workspace/outlines-test";
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let parent =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/rune-outlines-tests");
+            fs::create_dir_all(&parent).unwrap();
+            let dir = parent.join(format!(
+                "trial-outlines-{}",
+                codenomad_client::http::client_id().unwrap()
+            ));
+            fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn saved_outline(server: &str, session: &str, msg_id: &str) -> Arc<Outline> {
+        let saved = serde_json::from_value(serde_json::json!({
+            "identity": {
+                "server": server,
+                "project": "project-1",
+                "root": ROOT,
+                "directory": ROOT,
+                "session": session,
+                "undo": null,
+            },
+            "checkpoints": [
+                {
+                    "after": -1,
+                    "through": 0,
+                    "digest": "a".repeat(64),
+                }
+            ]
+        }))
+        .unwrap();
+        Arc::new(Outline {
+            entries: vec![TimelineEntry {
+                id: msg_id.into(),
+                seq: 0,
+                kind: Kind::Assistant,
+                tools: 0,
+                reasoning: 0,
+                text: Some(16),
+                tool_name: None,
+                layout: Some("T".into()),
+                omitted: None,
+            }],
+            total: 1,
+            cacheable: true,
+            saved: Some(saved),
+        })
+    }
+
+    fn attested_backend(server: &str, session: &str) -> Backend {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let server_id = server.to_owned();
+        let mut backend = platform::block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let reply = serde_json::json!({
+                    "apiContract": 1,
+                    "serverId": server_id,
+                })
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+            let backend = Backend::connect(&base, "").await.unwrap();
+            backend.attest_server().await.unwrap();
+            let _ = task.await;
+            backend
+        });
+        assert_eq!(backend.client.server_identity(), Some(server));
+        backend.session = session.into();
+        backend.session_directory = Some(ROOT.into());
+        backend
+    }
+
+    fn drain_cache(cache: &mut Cache, store: &Store) {
+        let wake: rune::Waker = Arc::new(|| {});
+        platform::block_on(async {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                cache.poll(store, wake.clone());
+                if cache.started
+                    && cache.loading.is_none()
+                    && cache.saving.is_none()
+                    && !cache.dirty
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "outline cache did not settle"
+                );
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        });
+    }
+
+    #[test]
+    fn outline_invalidated_before_freeze_is_not_reimported_after_failed_clear() {
+        let dir = TestDir::new();
+        let store = platform::block_on(Store::open(dir.0.join("rune"))).unwrap();
+        let outline_a = saved_outline("srv-1", "ses-a", "msg-a");
+        let outline_b = saved_outline("srv-1", "ses-b", "msg-b");
+        let encoded = timeline::encode_saved_outlines(&[outline_a, outline_b]);
+        platform::block_on(store.save_outlines(encoded)).unwrap();
+
+        let backend_a = attested_backend("srv-1", "ses-a");
+        let backend_b = attested_backend("srv-1", "ses-b");
+
+        let mut cache = Cache::default();
+        // Simulate an in-flight startup load interrupted by an invalidation and a failed Clear.
+        let (_pending_tx, pending_rx) = bounded(1);
+        cache.started = true;
+        cache.loading = Some(pending_rx);
+
+        cache.invalidate(&backend_a);
+        let _ = cache.begin_freeze();
+        cache.restore_after_failed_mutation();
+
+        drain_cache(&mut cache, &store);
+
+        assert!(
+            !cache
+                .entries
+                .iter()
+                .any(|entry| entry.outline.saved_for(&backend_a, ROOT)),
+            "invalidated outline must not be re-imported after a failed Clear"
+        );
+        assert!(
+            cache
+                .entries
+                .iter()
+                .any(|entry| entry.outline.saved_for(&backend_b, ROOT)),
+            "non-invalidated outline must still be restored"
+        );
+
+        let persisted = platform::block_on(store.load_outlines())
+            .unwrap()
+            .expect("rewritten outlines file");
+        let decoded = timeline::decode_saved_outlines(&persisted);
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].saved_for(&backend_b, ROOT));
+    }
+
+    #[test]
+    fn outline_invalidated_during_freeze_is_not_reimported_after_failed_clear() {
+        let dir = TestDir::new();
+        let store = platform::block_on(Store::open(dir.0.join("rune"))).unwrap();
+        let outline_a = saved_outline("srv-1", "ses-a", "msg-a");
+        let outline_b = saved_outline("srv-1", "ses-b", "msg-b");
+        let encoded = timeline::encode_saved_outlines(&[outline_a, outline_b]);
+        platform::block_on(store.save_outlines(encoded)).unwrap();
+
+        let backend_a = attested_backend("srv-1", "ses-a");
+        let backend_b = attested_backend("srv-1", "ses-b");
+
+        let mut cache = Cache::default();
+        // Freeze before the initial disk load ever started, then invalidate while frozen.
+        let _ = cache.begin_freeze();
+        cache.invalidate(&backend_a);
+        cache.restore_after_failed_mutation();
+
+        drain_cache(&mut cache, &store);
+
+        assert!(
+            !cache
+                .entries
+                .iter()
+                .any(|entry| entry.outline.saved_for(&backend_a, ROOT)),
+            "outline invalidated while frozen before initial load must not be imported"
+        );
+        assert!(
+            cache
+                .entries
+                .iter()
+                .any(|entry| entry.outline.saved_for(&backend_b, ROOT))
+        );
+
+        let persisted = platform::block_on(store.load_outlines())
+            .unwrap()
+            .expect("rewritten outlines file");
+        let decoded = timeline::decode_saved_outlines(&persisted);
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].saved_for(&backend_b, ROOT));
+    }
+}
