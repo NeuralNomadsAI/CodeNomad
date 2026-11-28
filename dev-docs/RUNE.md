@@ -31,12 +31,13 @@ Shared menus focus their container when opened by pointer—entering items direc
 
 ## Tests
 
-The compiler checks what TypeScript needs tests for: types, exhaustive matches, absent values, ownership. Tests cover the rest, with as few as do it.
+Tests earn their upkeep: one that breaks whenever the code moves without ever finding a fault costs more than it protects. The compiler already checks what TypeScript needs tests for: types, exhaustive matches, absent values, ownership.
 
 - **Write a test where a mistake destroys something or cannot be seen**: the server, installation and updates, data (files, Git, authentication), what is parsed from the network or the disk, concurrency. A fix there starts with the test that fails without it.
-- **Look at the interface.** A visual change is ready when its screen, captured beside the original application running on the same data at desktop and phone widths, shows it. Never write tests of the element tree's shape, sizes or colours as evidence of parity.
+- **What is visual is checked visually.** A visual change is ready when its screen, captured beside the original application running on the same data at desktop and phone widths, shows it. Never write tests of the element tree's shape, sizes or colours as evidence of parity.
 - **Interface tests cover behaviour a capture cannot show**: focus and keyboard, accessibility roles and names, error states, a crash that happened.
-- One test per behaviour; none restates the implementation or what the compiler rejects. A screen that is rebuilt drops the structure tests of the one it replaces.
+- **Use the standard harness**: `#[test]`, `cargo test` and plain assertions through the function callers use. No home-made test framework, and no helper or fixture layer rebuilt where one exists.
+- **A test states a behaviour, not the implementation**, so it survives a refactor that keeps the behaviour. One that keeps breaking without finding a fault is rewritten against the behaviour or removed; a screen that is rebuilt drops the structure tests of the one it replaces.
 
 ## Platform
 
