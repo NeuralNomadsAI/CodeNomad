@@ -2,17 +2,10 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionActor, MissionActorActivity, MissionMap } from "../../../server/src/api-types"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
-import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { inlineMissionEntry, missionToolbarAction, selectedMissionTitle, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
-import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
-import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
-import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
-import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
-import { BUILT_IN_COLOR_SCHEMES } from "../../src/lib/theme-scheme"
 
 let browser: Browser, url: string
 before(async () => {
@@ -34,11 +27,14 @@ function mission(id: string, patch: Partial<MissionMap> = {}): MissionMap {
       blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }], ...patch }
 }
 
-async function open(missions: () => MissionMap[], activity: () => Array<{ missionId: string; actors: MissionActorActivity[] }>,
-  schedules: RecurrenceSchedule[] = []) {
+async function open(missions: () => MissionMap[], activity: () => Array<{ missionId: string; actors: MissionActorActivity[] }>) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
-  const errors: string[] = [], recoveries: unknown[] = []
+  const errors: string[] = [], recoveries: unknown[] = [], taskMarkReads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  page.on("request", request => {
+    const input = request.url().endsWith("/missions/panel-page") ? request.postDataJSON() : undefined
+    if (input?.source === "task-marks") taskMarkReads.push(`${input.missionID}@${input.window.offset}`)
+  })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true,
     loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(localStorage.getItem("fixture-native") ?? "null") }),
@@ -47,36 +43,12 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions()),
     generatedAt: Date.now(), discardedEvents: 0, activity: { generatedAt: Date.now(), missions: activity() } } }))
-  // The real bounded source/projections include its coordinator and one independent actor.
-  const current = (id: string) => {
-    const schedule = schedules.find(item => item.id === id), passageID = schedule?.pending?.passageID ?? null
-    return { passageID, source: passageID ? { owner: "daily" as const, projectID: "project", scheduleID: id, passageID, missionID: passageID, digest: "a".repeat(43) } : undefined,
-      map: passageID ? mission(passageID, { coordinatorSessionId: schedule!.pending!.conversationID,
-        actors: [actor(schedule!.pending!.conversationID!), actor("ses_independent", "specialist")] }) : undefined }
-  }
-  await page.route(url => url.pathname.endsWith("/current"), route => {
-    const id = new URL(route.request().url()).pathname.split("/").at(-2)!, value = current(id)
-    return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: "project", scheduleID: id, passageID: value.passageID, ...(value.source ? { source: value.source } : {}) } })
-  })
-  await page.route(url => /\/current\/[^/]+\/page$/.test(url.pathname), route => {
-    const input = recurrenceCurrentPageInput.parse(route.request().postDataJSON()), { map, source } = current(input.source.scheduleID), selector = input.selector
-    assert.ok(map && source); assert.deepEqual(input.source, source)
-    if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks") throw Error("Unexpected project read")
-    const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
-    if (selector.source === "activity") return route.fulfill({ json: missionPanelPage({ projectID: "project", missionID: map.id, revision: map.revision,
-      ...damage, passage: source, source: "activity", phase: "observed", observedAt: 1 }, [{ context: activityActorWindow(missionActivityContext(map, damage), 0, 160), coverage: "unknown",
-      requests: { state: "unknown", items: [] }, activity: { actors: map.actors.map(actor => ({ sessionId: actor.sessionId, state: "unknown" })),
-        family: { state: "unknown", members: [] } } }], selector.cursor) })
-    return route.fulfill({ json: projectMissionPanel(map, selector, damage, { passage: source }) })
-  })
-  await page.route(url => url.pathname === "/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1,
-    projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) }))
   await page.route("**/api/workspaces/fixture/missions/*/recover", route => {
     recoveries.push(route.request().postDataJSON())
     return route.fulfill({ json: { mission: missions()[0], admitted: true } })
   })
   await page.goto(url)
-  return { page, errors, recoveries }
+  return { page, errors, recoveries, taskMarkReads }
 }
 const fixtureCall = (page: Page, method: string) => page.evaluate(method => (window as any).missionFixture[method](), method)
 async function refresh(page: Page) {
@@ -235,45 +207,6 @@ test("a stopped coordinator offers recovery in Pause's place only while nothing 
   } finally { await page.close() }
 })
 
-test("a recurring passage waiting for an answer is red; stopped and paused schedules keep a past failure quiet", async () => {
-  const schedule = (id: string, title: string, patch: Partial<RecurrenceSchedule>): RecurrenceSchedule => ({ id, title, revision: 2,
-    state: "running", clock: { time: "08:15", zone: "UTC" }, nextDueAt: Date.UTC(2026, 9, 28, 8, 15), pending: null, latestResult: null, history: [], controls: [],
-    actions: ["pause", "stop", "run-now"], ...patch })
-  const failedRun = { passageID: "pas_old", dueAt: 1, settledAt: 2, outcome: "failed" as const, reason: "not-started" as const, trigger: "daily" as const }
-  const { page, errors } = await open(() => [], () => [], [
-    schedule("rec_wait", "Waiting review", { pending: { passageID: "pas_wait", status: "running", trigger: "daily", conversationID: "ses_passage" },
-      actions: ["pause", "stop"] }),
-    schedule("rec_stopped", "Stopped review", { state: "stopped", nextDueAt: null, latestResult: failedRun, history: [failedRun], actions: [] }),
-    schedule("rec_paused", "Paused review", { state: "paused", nextDueAt: null, latestResult: failedRun, history: [failedRun],
-      actions: ["play", "stop", "run-now"] }),
-  ])
-  try {
-    // Schedules are read only through a connected instance.
-    await fixtureCall(page, "connectCatalog")
-    await (await inlineMissionEntry(page, "Waiting review")).waitFor()
-    assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
-      ["working", "idle", "paused"])
-    // Selected, its read passage counts its open questions: a loaded subsession
-    // outside the observed family does not, its declared actors do.
-    await page.evaluate(() => (window as any).missionFixture.seedCoordinators(["ses_passage", "ses_child"], { ses_child: "ses_passage" }))
-    await selectMission(page, "Waiting review")
-    await page.locator('.mission-tree [data-task-key="task-one"]').waitFor()
-    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_child", "child-permission"))
-    await page.evaluate(() => new Promise(requestAnimationFrame))
-    assert.equal(await page.locator(".mission-row-select[aria-current=true] .mission-row-flag").getAttribute("data-mark"), "working")
-    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_independent", "independent-permission"))
-    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "permission")
-    // Other rows read the live passage's own conversation.
-    await selectMission(page, "Stopped review")
-    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_passage"))
-    await page.waitForFunction(() => [...document.querySelectorAll(".mission-rows .mission-row-flag")]
-      .some(element => element.getAttribute("data-mark") === "permission"))
-    assert.equal(await mark(page, "Waiting review"), "permission")
-    assert.match(await (await inlineMissionEntry(page, "Waiting review")).locator(".sr-only").textContent() ?? "", /Awaiting your input/)
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 test("a failed mission reads as interrupted and resumes through coordinator recovery", async () => {
   const value = mission("failed", { status: "failed", summary: "Stopped short" })
   const { page, errors, recoveries } = await open(() => [value], () => [])
@@ -289,120 +222,32 @@ test("a failed mission reads as interrupted and resumes through coordinator reco
   } finally { await page.close() }
 })
 
-test("daily waiting, unread passage identities, restoration and paused/warning shapes use the real shared rows", async () => {
-  const schedule: RecurrenceSchedule = { id: "rec_marks", title: "Daily marks", revision: 1, state: "running",
-    clock: { time: "09:00", zone: "UTC" }, nextDueAt: Date.now() + 3_600_000, pending: null, latestResult: null,
-    history: [], actions: ["pause", "stop", "run-now"], controls: [] }
-  const { page, errors } = await open(() => [mission("other", { runState: "prepared" })], () => [], [schedule])
-  const entry = page.locator('[data-mission-key="schedule:rec_marks"] .mission-row-select')
-  const waitMark = (expected: string) => page.waitForFunction(expected =>
-    document.querySelector('[data-mission-key="schedule:rec_marks"] .mission-row-flag')?.getAttribute("data-mark") === expected, expected)
-  const refreshDaily = () => page.evaluate(async data => {
-    const { serverEvents } = await import("/src/lib/server-events.ts")
-    ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture",
-      event: { type: "rpc.codenomad.missions.scheduleChanged", data } }])
-  }, { scheduleID: schedule.id, revision: schedule.revision })
-  const success = async (id: string) => {
-    const result = { passageID: id, outcome: "completed" as const, dueAt: Date.now() - 2, settledAt: Date.now() - 1 }
-    schedule.history.push(result); schedule.latestResult = result; schedule.revision++
-    const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/recurrence")
-      && (await response.json()).schedules?.some((row: any) => row.latestResult?.passageID === id))
-    await refreshDaily(); await (await published).finished()
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-    await waitMark("done")
-  }
+test("the directory reads a row's task marks only while they can change it, and no further than the first seen one", async () => {
+  const tasks = (id: string, live: number, updatedAt = 1) => Array.from({ length: 120 }, (_, index) => ({ id: `task-${id}-${index}`, key: `task-${index}`,
+    title: `Task ${index}`, brief: "Brief", role: "research", status: index >= 120 - live ? "ready" : "completed", blockedBy: [],
+    outstandingExecution: false, createdAt: 1, updatedAt })) as MissionMap["tasks"]
+  // The live tasks close the plan: only the attention order brings them into the first window.
+  let list = [mission("busy", { updatedAt: 3, tasks: tasks("busy", 2) }),
+    mission("closed", { updatedAt: 2, finishSequence: 1, status: "completed", tasks: tasks("closed", 0) })]
+  const { page, errors, taskMarkReads } = await open(() => list, () => [])
+  const settled = () => page.waitForFunction(async () => {
+    const store = (await import("/src/stores/missions.ts")).missionStore, marks = store.taskMarks("fixture", "busy")
+    return !marks.loading && marks.revision === store.state("fixture").summaries.find(row => row.id === "busy")?.revision
+  })
   try {
-    await fixtureCall(page, "connectCatalog")
-    await entry.waitFor(); await waitMark("waiting")
-    assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run.*Next:/)
-    // All ready-made palettes, on idle, hover, focus and selected rows. The
-    // secondary-text underline supplies the shape contrast even on pale accents.
-    for (const scheme of BUILT_IN_COLOR_SCHEMES) {
-      await page.evaluate(async id => {
-        const module = await import("/src/lib/theme-scheme.ts")
-        module.applyColorScheme(module.normalizeColorScheme(id))
-      }, scheme.id)
-      for (const state of ["idle", "hover", "focus", "selected"] as const) {
-        if (state === "idle") { await (await inlineMissionEntry(page, "Objective other")).click(); await page.mouse.move(0, 0) }
-        if (state === "hover") await entry.hover()
-        if (state === "focus") { await page.mouse.move(0, 0); await entry.focus() }
-        if (state === "selected") await entry.click()
-        const sample = await entry.evaluate(element => {
-          const cell = element.querySelector(".mission-row-mark")!, icon = cell.querySelector("svg")!, line = getComputedStyle(cell, "::after")
-          const style = getComputedStyle(cell), svg = getComputedStyle(icon), row = getComputedStyle(element.parentElement!)
-          const probe = document.createElement("span"); element.append(probe)
-          probe.style.color = "var(--text-secondary)"; const secondary = getComputedStyle(probe).color
-          probe.style.color = "var(--accent-primary)"; const accent = getComputedStyle(probe).color
-          probe.style.color = "var(--surface-canvas)"; const surface = getComputedStyle(probe).color
-          const canvas = document.createElement("canvas").getContext("2d")!
-          canvas.fillStyle = surface; canvas.fillRect(0, 0, 1, 1)
-          canvas.fillStyle = row.backgroundColor; canvas.fillRect(0, 0, 1, 1)
-          if (row.backgroundImage !== "none" || element.parentElement!.matches(":hover")) {
-            probe.style.color = "var(--surface-hover-overlay)"; canvas.fillStyle = getComputedStyle(probe).color; canvas.fillRect(0, 0, 1, 1)
-          }
-          const background = [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
-          canvas.clearRect(0, 0, 1, 1); canvas.fillStyle = line.backgroundColor; canvas.fillRect(0, 0, 1, 1)
-          const foreground = [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
-          probe.remove()
-          return { width: style.width, height: style.height, lineWidth: line.width, lineHeight: line.height, lineTop: line.top,
-            lineColor: line.backgroundColor, secondary, accent, color: svg.color, opacity: svg.opacity,
-            animation: svg.animationName, lineOpacity: line.opacity, foreground, background }
-        })
-        assert.deepEqual([sample.width, sample.height, sample.lineWidth, sample.lineHeight, sample.lineTop], ["16px", "20px", "8px", "1px", "19px"])
-        assert.equal(sample.lineColor, sample.secondary); assert.equal(sample.color, sample.accent)
-        assert.equal(sample.opacity, "1"); assert.equal(sample.lineOpacity, "1"); assert.equal(sample.animation, "none")
-        const lum = (rgb: number[]) => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
-          .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0)
-        const [a, b] = [lum(sample.foreground), lum(sample.background)].sort((a, b) => b - a)
-        assert.ok((a + .05) / (b + .05) >= 3, `${scheme.id}/${state}: ${JSON.stringify(sample)}`)
-      }
-    }
-    await success("pas_A")
-    await fixtureCall(page, "flush")
-    await page.reload()
-    await fixtureCall(page, "connectCatalog")
-    await entry.waitFor(); await waitMark("done")
-    assert.equal(await entry.getAttribute("aria-current"), "true", "selection restores, unread result remains")
-    await entry.click(); await waitMark("waiting")
-    await success("pas_B")
-    // Explicit Mark as read also works without selecting a schedule.
-    await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
-    await success("pas_B_next")
-    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
-    assert.equal(await mark(page, "Daily marks"), "done", "the open menu acknowledges B, not the later passage")
-    assert.deepEqual(await page.evaluate(async () => {
-      const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
-      const scope = JSON.stringify(["fixture", "project"])
-      return ["pas_B", "pas_B_next"].map(id => scheduleSuccessSeen(scope, "daily", "rec_marks", id))
-    }), [true, false])
-    await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
-    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
-    await waitMark("waiting")
-    // A result arriving while the panel is hidden stays unread on returning.
-    await page.evaluate(() => (window as any).missionFixture.active(false))
-    const result = { passageID: "pas_C", outcome: "completed" as const, dueAt: Date.now() - 2, settledAt: Date.now() - 1 }
-    schedule.history.push(result); schedule.latestResult = result; schedule.revision++
-    await page.evaluate(() => (window as any).missionFixture.active(true))
-    await waitMark("done")
-    await entry.click(); await waitMark("waiting")
-    await page.emulateMedia({ reducedMotion: "reduce" })
-    schedule.pending = { passageID: "pas_D", status: "running" }; schedule.revision++
-    await refreshDaily(); await waitMark("working")
-    const motion = await entry.locator("svg").evaluate(element => {
-      const style = getComputedStyle(element); return [style.animationDuration, style.animationIterationCount]
-    })
-    assert.ok(parseFloat(motion[0]) <= .00001); assert.equal(motion[1], "1")
-    schedule.state = "paused"; schedule.nextDueAt = null; schedule.revision++
-    await refreshDaily(); await waitMark("paused")
-    assert.equal(await entry.locator("svg rect").count(), 2, "Pause has two bars")
-    schedule.state = "interrupted"; schedule.pending.status = "uncertain"; schedule.revision++
-    await refreshDaily(); await waitMark("interrupted")
-    assert.equal(await entry.locator("svg path").count(), 3, "interruption has a warning triangle and exclamation")
-    schedule.state = "running"; schedule.nextDueAt = Date.now() + 3_600_000; schedule.revision++
-    await refreshDaily(); await waitMark("unconfirmed")
-    assert.match(await entry.getAttribute("title") ?? "", /State unconfirmed/)
-    schedule.state = "stopped"; schedule.nextDueAt = null; schedule.revision++
-    await refreshDaily(); await waitMark("idle")
+    await (await inlineMissionEntry(page, "Objective busy")).waitFor()
+    await settled()
+    await page.waitForTimeout(300)
+    assert.deepEqual(taskMarkReads, ["busy@0"], "one window of the open Mission, none of the closed one it has seen")
+    assert.equal(await page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.taskMarks("fixture", "busy").tasks.filter(task => task.status === "ready").length), 2)
+
+    // A task finishes after what this window has seen: its Mission is read again, one window.
+    const finished = tasks("busy", 2).map((task, index) => index === 0 ? { ...task, updatedAt: 10 } : task)
+    list = [mission("busy", { updatedAt: 10, revision: 2, tasks: finished }), list[1]]
+    await refresh(page)
+    await settled()
+    await page.waitForTimeout(300)
+    assert.deepEqual(taskMarkReads, ["busy@0", "busy@0"])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

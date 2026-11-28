@@ -32,18 +32,23 @@ pub(crate) use state::{
 };
 pub(crate) use state::{
     MAX_WINDOW_DEVICE_FILES, StashedTemporary, TemporaryTabInfo, Ui, active_project_title,
-    active_session, active_temporary_workspace, attachment_draft_admissible, bound,
-    can_close_active, can_new, can_switch_tabs, capture, capture_files_mode, clear_temporary_mark,
-    close, close_after_keep, close_ordinary, confirm_unconfirmed, connected,
-    conversation_stream_clients, detach_dead_temporary, detach_stopped_temporary, draft_changed,
-    file_draft_status, file_wrap, files_tab, finish_discarded, has_conversation_stream,
-    has_temporary_tabs, has_unconfirmed, input_ready, new_tab, note_unconfirmed, opened,
+    active_session, active_temporary_workspace, attachment_draft_admissible,
+    auto_cleanup_abort_for_project, auto_cleanup_abort_for_session,
+    auto_cleanup_abort_if_protected, auto_cleanup_is_deleting_session, bound, bound_with_adopt,
+    can_close_active, can_new, can_switch_tabs, capture, capture_files_mode,
+    check_restored_draft_sessions, clear_temporary_mark, close, close_after_keep, close_ordinary,
+    confirm_unconfirmed, connected, conversation_stream_clients, detach_dead_temporary,
+    detach_stopped_temporary, draft_changed, file_draft_status, file_wrap, files_tab,
+    finish_discarded, has_conversation_stream, has_temporary_tabs, has_unconfirmed, input_ready,
+    new_tab, note_restored_draft_sessions_present, note_session_deleted, note_unconfirmed, opened,
     panel_width, poll, poll_file_drafts, prepare_open, reconcile_temporary_folders,
-    remove_cleaned_session, rename_tab, renew_connection, restore_files_mode, restore_stashed,
-    resume, retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
-    select_relative, session_cleanup_protected, stash_for_discard, stashed_has_in_memory_state,
-    status, strip, tab_rename_seed, temporary_tab_info, toggle_file_wrap, unconfirmed_drafts_full,
-    unselect_missing, window_inline_usage_without_history,
+    recover_missing_session_draft, remove_cleaned_session, rename_tab, renew_connection,
+    restore_files_mode, restore_stashed, resume, resume_restored_draft_checks, retry,
+    schedule_blank_cleanup, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
+    select_relative, session_cleanup_protected, session_deleted_hook, stash_for_discard,
+    stashed_has_in_memory_state, status, strip, tab_rename_seed, temporary_tab_info,
+    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
+    window_inline_usage_without_history,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,
@@ -62,7 +67,7 @@ pub(crate) const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 const MAX_TABS: usize = 32;
 pub(crate) const MAX_TABS_LIMIT: usize = MAX_TABS;
-const MAX_DRAFTS: usize = 24;
+pub(crate) const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
 pub(super) const MAX_PROJECT_NAME: usize = 4096;
@@ -612,18 +617,50 @@ fn safe_key(value: &str) -> bool {
 fn id_character(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
+pub(crate) const NO_SESSION_DRAFT_ID: &str = "__no_session_draft__";
+pub(crate) const RECOVERED_DRAFT_PREFIX: &str = "__recovered_draft__";
+
+/// Read-compatibility predicate matching Solid's `isRecoveredDraftId` (`local-draft-ids.ts`).
+pub(crate) fn is_recovered_draft_id(value: &str) -> bool {
+    value
+        .strip_prefix(RECOVERED_DRAFT_PREFIX)
+        .is_some_and(|tail| {
+            tail.len() == 36
+                && tail
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+        })
+}
+
+/// Strict lowercase `8-4-4-4-12` UUID check used when generating new recovered draft IDs.
+pub(crate) fn is_uuid_recovered_draft_id(value: &str) -> bool {
+    value
+        .strip_prefix(RECOVERED_DRAFT_PREFIX)
+        .is_some_and(|tail| {
+            tail.len() == 36
+                && tail.bytes().enumerate().all(|(idx, b)| {
+                    if matches!(idx, 8 | 13 | 18 | 23) {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+                    }
+                })
+        })
+}
+
+pub(crate) fn is_local_draft_id(value: &str) -> bool {
+    value == NO_SESSION_DRAFT_ID || is_recovered_draft_id(value)
+}
+
 fn draft_id(value: &str) -> bool {
     if !safe_key(value) {
         return false;
     }
-    if value == "__no_session_draft__" {
+    if value == NO_SESSION_DRAFT_ID {
         return true;
     }
-    if let Some(tail) = value.strip_prefix("__recovered_draft__") {
-        return tail.len() == 36
-            && tail
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-');
+    if value.starts_with(RECOVERED_DRAFT_PREFIX) {
+        return is_recovered_draft_id(value);
     }
     !value.is_empty() && value.len() <= 256 && value.bytes().all(id_character)
 }

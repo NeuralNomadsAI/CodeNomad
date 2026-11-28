@@ -81,10 +81,9 @@ async function projectControls() {
 
 if (reload) {
   if (process.env.MISSION_PASSAGE_CHECK) test("exact passage acknowledgement survives reload without acknowledging a replacement", () => {
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false)
-    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false)
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "A"), true)
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "B"), true)
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "C"), false)
   })
   if (process.env.MISSION_COLLISION_CHECK) test("legacy collision positives survive reload before the originally viewed row is discovered", () => {
     const { folder, scope, rows } = JSON.parse(process.env.MISSION_COLLISION_CHECK!)
@@ -129,21 +128,19 @@ if (reload) {
   })
 } else {
   test("schedule success uses exact passage identity, initial history, ownership and captured acknowledgement", () => {
-    seedScheduleSuccessSeen("passages", "daily", "schedule", "A")
-    seedScheduleSuccessSeen("passages", "scheduled", "schedule")
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true, "historical success on first load is already seen")
-    seedScheduleSuccessSeen("passages", "daily", "schedule", "B")
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false, "refresh never reseeds")
-    const lateA = () => markScheduleSuccessSeen("passages", "daily", "schedule", "A")
+    seedScheduleSuccessSeen("passages", "schedule", "A")
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "A"), true, "historical success on first load is already seen")
+    seedScheduleSuccessSeen("passages", "schedule", "B")
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "B"), false, "refresh never reseeds")
+    const lateA = () => markScheduleSuccessSeen("passages", "schedule", "A")
     lateA()
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false)
-    markScheduleSuccessSeen("passages", "daily", "schedule", "B")
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "B"), false)
+    markScheduleSuccessSeen("passages", "schedule", "B")
     lateA()
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false, "next result recreates unread attention")
-    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false, "document formats have distinct scopes")
-    seedScheduleSuccessSeen("other-project", "daily", "schedule")
-    assert.equal(scheduleSuccessSeen("other-project", "daily", "schedule", "A"), false)
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "B"), true)
+    assert.equal(scheduleSuccessSeen("passages", "schedule", "C"), false, "next result recreates unread attention")
+    seedScheduleSuccessSeen("other-project", "schedule")
+    assert.equal(scheduleSuccessSeen("other-project", "schedule", "A"), false)
     reloadWith({ MISSION_PASSAGE_CHECK: "1" })
   })
   test("duplicate project occurrences keep presentation independent across restore and closure", () => {

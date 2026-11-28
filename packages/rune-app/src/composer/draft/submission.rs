@@ -34,6 +34,39 @@ impl Draft {
         self.project(args, literal).map(|(text, _)| text)
     }
 
+    pub fn resolve_shell(&self, edit: &TextEdit) -> Option<String> {
+        let max_bytes = codenomad_client::prompt_shell::MAX_SHELL_COMMAND_BYTES;
+        let mut result = String::new();
+        let mut cursor = 0;
+        for literal in
+            literal::ranges(edit).chain(std::iter::once(edit.text.len()..edit.text.len()))
+        {
+            let inline = edit.text.get(cursor..literal.start)?;
+            let inline = if cursor == 0 {
+                inline.trim_start_matches(whitespace)
+            } else {
+                inline
+            };
+            let inline = if literal.start == edit.text.len() {
+                inline.trim_end_matches(whitespace)
+            } else {
+                inline
+            };
+            let remaining = max_bytes.checked_sub(result.len())?;
+            let (inline, _) = long_paste::expand_bounded(inline, &self.attachments, remaining)?;
+            result.push_str(&inline);
+            if !literal.is_empty() {
+                let literal_text = edit.text.get(literal.clone())?;
+                if result.len().saturating_add(literal_text.len()) > max_bytes {
+                    return None;
+                }
+                result.push_str(literal_text);
+            }
+            cursor = literal.end;
+        }
+        (!result.is_empty()).then_some(result)
+    }
+
     fn project(
         &self,
         text: &str,

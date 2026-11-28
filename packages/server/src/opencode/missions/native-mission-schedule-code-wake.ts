@@ -21,10 +21,10 @@ const CODE_WAKE_DEADLINE_MS = 20_000
 const applied = (result: { state: string; reply?: { state: string } }) => result.state === "received" && result.reply?.state === "applied"
 
 /** One code run of a Mission calendar. A principal run returns once Missions admitted it
- * (its preparation then proves the run, as a carrier message does), and an auxiliary run
+ * (its preparation then proves the run), and an auxiliary run
  * once its reconciliation applied. Anything else fails, so OpenCode retries the same run. */
 export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<Tool.Context, "sessionID" | "messageID">,
-  maintain = sendNativeMissionScheduleMaintenance) {
+  maintain = sendNativeMissionScheduleMaintenance, createDispatcher = nativeMissionScheduleDispatcher) {
   const invocation = nativeInvocation(CODE_WAKE_DEADLINE_MS)
   return Effect.scoped(invocation.capture(Effect.gen(function* () {
     const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
@@ -33,8 +33,7 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, tool.sessionID), original = ownership?.document
     if (!ownership?.verified || !original?.calendarOwner) throw new Error("schedule-code-wake-owner")
     const descriptor = original.calendarOwner.slots.find(item => item.sessionID === tool.sessionID && item.timeGeneration === original.timeGeneration)
-    // Retiring calendars admit nothing. A retained retiring auxiliary has no carrier turn to emit the
-    // after-idle hint, so its run asks the same cleanup-only maintenance directly.
+    // Retiring calendars admit nothing. The retiring auxiliary asks for cleanup directly.
     if (!descriptor) {
       // Only the retired auxiliary's own automation may ask.
       const retired = original.calendarOwner.retired.find(item => item.descriptor.sessionID === tool.sessionID && item.descriptor.role === "reconciliation"
@@ -65,7 +64,7 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
       if (value === undefined || value && typeof value === "object" && "deletedAt" in value) return undefined
       return parseMissionDocument(value, { id: original.id, projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical })
     }
-    const dispatcher = nativeMissionScheduleDispatcher(ctx, original, { run, current, signal: abort.signal, fresh })
+    const dispatcher = createDispatcher(ctx, original, { run, current, signal: abort.signal, fresh })
     // Due rows of one Mission share its transport lane, so another wake of it can hold the lane briefly.
     // Wait within the deadline rather than fail: a failed last slot could expire before OpenCode retries it.
     const free = async (send: () => Promise<NativeScheduleTransportResult>) => {
@@ -82,10 +81,22 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
       current()
       // An unsettled claim on another occurrence holds every later wake of its Mission.
       const prior = parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, original.id))), original.id)
-      const recovered = await recoverNativeMissionScheduleClaim(prior, wake, dispatch)
+      let recovered = await recoverNativeMissionScheduleClaim(prior, wake, dispatch)
       if (descriptor.role === "reconciliation") {
-        if (!recovered || !applied(await dispatch(wake))) throw new Error("schedule-code-wake-pending")
-        // Then the original next principal preparations, as an auxiliary carrier turn does.
+        if (!recovered && (await fresh())?.calendarOwner?.operation.pending) {
+          // A pending owner control blocks principal preflight while the unsettled claim
+          // blocks this reconciliation wake from running owner.reconcile. Settle the
+          // pending owner operation first, then retry recovering the exact prior claim.
+          await maintain({ missionID: original.id, sessionID: tool.sessionID, timeGeneration: original.timeGeneration,
+            registrationFile: original.calendarOwner!.installation.registrationFile, directory: ctx.location.directory }, abort.signal)
+          current()
+          const retryPrior = parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, original.id))), original.id)
+          recovered = await recoverNativeMissionScheduleClaim(retryPrior, wake, dispatch)
+        }
+        if (!recovered) throw new Error("schedule-code-wake-pending")
+        const result = await dispatch(wake)
+        if (!applied(result)) throw new Error(result.state === "received" && result.reply.reason || "schedule-code-wake-pending")
+        // Then the original next principal preparations.
         for (const principal of (await fresh())?.calendars.filter(item => item.role === "principal" && item.wakePreparing).slice(0, 8) ?? []) {
           current()
           await dispatch({ missionID: original.id, generation: principal.timeGeneration, sessionID: principal.sessionID,
@@ -100,6 +111,7 @@ export function nativeMissionScheduleCodeWake(ctx: Plugin.Context, tool: Pick<To
       const admission = await free(() => dispatcher.transport.admit(request))
       // The reason (transport failure or receiver reply) shows in the automation's last output.
       if (admission.state !== "received") throw new Error(`schedule-code-wake-${admission.state}-${admission.reason}`)
+      if (admission.reply.reason) throw new Error(admission.reply.reason)
       if (!["pending", "applied"].includes(admission.reply.state)) throw new Error(`schedule-code-wake-${admission.reply.state}`)
       if (admission.reply.state === "applied") return "applied"
       // Admitted: OpenCode may count the run now. Processing is retried by later wakes.

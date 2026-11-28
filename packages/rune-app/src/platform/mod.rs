@@ -25,6 +25,7 @@ pub(crate) mod wake_lock;
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_attachment::download as download_file;
+pub(crate) mod web_form_cap;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
@@ -161,6 +162,7 @@ pub fn attachment_export_available() -> bool {
 pub fn export_attachment(
     s: &mut crate::State,
     tx: &mut rune::Tx,
+    token: u64,
     name: &str,
     bytes: std::sync::Arc<Vec<u8>>,
 ) {
@@ -181,32 +183,40 @@ pub fn export_attachment(
                 if !s.current_scope(&scope) {
                     return;
                 }
-                if let Ok(Some(path)) = result {
-                    let (out, input) = codenomad_client::bounded(1);
-                    s.attachments.write = Some(input);
-                    let wake = s.wake.clone();
-                    spawn(async move {
-                        let ok = tokio::task::spawn_blocking(move || {
-                            std::fs::write(path, bytes.as_slice())
-                        })
-                        .await
-                        .is_ok_and(|result| result.is_ok());
-                        if out.send(ok).await.is_ok() {
-                            wake();
+                match result {
+                    Ok(Some(path)) => {
+                        if !crate::chat::attachments::Reader::confirm_save_dialog(s, token) {
+                            return;
                         }
-                    });
-                } else {
-                    s.attachments.saving = false;
-                    s.attachments.error = result.is_err();
+                        let (out, input) = codenomad_client::bounded(1);
+                        s.attachments.write = Some(input);
+                        let wake = s.wake.clone();
+                        spawn(async move {
+                            let ok = tokio::task::spawn_blocking(move || {
+                                std::fs::write(path, bytes.as_slice())
+                            })
+                            .await
+                            .is_ok_and(|result| result.is_ok());
+                            if out.send(ok).await.is_ok() {
+                                wake();
+                            }
+                        });
+                    }
+                    Ok(None) => {
+                        crate::chat::attachments::Reader::dismiss_save_dialog(s, token, false);
+                    }
+                    Err(_) => {
+                        crate::chat::attachments::Reader::dismiss_save_dialog(s, token, true);
+                    }
                 }
             },
         );
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = tx;
-        s.attachments.error = web_attachment::download(name, bytes.as_slice()).is_err();
-        s.attachments.saving = false;
+        let _ = (tx, token);
+        s.attachments
+            .finish_immediate_save(web_attachment::download(name, bytes.as_slice()).is_err());
     }
 }
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
@@ -409,8 +419,11 @@ pub fn scene_is(name: &str) -> bool {
             == Some(name)
     }
 }
+/// Whether this machine's folder picker can name a folder of the server. A browser has none,
+/// and a phone's folders aren't the server's: there the launcher lists the server's own
+/// (`launcher/folders.rs`).
 pub fn folder_picker_available() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    cfg!(not(any(target_arch = "wasm32", target_os = "android")))
 }
 pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     let scope = s.input_scope.clone();

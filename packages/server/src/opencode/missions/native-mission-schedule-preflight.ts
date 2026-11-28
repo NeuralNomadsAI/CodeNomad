@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { NativeScheduleWake, NativeSchedulePreflight } from "./native-schedule-transport-contract"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
+import { NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS } from "./native-schedule-transport"
 
 export type { NativeSchedulePreflight } from "./native-schedule-transport-contract"
 const secretKey = Symbol.for("codenomad.missions.schedule-preflight/v1")
@@ -17,7 +18,7 @@ export function nativeSchedulePreflight(wake: NativeScheduleWake, incarnation: s
 }
 export function assertNativeSchedulePreflight(value: NativeSchedulePreflight | undefined, wake: NativeScheduleWake, incarnation: string, now = Date.now()): number {
   if (!value || !Number.isSafeInteger(value.cutoff) || value.cutoff < 0 || !Number.isSafeInteger(value.issuedAt)
-    || value.issuedAt > now + 5000 || now - value.issuedAt >= 8000 || !/^[a-f0-9]{64}$/.test(value.signature)
+    || value.issuedAt > now + 5000 || now - value.issuedAt >= NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS || !/^[a-f0-9]{64}$/.test(value.signature)
     || !timingSafeEqual(Buffer.from(value.signature, "hex"), Buffer.from(sign(wake, incarnation, value.cutoff, value.issuedAt), "hex")))
     throw new Error("schedule-preflight-invalid")
   return value.cutoff

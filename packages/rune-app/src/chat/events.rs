@@ -7,10 +7,18 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true, true, false, None)
+    let (changed, deleted) = drain_chat(s, limit, true, true, false, None);
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
 }
 
-pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
+pub(crate) fn poll_hidden_chat(
+    s: &mut State,
+    limit: usize,
+    active_has_stream: bool,
+) -> (bool, bool) {
     drain_chat(s, limit, false, !active_has_stream, false, None)
 }
 
@@ -20,7 +28,85 @@ pub(crate) fn poll_chat_for_window(
     defer_reader_sync: bool,
     clock: f64,
 ) -> bool {
-    drain_chat(s, limit, true, true, defer_reader_sync, Some(clock))
+    let (changed, deleted) = drain_chat(s, limit, true, true, defer_reader_sync, Some(clock));
+    if deleted {
+        workspace::note_session_deleted(s);
+    }
+    changed
+}
+
+/// Applies all queued conversation events on the active tab during tab closure without discarding
+/// non-deletion updates if closure is deferred, returning whether `Event::SessionDeleted` arrived.
+pub(crate) fn drain_active_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
+    drain_chat(s, 1024, true, true, false, None).1
+}
+
+/// Drains queued prompt confirmations and `Event::SessionDeleted` from the outgoing session's
+/// incoming and reader channels before leaving or rebinding that session, without starting new
+/// refreshes on the session being left.
+pub(crate) fn drain_outgoing_incoming_deleted(s: &mut State) -> bool {
+    let _ = chat::reader::settle_discarded_inbox(s);
+    let mut session_deleted = false;
+    for _ in 0..1024 {
+        let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(false, reading, history_bounds, cached_gap, None)
+            })
+        });
+        let Some(event) = event else { break };
+        match event {
+            Event::SessionDeleted => session_deleted = true,
+            Event::InboxDelta(delta) => match &delta {
+                codenomad_client::inbox::InboxDelta::Upsert(item) => {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+                codenomad_client::inbox::InboxDelta::Delivery { id, .. }
+                | codenomad_client::inbox::InboxDelta::Removed(id) => {
+                    composer::confirm_unconfirmed_id(s, id);
+                }
+            },
+            Event::Inbox {
+                items,
+                authoritative: true,
+                ..
+            } => {
+                for item in &items {
+                    composer::confirm_unconfirmed_id(s, &item.id);
+                }
+            }
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
+            }
+            Event::Message(m) => {
+                if m.role == "user" {
+                    composer::confirm_unconfirmed_id(s, &m.id);
+                }
+            }
+            Event::History(messages) => {
+                for m in &messages {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                for m in &page.rows {
+                    if m.role == "user" {
+                        composer::confirm_unconfirmed_id(s, &m.id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = chat::reader::settle_discarded_inbox(s);
+    session_deleted
 }
 
 fn drain_chat(
@@ -30,8 +116,9 @@ fn drain_chat(
     affects_preferences: bool,
     defer_reader_sync: bool,
     clock: Option<f64>,
-) -> bool {
+) -> (bool, bool) {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
+    let mut session_deleted = false;
     if changed
         && s.reader
             .as_ref()
@@ -112,7 +199,10 @@ fn drain_chat(
                     s.status_services.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
-                    s.transcript_display.pictures.retry_interrupted();
+                    s.transcript_display.pictures.retry_interrupted_in_view(
+                        &s.transcript_display.tool_clock,
+                        s.tool_diff_preferences.history_bounds.get(),
+                    );
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -380,11 +470,15 @@ fn drain_chat(
                     s.status_permissions.synchronized();
                     s.status_services.synchronized();
                 }
-                if chat::reader::reconcile_bookmark(s, &page) {
-                    s.revision += 1;
-                    changed = true;
-                    continue;
-                }
+                let fallback_bookmark = match chat::reader::reconcile_bookmark_for_sync(s, &page) {
+                    chat::reader::Reconcile::Refetch => {
+                        s.revision += 1;
+                        changed = true;
+                        continue;
+                    }
+                    chat::reader::Reconcile::Keep => None,
+                    chat::reader::Reconcile::FallbackBookmark(bookmark) => Some(bookmark),
+                };
                 let sync_undo = if let Some(version) = reader_version
                     && !s.messages.is_empty()
                     && s.reader
@@ -420,6 +514,7 @@ fn drain_chat(
                     None
                 };
                 let had_sync_undo = sync_undo.is_some();
+                let saved_scroll = s.transcript_display.reading().scroll_snapshot();
                 if let Some(reader) = &mut s.reader {
                     reader.clear_sync_undo();
                     if let Some((
@@ -440,6 +535,8 @@ fn drain_chat(
                             prev_detached,
                             trimmed_older,
                             trimmed_newer,
+                            fallback_bookmark,
+                            saved_scroll,
                             clock,
                         );
                     }
@@ -563,7 +660,7 @@ fn drain_chat(
                         _ => Phase::Reconnecting,
                     };
                 }
-                s.attachments.cancel();
+                s.attachments.offline();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
                     a.attention.disconnected();
@@ -586,7 +683,10 @@ fn drain_chat(
                 crate::timeline::admit(s, ticket, page, admit);
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
-            Event::HistoryInvalidated => {
+            Event::HistoryInvalidated | Event::SessionDeleted => {
+                if matches!(event, Event::SessionDeleted) {
+                    session_deleted = true;
+                }
                 s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
                 s.history_error = false;
@@ -637,6 +737,9 @@ fn drain_chat(
                     reader.clear_sync_undo();
                 }
                 s.messages = messages;
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
                 s.phase = Phase::Ready;
                 s.stream_offline = false;
@@ -651,6 +754,9 @@ fn drain_chat(
                 } else {
                     s.messages.push(m.into());
                 }
+                s.transcript_display
+                    .reading_mut()
+                    .note_content_layout_change();
                 composer::reconcile(s);
             }
             Event::Inbox {
@@ -704,7 +810,14 @@ fn drain_chat(
                     continue;
                 };
                 chat::reader::preserve_anchor_on_inbox_change(s, &next);
+                let replay_replacement = s
+                    .transcript_display
+                    .reading()
+                    .queue_replay_replacement(s.transcript_display.queue.items(), &next);
                 s.transcript_display.queue.apply_preview(next);
+                s.transcript_display
+                    .reading_mut()
+                    .note_queue_layout_change(replay_replacement);
                 composer::reconcile(s);
             }
             Event::InboxFailed => {
@@ -718,6 +831,7 @@ fn drain_chat(
             }
             Event::Text(id, event) => {
                 let mut touched = false;
+                let mut applied = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
                     touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
@@ -730,6 +844,9 @@ fn drain_chat(
                             })
                             .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
+                        Ok(content::TextFit::Applied | content::TextFit::Settlement) => {
+                            applied = true
+                        }
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
@@ -737,15 +854,25 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    if applied {
+                        s.transcript_display
+                            .reading_mut()
+                            .note_content_layout_change();
+                    }
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
-                if s.messages.iter().any(|m| m.id == id)
-                    && let Some(reader) = &mut s.reader
-                {
-                    reader.clear_sync_undo();
+                if s.messages.iter().any(|m| m.id == id) {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
@@ -763,8 +890,13 @@ fn drain_chat(
                     touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Tool(id, tool) => {
@@ -792,8 +924,13 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
-                if touched && let Some(reader) = &mut s.reader {
-                    reader.clear_sync_undo();
+                if touched {
+                    s.transcript_display
+                        .reading_mut()
+                        .note_content_layout_change();
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,
@@ -823,8 +960,14 @@ fn drain_chat(
                     if !settings::conversation_authentication(s, auth) {
                         continue;
                     }
-                    // A pending send without a prior receipt was queued before the transport exited on 401.
-                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
+                    // A pending prompt/slash without a prior receipt was queued before the transport exited on 401,
+                    // whereas an already-spawned shell POST runs asynchronously and its receipt is uncertain.
+                    let outcome = if s.composer.pending_shell() {
+                        transport::PromptOutcome::Unconfirmed
+                    } else {
+                        transport::PromptOutcome::Rejected
+                    };
+                    composer::settle_pending(s, outcome);
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
@@ -889,14 +1032,22 @@ fn drain_chat(
         }
     }
     if super::tools::children::Children::poll_and_promote(s)
-        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
+        | s.transcript_display.pictures.poll_in_view(
+            &s.reads,
+            &s.wake,
+            &s.transcript_display.tool_clock,
+            s.tool_diff_preferences.history_bounds.get(),
+        )
         | super::receipts::Receipts::poll(s, visible)
     {
         s.revision += 1;
         changed = true;
     }
     changed |= chat::reader::settle_discarded_inbox(s);
-    changed | super::usage::family::Totals::poll(s)
+    (
+        changed | super::usage::family::Totals::poll(s),
+        session_deleted,
+    )
 }
 
 fn suspend_preserving_page_retry(s: &mut State) {

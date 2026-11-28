@@ -50,6 +50,7 @@ test("notifications: same-second IDs, later thread updates, and no mark-as-read 
   const updated = await readMissionGithubSource(condition, "/repo", next.checkpoint, undefined, f.transport)
   assert.deepEqual((updated.checkpoint.value as any).events.map((item: any) => item.id), ["1"])
   assert.equal(f.requests.filter(path => path.startsWith("notifications?")).length, 3, "one collection read per observation")
+  assert.equal(f.requests.filter(path => path === "user").length, 3, "one account read per observation before commit-time revalidation")
   assert.ok(f.requests.every(path => path === "user" || path.startsWith("notifications?all=") || path.startsWith("notifications?per_page=")))
   assert.ok(f.requests.filter(path => path.startsWith("notifications?")).every(path => new URL(path, "https://api.github.com").searchParams.get("all") === "true"))
 })

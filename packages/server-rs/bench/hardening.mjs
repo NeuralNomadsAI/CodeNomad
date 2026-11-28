@@ -5,19 +5,56 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile, rm } from "node:fs/promises"
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import http from "node:http"
 import https from "node:https"
 import net from "node:net"
 import tls from "node:tls"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { dropRegistration, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { fileURLToPath } from "node:url"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
-const cli = process.argv[2]
-assert(path.isAbsolute(cli ?? ""), "usage: node hardening.mjs <absolute opencode executable>")
+function stripGitEnv(sourceEnv = process.env) {
+  return Object.fromEntries(Object.entries(sourceEnv).filter(([key]) => !/^GIT_/i.test(key)))
+}
+
+export function buildHardeningGitEnv(sourceEnv = process.env, platform = process.platform) {
+  return {
+    ...stripGitEnv(sourceEnv),
+    GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "a",
+    GIT_AUTHOR_EMAIL: "a@a",
+    GIT_COMMITTER_NAME: "a",
+    GIT_COMMITTER_EMAIL: "a@a",
+  }
+}
+
+export function buildHardeningChildEnv(sourceEnv = process.env, overrides = {}, platform = process.platform) {
+  return {
+    ...stripGitEnv(sourceEnv),
+    ...overrides,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
+  }
+}
+
+const isMain = (() => {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+
+if (isMain) {
+const rawCli = process.argv[2]
+assert(path.isAbsolute(rawCli ?? ""), "usage: node hardening.mjs <absolute opencode executable>")
+const cli = await assertPrivateOpenCodeExecutable(rawCli)
+const { withProductRuntime } = await import("../../../scripts/native-product-fixture.mjs")
+const { fixtureChildPid, spawnFixtureChild: spawn, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { dropRegistration, out, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 const bin = rustBinary()
 await useBenchTemp()
 
@@ -45,7 +82,7 @@ function send(base, url, { method = "GET", headers = {}, body, stream = false, c
   })
 }
 
-const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "NUL", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "a", GIT_AUTHOR_EMAIL: "a@a", GIT_COMMITTER_NAME: "a", GIT_COMMITTER_EMAIL: "a@a" }
+const gitEnv = buildHardeningGitEnv()
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { env: gitEnv, windowsHide: true, encoding: "utf8" })
 
 await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connection }) => {
@@ -56,11 +93,14 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
   await writeFile(path.join(repo, "a.txt"), "one\n")
   git(repo, "add", "a.txt"); git(repo, "commit", "-q", "-m", "init")
   const password = randomUUID()
+  const childEnv = await sanitizeBenchEnvPath(buildHardeningChildEnv(env, {
+    CNRS_FIXTURE_URL: connection.endpoint.url, CNRS_FIXTURE_PASSWORD: connection.endpoint.auth.password,
+    CNRS_SERVER_PASSWORD: password, CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1",
+    CNRS_FIXTURE_INGRESS: "1", CNRS_FIXTURE_STDIN_STOP: "1",
+  }), { allowedRoot: home })
   const child = spawn(bin, [projects, path.join(home, "hardening.json"), "0", cli], {
     cwd: home, windowsHide: true,
-    env: { ...env, CNRS_FIXTURE_URL: connection.endpoint.url, CNRS_FIXTURE_PASSWORD: connection.endpoint.auth.password,
-      CNRS_SERVER_PASSWORD: password, CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1",
-      CNRS_FIXTURE_INGRESS: "1", CNRS_FIXTURE_STDIN_STOP: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "NUL" },
+    env: childEnv,
   })
   const stopped = new Promise(r => child.once("close", r))
   let lines = ""; for (const s of [child.stdout, child.stderr]) s.on("data", b => lines += b)
@@ -319,3 +359,4 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
 }).catch(error => { failures.push(String(error.stack)); console.error(error); process.exitCode = 1 })
 if (failures.length) { console.error("FAILURES", failures); process.exitCode = 1 }
 else console.log(`hardening: ${results.length} checks passed`)
+}

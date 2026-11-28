@@ -22,7 +22,6 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole,
     layout::{self, DrawnRect, Layout},
-    markdown,
     timeline::search::Query,
 };
 use std::{rc::Rc, sync::Arc};
@@ -96,27 +95,41 @@ pub(super) fn body(
     {
         return None;
     }
+    let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+    let owner_conversation = if let Some(owner_child) = ancestors.last().copied() {
+        super::super::document::Conversation::Child {
+            parent: owner_parent,
+            id: owner_child,
+        }
+    } else {
+        super::super::document::Conversation::Root
+    };
+    let output_conversation = child_id.map_or(super::super::document::Conversation::None, |id| {
+        super::super::document::Conversation::Child { parent, id }
+    });
     let prompt_key = format!("{key}-task-prompt");
     let prompt_claims = !prompt.trim().is_empty()
         && query.is_some_and(|q| {
             q.active
                 && q.claimed.is_none_or(|c| !c.get())
-                && super::super::document::bounded_prose_matches_for(
+                && super::super::document::bounded_prose_highlights_for(
                     s,
                     key,
                     &prompt_key,
                     prompt,
                     PANE_LIMIT,
+                    owner_conversation,
                     q,
                 )
         });
     let mut result = col().full_width().separate(Space::Sm);
-    for (section, label, value, truncated, section_query) in [
+    for (section, label, value, truncated, conversation, section_query) in [
         (
             "prompt",
             "toolCall.task.sections.prompt",
             prompt,
             false,
+            owner_conversation,
             query.map(|q| Query {
                 active: prompt_claims,
                 claimed: None,
@@ -128,6 +141,7 @@ pub(super) fn body(
             "toolCall.task.sections.output",
             output,
             output_truncated,
+            output_conversation,
             query.map(|q| Query {
                 active: q.active && !prompt_claims && q.claimed.is_none_or(|c| !c.get()),
                 claimed: None,
@@ -156,18 +170,23 @@ pub(super) fn body(
             let pane_limit = PANE_LIMIT;
             result = result.child(text(t(label)).text_role(TextRole::Label));
             if !shown_value.trim().is_empty() {
-                result = result.child(markdown::tool_pane(
-                    super::super::document::prose_pane_search(
-                        s,
-                        message,
-                        key,
-                        format!("{key}-task-{section}"),
-                        shown_value,
-                        tool.status == "running" && section == "output",
-                        pane_limit,
-                        section_query,
-                    ),
-                    true,
+                let pane_key = format!("{key}-task-{section}");
+                let clip_key = format!("{pane_key}-pane");
+                result = result.child(crate::chat::reading::inner_scroller(
+                    super::super::document::clipped_tool_pane(s, &clip_key, true, || {
+                        super::super::document::prose_pane_search(
+                            s,
+                            message,
+                            key,
+                            pane_key,
+                            shown_value,
+                            tool.status == "running" && section == "output",
+                            pane_limit,
+                            conversation,
+                            section_query,
+                        )
+                    }),
+                    false,
                 ));
             }
             if truncated && expanded_full.is_none() {

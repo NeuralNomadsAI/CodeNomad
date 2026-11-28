@@ -4,11 +4,8 @@ import type { SqlClient } from "effect/sql"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Automation } from "@opencode/schema/automation"
 import { Session } from "@opencode/schema/session"
-import { SessionMessage } from "@opencode/schema/session-message"
 import { Location } from "@opencode/schema/location"
 import { Agent } from "@opencode/schema/agent"
-import { Model } from "@opencode/schema/model"
-import { Provider } from "@opencode/schema/provider"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import type { MissionCalendarOwnerSlot } from "../../missions/mission-calendar-owner-state"
@@ -16,11 +13,11 @@ import { missionCalendarOwnerSlotSchema } from "../../missions/mission-calendar-
 import { documentID } from "../../missions/launch-policy"
 import type { MissionCalendarWhen } from "../../missions/mission-calendar-plan"
 import type { MissionWake } from "../../missions/mission-document"
-import { NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "./native-schedule-carrier"
+import { isAllowedScheduleCarrierModel, NATIVE_SCHEDULE_CARRIER_TITLE } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { readNativeScheduleFlag } from "./native-schedule-flag"
 import { matchMissionAutomation, missionAutomationID, missionAutomationService, missionAutomationTrigger, missionCodeWake, missionCodeWakeRunning,
-  missionWakeMetadata, missionWakeReadIDs, readMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS,
+  readMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS,
   type MissionAutomationInfo } from "./native-mission-automation"
 
 type NativeEffect = Effect.Effect<unknown, unknown>
@@ -62,7 +59,6 @@ const missing = (error: unknown, name: string) => !!error && typeof error === "o
 export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireScheduleCalendar")(function* (
   ctx: Plugin.Context, carrierAgent: string, current: () => true,
   invocationRun?: <A>(effect: Effect.Effect<A, unknown>) => Promise<A>,
-  providerAvailable?: () => Effect.Effect<void, unknown>,
 ) {
   const graph = yield* Effect.context<never>()
   const required = (key: typeof missionAutomationService) => {
@@ -95,74 +91,84 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     const snapshot = { missionID: documentID.parse(input.missionID), descriptor: missionCalendarOwnerSlotSchema.parse(structuredClone(input.descriptor)) }
     return invoke(() => use(snapshot), guard)
   }
-  const available = Effect.fnUntraced(function* () {
-    if (!providerAvailable) throw new Error("Native calendar provider availability unqualified")
-    const effect = providerAvailable()
-    if (!Effect.isEffect(effect)) throw new Error("Native calendar provider availability unqualified")
-    yield* effect
-    assertCurrent()
-  })
   const enabled = Effect.fnUntraced(function* () {
     assertCurrent()
     if (!(yield* readNativeScheduleFlag(ctx)).enabled) throw new Error("Native calendar schedules disabled")
     assertCurrent()
   })
-  const carrier = Effect.fnUntraced(function* (target: Target) {
-    yield* enabled()
-    const session = yield* ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) })
+  const schedulesEnabled = Effect.fnUntraced(function* () {
+    const effect = schedules.enabled(location.directory)
+    if (!Effect.isEffect(effect) || (yield* effect) !== true) throw new Error("Native calendar schedules disabled")
+  })
+  // Native has no joint snapshot. Read both flags, the carrier and any row
+  // together after earlier awaits; validate and dispatch on that result.
+  const readCarrier = (target: Target) => Effect.suspend(() => ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) }))
+  const validateCarrier = (target: Target, session: Effect.Success<ReturnType<typeof readCarrier>>) => {
     if (session.id !== target.descriptor.sessionID || session.parentID || session.projectID !== location.project.id
       || session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID
       || canonicalAuthority(session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER]) !== canonicalAuthority(marker(target))
-      || session.model?.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID || session.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id)
+      || !isAllowedScheduleCarrierModel(session.model))
       throw new Error("Native calendar carrier differs")
-    const effect = schedules.enabled(location.directory)
-    if (!Effect.isEffect(effect) || (yield* effect) !== true) throw new Error("Native calendar schedules disabled")
     assertCurrent()
-  })
+    return session
+  }
+  const observe = <A>(target: Target, row: Effect.Effect<A, unknown>) => Effect.all(
+    [enabled(), schedulesEnabled(), readCarrier(target), row], { concurrency: "unbounded" }).pipe(Effect.map(([, , session, value]) => {
+      validateCarrier(target, session)
+      return { session, value }
+    }))
+  const carrier = (target: Target) => observe(target, Effect.void).pipe(Effect.map(result => result.session))
   const wakeRules = () => MISSION_WAKE_PERMISSIONS.map(rule => ({ ...rule }))
   // A carrier made before code wakes has no rules of its own; it receives exactly these.
   const codeCarrier = Effect.fnUntraced(function* (target: Target, guard: () => true) {
-    const sessionID = Session.ID.make(target.descriptor.sessionID)
-    const rules = (yield* ctx.session.get({ sessionID })).permissions
-    if (canonicalAuthority(rules ?? []) === canonicalAuthority(MISSION_WAKE_PERMISSIONS)) return
+    const session = yield* carrier(target)
+    const rules = session.permissions
+    if (canonicalAuthority(rules ?? []) === canonicalAuthority(MISSION_WAKE_PERMISSIONS)) return session
     if (rules?.length) throw new Error("Native calendar carrier permissions differ")
+    const sessionID = Session.ID.make(target.descriptor.sessionID)
     yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified")
       return ctx.session.update({ sessionID, permissions: wakeRules() }) })
-    if (canonicalAuthority((yield* ctx.session.get({ sessionID })).permissions ?? []) !== canonicalAuthority(MISSION_WAKE_PERMISSIONS))
+    const updated = yield* carrier(target)
+    if (canonicalAuthority(updated.permissions ?? []) !== canonicalAuthority(MISSION_WAKE_PERMISSIONS))
       throw new Error("Native calendar carrier permissions unconfirmed")
-    yield* carrier(target)
+    return updated
   })
   const project = (info: MissionAutomationInfo, target: Target): NativeScheduleCalendarInfo => {
     const time = (value: DateTime.Utc | undefined) => value === undefined ? null : DateTime.toEpochMillis(value)
     const slot = target.descriptor
+    const code = missionCodeWake(info)
     if (!matchMissionAutomation(info, slot, { directory: location.directory, projectID: location.project.id }, NATIVE_SCHEDULE_CARRIER_SIGNAL))
       throw new Error("Native calendar Info differs")
     const id = slot.scheduleID && missionAutomationID(slot.scheduleID) === info.id ? slot.scheduleID : info.id
     return { id, sessionID: slot.sessionID, name: info.name, when: slot.when,
       status: info.status, nextDueAt: time(info.nextDueAt), endsAt: time(info.expires), runCount: info.runCount, remainingRuns: null,
-      createdAt: DateTime.toEpochMillis(info.time.created), code: missionCodeWake(info) }
+      createdAt: DateTime.toEpochMillis(info.time.created), code }
   }
   const same = (value: NativeScheduleCalendarInfo, target: Target) => nativeScheduleCalendarMatches(value, target.descriptor)
   const get = Effect.fnUntraced(function* (target: Target, id: string) {
-    yield* carrier(target)
     const nativeID = missionAutomationID(id)
-    const value = yield* schedules.get(nativeID).pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => {
-      if (info.id !== nativeID) throw new Error("Native calendar mapping differs")
-      return { ...project(info, target), id }
-    }), Effect.catch(error =>
+    const row = Effect.suspend(() => schedules.get(nativeID)).pipe(Effect.flatMap(readMissionAutomation), Effect.catch(error =>
       missing(error, "Automation.NotFoundError") ? Effect.succeed(undefined) : Effect.fail(error)))
-    if (value && (!same(value, target) || value.id !== id)) throw new Error("Native calendar mapping differs")
+    const { value: info } = yield* observe(target, row)
+    if (!info) return undefined
+    if (info.id !== nativeID) throw new Error("Native calendar mapping differs")
+    const value = { ...project(info, target), id }
+    if (!same(value, target)) throw new Error("Native calendar mapping differs")
     return value
   })
   const mutate = (action: "pause" | "resume", input: Target, id: string, guard: () => true) => protect(input, target => Effect.gen(function* () {
-    if (!(yield* get(target, id))) throw new Error("Native calendar missing")
-    yield* carrier(target)
-    if (action === "resume") yield* available()
-    yield* carrier(target)
+    const existing = yield* get(target, id)
+    if (!existing) throw new Error("Native calendar missing")
+    if (action === "resume" && !existing.code) throw new Error("schedule-calendar-requires-code")
     const nativeID = missionAutomationID(id)
-    const value = yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return schedules[action](nativeID) })
+    const value = yield* Effect.suspend(() => {
+      assertCurrent()
+      assertSynchronousAuthorityGuard(guard, "policy-unqualified")
+      return schedules[action](nativeID)
+    })
       .pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => {
         if (info.id !== nativeID) throw new Error("Native calendar mutation differs")
+        if (action === "resume" && !missionCodeWake(info)) throw new Error("schedule-calendar-requires-code")
         return { ...project(info, target), id }
       }))
     if (!same(value, target) || value.id !== id) throw new Error("Native calendar mutation differs")
@@ -185,23 +191,19 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     assertCurrent, directory: location.directory,
     ensureCarrier: (input, guard) => protect(input, target => Effect.gen(function* () {
       yield* enabled()
-      yield* available()
       const present = yield* ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) }).pipe(Effect.catch(error =>
         missing(error, "Session.NotFoundError") ? Effect.succeed(undefined) : Effect.fail(error)))
       if (!present) { yield* enabled(); yield* Effect.suspend(() => {
         assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified")
         return ctx.session.create({ id: Session.ID.make(target.descriptor.sessionID), title: NATIVE_SCHEDULE_CARRIER_TITLE,
           location: { directory: location.directory }, agent: Agent.ID.make(carrierAgent),
-          model: Model.Ref.make({ providerID: Provider.ID.make(NATIVE_SCHEDULE_CARRIER_MODEL.providerID), id: Model.ID.make(NATIVE_SCHEDULE_CARRIER_MODEL.id) }),
           metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: marker(target) }, permissions: wakeRules() })
       }) }
       yield* carrier(target)
     }), guard),
     list: (input, guard) => protect(input, target => Effect.gen(function* () {
-      yield* carrier(target)
-      yield* available()
-      const values = yield* schedules.list({ sessionID: target.descriptor.sessionID }).pipe(Effect.flatMap(
-        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(Automation.Info)).check(Schema.isMaxLength(16)))))
+      const { value: values } = yield* observe(target, Effect.suspend(() => schedules.list({ sessionID: target.descriptor.sessionID })).pipe(Effect.flatMap(
+        Schema.decodeUnknownEffect(Schema.Array(Schema.toType(Automation.Info)).check(Schema.isMaxLength(16))))))
       const result = values.map(info => project(info, target))
       if (result.some(info => info.sessionID !== target.descriptor.sessionID)) throw new Error("Native calendar list is foreign")
       canonicalAuthority(result, 1024 * 1024)
@@ -209,11 +211,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     }), guard),
     get: (input, id, guard) => protect(input, target => get(target, id), guard),
     create: (input, guard) => protect(input, target => Effect.gen(function* () {
-      yield* carrier(target)
-      yield* available()
-      yield* carrier(target)
       if (target.descriptor.anchorAt === undefined) throw new Error("Native calendar creation anchor unavailable")
-      yield* codeCarrier(target, guard)
       const anchor = target.descriptor.anchorAt, real = yield* Clock.Clock
       const creationClock: Clock.Clock = { currentTimeMillis: Effect.succeed(anchor), currentTimeMillisUnsafe: () => anchor,
         currentTimeNanos: Effect.succeed(BigInt(anchor) * 1_000_000n), currentTimeNanosUnsafe: () => BigInt(anchor) * 1_000_000n,
@@ -221,16 +219,16 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
       const input = Schema.decodeUnknownSync(Schema.toType(Automation.CreateInput))({ sessionID: target.descriptor.sessionID, name: target.descriptor.name,
         trigger: missionAutomationTrigger(target.descriptor), action: { type: "code", code: MISSION_WAKE_CODE },
         ...(target.descriptor.endsAt === null ? {} : { expires: new Date(target.descriptor.endsAt).toISOString() }) })
+      yield* codeCarrier(target, guard)
       const value = yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified");
         return schedules.create(input).pipe(Effect.provideService(Clock.Clock, creationClock)) })
         .pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => project(info, target)))
-      if (!same(value, target)) throw new Error("Native created calendar differs")
+      if (!value.code || !same(value, target)) throw new Error("Native created calendar differs")
       return value
     }), guard),
     pause: (target, id, guard) => mutate("pause", target, id, guard), resume: (target, id, guard) => mutate("resume", target, id, guard),
     remove: (input, id, guard) => protect(input, target => Effect.gen(function* () {
       if (!(yield* get(target, id))) return
-      yield* carrier(target)
       yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return schedules.remove(missionAutomationID(id)) }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Void)))
       if (yield* get(target, id)) throw new Error("Native calendar removal unconfirmed")
     }), guard),
@@ -248,18 +246,9 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
       if (!info) return false
       // An active row retries an uncounted run. A paused or done one still counts a program
       // in flight, so only a program that ended uncounted leaves the run unconsumed for good.
-      if (info.code) return info.runCount >= wake.run
+      if (!info.code) throw new Error("schedule-calendar-requires-code")
+      return info.runCount >= wake.run
         || info.status !== "active" && info.runCount === wake.run - 1 && !missionCodeWakeRunning(wake.scheduleID, wake.run)
-      if (info.runCount < wake.run) return false
-      const ids = missionWakeReadIDs(wake.scheduleID, wake.run)
-      const value = yield* query("SELECT id,type,CASE WHEN length(CAST(data AS BLOB))<=262144 THEN data END AS data FROM session_message WHERE id IN (?,?) AND session_id=?",
-        [ids[0], ids.at(-1), target.descriptor.sessionID])
-      if (value.length !== 1 || value[0].type !== "user" || typeof value[0].data !== "string") return false
-      const data = JSON.parse(value[0].data)
-      const message = Schema.decodeUnknownSync(SessionMessage.User)({ ...data, id: value[0].id, type: "user" })
-      const metadata = missionWakeMetadata(message.metadata, message.id)
-      return metadata !== undefined && missionAutomationID(metadata.id) === missionAutomationID(wake.scheduleID)
-        && metadata.run === wake.run && metadata.dueAt === wake.dueAt && message.text === NATIVE_SCHEDULE_CARRIER_SIGNAL
     }), guard),
   } satisfies NativeScheduleCalendarService
 })

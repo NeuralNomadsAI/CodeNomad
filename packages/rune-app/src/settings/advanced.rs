@@ -40,7 +40,10 @@ impl Toggle {
     }
 
     pub fn supported(self) -> bool {
-        self == Self::Whitespace || (cfg!(target_os = "windows") && self == Self::SecondLaunch)
+        matches!(
+            self,
+            Self::EmptySessions | Self::UnseenSubagents | Self::Whitespace
+        ) || (cfg!(target_os = "windows") && self == Self::SecondLaunch)
     }
 
     fn labels(self) -> (&'static str, &'static str) {

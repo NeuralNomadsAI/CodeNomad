@@ -223,8 +223,7 @@ export async function prepareScheduledCoordinatorMission(args: {
           if (before.scheduleActivation) return refused("schedule-activation-conflict")
           const plan = await activation.prepare(workspaceID, location)
           await mutation.refresh(); await assertAuthor()
-          await activation.apply(workspaceID, location, { authority: plan.authority,
-            targets: plan.targets.map(item => ({ ...item, attempted: false, acknowledged: false })) }, adapter.journal)
+          await activation.apply(workspaceID, location, plan, adapter.journal)
           const after = await adapter.read()
           if (after.scheduleActivation?.state !== "ready" || after.scheduleActivation.requestID !== requestID) return uncertain()
           await activation.verify(workspaceID, location, after.scheduleActivation.authority)

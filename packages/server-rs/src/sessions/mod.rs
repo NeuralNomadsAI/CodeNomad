@@ -1,5 +1,6 @@
 //! Session-scoped reads beside the relay: pending requests, permission receipts,
 //! favorites and history navigation, each checked against the workspace's locations.
+pub mod cleanup;
 pub mod contracts;
 pub mod favorites;
 pub mod history;
@@ -32,6 +33,7 @@ pub fn routes(shutdown: CancellationToken) -> Router<Shared> {
         .route("/api/workspaces/{id}/pending-requests", get(pending::snapshot).layer(Extension(shutdown)))
         .route("/api/workspaces/{id}/session-favorites", get(favorites::list))
         .route("/api/workspaces/{id}/session-favorites/{session}", put(favorites::update))
+        .route("/api/workspaces/{id}/session-cleanup/{session}", post(cleanup::route))
         .route("/api/workspaces/{id}/sessions/{session}/permission-receipts", get(receipts::list))
         .route(
             "/api/workspaces/{id}/sessions/{session}/permission-mode",

@@ -5,9 +5,16 @@ use crate::prompt::Prompt;
 use crate::{
     Sender, Wake,
     backend::Backend,
+    prompt_shell::ShellError,
     stream,
     transport::{Event, PromptOutcome, publish},
 };
+
+#[derive(Debug)]
+pub enum ShellSettlement {
+    Outcome(PromptOutcome),
+    AuthExpired { outcome: PromptOutcome },
+}
 
 pub(super) enum SlashReceipt {
     Settled,
@@ -63,6 +70,32 @@ pub(super) async fn slash(
     )
     .await;
     SlashReceipt::Settled
+}
+
+pub(super) async fn shell(backend: &Backend, attempt: &str, command: &str) -> ShellSettlement {
+    match backend.prompt_shell(attempt, command).await {
+        Ok(()) => ShellSettlement::Outcome(PromptOutcome::Confirmed(attempt.into())),
+        Err(ShellError::Rejected) => ShellSettlement::Outcome(PromptOutcome::Rejected),
+        Err(ShellError::Unconfirmed) => ShellSettlement::Outcome(PromptOutcome::Unconfirmed),
+        Err(ShellError::PreDispatchAuthenticationRequired) => {
+            if matches!(backend.authentication_status().await, Ok(false)) {
+                ShellSettlement::AuthExpired {
+                    outcome: PromptOutcome::Rejected,
+                }
+            } else {
+                ShellSettlement::Outcome(PromptOutcome::Rejected)
+            }
+        }
+        Err(ShellError::UnconfirmedAuthenticationRequired) => {
+            if matches!(backend.authentication_status().await, Ok(false)) {
+                ShellSettlement::AuthExpired {
+                    outcome: PromptOutcome::Unconfirmed,
+                }
+            } else {
+                ShellSettlement::Outcome(PromptOutcome::Unconfirmed)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -141,7 +141,7 @@ test("transcript frames and compaction buffers never merge or publish across att
   const owner = lifetime(), frames: Array<() => void> = []
   let projected = 0, usage = 0
   const projection = production("./opencode-projection-frame.ts", {
-    ...owner, getLogger: () => ({ error: assert.fail }),
+    ...owner, batch: <T>(run: () => T) => run(), getLogger: () => ({ error: assert.fail }),
     requestAnimationFrame: (run: () => void) => { frames.push(run); return frames.length }, cancelAnimationFrame: () => {},
   })
   projection.setTranscriptProjectionGates({ isActiveSession: () => true, isLatestMessageWindow: () => true,
@@ -214,7 +214,7 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
       ...owner, beginGesture: surfaces.beginGesture, applySurface: surfaces.applySurface,
       props: { instanceId: "workspace", activeSessionId: () => "session", onRevealConversation: () => { reveals++ } },
       intent: 0, conversationEpoch: 0, scope: () => "unchanged-view", captureView: () => () => true,
-      passageSchedule: () => undefined, currentPassage: { snapshot: () => undefined }, selectedScheduled: () => "schedule",
+      currentPassage: { snapshot: () => undefined }, selectedScheduled: () => route === "scheduled" ? "schedule" : undefined,
       mission: () => mission, missions: () => [mission], includesSession: () => true, scheduled: { ownsSession: () => true },
       instances: () => new Map([["workspace", { client }]]), getOpenCodeInstanceGeneration: () => 1,
       getAuthoritativelyDeletedSessionIdsForInstance: () => new Set(), sessions: () => new Map([["workspace", new Map([["session", {}]])]]),

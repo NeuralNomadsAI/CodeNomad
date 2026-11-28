@@ -12,6 +12,21 @@ pub struct AttentionHint {
     pub event: WorkspaceEvent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionActivityKind {
+    Working,
+    Idle,
+    Deleted,
+    ResetWorkspace,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionActivityHint {
+    pub workspace: String,
+    pub session: String,
+    pub kind: SessionActivityKind,
+}
+
 #[derive(Default)]
 pub enum CatalogueChanges {
     #[default]
@@ -100,12 +115,14 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
+    provider_locations: Mutex<CatalogueChanges>,
     provider_moves: Mutex<ProviderMoves>,
     integrations: Mutex<CatalogueChanges>,
     integration_sessions: Mutex<SessionCatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
+    session_activity: Mutex<VecDeque<SessionActivityHint>>,
     workspace_events: Mutex<WorkspaceEventQueue>,
     workspace_stopped: Mutex<std::collections::HashMap<String, (bool, bool)>>,
     temporary_folders: Mutex<Option<Vec<String>>>,
@@ -128,6 +145,7 @@ impl Signals {
         let workspace = !self.workspace_overflow.swap(true, SeqCst);
         if self.mark(&self.pending, None)
             | self.mark(&self.providers, None)
+            | self.mark(&self.provider_locations, None)
             | self.mark(&self.integrations, None)
             | mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None)
             | workspace
@@ -139,6 +157,7 @@ impl Signals {
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
+        self.mark(&self.provider_locations, None);
         self.mark(&self.integrations, None);
         mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None);
         self.generation.fetch_add(1, SeqCst);
@@ -156,6 +175,7 @@ impl Signals {
 
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
+        self.session_activity.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
         *self.temporary_folders.lock().unwrap() = None;
         *self.stats.lock().unwrap() = StatsChanges::default();
@@ -307,8 +327,20 @@ impl Signals {
         let account_config_changed = frame["type"] == "storage.configChanged"
             && matches!(frame["owner"].as_str(), Some("providerAccounts" | "*"))
             && self.mark(&self.providers, None);
-        let provider_changed = crate::settings::provider_change(frame)
-            .is_some_and(|id| self.mark(&self.providers, Some(id)))
+        let provider_changed = crate::settings::provider_change(frame).is_some_and(|id| {
+            let mut marked = self.mark(&self.providers, Some(id));
+            if frame["type"] == "instance.eventStatus"
+                || (frame["type"] == "instance.event"
+                    && frame["event"]["type"] == "server.connected")
+            {
+                marked |= self.mark(&self.provider_locations, Some(id));
+            }
+            marked
+        }) | (frame["type"] == "instance.eventStatus"
+            && frame["instanceId"]
+                .as_str()
+                .filter(|id| valid_id(id))
+                .is_some_and(|id| self.mark(&self.provider_locations, Some(id))))
             | session_moved
             | account_config_changed;
         let integration_changed = match crate::settings::integrations::change_event(frame) {
@@ -346,16 +378,27 @@ impl Signals {
             Some("instance.eventStatus") => {
                 let mut stats = self.stats.lock().unwrap();
                 let state = (frame["status"] == "connected", frame["generation"].as_u64());
+                let prev = stats.status.get(id).copied();
                 if !stats.status.contains_key(id) && stats.status.len() >= 128 {
                     stats.status.clear();
                 }
-                stats.status.insert(id.to_owned(), state) != Some(state)
+                let changed = stats.status.insert(id.to_owned(), state) != Some(state);
+                drop(stats);
+                if !state.0 || prev.is_some_and(|(_, g)| g != state.1) {
+                    self.push_session_activity(id, "", SessionActivityKind::ResetWorkspace);
+                }
+                changed
             }
-            Some("workspace.stopped") => self.stats.lock().unwrap().status.remove(id).is_some(),
+            Some("workspace.stopped") => {
+                self.push_session_activity(id, "", SessionActivityKind::ResetWorkspace);
+                self.stats.lock().unwrap().status.remove(id).is_some()
+            }
             _ => false,
         };
         let attention =
             kind == Some("instance.event") && self.observe_attention(id, &frame["event"]);
+        let activity =
+            kind == Some("instance.event") && self.observe_session_activity(id, &frame["event"]);
         let invalidates = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped") => true,
             Some("instance.eventStatus") => frame["status"] == "connected",
@@ -381,10 +424,48 @@ impl Signals {
             | workspace_event
             | stopped
             | attention
+            | activity
             | stats
         {
             (self.wake)();
         }
+    }
+
+    fn push_session_activity(&self, workspace: &str, session: &str, kind: SessionActivityKind) {
+        let mut queue = self.session_activity.lock().unwrap();
+        if queue.len() >= 256 {
+            queue.pop_front();
+        }
+        queue.push_back(SessionActivityHint {
+            workspace: workspace.into(),
+            session: session.into(),
+            kind,
+        });
+    }
+
+    fn observe_session_activity(&self, workspace: &str, event: &Value) -> bool {
+        let kind = match event["type"].as_str() {
+            Some(
+                "session.execution.started" | "session.step.started" | "session.compaction.started",
+            ) => SessionActivityKind::Working,
+            Some(
+                "session.execution.succeeded"
+                | "session.execution.failed"
+                | "session.execution.interrupted"
+                | "session.compaction.ended"
+                | "session.compaction.failed",
+            ) => SessionActivityKind::Idle,
+            Some("session.deleted" | "session.moved") => SessionActivityKind::Deleted,
+            _ => return false,
+        };
+        let Some(session) = event["data"]["sessionID"]
+            .as_str()
+            .filter(|id| valid_id(id))
+        else {
+            return false;
+        };
+        self.push_session_activity(workspace, session, kind);
+        true
     }
 
     fn observe_attention(&self, workspace: &str, event: &Value) -> bool {
@@ -432,12 +513,14 @@ impl CatalogueWatch {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -564,6 +647,17 @@ impl CatalogueWatch {
         )
     }
 
+    pub fn generation(&self) -> u64 {
+        self.signals.generation.load(SeqCst)
+    }
+
+    pub fn take_session_activity(&self) -> (u64, VecDeque<SessionActivityHint>) {
+        (
+            self.signals.generation.load(SeqCst),
+            std::mem::take(&mut *self.signals.session_activity.lock().unwrap()),
+        )
+    }
+
     pub fn take_provider_changes(&self) -> (CatalogueChanges, CatalogueChanges, u64) {
         (
             std::mem::take(&mut *self.signals.providers.lock().unwrap()),
@@ -572,8 +666,22 @@ impl CatalogueWatch {
         )
     }
 
+    pub fn take_provider_location_changes(&self) -> CatalogueChanges {
+        std::mem::take(&mut *self.signals.provider_locations.lock().unwrap())
+    }
+
     pub fn take_provider_moves(&self) -> ProviderMoves {
         std::mem::take(&mut *self.signals.provider_moves.lock().unwrap())
+    }
+
+    pub fn native_connected(&self, workspace: &str) -> Option<bool> {
+        self.signals
+            .stats
+            .lock()
+            .unwrap()
+            .status
+            .get(workspace)
+            .map(|(connected, _)| *connected)
     }
 
     pub fn take_integration_changes(&self) -> (CatalogueChanges, SessionCatalogueChanges) {
@@ -765,12 +873,14 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -844,12 +954,14 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -870,6 +982,42 @@ mod tests {
         assert!(
             matches!(&*signals.providers.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
         );
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"session.moved"}}),
+        );
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        assert!(matches!(
+            &*signals.provider_moves.lock().unwrap(),
+            ProviderMoves::Sessions(entries) if entries.contains(&("first".into(), String::new()))
+        ));
+        *signals.provider_moves.lock().unwrap() = ProviderMoves::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"disconnected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"connected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"server.connected"}}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
         assert!(
             matches!(&*signals.stopped.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["second".into()]))
         );
@@ -880,12 +1028,14 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -923,12 +1073,14 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -954,12 +1106,14 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            session_activity: Mutex::default(),
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             temporary_folders: Mutex::default(),
@@ -1064,5 +1218,59 @@ mod tests {
             ev,
             WorkspaceEvent::NativeStreamStatus { workspace_id, connected: true } if workspace_id == "proj-2"
         )));
+    }
+
+    #[test]
+    fn compaction_events_transition_session_activity_working_then_idle() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.started", "data": { "sessionID": "ses_cmp1" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.ended", "data": { "sessionID": "ses_cmp1" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.started", "data": { "sessionID": "ses_cmp2" } }
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "ws1",
+            "event": { "type": "session.compaction.failed", "data": { "sessionID": "ses_cmp2" } }
+        }));
+        let (_, hints) = watch.take_session_activity();
+        assert_eq!(
+            Vec::from(hints),
+            vec![
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp1".into(),
+                    kind: SessionActivityKind::Working,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp1".into(),
+                    kind: SessionActivityKind::Idle,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp2".into(),
+                    kind: SessionActivityKind::Working,
+                },
+                SessionActivityHint {
+                    workspace: "ws1".into(),
+                    session: "ses_cmp2".into(),
+                    kind: SessionActivityKind::Idle,
+                },
+            ]
+        );
     }
 }

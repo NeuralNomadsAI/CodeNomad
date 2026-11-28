@@ -1,5 +1,4 @@
 import type { PendingDirectoryErrorReason, WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
-import { getPathBasename } from "../lib/instance-label"
 import { HttpResponseError } from "../lib/retryable-file-search"
 
 /** Why one directory's questions/permissions could not be recovered. */
@@ -75,73 +74,4 @@ export function combinePendingFailures(failures: readonly unknown[]): unknown {
     && failure.recoveryCause.kind === "directories" ? failure.recoveryCause.directories : [])
   if (!directories.length || failures.some((failure) => !(failure instanceof PendingRecoveryError))) return failures[0]
   return new PendingRecoveryError({ kind: "directories", directories })
-}
-
-const ISSUE_KEYS: Record<PendingDirectoryIssue, string> = {
-  "not-owned": "interruption.recoveryIssue.notOwned",
-  deleting: "interruption.recoveryIssue.deleting",
-  missing: "interruption.recoveryIssue.missing",
-  unverified: "interruption.recoveryIssue.unverified",
-  changed: "interruption.recoveryIssue.changed",
-  timeout: "interruption.recoveryIssue.timeout",
-  unavailable: "interruption.recoveryIssue.unavailable",
-  excluded: "interruption.recoveryIssue.excluded",
-}
-
-const MAX_LISTED = 3
-
-/** Short folder names; a shared name adds the parent, and a still-shared one the full path. */
-function folderNames(directories: readonly string[]): Map<string, string> {
-  const unique = [...new Set(directories)]
-  const distinct = (label: (directory: string) => string) => {
-    const counts = new Map<string, number>()
-    for (const directory of unique) counts.set(label(directory), (counts.get(label(directory)) ?? 0) + 1)
-    return (directory: string) => counts.get(label(directory)) === 1
-  }
-  const withParent = (directory: string) =>
-    `${getPathBasename(directory.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, ""))}/${getPathBasename(directory)}`
-  const nameIsDistinct = distinct(getPathBasename), parentIsDistinct = distinct(withParent)
-  return new Map(unique.map((directory) => [directory, nameIsDistinct(directory) ? getPathBasename(directory)
-    : parentIsDistinct(directory) ? withParent(directory) : directory]))
-}
-
-// Callers pass distinct entries (folders by path, sessions by title).
-function list(values: readonly string[]): string {
-  return values.length > MAX_LISTED ? `${values.slice(0, MAX_LISTED).join(", ")} (+${values.length - MAX_LISTED})` : values.join(", ")
-}
-
-type Translate = (key: string, params?: Record<string, string | number>) => string
-
-/** The warning's title (workspace) and message (cause, folders and affected sessions). */
-export function describePendingRecovery(
-  cause: PendingRecoveryCause,
-  workspace: string,
-  sessionTitlesIn: (directories: readonly string[]) => string[],
-  t: Translate,
-): { title: string; message: string } {
-  // The plugin belongs to the OpenCode connection, so its single notice names no project.
-  if (cause.kind === "unsupported") {
-    return { title: t("interruption.recoveryUnsupported.title"), message: t("interruption.recoveryCause.unsupported") }
-  }
-  const title = t("interruption.recoveryIncomplete.title", { workspace })
-  if (cause.kind !== "directories") {
-    const detail = "detail" in cause ? cause.detail : ""
-    return { title, message: t(`interruption.recoveryCause.${cause.kind}`, { detail }) }
-  }
-  const names = folderNames(cause.directories.map(({ directory }) => directory))
-  const byIssue = new Map<PendingDirectoryIssue, { directories: Set<string>; details: Set<string> }>()
-  for (const { directory, issue, detail } of cause.directories) {
-    const entry = byIssue.get(issue) ?? { directories: new Set(), details: new Set() }
-    entry.directories.add(directory)
-    if (detail) entry.details.add(detail)
-    byIssue.set(issue, entry)
-  }
-  const lines = [...byIssue].map(([issue, { directories, details }]) => t(issue === "unavailable" && details.size
-    ? "interruption.recoveryIssue.unavailableDetail" : ISSUE_KEYS[issue], {
-    directories: list([...directories].map((directory) => names.get(directory)!)),
-    detail: list([...details]),
-  }))
-  const titles = [...new Set(sessionTitlesIn(cause.directories.map(({ directory }) => directory)))]
-  if (titles.length) lines.push(t("interruption.recoverySessions", { sessions: list(titles) }))
-  return { title, message: lines.join(" ") }
 }

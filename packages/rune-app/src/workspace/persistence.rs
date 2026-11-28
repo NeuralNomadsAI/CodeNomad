@@ -177,42 +177,40 @@ impl Persistence {
     pub fn dirty(&mut self, now: f64) {
         self.due = now + 0.25;
     }
-    pub fn poll_save(
-        &mut self,
-        snapshot: &Snapshot,
-        now: f64,
-        tx: &mut rune::Tx,
-        wake: rune::Waker,
-    ) {
-        if let Some((revision, ok)) = self.saving.as_ref().and_then(|rx| rx.try_recv().ok()) {
+    pub fn poll_save_ready(&mut self, revision: u64, now: f64, tx: &mut rune::Tx) -> bool {
+        if let Some((saved_rev, ok)) = self.saving.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.saving = None;
             self.write_error = !ok;
             if ok {
-                self.saved = self.saved.max(revision);
+                self.saved = self.saved.max(saved_rev);
             }
         }
-        let Some(store) = self.store.clone() else {
-            return;
-        };
-        if !self.restore_enabled
+        if self.store.is_none()
+            || !self.restore_enabled
             || self.mutating
             || self.read_error
             || self.write_error
             || self.saving.is_some()
-            || self.saved >= snapshot.revision
+            || self.saved >= revision
         {
-            return;
+            return false;
         }
         if self
             .cleared_revision
-            .is_some_and(|cleared| snapshot.revision > cleared)
+            .is_some_and(|cleared| revision > cleared)
         {
             self.cleared_revision = None;
         }
         if now < self.due {
             tx.wake_at(self.due);
-            return;
+            return false;
         }
+        true
+    }
+    pub fn start_save(&mut self, snapshot: &Snapshot, wake: rune::Waker) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
         let bytes = match encode_for_save(snapshot) {
             Ok((bytes, partial)) => {
                 self.partial = partial;
@@ -232,6 +230,18 @@ impl Persistence {
             let _ = out.send((revision, ok)).await;
             wake();
         });
+    }
+    #[cfg(test)]
+    pub fn poll_save(
+        &mut self,
+        snapshot: &Snapshot,
+        now: f64,
+        tx: &mut rune::Tx,
+        wake: rune::Waker,
+    ) {
+        if self.poll_save_ready(snapshot.revision, now, tx) {
+            self.start_save(snapshot, wake);
+        }
     }
     pub fn retry(&mut self) {
         if self.store.is_none() {
@@ -505,6 +515,15 @@ impl Persistence {
                 self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = base_drafts;
                 self.attempted_file_drafts = base_drafts;
+                #[cfg(target_arch = "wasm32")]
+                if !self.file_draft_read_error
+                    && let Some(store) = &self.store
+                {
+                    let staged = documents
+                        .file_draft_snapshot(base_drafts)
+                        .map(|(_, bytes)| bytes);
+                    store.stage_pending_file_drafts(staged);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.file_drafts_dirty_revision = drafts_rev;
@@ -521,7 +540,9 @@ impl Persistence {
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
                 #[cfg(target_arch = "wasm32")]
-                if let Some(store) = &self.store {
+                if !self.file_draft_read_error
+                    && let Some(store) = &self.store
+                {
                     let staged = documents
                         .file_draft_snapshot(drafts_rev)
                         .map(|(_, bytes)| bytes);
@@ -536,6 +557,10 @@ impl Persistence {
                 self.cleared_file_drafts_revision = None;
                 self.saved_file_drafts = drafts_rev;
                 self.attempted_file_drafts = drafts_rev;
+                #[cfg(target_arch = "wasm32")]
+                if let Some(store) = &self.store {
+                    store.stage_pending_file_drafts(None);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.file_drafts_dirty_revision = drafts_rev;
@@ -548,6 +573,15 @@ impl Persistence {
         } else {
             // Re-arm any file draft write cancelled by the partial Clear so live edits persist.
             self.attempted_file_drafts = self.saved_file_drafts;
+            #[cfg(target_arch = "wasm32")]
+            if !self.file_draft_read_error
+                && let Some(store) = &self.store
+            {
+                let staged = documents
+                    .file_draft_snapshot(self.saved_file_drafts)
+                    .map(|(_, bytes)| bytes);
+                store.stage_pending_file_drafts(staged);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 self.file_drafts_due = 0.0;
@@ -692,10 +726,6 @@ impl Persistence {
                 return;
             }
             self.cleared_file_drafts_revision = None;
-            #[cfg(target_arch = "wasm32")]
-            if let Some(store) = &self.store {
-                store.stage_pending_file_drafts(None);
-            }
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -755,12 +785,18 @@ impl Persistence {
             return !self.file_draft_error;
         };
         self.attempted_file_drafts = revision;
-        if self.file_draft_read_error
-            || self
-                .store
-                .as_ref()
-                .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
-        {
+        if self.file_draft_read_error {
+            self.file_draft_error = true;
+            return false;
+        }
+        let Some(store) = self.store.as_ref() else {
+            self.file_draft_error = true;
+            return false;
+        };
+        if store.save_file_drafts(&bytes).is_err() {
+            // Keep unsaved draft bytes staged so pagehide retries writing them and withholds
+            // record release if sessionStorage quota still rejects the write.
+            store.stage_pending_file_drafts(Some(bytes));
             self.file_draft_error = true;
             return false;
         }

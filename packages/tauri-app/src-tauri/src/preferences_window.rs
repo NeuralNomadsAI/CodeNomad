@@ -851,9 +851,15 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
 pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
     let incarnation = app.state::<PreferencesWindow>().incarnation();
     let (done, reply) = tokio::sync::oneshot::channel();
-    if !enqueue_close(app, incarnation, move |result| {
-        let _ = done.send(result);
-    })? {
+    // Capturing the window geometry waits on the native thread: keep it off the executor.
+    let worker = app.clone();
+    let admitted = crate::off_executor(move || {
+        enqueue_close(&worker, incarnation, move |result| {
+            let _ = done.send(result);
+        })
+    })
+    .await?;
+    if !admitted {
         return Ok(false);
     }
     reply.await.map_err(|error| error.to_string())?

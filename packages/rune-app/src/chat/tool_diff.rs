@@ -82,6 +82,9 @@ pub(crate) struct Preferences {
     last_agent_focus: Cell<Option<(u64, Option<DraftSig>, Option<(i32, i32)>)>>,
     pub(crate) stack_scroll: Rc<Cell<(f32, f32)>>,
     pub(crate) composer_scroll: Rc<Cell<(f32, f32)>>,
+    pub(crate) session_list_scroll: Rc<Cell<(f32, f32)>>,
+    pub(crate) right_panel_status_scroll: Rc<Cell<(f32, f32)>>,
+    pub(crate) hovered_other_scrollers: u8,
     pub(crate) composer_bounds: DrawnRect,
     pub(crate) history_bounds: DrawnRect,
 }
@@ -113,6 +116,9 @@ impl Default for Preferences {
             last_agent_focus: Cell::new(None),
             stack_scroll: Rc::new(Cell::new((0.0, 0.0))),
             composer_scroll: Rc::new(Cell::new((0.0, 0.0))),
+            session_list_scroll: Rc::new(Cell::new((0.0, 0.0))),
+            right_panel_status_scroll: Rc::new(Cell::new((0.0, 0.0))),
+            hovered_other_scrollers: 0,
             composer_bounds: DrawnRect::new([0.0; 4]),
             history_bounds: DrawnRect::new([0.0; 4]),
         }
@@ -184,6 +190,7 @@ impl Preferences {
         self.last_agent_focus.set(None);
         self.stack_scroll.set((0.0, 0.0));
         self.composer_scroll.set((0.0, 0.0));
+        self.hovered_other_scrollers = 0;
         self.composer_bounds.set([0.0; 4]);
         self.history_bounds.set([0.0; 4]);
     }
@@ -194,6 +201,10 @@ impl Preferences {
     }
 
     pub(crate) fn sync_focused_agent_control(s: &mut State, focused: Option<&str>) -> bool {
+        let reconciled = s
+            .agent
+            .as_mut()
+            .is_some_and(crate::agent::Ui::reconcile_custom_focus);
         let next = if s.screen.is_launcher() {
             None
         } else {
@@ -204,7 +215,7 @@ impl Preferences {
             s.revision += 1;
             true
         } else {
-            false
+            reconciled
         }
     }
 
@@ -1115,15 +1126,19 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                     .checked(wrapped || split),
                 ),
         )
-        .child(markdown::diff_pane(
-            diff::view(
-                s,
-                format!("{key}-diff"),
-                move |s| s.transcript_display.diffs.read(&read),
-                move |s| s.transcript_display.diffs.edit(&write),
-                None,
+        .child(crate::chat::reading::inner_diff_scroller(
+            markdown::diff_pane(
+                diff::view(
+                    s,
+                    format!("{key}-diff"),
+                    move |s| s.transcript_display.diffs.read(&read),
+                    move |s| s.transcript_display.diffs.edit(&write),
+                    None,
+                ),
+                entry.lines,
             ),
-            entry.lines,
+            !wrapped,
+            entry.lines > 30,
         ))
 }
 

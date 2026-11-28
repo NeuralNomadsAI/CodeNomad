@@ -162,6 +162,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         col().full_width().role("group").label(name).child(
             hinted_field(&l.search, t("sessionList.filter.placeholder"))
                 .label(name)
+                .input_mode(rune::InputMode::Search)
                 .on_edit(screen::edit(scope, Editor::Search))
                 .on_key(editor_keys.clone())
                 .build(&field_kit(layout::dark()))
@@ -268,7 +269,8 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 )),
         );
     }
-    pane.child(
+    let list_scroll = s.tool_diff_preferences.session_list_scroll.clone();
+    pane.child(crate::chat::reading::track_other_scroller_hover(
         col()
             .full_width()
             .remaining()
@@ -276,6 +278,10 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .on_scroll_offset(move |at| {
+                list_scroll.set((at.offset[1], at.max[1]));
+            })
             .child(items),
-    )
+        crate::chat::reading::HOVER_SESSION_LIST,
+    ))
 }

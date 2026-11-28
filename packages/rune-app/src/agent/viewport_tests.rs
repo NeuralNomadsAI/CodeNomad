@@ -214,7 +214,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
         let mut state = state();
         let ui = state.agent.as_mut().unwrap();
         ui.selected = "form-fixture".into();
-        ui.forms.push(Form { tool: None, infer_websearch: false, id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
+        ui.forms.push(Form { tool: None, infer_websearch: false, owner: Default::default(), id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
         agent_forms::seed(&ui.forms, &mut ui.drafts);
         let mut rt = runtime(state, size);
         reveal(&mut rt, "field-field23");
@@ -272,6 +272,7 @@ fn audit_settlement_during_edit(permission: bool) {
         ui.forms.push(Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: ui.selected.clone(),
             title: "Synthetic question".into(),
             fields: vec![json!({"key":"answer","type":"string"})],
@@ -447,6 +448,7 @@ fn keyboard_viewport_matrix_preserves_reading_draft_and_actions() {
                 ui.forms.push(Form {
                     tool: None,
                     infer_websearch: false,
+                    owner: Default::default(),
                     id: "form-1".into(),
                     title: "Choose a target".into(),
                     fields: (0..12)
@@ -1767,7 +1769,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     seed_passages(&mut s, 16);
     let form = Form {
         tool: None,
-        infer_websearch: false,
+        infer_websearch: false, owner: Default::default(),
         id: "q-focus".into(),
         title: "Scrollable question with multiple fields".into(),
         fields: (0..6)
@@ -2054,7 +2056,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
             && caret_ime[1] + caret_ime[3] <= stack_ime[1] + stack_ime[3] + 1.0,
         "wrapping IME preedit caret must stay unclipped inside 28px session-stack: caret={caret_ime:?}, stack={stack_ime:?}"
     );
-    // Commit / clear preedit, then test selection inversion (Ctrl+End -> Ctrl+Shift+Home -> Ctrl+A):
+    // Commit / clear preedit, then test selection inversion (Ctrl+End -> Ctrl+Shift+Home -> Select All):
     // sorted range() stays (0, len) while active caret moves from line 1 to line 10.
     rt.ime(rune::Ime::Preedit(String::new(), None, vec![]));
     settle(&mut rt);
@@ -2073,10 +2075,12 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
             ..rune::Mods::default()
         },
     };
-    let ctrl_a = rune::KeyEvent {
+    let select_all = rune::KeyEvent {
         key: rune::Key::Command('a'),
         mods: rune::Mods {
-            ctrl: true,
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            logo: cfg!(target_os = "macos"),
             ..rune::Mods::default()
         },
     };
@@ -2088,8 +2092,8 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     settle(&mut rt);
     let len_inv = rt.state.draft.text.len();
     assert_eq!((rt.state.draft.anchor, rt.state.draft.focus), (len_inv, 0));
-    rt.key(ctrl_a.clone());
-    rt.key_up(ctrl_a);
+    rt.key(select_all.clone());
+    rt.key_up(select_all.clone());
     settle(&mut rt);
     assert_eq!((rt.state.draft.anchor, rt.state.draft.focus), (0, len_inv));
     let stack_inv = element_rect(&rt, "session-stack");
@@ -2098,24 +2102,17 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
         .into_iter()
         .find(|e| e.path.ends_with("/composer/scroll/input"))
         .and_then(|e| e.caret)
-        .expect("focused composer must expose drawn caret after Ctrl+A inversion");
+        .expect("focused composer must expose drawn caret after Select All inversion");
     assert!(
         caret_inv[1] >= stack_inv[1] - 1.0
             && caret_inv[1] + caret_inv[3] <= stack_inv[1] + stack_inv[3] + 1.0,
-        "Ctrl+A selection inversion must scroll 28px session-stack to reveal line-10 caret: caret={caret_inv:?}, stack={stack_inv:?}"
+        "Select All selection inversion must scroll 28px session-stack to reveal line-10 caret: caret={caret_inv:?}, stack={stack_inv:?}"
     );
 
     // Same-length single-operation replacement ("abcdefghi" -> "abcd\nefgh", cursor stays at 9)
     // must still trigger outer stack caret reveal when caret moves to line 2.
-    let ctrl_a_2 = rune::KeyEvent {
-        key: rune::Key::Command('a'),
-        mods: rune::Mods {
-            ctrl: true,
-            ..rune::Mods::default()
-        },
-    };
-    rt.key(ctrl_a_2.clone());
-    rt.key_up(ctrl_a_2.clone());
+    rt.key(select_all.clone());
+    rt.key_up(select_all.clone());
     settle(&mut rt);
     rt.paste("abcdefghi");
     settle(&mut rt);
@@ -2131,8 +2128,8 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
         tx.scroll_to_y("session-stack", (cur_sy + align_dy).max(0.0));
     });
     settle(&mut rt);
-    rt.key(ctrl_a_2.clone());
-    rt.key_up(ctrl_a_2);
+    rt.key(select_all.clone());
+    rt.key_up(select_all);
     rt.paste("abcd\nefgh");
     settle(&mut rt);
     assert_eq!(rt.state.draft.text, "abcd\nefgh");
@@ -2153,6 +2150,12 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
 
 #[test]
 fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
+    wheel_after_bottom_clamped_resize_cases_22_to_25();
+    wheel_after_bottom_clamped_resize_cases_26_to_30();
+    wheel_after_bottom_clamped_resize_cases_31_to_34();
+}
+
+fn wheel_after_bottom_clamped_resize_cases_22_to_25() {
     // 22. A manual wheel gesture between Frame 1 and Frame 2 after a bottom-clamped resize must
     // win over the saved anchor (both for headless rt.wheel and real host wheel_event).
     let top_passage_key = |rt: &Runtime<State>| -> Option<String> {
@@ -2428,7 +2431,9 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
             && comp_25[1] + comp_25[3] <= stack_25[1] + stack_25[3] + 1.0,
         "focused composer must remain visible when attachment error clears: comp={comp_25:?}, stack={stack_25:?}"
     );
+}
 
+fn wheel_after_bottom_clamped_resize_cases_26_to_30() {
     // 26. Boolean field "q" must not collide with a text field named "q-true" when revealing the
     // focused question field on dock shrink.
     let mut s = state();
@@ -2455,6 +2460,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     ui.forms.push(Form {
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
         id: "form-r2m1".into(),
         title: "Key collision check".into(),
         fields,
@@ -2680,7 +2686,9 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
             && reason_30[1] + reason_30[3] <= stack_30[1] + stack_30[3] + 1.0,
         "typing in an off-screen focused dock field must reveal it inside session-stack: reason={reason_30:?}, stack={stack_30:?}"
     );
+}
 
+fn wheel_after_bottom_clamped_resize_cases_31_to_34() {
     // 31. Adding resources to an already capped permission dock must re-reveal focused reason-* inside pending-content.
     let mut s = state();
     seed_passages(&mut s, 16);
@@ -2798,6 +2806,7 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
     let form_33 = Form {
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
         id: "form-33".into(),
         title: "Confirm deployment target?".into(),
         fields: vec![serde_json::json!({

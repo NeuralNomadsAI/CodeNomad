@@ -8,13 +8,15 @@ import { brotliCompressSync } from "node:zlib"
 import http from "node:http"
 import https from "node:https"
 import path from "node:path"
-import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
-import { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateOpenCodeExecutable, sanitizeBenchEnvPath } from "./private-profile.mjs"
 
-const exe=process.argv[2]
-assert(path.isAbsolute(exe??""),"usage: node security.mjs <absolute opencode executable>")
+const rawExe = process.argv[2]
+assert(path.isAbsolute(rawExe ?? ""), "usage: node security.mjs <absolute opencode executable>")
+const exe = await assertPrivateOpenCodeExecutable(rawExe)
+const { withProductRuntime } = await import("../../../scripts/native-product-fixture.mjs")
+const { fixtureChildPid, spawnFixtureChild: spawn, stopFixtureChild } = await import("../../../scripts/native-fixture-guards.mjs")
+const { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } = await import("./fixtures.mjs")
 const bin=rustBinary()
 await useBenchTemp()
 const { isHtmlBundlePath } = await fromDist("remote-control/gate.js")
@@ -169,12 +171,13 @@ async function query(rust,ts) {
   for (const state of states) assert.deepEqual(state.body,{authenticated:false,pairingRequired:true})
 }
 await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
+  const safeEnv = await sanitizeBenchEnvPath({ ...env }, { allowedRoot: home })
   const password=randomUUID()
   const projects=path.join(home,"projects")
   await mkdir(projects)
   const start=(identity,extra={})=>{
     const child=spawn(bin,[projects,path.join(home,`${identity}.json`),"0",exe],{cwd:home,windowsHide:true,
-    env:{...env,CNRS_FIXTURE_URL:connection.endpoint.url,CNRS_FIXTURE_PASSWORD:connection.endpoint.auth.password,
+    env:{...safeEnv,CNRS_FIXTURE_URL:connection.endpoint.url,CNRS_FIXTURE_PASSWORD:connection.endpoint.auth.password,
        CNRS_SERVER_PASSWORD:password,CNRS_HTTPS_BIND:"127.0.0.1:0",CNRS_HTTPS_NAME:"127.0.0.1",
        CNRS_FIXTURE_INGRESS:"1",CNRS_FIXTURE_STDIN_STOP:"1",...extra}})
     const stopped=new Promise(resolve=>child.once("close",resolve))

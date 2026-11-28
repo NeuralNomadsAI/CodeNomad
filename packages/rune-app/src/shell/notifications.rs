@@ -83,6 +83,16 @@ pub(crate) struct Host {
     recorded: Option<Vec<(u64, String, String)>>,
 }
 
+#[cfg(test)]
+impl Host {
+    pub(crate) fn queued_messages(&self) -> Vec<(Category, String)> {
+        self.messages
+            .iter()
+            .map(messages::Message::summary)
+            .collect()
+    }
+}
+
 struct Click {
     target: Target,
     ticket: u64,
@@ -177,6 +187,15 @@ impl Host {
         let keeps = |target: &Target| target.tab.as_deref() != Some(tab);
         self.routes.retain(|(_, target, _)| keeps(target));
         self.deferred.retain(|notice| keeps(&notice.target));
+    }
+
+    pub(crate) fn main_window_focused(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        return web::focused();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.focused
+        }
     }
 
     fn focused(&self) -> bool {
@@ -288,9 +307,16 @@ fn activate_notice(s: &mut State, target: Target) {
     (s.wake)();
 }
 
+#[cfg(test)]
+pub(crate) fn set_focus_for_test(s: &mut State, focused: bool) {
+    s.notifications.focused = focused;
+}
+
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
-    if focused {
+    if !focused {
+        s.transcript_display.reading_mut().end_wheel_gesture();
+    } else {
         codenomad_client::stream::probe_stale();
     }
 }

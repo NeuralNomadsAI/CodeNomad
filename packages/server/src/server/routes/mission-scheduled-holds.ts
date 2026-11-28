@@ -12,12 +12,16 @@ export type ScheduledHoldBinding = {
   profile: string; configYamlPath: string; executionHost: string
   deleteManagedSessions?: boolean
 }
-type Receipt = { pending?: unknown; document?: { id?: unknown; control?: {
+type Receipt = { pending?: unknown; deleted?: unknown; document?: { id?: unknown; control?: {
   requestID?: unknown; action?: unknown; expectedRevision?: unknown; pending?: unknown
-} | null } | null; deletionReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; deleteManagedSessions?: unknown } }
+} | null } | null; deletionReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; deleteManagedSessions?: unknown };
+  checkReceipt?: { id?: unknown; requestID?: unknown; expectedRevision?: unknown; action?: unknown } }
+const receiptID = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{3,100}$/.test(value)
+const nonNegativeInt = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 const held = new WeakMap<WorktreeDeletionFence, Map<string, ReturnType<typeof record>>>()
+const skippedChecks = new WeakMap<WorktreeDeletionFence, Map<string, { missionID: string; requestID: string; expectedRevision: number; action: "check" }>>()
 export class ScheduledHoldError extends Error {
-  constructor(readonly status: 409 | 503, message: string) { super(message) }
+  constructor(readonly status: 409 | 503, message: string, readonly busyConflict = false) { super(message) }
 }
 const current = (connection: ServiceConnection) => { try { connection.assertCurrent(); return true } catch { return false } }
 export function exactScheduledRefusal(binding: ScheduledHoldBinding, raw: unknown) {
@@ -32,6 +36,7 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
   const original = Object.freeze({ ...binding, owner: Object.freeze({ ...binding.owner }),
     location: Object.freeze({ ...binding.location }), base: Object.freeze({ ...binding.base }) })
   let active = true, busy = false, dispatched = false, retried = false
+  const borrowedChecks = new Set<string>()
   let connection = original.connection, releasePermit = release
   const bound = (fresh: ScheduledHoldBinding) => {
     fresh.connection.assertCurrent()
@@ -44,12 +49,24 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
       || fresh.digest !== original.digest || fresh.connection !== connection && current(connection))
       throw new ScheduledHoldError(409, "Held Mission schedule scope differs")
   }
-  const exact = (raw: unknown) => {
-    const result = raw as Receipt | null, control = result?.document?.control
+  const validDeletion = (result: Receipt | null) => {
     const deleted = result?.deletionReceipt
-    if (original.action === "delete" && result?.document === null && deleted)
-      return deleted.id === original.missionID && deleted.requestID === original.requestID
+    return result?.pending === false && result.deleted === true && result.document === null && !!deleted
+      && deleted.id === original.missionID && receiptID(deleted.requestID)
+      && nonNegativeInt(deleted.expectedRevision) && typeof deleted.deleteManagedSessions === "boolean"
+  }
+  const settledDeletion = (result: Receipt | null) => {
+    if (!validDeletion(result)) return false
+    const deleted = result!.deletionReceipt!
+    if (original.action === "delete")
+      return deleted.requestID === original.requestID
         && deleted.expectedRevision === original.expectedRevision && deleted.deleteManagedSessions === (original.deleteManagedSessions ?? false)
+    const checked = result!.checkReceipt
+    return original.action === "check" && !!checked && checked.id === original.missionID
+      && checked.requestID === original.requestID && checked.expectedRevision === original.expectedRevision && checked.action === "check"
+  }
+  const exactControl = (raw: unknown) => {
+    const result = raw as Receipt | null, control = result?.document?.control
     return result?.document?.id === original.missionID && control?.requestID === original.requestID
       && control.action === original.action && control.expectedRevision === original.expectedRevision && typeof control.pending === "boolean"
   }
@@ -59,13 +76,19 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     get busy() { return busy || !dispatched },
     get preparing() { return !dispatched },
     assertBound: bound,
+    trackCheck(checkRequestID: string) {
+      if (borrowedChecks.has(checkRequestID)) return
+      borrowedChecks.add(checkRequestID)
+      if (borrowedChecks.size > 16) borrowedChecks.delete(borrowedChecks.values().next().value!)
+    },
+    hasCheck(checkRequestID: string) { return borrowedChecks.has(checkRequestID) },
     dispatch() {
       if (!active || busy) throw new ScheduledHoldError(503, "Mission schedule request is in flight")
       connection.assertCurrent(); busy = true; dispatched = true
     },
     retry(fresh: ScheduledHoldBinding, raw: unknown, freshRelease?: () => void) {
       bound(fresh)
-      if (busy || !exact(raw) || (raw as Receipt).pending !== true || fresh.connection !== connection && !freshRelease)
+      if (busy || !exactControl(raw) || (raw as Receipt).pending !== true || fresh.connection !== connection && !freshRelease)
         throw new ScheduledHoldError(503, "Exact partial Mission schedule receipt unavailable")
       if (fresh.connection !== connection) {
         const previous = releasePermit
@@ -81,9 +104,9 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
     },
     settle(fresh: ScheduledHoldBinding, raw: unknown) {
       bound(fresh)
-      if (!dispatched || !exact(raw) || (raw as Receipt).pending !== false
-        || !(original.action === "delete" && (raw as Receipt).document === null && (raw as Receipt).deletionReceipt)
-          && (raw as Receipt).document?.control?.pending !== false) return false
+      const receipt = raw as Receipt | null
+      if (!dispatched || receipt?.pending !== false) return false
+      if (!settledDeletion(receipt) && (!exactControl(raw) || receipt.document?.control?.pending !== false)) return false
       active = false; busy = false; drop(); releasePermit(); return true
     },
     dispose() {
@@ -97,11 +120,23 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
 export function holdScheduledMission(fence: WorktreeDeletionFence, binding: ScheduledHoldBinding, release: () => void) {
   let registry = held.get(fence)
   if (!registry) { registry = new Map(); held.set(fence, registry) }
-  if (registry.has(binding.missionID)) throw new ScheduledHoldError(409, "Mission schedule request remains held")
+  if (registry.has(binding.missionID)) throw new ScheduledHoldError(409, "Mission schedule request remains held", true)
   if (registry.size >= 128) throw new ScheduledHoldError(409, "Mission schedule hold capacity exhausted")
   const handle = record(binding, release, () => { if (registry!.get(binding.missionID) === handle) registry!.delete(binding.missionID) })
   registry.set(binding.missionID, handle)
   return handle
+}
+export function recordUndispatchedCheck(fence: WorktreeDeletionFence | undefined,
+  entry: { missionID: string; requestID: string; expectedRevision: number; action: "check" }) {
+  if (!fence) return
+  let map = skippedChecks.get(fence)
+  if (!map) { map = new Map(); skippedChecks.set(fence, map) }
+  const key = `${entry.missionID}\0${entry.requestID}`
+  map.delete(key); map.set(key, entry)
+  if (map.size > 32) map.delete(map.keys().next().value!)
+}
+export function readUndispatchedCheck(fence: WorktreeDeletionFence | undefined, missionID: string, requestID: string) {
+  return fence ? skippedChecks.get(fence)?.get(`${missionID}\0${requestID}`) : undefined
 }
 export const scheduledMissionHold = (fence: WorktreeDeletionFence | undefined, missionID: string) => fence && held.get(fence)?.get(missionID)
 export const scheduledMissionCreationHold = (fence: WorktreeDeletionFence | undefined, workspaceID: string, requestID: string) =>

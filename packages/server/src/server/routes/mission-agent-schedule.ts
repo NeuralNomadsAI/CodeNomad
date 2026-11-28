@@ -13,20 +13,22 @@ import { prepareMissionScheduleSettings } from "./mission-schedule-settings"
 import { scheduledMissionHold } from "./mission-scheduled-holds"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { readMissionScheduleCapability } from "./mission-schedule-list"
+import { controlAgentMissionProgram } from "./mission-agent-program"
+import type { MissionCalendarDeps } from "./mission-calendars"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
-import { controlAgentDailyRecurrence } from "./mission-agent-daily"
 
 const commandSchema = z.object({ kind: z.literal("schedule"), input: scheduleToolInput }).strict()
 type Deps = ScheduledMissionDeps & Pick<ScheduledPreparationDeps, "scheduleSettingsActivation">
   & { workspaceManager: ScheduledMissionDeps["workspaceManager"] & Pick<WorkspaceManager, "list">;
-    scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read"> }
+    scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read"> } & Pick<MissionCalendarDeps, "permissionModes">
 
 /** Private bridge entry: native caller identity, never an HTTP-supplied principal. */
 export async function controlAgentMissionSchedule(deps: Deps, sessionID: string, command: unknown, signal: AbortSignal) {
+  const program = (command as { input?: { program?: unknown } } | null)?.input?.program
+  if (program !== undefined) return controlAgentMissionProgram(deps as never, sessionID, program, signal)
   const { input } = commandSchema.parse(command), manager = deps.workspaceManager
    if (!deps.worktreeDeletionFence) throw new Error("Mission schedule owner unavailable")
    const agent = await ownedMissionAgent(manager, sessionID, signal)
-   if (input.owner === "daily") return controlAgentDailyRecurrence(deps, agent, input, signal)
    const { client, workspace, session, current, refresh, options } = agent
   const rpc = client.rpc(CODENOMAD_MISSIONS_RPC)
    if (!["list", "read", "capabilities", "activation-read"].includes(input.action)) {

@@ -10,6 +10,7 @@ import {pathToFileURL} from 'node:url'
 import {promisify} from 'node:util'
 import {setTimeout as delay} from 'node:timers/promises'
 import {privateEnvironment} from '../../rune-app/fixtures/private-profile.mjs'
+import {sanitizeBenchEnvPath} from './private-profile.mjs'
 import {out, repo, rustBinary} from './fixtures.mjs'
 
 const post = body => ({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
@@ -132,7 +133,7 @@ async function upstream(profile) {
 }
 
 async function start(label,profile,native) {
-  const env=await privateEnvironment(profile),password=randomUUID(),config=path.join(profile,'config/config.yaml')
+  const env=await sanitizeBenchEnvPath(await privateEnvironment(profile),{allowedRoot:profile}),password=randomUUID(),config=path.join(profile,'config/config.yaml')
   await writeFile(config,`server:\n  opencodeBinary: ${JSON.stringify(path.join(profile,'disabled-opencode.exe'))}\n  environmentVariables:\n    FIXTURE_SETTING: "profile"\n`)
   Object.assign(env,{CLI_CONFIG:config,CNRS_FIXTURE_URL:native.origin+'/',CNRS_FIXTURE_PASSWORD:native.password,
     CNRS_FIXTURE_PID:String(process.pid),CNRS_SERVER_PASSWORD:password,CODENOMAD_SERVER_PASSWORD:password,

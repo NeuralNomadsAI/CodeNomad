@@ -254,12 +254,18 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
-  const getWorktreeLabel = (directory: string) => {
-    const worktrees = getWorktrees(props.instanceId)
-    const normalized = normalizeSessionDirectory(directory)
-    const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
-    return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
-  }
+  const worktreeLabelByDirectory = createMemo(() => {
+    const labels = new Map<string, string | undefined>()
+    const rootLabel = t("sessionList.worktree.workspace")
+    for (const candidate of getWorktrees(props.instanceId)) {
+      const key = normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory)
+      if (labels.has(key)) continue
+      labels.set(key, candidate.kind === "root" ? rootLabel : candidate.label ?? candidate.slug)
+    }
+    return labels
+  })
+  const getWorktreeLabel = (directory: string) =>
+    worktreeLabelByDirectory().get(normalizeSessionDirectory(directory)) ?? directory
   const normalThreads = createMemo(() => projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), {
     sort: "activity", getWorktreeLabel, favoriteIds: favorites(),
   }))
@@ -897,14 +903,17 @@ const SessionList: Component<SessionListProps> = (props) => {
  
     const isSelected = () => selectedSessionIds().has(sessionId())
 
+    const UNSELECTED_GROUP_STATE = { checked: false, indeterminate: false } as const
+
     const parentGroupState = createMemo(() => {
-      const ids = rowProps.hasChildren ? getSelectableThreadIds(sessionId()) : [sessionId()]
+      if (!props.enableFilterBar) return UNSELECTED_GROUP_STATE
       const selected = selectedSessionIds()
+      if (selected.size === 0) return UNSELECTED_GROUP_STATE
+      const ids = rowProps.hasChildren ? getSelectableThreadIds(sessionId()) : [sessionId()]
       const selectedInGroup = ids.reduce((count, id) => (selected.has(id) ? count + 1 : count), 0)
       return {
         checked: selectedInGroup > 0 && selectedInGroup === ids.length,
         indeterminate: selectedInGroup > 0 && selectedInGroup < ids.length,
-        ids,
       }
     })
 
@@ -996,7 +1005,10 @@ const SessionList: Component<SessionListProps> = (props) => {
               type="checkbox"
               checked={parentGroupState().checked}
               data-toggle-sweep={toggleSweepGroup("session-selection")}
-              onChange={(event) => setSelectedMany(parentGroupState().ids, event.currentTarget.checked)}
+              onChange={(event) => {
+                const ids = rowProps.hasChildren ? getSelectableThreadIds(sessionId()) : [sessionId()]
+                setSelectedMany(ids, event.currentTarget.checked)
+              }}
               aria-label={t("sessionList.selection.checkboxAriaLabel")}
             />
           </Show>

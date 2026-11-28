@@ -73,8 +73,10 @@ Les brouillons sont un état de travail côté client, pas des messages natifs p
 ## Ouvrir des fichiers depuis les réponses {#open-files-from-replies}
 
 1. Les réponses de l’agent lient des fichiers du projet par des chemins relatifs et absolus.
-2. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
-3. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
+2. Un chemin écrit en texte simple ou dans du code en ligne devient aussi un lien lorsque le worktree de la conversation est connu pour contenir le fichier, y compris des noms de fichiers dans tout système d'écriture ; les chemins inexistants restent en texte simple. Dans l'application de bureau, pour un projet sur cet ordinateur, les dossiers deviennent aussi des liens.
+3. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
+4. Dans l'application de bureau, pour un projet sur cet ordinateur, l'aperçu du fichier garde les fichiers texte et les images qu'il sait afficher. Les dossiers, les autres fichiers (vidéos, PDF…), les chemins hors du worktree et les liens `file:` s'ouvrent avec votre système, comme toujours avec Ctrl/Cmd-clic et le clic milieu ; une erreur s'affiche s'ils ne peuvent pas être ouverts.
+5. Ailleurs, les clics modifiés (Ctrl/Cmd-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
 
 ## Commandes et mode shell {#commands-shell}
 
@@ -116,6 +118,14 @@ Fermer annule la demande annexe en attente sans interrompre la session principal
 3. Utilisez **Mettre l'objectif en pause** ou **Reprendre l'objectif** sur cette ligne, ou envoyez `/goal pause` ou `/goal resume`. Utilisez **Effacer l'objectif** ou `/goal clear` pour supprimer l’objectif.
 
 Un objectif appartient à sa conversation : les sous-sessions et les bifurcations commencent sans objectif. OpenCode met aussi un objectif en pause de lui-même quand vous arrêtez la session, quand une exécution échoue, quand il ne progresse plus, à sa limite de tours ou au redémarrage du service ; reprenez-le pour continuer. Mettre en pause ou effacer n’annule pas le travail déjà fait. Sans objectif, ou avec un service OpenCode qui ne prend pas en charge les objectifs, la ligne n’apparaît pas.
+
+## Suivre les automations de la session avec /automation {#automations}
+
+1. Créez ou gérez des automations planifiées ou événementielles dans une conversation avec `/automation` (ou via les outils d’automation de l’agent).
+2. Tant que la conversation comporte des automations, **Statut** les affiche au-dessus de **Tokens** (sous **Objectif** lorsqu’un objectif est actif) : chaque ligne montre son état (**Active**, **En pause** ou **Terminée**), son nom, la prochaine exécution ou la règle, et le nombre d’exécutions. Les automations terminées restent repliées sous **Terminées (N)** jusqu’à ouverture.
+3. Survolez une ligne ou donnez-lui le focus pour lire son déclencheur, sa planification et sa dernière sortie, ou cliquez dessus pour ouvrir la fenêtre de détail. Utilisez **Mettre l'automation en pause**, **Reprendre l'automation** ou **Supprimer l'automation** sur une ligne pour la piloter directement.
+
+Seules les automations appartenant à la conversation active s’affichent. La suppression est définitive et n’annule pas le travail déjà effectué. Sans automation, ou avec un service OpenCode qui n’expose pas l’API d’automation, le bloc n’apparaît pas.
 
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
 

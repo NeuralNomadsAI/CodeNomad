@@ -50,18 +50,21 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let stack_scroll = s.tool_diff_preferences.stack_scroll.clone();
     let (caret_pins, caret_probe) =
         chat::ToolDiffPreferences::composer_caret_plan(s, cx, scroll_stack);
-    let surface = rune_theme_codenomad::interruption::session_surface(layout)
-        .drawn_rect_into(s.transcript_display.tool_clock.stack_bounds())
-        .on_scroll_offset(move |at| {
-            stack_scroll.set((at.offset[1], at.max[1]));
-        })
-        .on_layout_tx(move |s: &mut State, rect, tx| {
-            if !s.screen.is_launcher() {
-                chat::ToolDiffPreferences::stack_layout(s, rect, scroll_stack, tx);
-            } else {
-                tx.live_only();
-            }
-        });
+    let surface = crate::chat::reading::track_other_scroller_hover(
+        rune_theme_codenomad::interruption::session_surface(layout)
+            .drawn_rect_into(s.transcript_display.tool_clock.stack_bounds())
+            .on_scroll_offset(move |at| {
+                stack_scroll.set((at.offset[1], at.max[1]));
+            })
+            .on_layout_tx(move |s: &mut State, rect, tx| {
+                if !s.screen.is_launcher() {
+                    chat::ToolDiffPreferences::stack_layout(s, rect, scroll_stack, tx);
+                } else {
+                    tx.live_only();
+                }
+            }),
+        chat::reading::HOVER_SESSION_STACK,
+    );
     chat::reading::probe_resuming_scroll(s, cx);
     let surface = if s.agent.is_some() {
         surface.on_key(|s: &mut State, event, tx| {
@@ -110,7 +113,12 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         .children(super::receipts::session(s))
                         .child(transcript::rows(s)),
                 );
-                crate::timeline::view(s, chat::reading::viewport(s, history, scroll_stack), layout)
+                crate::timeline::view(
+                    s,
+                    cx,
+                    chat::reading::viewport(s, history, scroll_stack),
+                    layout,
+                )
             }))
             .child(
                 agent_view::view(s, cx, layout_viewport_height).on_layout_tx(

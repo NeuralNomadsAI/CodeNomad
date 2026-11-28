@@ -19,8 +19,39 @@ impl std::fmt::Display for CreationRefused {
 }
 impl std::error::Error for CreationRefused {}
 
-#[derive(Debug)]
-pub struct SessionMissing;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAbsence {
+    NotFound,
+    LocatedElsewhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionMissing {
+    reason: SessionAbsence,
+}
+
+impl SessionMissing {
+    pub const fn not_found() -> Self {
+        Self {
+            reason: SessionAbsence::NotFound,
+        }
+    }
+
+    pub const fn located_elsewhere() -> Self {
+        Self {
+            reason: SessionAbsence::LocatedElsewhere,
+        }
+    }
+
+    pub const fn absence(self) -> SessionAbsence {
+        self.reason
+    }
+
+    pub const fn is_deleted(self) -> bool {
+        matches!(self.reason, SessionAbsence::NotFound)
+    }
+}
+
 impl std::fmt::Display for SessionMissing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("native session is no longer available in the workspace")
@@ -169,27 +200,37 @@ impl Backend {
 
     pub async fn attest_server(&self) -> Result<String> {
         self.client.require_attestation();
-        let (id, capabilities, same_gen, generation, seq, drop_epoch) =
-            self.probe_server_meta().await?;
-        if self
-            .client
-            .server_identity()
-            .is_some_and(|current| current != id)
-        {
+        for attempt in 0..4 {
+            let (id, capabilities, same_gen, generation, seq, drop_epoch) =
+                self.probe_server_meta().await?;
+            if self
+                .client
+                .server_identity()
+                .is_some_and(|current| current != id)
+            {
+                return Err("Server identity changed".into());
+            }
+            if !same_gen {
+                // Re-probe when a concurrent voluntary stream handoff (such as switching sessions)
+                // advances drop_generation without a transport drop or identity mismatch.
+                if attempt < 3
+                    && self.client.stream_drop_epoch() == drop_epoch
+                    && !self.client.server_identity_mismatch()
+                {
+                    continue;
+                }
+                return Err("Transport changed during server attestation".into());
+            }
+            if self
+                .client
+                .verify_server_identity_at(&id, capabilities, generation, seq)
+            {
+                self.client.mark_drop_epoch_attested(drop_epoch);
+                return Ok(id);
+            }
             return Err("Server identity changed".into());
         }
-        if !same_gen {
-            return Err("Transport changed during server attestation".into());
-        }
-        if self
-            .client
-            .verify_server_identity_at(&id, capabilities, generation, seq)
-        {
-            self.client.mark_drop_epoch_attested(drop_epoch);
-            Ok(id)
-        } else {
-            Err("Server identity changed".into())
-        }
+        Err("Transport changed during server attestation".into())
     }
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {

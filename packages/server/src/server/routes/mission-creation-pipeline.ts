@@ -25,6 +25,7 @@ export const missionCreationRequestSchema = z.object({
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
+  coordinatorGoal: z.boolean().optional(),
   watchedConversationIDs: z.array(nativeDocumentID).max(32).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 
@@ -126,6 +127,7 @@ export async function prepareMissionCreation(input: {
     prepared: true, requestID: request.requestId, objective: request.objective,
     ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
+    ...(request.coordinatorGoal ? { coordinatorGoal: true } : {}),
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
     ...(request.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: request.watchedConversationIDs }),
     ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),

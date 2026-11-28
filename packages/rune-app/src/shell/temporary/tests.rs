@@ -215,7 +215,7 @@ fn connected_runtime(backend: Backend) -> Runtime<State> {
     let mut l = Launcher::fixture();
     l.connection = Some(backend);
     l.server_id = Some("srv-temp".into());
-    s.screen = Screen::Launcher(l);
+    s.screen = Screen::Launcher(Box::new(l));
     let mut ui = workspace::Ui::new();
     ui.fixture_ready();
     s.workspace = Some(ui);
@@ -1312,5 +1312,538 @@ fn keep_then_close_aborts_detach_when_in_memory_draft_arrives_in_flight() {
             .and_then(|a| a.reasons.get("perm-1"))
             .map(|e| e.text.as_str()),
         Some("unsent reason")
+    );
+}
+
+#[test]
+fn abandon_drain_retries_after_401_until_reauthenticated() {
+    let server = MockServer::start(vec![
+        // 1. First drain after auth renewal hits 401 -> re-queues & enters auth-required
+        MockReply {
+            status: "401 Unauthorized",
+            body: r#"{"error":"unauthorized"}"#.into(),
+        },
+        // 2. Second drain after re-authentication succeeds
+        MockReply {
+            status: "204 No Content",
+            body: String::new(),
+        },
+        // 3. Stale backend abandon hits 401 after launcher switched to a fresh connection on same server
+        MockReply {
+            status: "401 Unauthorized",
+            body: r#"{"error":"unauthorized"}"#.into(),
+        },
+        // 4. Retry on the fresh connection succeeds without disrupting auth state
+        MockReply {
+            status: "204 No Content",
+            body: String::new(),
+        },
+    ]);
+    let mut rt = connected_runtime(server.backend.clone());
+
+    // Queue an abandon while authentication is required.
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = true;
+        }
+        queue_abandon(
+            s,
+            server.backend.clone(),
+            "/tmp/cn-401-retry".into(),
+            Some("req-401".into()),
+        );
+    });
+    assert_eq!(rt.state.temporary.pending_abandons.len(), 1);
+
+    // Renew auth: drain fires the abandon, which returns 401 and must re-queue instead of dropping.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        assert!(poll(s, tx));
+    });
+    wait_until(&mut rt, |s| {
+        s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required)
+            && !s.temporary.pending_abandons.is_empty()
+            && s.temporary.in_flight_abandons.is_empty()
+    });
+    let abandon_count = |srv: &MockServer| {
+        srv.requests()
+            .iter()
+            .filter(|(req, _)| req == "POST /api/workspaces/temporary/abandon HTTP/1.1")
+            .count()
+    };
+    assert_eq!(abandon_count(&server), 1);
+
+    // Additional polls while still unauthenticated must not spin in a 401 loop.
+    rt.update(|s, tx| {
+        let _ = poll(s, tx);
+    });
+    assert_eq!(abandon_count(&server), 1);
+    assert_eq!(rt.state.temporary.pending_abandons.len(), 1);
+
+    // Re-authenticate again: the re-queued abandon retries and settles with 204.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        assert!(poll(s, tx));
+    });
+    wait_until(&mut rt, |s| {
+        s.temporary.pending_abandons.is_empty() && s.temporary.in_flight_abandons.is_empty()
+    });
+    assert_eq!(abandon_count(&server), 2);
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| !l.authentication_required)
+    );
+
+    // Direct abandon on an older Http client getting 401 after launcher already moved to a fresh
+    // attested connection on the same server retries immediately without forcing auth.
+    let fresh_backend = Backend::unauthenticated(&format!("http://{}/", server.addr)).unwrap();
+    let attest_fresh = fresh_backend.clone();
+    let (attest_tx, attest_rx) = bounded(1);
+    platform::spawn(async move {
+        let _ = attest_tx.try_send(attest_fresh.attest_server().await.is_ok());
+    });
+    let attest_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(ok) = attest_rx.try_recv() {
+            assert!(ok, "fresh backend attestation failed");
+            break;
+        }
+        assert!(
+            Instant::now() < attest_deadline,
+            "timed out attesting fresh backend"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    rt.update(|s, _| {
+        queue_abandon(
+            s,
+            server.backend.clone(),
+            "/tmp/cn-401-fresh".into(),
+            Some("req-fresh".into()),
+        );
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection = Some(fresh_backend.clone());
+        }
+    });
+    wait_until(&mut rt, |s| {
+        abandon_count(&server) == 4
+            && s.temporary.pending_abandons.is_empty()
+            && s.temporary.in_flight_abandons.is_empty()
+    });
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| !l.authentication_required),
+        "401 from superseded client must not force re-auth on the fresh connection"
+    );
+}
+
+#[test]
+fn discard_404_protecting_in_memory_draft_clears_dead_binding() {
+    let server = MockServer::start(vec![MockReply {
+        status: "404 Not Found",
+        body: r#"{"error":"temporary_not_found"}"#.into(),
+    }]);
+    let mut rt = connected_runtime(server.backend.clone());
+    open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
+
+    rt.update(workspace::new_tab);
+    open_fixture_tab(
+        &mut rt,
+        "ws-temp-dead",
+        "/tmp/cn-dead",
+        true,
+        vec![Session {
+            id: "s-dead".into(),
+            title: "Dead".into(),
+        }],
+    );
+    let dead_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, tx| {
+        let bound_backend = s
+            .screen
+            .launcher()
+            .and_then(|l| l.connection.clone())
+            .map(|mut b| {
+                b.workspace = "ws-temp-dead".into();
+                b.session = "s-dead".into();
+                b
+            })
+            .unwrap();
+        let _ = workspace::bound(s, &bound_backend);
+        assert!(
+            s.composer
+                .draft
+                .attach(crate::composer::draft::Attachment::Device {
+                    name: "keep.bin".into(),
+                    mime: "application/octet-stream".into(),
+                    bytes: std::sync::Arc::from(&b"preserve-bytes"[..]),
+                    token: None,
+                })
+        );
+        workspace::capture(s);
+        strings::with_locale("en", || {
+            let _ = open_dialog(s, &dead_key, Some(format!("t-{dead_key}")), tx);
+            choose_discard(s, tx);
+        });
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        dead_key,
+        "tab with in-memory device attachment must be restored after 404 temporary_not_found"
+    );
+    assert_eq!(
+        rt.state.composer.draft.inline_usage().0,
+        1,
+        "device attachment bytes must survive 404 restoration"
+    );
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .is_none(),
+        "launcher must not retain dead project.id after 404 restoration"
+    );
+    assert!(
+        workspace::active_workspace(&rt.state)
+            .and_then(|(_, w)| w.workspace_id.as_deref())
+            .is_none(),
+        "saved workspace must clear dead workspace_id after 404 restoration"
+    );
+    assert!(
+        workspace::temporary_tab_info(&rt.state, &dead_key).is_none(),
+        "detached dead binding must no longer expose live temporary workspace actions"
+    );
+    assert!(rt.state.commands.is_none());
+    assert!(rt.state.incoming.is_none());
+    assert!(rt.state.stream_offline);
+    assert!(rt.state.phase == crate::Phase::Failed);
+
+    // Once the user clears the local attachment, closing detaches locally with no further server calls.
+    let before_requests = server.requests().len();
+    rt.update(|s, tx| {
+        s.composer.draft.attachments.clear();
+        strings::with_locale("en", || workspace::close(s, &dead_key, tx));
+    });
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        "tab-0",
+        "closing a dead-binding tab after clearing local drafts must detach locally"
+    );
+    assert_eq!(
+        server.requests().len(),
+        before_requests,
+        "closing a dead-binding tab must not issue another /discard or DELETE request"
+    );
+}
+
+#[test]
+fn quiet_discard_busy_neighbour_and_inactive_explicit_refusal_focus() {
+    let server = MockServer::start(vec![
+        // 1. Quiet discard refusal while active neighbour is busy
+        MockReply {
+            status: "409 Conflict",
+            body: r#"{"error":"temporary_not_empty"}"#.into(),
+        },
+        // 2a. Explicit discard refusal on an inactive tab while active neighbour is idle (no focus taken)
+        MockReply {
+            status: "500 Internal Server Error",
+            body: r#"{"message":"disk busy"}"#.into(),
+        },
+        // 2b. Explicit discard refusal on an inactive tab while active neighbour is idle (user focused neighbour)
+        MockReply {
+            status: "500 Internal Server Error",
+            body: r#"{"message":"disk busy"}"#.into(),
+        },
+        // 3. Explicit discard refusal on an inactive tab while active neighbour is busy
+        MockReply {
+            status: "500 Internal Server Error",
+            body: r#"{"message":"disk busy"}"#.into(),
+        },
+        // 4. Quiet discard refusal while another modal (command palette) is open on an idle neighbour
+        MockReply {
+            status: "409 Conflict",
+            body: r#"{"error":"temporary_not_empty"}"#.into(),
+        },
+    ]);
+    let mut rt = connected_runtime(server.backend.clone());
+    open_fixture_tab(&mut rt, "ws-base", "/repo/base", false, vec![]);
+    let base_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+
+    rt.update(workspace::new_tab);
+    open_fixture_tab(&mut rt, "ws-temp-q", "/tmp/cn-quiet-busy", true, vec![]);
+    let temp_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    let focused_key = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|el| el.focused)
+            .and_then(|el| el.key)
+    };
+
+    // 1. Quiet discard fails while active neighbour (ws-base) becomes busy:
+    //    must restore tab to the strip, emit error notification, and NOT open the modal.
+    assert!(rt.find("notification-bubbles").is_none());
+    rt.update(|s, tx| {
+        strings::with_locale("en", || workspace::close(s, &temp_key, tx));
+        assert!(s.temporary.discarding.is_some());
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = true;
+            l.pending_restore_intent = None;
+        }
+        tx.focus(format!("t-{base_key}"), true);
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().active_key(),
+        base_key,
+        "busy neighbour must remain active on quiet discard refusal"
+    );
+    assert!(
+        !is_open(&rt.state),
+        "quiet discard refusal must not open the close modal over a busy neighbour"
+    );
+    assert_ne!(
+        focused_key(&rt).as_deref(),
+        Some(theme::CANCEL),
+        "quiet discard refusal must not steal focus to modal Cancel over a busy neighbour"
+    );
+    let expected_title =
+        strings::with_locale("en", || strings::t("temporaryInstance.discard.failedTitle"));
+    assert!(
+        rt.find("notification-bubbles").is_some()
+            && rt.elements().into_iter().any(|el| {
+                el.text.as_deref() == Some(expected_title)
+                    || el
+                        .label
+                        .as_deref()
+                        .is_some_and(|l| l.contains(expected_title))
+            }),
+        "quiet discard refusal over a busy neighbour must present a failure notification"
+    );
+    assert!(
+        workspace::temporary_tab_info(&rt.state, &temp_key).is_some(),
+        "stashed temporary tab must be restored into the tab strip"
+    );
+
+    // 2a. Explicit discard refusal on an INACTIVE temporary tab while active neighbour is idle
+    //     and focus is empty after modal dismissal (the originating inactive tab was stashed):
+    //     focus returns to the originating tab control.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = false;
+        }
+        tx.focus(format!("t-{temp_key}"), true);
+    });
+    settle(&mut rt);
+    rt.update(|s, tx| {
+        strings::with_locale("en", || {
+            assert!(open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx));
+        });
+    });
+    settle(&mut rt);
+    assert_eq!(focused_key(&rt).as_deref(), Some(theme::CANCEL));
+    rt.update(|s, tx| {
+        strings::with_locale("en", || choose_discard(s, tx));
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), base_key);
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some(format!("t-{temp_key}").as_str()),
+        "explicit refusal on an inactive tab must return focus when active neighbour is idle and nothing took focus"
+    );
+
+    // 2b. Explicit discard refusal on an INACTIVE temporary tab while active neighbour is idle,
+    //     but the user actively moved focus onto the neighbour in flight: never steal focus.
+    rt.update(|s, tx| {
+        strings::with_locale("en", || {
+            assert!(open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx));
+        });
+    });
+    settle(&mut rt);
+    rt.update(|s, tx| {
+        strings::with_locale("en", || choose_discard(s, tx));
+        tx.focus(format!("t-{base_key}"), true);
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), base_key);
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some(format!("t-{base_key}").as_str()),
+        "async refusal must never steal focus taken by the user in the meantime"
+    );
+
+    // 3. Explicit discard refusal on an INACTIVE temporary tab while active neighbour is busy:
+    //    focus must stay on the busy neighbour instead of being stolen back to the inactive tab.
+    rt.update(|s, tx| {
+        tx.focus(format!("t-{base_key}"), true);
+        strings::with_locale("en", || {
+            let _ = open_dialog(s, &temp_key, Some(format!("t-{temp_key}")), tx);
+            choose_discard(s, tx);
+        });
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = true;
+            l.pending_restore_intent = None;
+        }
+        tx.focus(format!("t-{base_key}"), true);
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), base_key);
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some(format!("t-{base_key}").as_str()),
+        "explicit refusal on an inactive tab must not steal focus from a busy neighbour"
+    );
+
+    // 4. Quiet discard refusal while another modal (command palette) is open on an IDLE neighbour:
+    //    must restore the tab, keep the other modal open, NOT open the temporary close modal,
+    //    and emit a failure notification.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.pending = false;
+        }
+        strings::with_locale("en", || {
+            workspace::close(s, &temp_key, tx);
+            assert!(s.temporary.discarding.is_some());
+            command_palette::open(s, tx);
+            assert!(command_palette::is_open(s));
+        });
+    });
+    wait_until(&mut rt, |s| !s.temporary.in_flight());
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        command_palette::is_open(&rt.state),
+        "other open modal must remain undisturbed on quiet discard refusal"
+    );
+    assert!(
+        !is_open(&rt.state),
+        "quiet discard refusal must not stack the temporary close modal over another open modal"
+    );
+    assert!(
+        workspace::temporary_tab_info(&rt.state, &temp_key).is_some(),
+        "stashed temporary tab must still be restored into the strip"
+    );
+    assert!(
+        rt.find("notification-bubbles").is_some(),
+        "quiet discard refusal suppressed by another open modal must present a failure notification"
+    );
+}
+
+#[test]
+fn pending_abandons_preserves_other_targets_and_rejects_unattested_connection() {
+    let server = MockServer::start(vec![MockReply {
+        status: "204 No Content",
+        body: String::new(),
+    }]);
+    let other_server = MockServer::start(vec![]);
+    let mut rt = connected_runtime(server.backend.clone());
+
+    // Queue an abandon for `server` while authentication is required.
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = true;
+        }
+        queue_abandon(
+            s,
+            server.backend.clone(),
+            "/tmp/cn-other-target".into(),
+            Some("req-preserve".into()),
+        );
+    });
+    assert_eq!(rt.state.temporary.pending_abandons.len(), 1);
+
+    // 1. Switch launcher connection to an unattested client on the SAME URL (missing server_identity):
+    //    same_abandon_target must refuse, keep the queued entry, send 0 requests, and report changed=false.
+    let unattested_same_url =
+        Backend::unauthenticated(&format!("http://{}/", server.addr)).unwrap();
+    assert!(unattested_same_url.client.server_identity().is_none());
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+            l.connection = Some(unattested_same_url.clone());
+        }
+        assert!(
+            !poll(s, tx),
+            "poll must return false when no pending abandon matches the unattested connection"
+        );
+    });
+    assert_eq!(
+        rt.state.temporary.pending_abandons.len(),
+        1,
+        "unattested connection must preserve pending_abandons instead of dropping them"
+    );
+    assert!(rt.state.temporary.in_flight_abandons.is_empty());
+
+    // 2. Switch launcher connection to a DIFFERENT server (attested, different base URL):
+    //    must also preserve the entry and report changed=false without sending to the other server.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection = Some(other_server.backend.clone());
+        }
+        assert!(
+            !poll(s, tx),
+            "poll must return false when pending_abandons only holds entries for another server"
+        );
+    });
+    assert_eq!(
+        rt.state.temporary.pending_abandons.len(),
+        1,
+        "connecting to another server must not discard pending_abandons for the first server"
+    );
+    assert!(
+        other_server
+            .requests()
+            .iter()
+            .all(|(req, _)| req != "POST /api/workspaces/temporary/abandon HTTP/1.1"),
+        "other server must never receive an abandon belonging to the first server"
+    );
+
+    // 3. Reconnect to the attested matching server: poll returns true and drains cleanly with 204.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection = Some(server.backend.clone());
+        }
+        assert!(
+            poll(s, tx),
+            "poll must return true once a matching attested connection dispatches the preserved abandon"
+        );
+    });
+    wait_until(&mut rt, |s| {
+        s.temporary.pending_abandons.is_empty() && s.temporary.in_flight_abandons.is_empty()
+    });
+    assert_eq!(
+        server
+            .requests()
+            .iter()
+            .filter(|(req, _)| req == "POST /api/workspaces/temporary/abandon HTTP/1.1")
+            .count(),
+        1,
+        "preserved abandon must finally be delivered once the matching server reconnects"
     );
 }

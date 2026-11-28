@@ -113,8 +113,12 @@ fn terminal_omission_is_not_enough_to_retire_a_visit() {
             .visits
             .start_checks(&["a".into()], input);
         assert!(
-            out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
-                .is_ok()
+            out.try_send((
+                "a".into(),
+                codenomad_client::runtime::Instant::now(),
+                codenomad_client::catalog::SessionAbsence::NotFound,
+            ))
+            .is_ok()
         );
         assert!(poll(s, tx));
         assert!(!can_visit(s, true));
@@ -307,7 +311,7 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
             id: "existing".into(),
             title: "Existing history".into(),
         }];
-        state.screen = crate::Screen::Launcher(launcher);
+        state.screen = crate::Screen::Launcher(Box::new(launcher));
         let mut runtime =
             rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
         for _ in 0..8 {
@@ -344,8 +348,10 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
 fn bootstrap_failure_reaches_the_rendered_launcher() {
     let (out, input) = bounded(1);
     let mut state = crate::init();
-    state.screen =
-        crate::Screen::Launcher(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        std::sync::Arc::new(|| {}),
+        Some(input),
+    )));
     out.try_send(Err("private backend startup detail".into()))
         .unwrap();
     let mut runtime = rune::Runtime::new(
@@ -370,7 +376,7 @@ fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded()
     let mut launcher = Launcher::fixture();
     launcher.address = TextEdit::new("");
     launcher.password = TextEdit::new("");
-    state.screen = crate::Screen::Launcher(launcher);
+    state.screen = crate::Screen::Launcher(Box::new(launcher));
     let mut rt = rune::Runtime::new(
         state,
         crate::view,
@@ -1708,4 +1714,338 @@ fn failed_session_retry_stays_reconnecting_until_sync_and_reverts_on_error() {
     assert!(rt.state.commands.is_some());
     assert!(rt.state.incoming.is_some());
     assert_eq!(rt.state.draft.text, "Draft across device revocation");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn persistence_starts_on_boot_and_survives_failed_initial_project_listing() {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        io::{Read, Write},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering::SeqCst},
+        },
+        time::Duration,
+    };
+
+    let parent = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+    let dir = parent.join("rune");
+    std::fs::create_dir_all(&dir).unwrap();
+    let saved = crate::workspace::Snapshot {
+        revision: 3,
+        saved_at: 100,
+        panel_widths: [Some(280), Some(320)],
+        file_wrap: Some(true),
+        tabs: vec![crate::workspace::Tab::Workspace(
+            crate::workspace::Workspace {
+                backend_id: None,
+                server_id: None,
+                folder: "/saved-project".into(),
+                project_name: Some("Saved Project".into()),
+                temporary: false,
+                occurrence: 0,
+                workspace_id: None,
+                active_session_id: Some("ses-saved".into()),
+                drafts: BTreeMap::from([("ses-saved".into(), "Saved draft".into())]),
+                attachment_drafts: BTreeSet::new(),
+                attachment_parts: BTreeMap::new(),
+                view: Default::default(),
+            },
+        )],
+        active: Some(0),
+    };
+    let encoded = crate::workspace::encode(&saved).unwrap();
+    std::fs::write(dir.join("state.json"), &encoded).unwrap();
+
+    // Stub server fails initial attestation/listing with 503 until flipped to healthy.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = format!("http://{}/", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let healthy = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let healthy_flag = healthy.clone();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !stop_flag.load(SeqCst) && std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut socket, _)) => {
+                    let _ = socket.set_nonblocking(false);
+                    let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = [0u8; 2048];
+                    let n = socket.read(&mut buf).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    if !healthy_flag.load(SeqCst) {
+                        let _ = socket.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    } else if req.starts_with("GET /api/meta ") {
+                        let body = r#"{"apiContract":1,"serverId":"srv-boot","capabilities":[]}"#;
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes());
+                    } else if req.starts_with("GET /api/workspaces ") {
+                        let body = "[]";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes());
+                    } else {
+                        let _ = socket.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let (boot_tx, boot_rx) = bounded(1);
+    let mut state = crate::init();
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        Arc::new(|| {}),
+        Some(boot_rx),
+    )));
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::connected(&mut state);
+    assert!(
+        !crate::workspace::input_ready(&state),
+        "workspace must stay not ready while local host boot is pending"
+    );
+
+    let backend = Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: addr,
+        workspace: String::new(),
+        session: String::new(),
+        client_id: "fixture".into(),
+        session_directory: None,
+        fresh_mode: false,
+    };
+    let host = crate::platform::LocalHost::fixture(|| crate::platform::ManagedRenewal::Denied)
+        .with_state_directory(dir.clone());
+    boot_tx.try_send(Ok((backend, host))).unwrap();
+
+    let mut rt = rune::Runtime::new(
+        state,
+        crate::view,
+        (960.0, 720.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.poll = Some(crate::poll);
+    let mut now = 0.0;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        rt.frame(now);
+        now += 0.05;
+        let ready = crate::workspace::input_ready(&rt.state);
+        let listed_err = rt
+            .state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.error == Some("rune.list_error") && !l.pending);
+        if ready && listed_err {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for persistence load + failed listing (ready={ready}, listed_err={listed_err})"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let ui = rt.state.workspace.as_ref().unwrap();
+    assert!(
+        ui.persistence_store().is_some(),
+        "persistence store must open on poll_boot even when initial listing fails"
+    );
+    assert_eq!(ui.tab_count(), 1);
+    assert!(rt.state.shell.file_wrap);
+    assert_eq!(
+        rt.state.screen.launcher().unwrap().error,
+        Some("rune.list_error")
+    );
+    assert!(
+        rt.state.screen.launcher().unwrap().projects_stale,
+        "initial listing failure must expose launcher retry action"
+    );
+    let hydrated_snapshot = ui.snapshot();
+    match &hydrated_snapshot.tabs[0] {
+        crate::workspace::Tab::Workspace(w) => {
+            assert_eq!(w.folder, "/saved-project");
+            assert_eq!(
+                w.drafts.get("ses-saved").map(String::as_str),
+                Some("Saved draft")
+            );
+        }
+        other => panic!("expected hydrated workspace tab, got {other:?}"),
+    }
+
+    // Subsequent changes persist cleanly to disk even without a successful initial listing.
+    rt.update(crate::workspace::new_tab);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        now += 0.3;
+        rt.frame(now);
+        if let Ok(bytes) = std::fs::read(dir.join("state.json"))
+            && let Ok(disk) = crate::workspace::decode(&bytes)
+            && disk.tabs.len() == 2
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "new tab was not persisted after failed initial listing"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // Retry from launcher recovers attestation and clears projects_stale even after new_tab cleared error.
+    assert!(rt.state.screen.launcher().unwrap().projects_stale);
+    healthy.store(true, SeqCst);
+    refresh_projects(&mut rt.state);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        now += 0.05;
+        rt.frame(now);
+        let recovered = rt.state.screen.launcher().is_some_and(|l| {
+            l.server_id.as_deref() == Some("srv-boot") && !l.projects_stale && !l.pending
+        });
+        if recovered {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "launcher retry did not recover initial attestation and project listing"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    drop(rt);
+    stop.store(true, SeqCst);
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(parent);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn unreadable_state_on_boot_is_never_overwritten_when_initial_listing_fails() {
+    use std::{
+        io::{Read, Write},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering::SeqCst},
+        },
+        time::Duration,
+    };
+
+    let parent = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+    let dir = parent.join("rune");
+    std::fs::create_dir_all(&dir).unwrap();
+    let corrupt = b"corrupt saved workspace";
+    std::fs::write(dir.join("state.json"), corrupt).unwrap();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = format!("http://{}/", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !stop_flag.load(SeqCst) && std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut socket, _)) => {
+                    let _ = socket.set_nonblocking(false);
+                    let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = [0u8; 2048];
+                    let _ = socket.read(&mut buf);
+                    let _ = socket.write_all(
+                        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let (boot_tx, boot_rx) = bounded(1);
+    let mut state = crate::init();
+    state.screen = crate::Screen::Launcher(Box::new(Launcher::with_boot(
+        Arc::new(|| {}),
+        Some(boot_rx),
+    )));
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::connected(&mut state);
+    assert!(!crate::workspace::input_ready(&state));
+
+    let backend = Backend {
+        client: codenomad_client::http::Http::new().unwrap(),
+        base: addr,
+        workspace: String::new(),
+        session: String::new(),
+        client_id: "fixture".into(),
+        session_directory: None,
+        fresh_mode: false,
+    };
+    let host = crate::platform::LocalHost::fixture(|| crate::platform::ManagedRenewal::Denied)
+        .with_state_directory(dir.clone());
+    boot_tx.try_send(Ok((backend, host))).unwrap();
+
+    let mut rt = rune::Runtime::new(
+        state,
+        crate::view,
+        (960.0, 720.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.poll = Some(crate::poll);
+    let mut now = 0.0;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        rt.frame(now);
+        now += 0.05;
+        let ready = crate::workspace::input_ready(&rt.state);
+        let listed_err = rt
+            .state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.error == Some("rune.list_error") && !l.pending);
+        if ready && listed_err {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    assert_eq!(
+        crate::workspace::status(&rt.state),
+        Some("rune.restore_error")
+    );
+    rt.update(crate::workspace::new_tab);
+    for _ in 0..5 {
+        now += 0.5;
+        rt.frame(now);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read(dir.join("state.json")).unwrap(),
+        corrupt,
+        "unreadable state.json must never be overwritten"
+    );
+
+    drop(rt);
+    stop.store(true, SeqCst);
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(parent);
 }

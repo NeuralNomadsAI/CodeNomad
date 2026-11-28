@@ -61,7 +61,6 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
     if (holdDepth && path.endsWith("/subagent-depth")) { depthRoute = route; return }
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([LONG, SHORT]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "long", actors: [{ sessionId: "ses_worker", state: "running" }] }, { missionId: "short", actors: [] }] } } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     return route.fulfill({ json: {} })
   })
   await page.goto(url, { timeout: 60_000 })

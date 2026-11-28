@@ -34,7 +34,7 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 Chaque session a un seul aperçu natif. Si un onglet dupliqué affiche **Aperçu ouvert dans un autre onglet**, choisissez **Y aller** pour le retrouver ou **L’ouvrir ici** pour le déplacer dans la même fenêtre. L’ancien onglet affiche alors le même message. Fermer l’onglet propriétaire permet de rouvrir l’aperçu ailleurs.
 
-L’agent ouvre l’aperçu dans son onglet propriétaire ou, à défaut, dans le dernier onglet utilisé pour la session. Les actions sur la page ciblent l’aperçu natif visible.
+Tant qu’une fenêtre de bureau affiche une conversation, ses agents peuvent piloter son aperçu avec les outils de navigateur d’OpenCode (OpenCode 2.4 ou ultérieur) ; l’exécution de scripts dans la page est refusée et, dans l’app Tauri sous macOS et Linux, ils ne peuvent ni revenir en arrière, ni avancer, ni recharger. Dans Electron et l’app Tauri Windows, ils peuvent aussi lire les messages de console et les requêtes réseau de l’aperçu ; ils voient les en-têtes et les corps textuels des requêtes et réponses tant que l’aperçu les conserve, sauf les valeurs des en-têtes de cookies et d’autorisation. L’agent ouvre l’aperçu dans son onglet propriétaire ou, à défaut, dans le dernier onglet utilisé pour la session. Les actions sur la page ciblent l’aperçu natif visible. Les pages se chargent par le réseau de cet ordinateur, comme dans l’aperçu affiché : `localhost` désigne donc cet ordinateur, même quand OpenCode tourne dans WSL.
 
 L’agent prend un instantané avant d’agir sur l’aperçu ou de le capturer. Si l’aperçu change, la commande s’arrête au lieu de viser un autre aperçu.
 

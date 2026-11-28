@@ -22,7 +22,8 @@ mod routing;
 mod sessions;
 mod staleness;
 pub use catalogue::{
-    AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves, SessionCatalogueChanges,
+    AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves, SessionActivityHint,
+    SessionActivityKind, SessionCatalogueChanges,
 };
 pub use children::ChildSettlement;
 pub(crate) use children::Children;
@@ -34,6 +35,8 @@ pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;
+
+pub(super) type SessionDeletedHook = Arc<(Arc<dyn Fn() + Send + Sync>, AtomicBool)>;
 
 pub struct State {
     cancelled: AtomicBool,
@@ -53,6 +56,7 @@ pub struct State {
     cancel_signal: (Sender<()>, crate::Receiver<()>),
     stopped: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
+    on_session_deleted: Option<SessionDeletedHook>,
 }
 
 impl Default for State {
@@ -75,8 +79,23 @@ impl Default for State {
             cancel_signal: crate::bounded(1),
             stopped: crate::bounded(1),
             provider_usage: None,
+            on_session_deleted: None,
         }
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn observe_session_deleted_frame(workspace: &str, session: &str, kind: &str, data: &str) -> bool {
+    if (!kind.is_empty() && kind != "message") || !data.contains("\"session.deleted\"") {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
+        return false;
+    };
+    value["type"] == "instance.event"
+        && value["instanceId"] == workspace
+        && value["event"]["type"] == "session.deleted"
+        && value["event"]["data"]["sessionID"] == session
 }
 
 impl State {
@@ -86,6 +105,35 @@ impl State {
     ) -> Self {
         self.provider_usage = watch;
         self
+    }
+
+    pub(crate) fn with_session_deleted(
+        mut self,
+        hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
+        self.on_session_deleted = hook.map(|f| Arc::new((f, AtomicBool::new(false))));
+        self
+    }
+
+    pub(super) fn notify_session_deleted(&self) {
+        if let Some(hook) = &self.on_session_deleted
+            && !hook.1.swap(true, SeqCst)
+        {
+            (hook.0)();
+        }
+    }
+
+    pub(super) fn session_deleted_hook(&self) -> Option<SessionDeletedHook> {
+        self.on_session_deleted.clone()
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn observe_frame(&self, b: &Backend, kind: &str, data: &str) {
+        if self.on_session_deleted.is_some()
+            && observe_session_deleted_frame(&b.workspace, &b.session, kind, data)
+        {
+            self.notify_session_deleted();
+        }
     }
 
     fn quota_ingress(&self, backend: &Backend) -> Option<crate::provider_usage::Ingress> {

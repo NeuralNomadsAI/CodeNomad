@@ -713,7 +713,7 @@ mod tests {
             super::super::git_scene::view_with_width(state, 360.0)
         }
         let mut state = init();
-        state.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        state.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         state.phase = Phase::Ready;
         super::super::git_scene::changes_explicit(&mut state);
         let mut rt = Runtime::new(state, scene_view, (1450.0, 920.0), Env::new(true, 1.0));

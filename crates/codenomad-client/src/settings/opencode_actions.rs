@@ -181,6 +181,21 @@ pub async fn opencode_login_start(backend: &Backend) -> crate::history::Result<L
     parse_login_start(read_json_limited(response, MAX_LOGIN_START_BYTES).await?)
 }
 
+fn parse_login_start_mutation(
+    value: serde_json::Value,
+    enabled: bool,
+) -> Result<LoginStartState, LoginStartError> {
+    let expected = if enabled {
+        LoginStartState::On
+    } else {
+        LoginStartState::Off
+    };
+    match parse_login_start(value) {
+        Ok(state) if state == expected => Ok(state),
+        _ => Err(LoginStartError::Failed),
+    }
+}
+
 pub async fn set_opencode_login_start(
     backend: &Backend,
     enabled: bool,
@@ -197,7 +212,7 @@ pub async fn set_opencode_login_start(
         .await
         .map_err(|_| LoginStartError::Failed)?;
     if success {
-        return parse_login_start(value).map_err(|_| LoginStartError::Failed);
+        return parse_login_start_mutation(value, enabled);
     }
     Err(match value["error"].as_str() {
         Some("login-start-unsupported-binary") => LoginStartError::UnsupportedBinary,
@@ -295,5 +310,93 @@ mod tests {
             parse_opencode_logs(json!({"path": "bad\npath", "text": "", "truncated": false}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn login_start_mutation_rejects_contradictory_200_state() {
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "on"}), true),
+            Ok(LoginStartState::On)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "off"}), false),
+            Ok(LoginStartState::Off)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "off"}), true),
+            Err(LoginStartError::Failed)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "on"}), false),
+            Err(LoginStartError::Failed)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "unavailable"}), true),
+            Err(LoginStartError::Failed)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "unavailable"}), false),
+            Err(LoginStartError::Failed)
+        );
+        assert_eq!(
+            parse_login_start_mutation(json!({"state": "bogus"}), true),
+            Err(LoginStartError::Failed)
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn set_opencode_login_start_http_rejects_mismatched_state_and_maps_422() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let responses = [
+                    ("200 OK", r#"{"state":"off"}"#),
+                    ("200 OK", r#"{"state":"unavailable"}"#),
+                    ("200 OK", r#"{"state":"on"}"#),
+                    (
+                        "422 Unprocessable Entity",
+                        r#"{"error":"login-start-unsupported-binary"}"#,
+                    ),
+                ];
+                for (status, body) in responses {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf).await.unwrap();
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(reply.as_bytes()).await.unwrap();
+                }
+            });
+
+            let backend = Backend::connect(&format!("http://{addr}"), "").await.unwrap();
+            assert_eq!(
+                set_opencode_login_start(&backend, true).await,
+                Err(LoginStartError::Failed)
+            );
+            assert_eq!(
+                set_opencode_login_start(&backend, false).await,
+                Err(LoginStartError::Failed)
+            );
+            assert_eq!(
+                set_opencode_login_start(&backend, true).await,
+                Ok(LoginStartState::On)
+            );
+            assert_eq!(
+                set_opencode_login_start(&backend, true).await,
+                Err(LoginStartError::UnsupportedBinary)
+            );
+            server.await.unwrap();
+        });
     }
 }

@@ -33,6 +33,7 @@ const localElectronAPI = {
   openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
   getDirectoryPaths: (paths) => ipcRenderer.invoke("filesystem:getDirectoryPaths", paths),
   openWorkspaceTarget: (payload) => ipcRenderer.invoke("workspace:openTarget", payload),
+  openLocalPath: (payload) => ipcRenderer.invoke("workspace:openLocalPath", payload),
   setWorkspaceMenuEnabled: (enabled, viewState) => ipcRenderer.invoke("workspace:setMenuEnabled", Boolean(enabled), viewState),
   newWindow: () => ipcRenderer.invoke("window:new"),
   nextPendingFolder: () => ipcRenderer.invoke("window:nextFolder"),

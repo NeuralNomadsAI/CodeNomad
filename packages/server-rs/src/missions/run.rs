@@ -6,23 +6,39 @@ use crate::shared::js_trim;
 use crate::{App, Error, Shared, Workspace, error, files, worktrees::linked};
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, RawQuery, State},
     http::{Method, StatusCode as Status},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 
-pub async fn playbooks() -> Response {
-    (
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        include_str!("../../contracts/mission-playbooks-native.json"),
-    )
-        .into_response()
+const NATIVE_PLAYBOOKS: &str = include_str!("../../contracts/mission-playbooks-native.json");
+const INDEPENDENT_PLAYBOOKS: &str = include_str!("playbooks_independent.json");
+
+pub(super) fn playbook_details(task_mode: &str) -> &'static Value {
+    static NATIVE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(NATIVE_PLAYBOOKS).expect("bundled native playbooks"));
+    static INDEPENDENT: LazyLock<Value> =
+        LazyLock::new(|| serde_json::from_str(INDEPENDENT_PLAYBOOKS).expect("bundled independent playbooks"));
+    if task_mode == "independent" { &INDEPENDENT } else { &NATIVE }
+}
+
+pub async fn playbooks(RawQuery(raw): RawQuery) -> Result<Response, Error> {
+    let invalid = || error(Status::BAD_REQUEST, "Invalid playbook request");
+    let query = super::recurrence::query(raw.as_deref()).ok_or_else(invalid)?;
+    if query.keys().any(|k| k != "taskMode") {
+        return Err(invalid());
+    }
+    let body = match query.get("taskMode").and_then(Value::as_str) {
+        None | Some("native") => NATIVE_PLAYBOOKS,
+        Some("independent") => INDEPENDENT_PLAYBOOKS,
+        Some(_) => return Err(invalid()),
+    };
+    Ok(([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response())
 }
 pub(super) fn bad() -> Error {
     error(Status::BAD_REQUEST, "Invalid one-time Mission request")
@@ -540,6 +556,8 @@ pub async fn dispatch(State(app): State<Shared>, request: axum::extract::Request
     }
     let result = match command.kind.as_str() {
         "profile-defaults" => super::prepare::defaults(&app, command.input),
+        "configurations" => super::agent_settings::configurations(&app, command.input),
+        "settings" => super::agent_settings::settings(&app, scope, co, command.input).await,
         "prepare" => {
             let lifetime = CancellationToken::new();
             let _disconnect = lifetime.clone().drop_guard();
@@ -551,6 +569,12 @@ pub async fn dispatch(State(app): State<Shared>, request: axum::extract::Request
         "create-root" => super::inputs::create_root(&app, scope, co, command.input).await,
         "cleanup" => super::cleanup::remove(&app, scope, co, command.input).await,
         "task-sessions" => super::task_sessions::observe(&app, scope, co, command.input).await,
+        "interrupt" => super::task_sessions::interrupt(&app, scope, co, command.input).await,
+        "project-read" => super::agent_read::read(&app, scope, co, command.input).await,
+        "project-control" => super::agent_control::control(&app, scope, co, command.input).await,
+        "project-control-verify" | "project-update" => {
+            super::agent_control::verify(&app, scope, co, &command.kind, command.input).await
+        }
         "schedule" => super::calendar::agent_command(app.clone(), scope, co, command.input).await,
         "prompt" | "synthetic" => super::inputs::admit(&app, scope, co, &command.kind, command.input).await,
         "lifecycle" => lifecycle(&app, scope, co, command.input).await,

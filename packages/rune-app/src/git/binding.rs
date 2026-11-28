@@ -53,7 +53,7 @@ impl Binding {
         self.owner.as_mut().map_or(0, Ui::evict_inactive_caches)
     }
 
-    pub(crate) fn take(binding: &mut Self) -> Self {
+    pub(crate) fn take(binding: &mut Box<Self>) -> Box<Self> {
         let taken = std::mem::take(binding);
         binding.preferences = taken.preferences.clone();
         binding.placement_unconfirmed = taken.placement_unconfirmed.clone();
@@ -478,7 +478,7 @@ fn publish_notice(s: &mut State) {
             s,
             backend,
             crate::shell::notifications::Category::Files,
-            message,
+            message.localized(),
             !success,
         );
     }

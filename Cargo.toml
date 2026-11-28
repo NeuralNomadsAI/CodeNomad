@@ -8,21 +8,21 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries", "svg", "avif"] }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d", default-features = false, features = ["markdown", "mermaid"] }
+rune = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries", "svg", "avif"] }
+rune-kit = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next", default-features = false, features = ["markdown", "mermaid"] }
 serde_json = "1"
 codenomad-client = { path = "crates/codenomad-client" }
 rune-theme-codenomad = { path = "crates/rune-theme-codenomad" }
 
 [patch.crates-io]
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-naga = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-winit = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+wgpu-hal = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+naga = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+winit = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+parley_engine = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+accesskit_windows = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+accesskit_atspi_common = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+accesskit_macos = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
+sctk-adwaita = { git = "https://github.com/NeuralNomadsAI/rune.git", branch = "android/next" }
 
 [profile.dev]
 debug = 0

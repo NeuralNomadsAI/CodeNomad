@@ -42,7 +42,7 @@ async function fixture() {
   const native = { location: { directory: "/project", project: { id: "project" } }, assertCurrent: current,
     get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "project", location: { directory: "/project" } }),
   } as unknown as MissionNativeService
-  const observation: NativePassageObservation = { assertCurrent: current, assertScheduleCurrent: current, exists: async id => states.has(id),
+  const observation: NativePassageObservation = { assertCurrent: current, exists: async id => states.has(id),
     session: async id => ({ id, projectID: "project", directory: "/project", active: states.get(id)?.active ?? false,
       inbox: 0, suspended: false, runningTools: 0, failed: false, messagePresent: true,
       terminal: { inputMessageID: states.get(id)?.message ?? "msg_first", messageID: "msg_idle", outcome: "succeeded" } }),

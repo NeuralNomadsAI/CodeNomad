@@ -5,6 +5,7 @@ pub(crate) fn set_project(l: &mut Launcher, project: Option<Project>) {
     if l.project.as_ref().map(|p| &p.id) != project.as_ref().map(|p| &p.id) {
         l.search_results = Default::default();
         l.linked = Default::default();
+        l.adopt_recovered_for = None;
     }
     l.project = project;
 }
@@ -146,6 +147,9 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
     let Some(backend) = l.connection.clone() else {
         return;
     };
+    if l.server_id.is_none() && backend.client.needs_capability_recheck() {
+        return;
+    }
     let local = l.local_connection();
     let identity = if local {
         saved.backend_id.is_none()
@@ -179,7 +183,11 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
                 .await
             {
                 Ok((bound, session, slug)) => Restored::Bound(bound, session.title, slug),
-                Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
+                Err(err) if err.is::<SessionMissing>() => Restored::Missing(
+                    id.clone(),
+                    err.downcast_ref::<SessionMissing>()
+                        .is_some_and(|reason| reason.is_deleted()),
+                ),
                 Err(err) => return Err(err),
             }
         } else {

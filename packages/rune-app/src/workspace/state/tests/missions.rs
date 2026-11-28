@@ -149,8 +149,17 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
 
         click(&mut rt, "right-panel-tab-2");
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
-        for _ in 0..2 {
+        let mut seen_calendars = false;
+        for _ in 0..3 {
             let req = http.accept().await;
+            if req
+                .header
+                .starts_with("GET /api/workspaces/header-windows/missions/calendars ")
+            {
+                seen_calendars = true;
+                req.reply(200, json!({"calendars":[]})).await;
+                continue;
+            }
             assert!(
                 req.header
                     .starts_with("POST /api/workspaces/header-windows/missions/panel-page ")
@@ -183,6 +192,10 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             }
             req.reply(200, page).await;
         }
+        assert!(
+            seen_calendars,
+            "Opening Missions loads programmed calendars"
+        );
         until(&mut rt, &signal, |rt| {
             let tree = rt.accessibility_json().to_string();
             tree.contains("Alpha 🦀")
@@ -300,9 +313,13 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         rt.update(|s, _| mission_event(s, Some(&changed)));
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..4 {
+        let mut calendars = false;
+        for _ in 0..5 {
             let req = http.accept().await;
             detail |= req.body == json!({"source":"mission","missionID":"alpha","header":true});
+            calendars |= req
+                .header
+                .starts_with("GET /api/workspaces/header-windows/missions/calendars ");
             req.reply(
                 503,
                 json!({"available":false,"reason":"plugin-unavailable","missions":[]}),
@@ -310,6 +327,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             .await;
         }
         assert!(detail, "Journal changes reread the selected header");
+        assert!(calendars, "Journal changes refresh programmed calendars");
         tick(&mut rt);
         rt.update(|s, _| {
             s.workspace.as_mut().unwrap().clock = 2.0;
@@ -317,9 +335,13 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         });
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..4 {
+        let mut calendars = false;
+        for _ in 0..5 {
             let req = http.accept().await;
             detail |= req.body["source"] == "mission";
+            calendars |= req
+                .header
+                .starts_with("GET /api/workspaces/header-windows/missions/calendars ");
             req.reply(
                 503,
                 json!({"available":false,"reason":"plugin-unavailable","missions":[]}),
@@ -327,6 +349,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             .await;
         }
         assert!(detail, "Reconnection rereads the selected header");
+        assert!(calendars, "Reconnection refreshes programmed calendars");
         tick(&mut rt);
         click(&mut rt, "right-panel-tab-0");
         assert!(rt.find("missions-panel").is_none());
@@ -338,8 +361,9 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         tick(&mut rt);
         http.quiet().await;
         click(&mut rt, "right-panel-tab-2");
-        let summaries = http.accept().await;
-        let cleanups = http.accept().await;
+        // Reads::background allows 2 concurrent flights; the 3rd queued read cancels before opening a socket.
+        let first = http.accept().await;
+        let second = http.accept().await;
         assert!(rt.find("missions-panel").is_some());
         rt.update(|s, tx| {
             assert!(crate::settings::conversation_authentication(
@@ -358,8 +382,8 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         );
         assert!(rt.find("missions-panel").is_none());
         assert!(rt.find("server-password").is_some());
-        summaries.disconnected().await;
-        cleanups.disconnected().await;
+        first.disconnected().await;
+        second.disconnected().await;
         http.quiet().await;
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
         drop(conversation_a);

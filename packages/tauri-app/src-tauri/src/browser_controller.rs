@@ -43,6 +43,8 @@ mod open;
 mod open_navigation;
 #[path = "browser_controller_page.rs"]
 pub(crate) mod page;
+#[path = "browser_diagnostics.rs"]
+mod diagnostics;
 use open::OpenClaim;
 #[path = "browser_preview_owners.rs"]
 mod preview_owners;
@@ -130,9 +132,14 @@ struct Inner {
     published_generations: HashMap<String, (String, u64)>,
     renderer_versions: HashMap<String, u64>,
     page_leases: HashMap<String, page::PageLease>,
+    /// The webview whose file pickers each page operation intercepts, kept until its end even if the lease goes.
+    #[cfg(any(windows, target_os = "macos"))]
+    file_picker_intercepts: HashMap<String, String>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
+    /// The main-frame navigation each registration is loading, from its start to its completion.
+    page_loading: HashMap<String, u64>,
     open_claims: HashMap<String, OpenClaim>,
     preview_owners: preview_owners::BrowserPreviewOwners,
 }
@@ -147,6 +154,7 @@ pub(crate) struct BrowserController {
     pub(crate) embedded_views: EmbeddedViews,
     /// Refs of each session's snapshots (`browser-page.ts`), one operation at a time per session.
     page_refs: Arc<Mutex<page::Refs>>,
+    diagnostics: Arc<diagnostics::Buffers>,
 }
 
 impl BrowserController {
@@ -163,6 +171,7 @@ impl BrowserController {
             run_id: Arc::new(uuid::Uuid::new_v4().to_string()),
             embedded_views: EmbeddedViews::default(),
             page_refs: Default::default(),
+            diagnostics: Arc::default(),
         }
     }
 
@@ -255,6 +264,7 @@ impl BrowserController {
             .and_then(|()| webkit_navigation::install(&webview, self.clone(), registration.clone()))
             .and_then(|()| crate::embedded_view::input::install_read(&webview));
         if let Err(error) = installed {
+            self.diagnostics.remove(&input.registration_id, generation);
             let _ = self
                 .embedded_views
                 .close(window.app_handle(), window.label(), &label);
@@ -274,6 +284,8 @@ impl BrowserController {
         {
             Ok(previous) => previous,
             Err(error) => {
+                // A refused candidate drops only its own buffer: the published preview keeps its diagnostics.
+                self.diagnostics.remove(&input.registration_id, generation);
                 let _ = self
                     .embedded_views
                     .close(window.app_handle(), window.label(), &label);
@@ -281,6 +293,8 @@ impl BrowserController {
             }
         };
         if let Some(previous) = previous {
+            self.diagnostics
+                .remove(&previous.registration_id, previous.generation);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             webkit_history::remove(window.app_handle(), previous.webview_label.clone());
             let _ = self.embedded_views.close(
@@ -685,7 +699,10 @@ impl BrowserController {
             .retain(|_, lease| lease.registration.registration_id != registration_id);
         inner.navigation_versions.remove(registration_id);
         inner.page_load_expectations.remove(registration_id);
+        inner.page_loading.remove(registration_id);
         drop(inner);
+        self.diagnostics
+            .remove(registration_id, registration.generation);
         ready.notify_all();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         webkit_history::remove(app, registration.webview_label.clone());
@@ -770,6 +787,10 @@ impl BrowserController {
                     .retain(|_, lease| lease.registration.registration_id != id);
                 inner.navigation_versions.remove(&id);
                 inner.page_load_expectations.remove(&id);
+                inner.page_loading.remove(&id);
+                if let Some(registration) = inner.registrations.get(&id) {
+                    self.diagnostics.remove(&id, registration.generation);
+                }
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -823,6 +844,7 @@ impl BrowserController {
                 "browser.probe" => self.probe(
                     app,
                     session_id,
+                    workspace_filter(input.get("workspaceIDs"))?,
                     deadline,
                     &fence,
                     |registration, version| {
@@ -857,11 +879,15 @@ impl BrowserController {
         &self,
         app: &AppHandle<R>,
         session_id: &str,
+        workspaces: Option<Vec<String>>,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
         read_document: impl FnOnce(&Registration, u64) -> Result<String, String>,
     ) -> Result<Value, String> {
-        let registration = self.resolve(app, session_id)?;
+        // Only a view in one of these project tabs serves the session to its agents.
+        let registration = self.resolve_with_visibility_in(session_id, workspaces.as_deref(), |label| {
+            window_visible(app, label)
+        })?;
         let document = self.document_version(&registration)?;
         self.check_target(app, &registration, deadline, fence)?;
         let token = read_document(&registration, document)?;
@@ -875,7 +901,19 @@ impl BrowserController {
         }
         self.check_witness_state(app, &registration, document)?;
         fence.check()?;
-        Ok(json!({ "available": true, "target": target }))
+        let loading = self
+            .inner
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .page_loading
+            .contains_key(&registration.registration_id);
+        Ok(json!({
+            "available": true,
+            "target": target,
+            "loading": loading,
+            "registration": registration_identity(&registration),
+        }))
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -915,7 +953,90 @@ impl BrowserController {
                     None,
                     || Ok(()),
                 )?;
-                Ok(json!({ "url": url }))
+                Ok(json!({ "url": url, "registration": registration_identity(&registration) }))
+            }
+            "back" | "forward" | "reload" => {
+                let nav_deadline = deadline.min(Instant::now() + Duration::from_secs(15));
+                #[cfg(windows)]
+                let url = if action == "reload" {
+                    let current = allowed_url(
+                        webview.url().map_err(|error| error.to_string())?.as_str(),
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &current,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::Reload,
+                    )?
+                } else {
+                    let controller = self.clone();
+                    let expected = registration.clone();
+                    let queued_app = app.clone();
+                    let queued_fence = fence.clone();
+                    let history = cdp_guarded(
+                        &webview,
+                        "Page.getNavigationHistory",
+                        json!({}),
+                        nav_deadline,
+                        move || {
+                            controller.check_capture(
+                                &queued_app,
+                                &expected,
+                                document,
+                                nav_deadline,
+                                &queued_fence,
+                            )
+                        },
+                        2 * 1024 * 1024,
+                    )?;
+                    let index = history["currentIndex"]
+                        .as_i64()
+                        .ok_or("Browser history is unavailable")?;
+                    let target_index = if action == "back" { index - 1 } else { index + 1 };
+                    let entry = usize::try_from(target_index)
+                        .ok()
+                        .and_then(|idx| history["entries"].as_array().and_then(|e| e.get(idx)))
+                        .ok_or_else(|| {
+                            if action == "back" {
+                                "No previous page in browser history"
+                            } else {
+                                "No next page in browser history"
+                            }
+                        })?;
+                    let entry_id = entry["id"]
+                        .as_i64()
+                        .ok_or("Invalid browser history entry")?;
+                    let entry_url = allowed_url(
+                        entry["url"]
+                            .as_str()
+                            .ok_or("Invalid browser history URL")?,
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &entry_url,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::HistoryEntry(entry_id),
+                    )?
+                };
+                #[cfg(windows)]
+                return Ok(json!({ "url": url, "registration": registration_identity(&registration) }));
+                // WebKit previews do not report a load receipt for history traversal or reload.
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    let _ = (nav_deadline, document, token);
+                    Err("Browser history and reload are unavailable in WebKit previews; use navigate"
+                        .into())
+                }
             }
             "screenshot" => {
                 #[cfg(windows)]
@@ -999,6 +1120,16 @@ impl BrowserController {
         session_id: &str,
         read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
     ) -> Result<Registration, String> {
+        self.resolve_with_visibility_in(session_id, None, read_visibility)
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn resolve_with_visibility_in(
+        &self,
+        session_id: &str,
+        workspaces: Option<&[String]>,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+    ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
             .inner
@@ -1007,7 +1138,16 @@ impl BrowserController {
             .map_err(|error| error.to_string())?
             .registrations
             .values()
-            .filter(|registration| registration.session_id == session_id && registration.visible)
+            .filter(|registration| {
+                registration.session_id == session_id
+                    && registration.visible
+                    && workspaces.is_none_or(|workspaces| {
+                        registration
+                            .instance_id
+                            .as_ref()
+                            .is_some_and(|id| workspaces.contains(id))
+                    })
+            })
             .cloned()
             .collect::<Vec<_>>();
         resolve_visible_registration(registrations.iter(), read_visibility).cloned()
@@ -1247,6 +1387,8 @@ impl BrowserController {
         let frame = &parameters["frame"];
         if frame["id"].as_str().is_some_and(|id| !id.is_empty()) && frame.get("parentId").is_none()
         {
+            // document.open() replaces the document without a navigation: its diagnostics restart too.
+            self.diagnostics.restart(registration_id, generation, None);
             self.invalidate_page_for_generation(registration_id, generation);
         }
     }
@@ -1320,6 +1462,9 @@ impl BrowserController {
                 .map(|item| item.generation)
                 == Some(generation)
             {
+                inner
+                    .page_loading
+                    .insert(registration_id.to_string(), navigation_id);
                 if url != "about:blank" {
                     open::retire_open_for_navigation(
                         &mut inner,
@@ -1376,6 +1521,9 @@ impl BrowserController {
                 != Some(generation)
             {
                 return;
+            }
+            if inner.page_loading.get(registration_id) == Some(&navigation_id) {
+                inner.page_loading.remove(registration_id);
             }
             if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                 if expectation.navigation_id == Some(navigation_id) && expectation.result.is_none()
@@ -1508,6 +1656,31 @@ fn navigation_error() -> String {
     "Browser navigation requires a credential-free HTTP(S) URL".to_string()
 }
 
+/// The preview a probe or a load used: a load that ends in another registration is no receipt for the agent's tab.
+fn registration_identity(registration: &Registration) -> String {
+    format!("{}:{}", registration.registration_id, registration.generation)
+}
+
+/// The project tabs a probe may use, from the backend's verified owners.
+fn workspace_filter(value: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let ids = value
+        .as_array()
+        .filter(|ids| ids.len() <= 1024)
+        .ok_or("Invalid browser request")?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .filter(|id| validate_id(id, 256).is_ok())
+                .map(str::to_string)
+                .ok_or("Invalid browser request")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(ids))
+}
+
 fn resolve_visible_registration<'a>(
     registrations: impl IntoIterator<Item = &'a Registration>,
     mut read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
@@ -1610,6 +1783,8 @@ fn install_webview2_handlers(
 
     let app = webview.app_handle().clone();
     let deadline = Instant::now() + Duration::from_secs(5);
+    let (controller_diagnostics, diagnostics_registration_id) =
+        (controller.diagnostics.clone(), registration_id.clone());
     let (sender, receiver) = mpsc::sync_channel(1);
     webview
         .with_webview(move |platform| {
@@ -1626,6 +1801,10 @@ fn install_webview2_handlers(
                     unsafe { args.NavigationId(&mut navigation_id)? };
                     let mut raw = Default::default();
                     unsafe { args.Uri(&mut raw)? };
+                    // A new document's diagnostics start with its own request, as in OpenCode's browser.
+                    started_controller
+                        .diagnostics
+                        .restart(&started_registration_id, generation, Some(navigation_id));
                     started_controller.mark_page_started(
                         &started_registration_id,
                         generation,
@@ -1744,6 +1923,7 @@ fn install_webview2_handlers(
                     }
                     .map_err(|error| preview_error("install document-opened handler", error))
                 })?;
+                diagnostics::install(&core, controller.clone(), registration_id.clone(), generation)?;
 
                 let source = SourceChangedEventHandler::create(Box::new(move |core, args| {
                     let Some(core) = core else {
@@ -1780,7 +1960,15 @@ fn install_webview2_handlers(
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|error| preview_error("wait for WebView2 navigation handlers", error))??;
     // Confirm Page events are enabled before this guest can publish any witness.
-    cdp(webview, "Page.enable", json!({}), deadline).map(|_| ())
+    cdp(webview, "Page.enable", json!({}), deadline)?;
+    // Diagnostics are an extra: a preview whose domains cannot be enabled still serves the page channel.
+    for (method, params) in &diagnostics::spec().enable {
+        if cdp(webview, method, params.clone(), deadline).is_err() {
+            controller_diagnostics.remove(&diagnostics_registration_id, generation);
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1820,16 +2008,33 @@ fn cdp_guarded(
     guard: impl Fn() -> Result<(), String> + Send + 'static,
     response_limit: usize,
 ) -> Result<Value, String> {
+    cdp_guarded_in(webview, None, method, params, deadline, guard, response_limit)
+}
+
+/// `session` sends the command to an out-of-process frame's protocol session.
+#[cfg(windows)]
+fn cdp_guarded_in(
+    webview: &tauri::Webview,
+    session: Option<String>,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
+    response_limit: usize,
+) -> Result<Value, String> {
     let step = format!("CDP {method}");
     let deadline = deadline.min(Instant::now() + Duration::from_secs(20));
     guard()
-        .and_then(|()| cdp_guarded_inner(webview, method, params, deadline, guard, response_limit))
+        .and_then(|()| {
+            cdp_guarded_inner(webview, session, method, params, deadline, guard, response_limit)
+        })
         .map_err(|error| preview_error(&step, error))
 }
 
 #[cfg(windows)]
 pub(crate) fn cdp_guarded_inner(
     webview: &tauri::Webview,
+    session: Option<String>,
     method: &str,
     params: Value,
     deadline: Instant,
@@ -1837,7 +2042,11 @@ pub(crate) fn cdp_guarded_inner(
     response_limit: usize,
 ) -> Result<Value, String> {
     use std::sync::mpsc;
-    use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
+    use webview2_com::{
+        CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR,
+        Microsoft::Web::WebView2::Win32::ICoreWebView2_11,
+    };
+    use windows_core::Interface;
 
     let (sender, receiver) = mpsc::sync_channel(1);
     let method = method.to_string();
@@ -1866,6 +2075,21 @@ pub(crate) fn cdp_guarded_inner(
                 // side effect too, not just the operation that queues this closure.
                 if let Err(error) = run_before_deadline(deadline, || {
                     guard()?;
+                    if let Some(session) = &session {
+                        let core = core
+                            .cast::<ICoreWebView2_11>()
+                            .map_err(|error| error.to_string())?;
+                        let session = CoTaskMemPWSTR::from(session.as_str());
+                        return unsafe {
+                            core.CallDevToolsProtocolMethodForSession(
+                                *session.as_ref().as_pcwstr(),
+                                *method.as_ref().as_pcwstr(),
+                                *params.as_ref().as_pcwstr(),
+                                &handler,
+                            )
+                            .map_err(|error| error.to_string())
+                        };
+                    }
                     unsafe {
                         core.CallDevToolsProtocolMethod(
                             *method.as_ref().as_pcwstr(),

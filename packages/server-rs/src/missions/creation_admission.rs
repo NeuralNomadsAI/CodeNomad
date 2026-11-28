@@ -162,12 +162,13 @@ impl Creations {
 
 /// The original connection, workspace occurrence and physical paths are part
 /// of the authority, independently of the project ID carried by the RPC.
+#[derive(Clone)]
 pub(super) struct Scope {
     pub workspace: Workspace,
     pub endpoint: Arc<opencode::Endpoint>,
     pub project: String,
     pub dir: String,
-    canonical: String,
+    pub canonical: String,
     paths: Vec<(PathBuf, String)>,
     checkouts: Vec<String>,
 }

@@ -37,7 +37,7 @@ fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
     }
     for dark in [false, true] {
         let mut s = crate::init();
-        s.status_permissions = Permissions {
+        s.status_permissions = Box::new(Permissions {
             backend: Some(platform::block_on(Backend::connect("http://127.0.0.1:9/", "")).unwrap()),
             visible: true,
             online: true,
@@ -46,7 +46,7 @@ fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
                 root: None,
             }),
             ..Permissions::default()
-        };
+        });
         crate::strings::with_locale("en", || {
             let mut runtime = Runtime::new(s, render, (320.0, 300.0), Env::new(dark, 1.0));
             runtime.frame(0.0);
@@ -126,7 +126,7 @@ fn arrows_only_move_permission_focus_and_enter_or_space_writes() {
             http.backend.session = "ses_child".into();
             let mut s = crate::init();
             s.show_chat();
-            s.status_permissions = Permissions {
+            s.status_permissions = Box::new(Permissions {
                 backend: Some(http.backend.clone()),
                 visible: true,
                 online: true,
@@ -136,7 +136,7 @@ fn arrows_only_move_permission_focus_and_enter_or_space_writes() {
                     root: None,
                 }),
                 ..Permissions::default()
-            };
+            });
             let mut rt = Runtime::new(s, render, (440.0, 300.0), Env::new(false, 1.0));
             rt.frame(0.0);
             rt.update(|s, tx| crate::shell::toggle_panel(s, 1, tx));
@@ -182,7 +182,7 @@ fn reconnection_remains_unconfirmed_until_the_delayed_get_succeeds() {
         s.wake = Arc::new(move || {
             let _ = wake.try_send(());
         });
-        s.status_permissions = Permissions {
+        s.status_permissions = Box::new(Permissions {
             backend: Some(http.backend.clone()),
             visible: true,
             online: true,
@@ -192,7 +192,7 @@ fn reconnection_remains_unconfirmed_until_the_delayed_get_succeeds() {
                 root: None,
             }),
             ..Permissions::default()
-        };
+        });
         let poll = |s: &mut State| s.status_permissions.poll(&s.reads, &s.wake);
         s.status_permissions.online(false);
         assert!(s.status_permissions.unconfirmed());

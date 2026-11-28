@@ -85,7 +85,7 @@ test("recovery admission is remote; detached completion cannot notify the view",
 })
 
 // These routing cases opt out of automatic start; either unexpected opt-in or continuation fails.
-const editorStart = { startOnCreation: () => false, captureStart: (requested: boolean) => {
+const editorStart = { startOnCreation: () => false, coordinatorGoal: () => false, captureStart: (requested: boolean) => {
   if (requested) throw new Error("Unexpected automatic start opt-in")
   return async () => { throw new Error("Unexpected automatic start continuation") }
 }, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID: () => undefined }) }
@@ -177,7 +177,7 @@ test("coordinator sources keep same-ID roots on A/B, filter foreign rows and rej
     assert.equal(reader.reader("coordinator-session", "ses_missing").lookupFailed(), true)
     reader.reader("coordinator-session").more()
     for (const [key, timer] of timers) { timers.delete(key); timer() }
-    assert.deepEqual(reads[1].options, { cursor: "page2" })
+    assert.deepEqual(reads[1].options, { cursor: "page2", limit: 200 })
     env.revoke(); assert.equal(reads[1].signal.aborted, true)
     pending.resolve({ data: [row("ses_late")], cursor: {} }); await flush()
     assert.deepEqual(reader.sources()["coordinator-session"], [{ id: "ses_same", label: `${owner}:ses_same` }])
@@ -215,18 +215,6 @@ test("editor GitHub and coordinator payload reaches only its owning schedule con
   }
 })
 
-test("daily recurrence controls route remotely and reject stale view effects", async () => {
-  const read = deferred(), env = fixture({ controlMissionRecurrence: () => read.promise })
-  const run = production("./mission-recurrence-list.tsx", "act", { ...env,
-    props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo" }, generation: 1,
-    retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => ({ requestID: "r", scheduleID: "s" }),
-    holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
-    setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, finish: () => assert.fail("stale recurrence publication"),
-  })
-  const pending = run("pause"); assert.equal(env.owners.length, 1)
-  env.replace(); read.resolve({}); await pending
-})
-
 test("current passage content dispatches remotely and fences detached prose", async () => {
   const read = deferred(), env = fixture({ fetchMissionCurrentContent: () => read.promise }), instance = { folder: "/repo", client: {} }
   let publications = 0, dispose!: () => void
@@ -238,21 +226,6 @@ test("current passage content dispatches remotely and fences detached prose", as
   }, "fetchMissionCurrentContent")
   createRoot(close => { dispose = close; createEffect(effect) }); assert.equal(env.owners.length, 1)
   env.revoke(); read.resolve({}); await flush(); assert.equal(publications, 0); dispose()
-})
-
-test("archive passage dispatches remotely and fences detached prose", async () => {
-  const read = deferred(), env = fixture({ fetchMissionRecurrencePassagePage: () => read.promise }), client = {}
-  const [value, setValue] = createSignal<any>(); let dispose!: () => void
-  const effect = production("./mission-recurrence-passage-reader.tsx", "createEffect", { ...env,
-    props: { instanceId: id, projectID: "p", scheduleID: "s", receipt: {} },
-    binding: () => "identity", section: () => 0, page: () => 0, refresh: () => 0, previousRefresh: 0,
-    previous: "", previousClient: undefined, previousGeneration: undefined, previousSignal: undefined,
-    connection: () => ({ client, generation: 1, signal: env.captureBackendOperation(id).signal }),
-    instances: () => new Map([[id, { folder: "/repo", client, metadata: { project: { id: "p" } } }]]),
-    getOpenCodeInstanceGeneration: () => 1, cache: new Map(), value, setValue, setError: () => {}, setLoading: () => {},
-  }, "fetchMissionRecurrencePassagePage")
-  createRoot(close => { dispose = close; createEffect(effect) }); assert.equal(env.owners.length, 1)
-  env.revoke(); read.resolve({}); await flush(); assert.equal(value(), undefined); dispose()
 })
 
 test("depth setting reads remotely; detached response cannot adopt the new depth", async () => {
@@ -310,15 +283,20 @@ function scheduleScope(api: Record<string, any>) {
   const mission = { id: "m", revision: 1 }
   const configuration = { objective: "objective", notes: "notes" }
   const doc = { id: "m", revision: 1, kind: "one-time", configuration, edit: { reason: null }, observation: { state: "complete" } }
+  const ownerValue = { signal: env.captureBackendOperation(id).signal }
   const scope: Record<string, any> = { ...env, accepted, released, doc, mission, target: "m", unified: true,
     props: { instanceId: id, directory: "/repo", action: {}, active: () => true, scope: () => "scope",
       captureDraft: () => ({}), onSaved: (...args: any[]) => accepted.push(args), onLoad: (value: any) => accepted.push(value) },
-    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false, retryable: () => true,
+    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false,
+    owner: () => ownerValue,
+    captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
+    reconcileRead: undefined,
     document: () => doc, journal: () => mission, holdMissionScheduleEditor: () => true,
-    releaseMissionScheduleEditor: (_scope: string, request: string) => released.push(request), retainMissionScheduleEditor: () => {},
-    exactMissionScheduleEditorReceipt: () => true, refusedMissionScheduleReceipt: () => false,
+    releaseMissionScheduleEditor: (_scope: string, request: string) => { released.push(request); return false }, retainMissionScheduleEditor: () => {},
+    resumeMissionScheduleEditor: () => true,
+    exactMissionScheduleEditorReceipt: () => true, partialMissionScheduleReceipt: () => undefined, refusedMissionScheduleReceipt: () => false,
     HttpResponseError: class extends Error {}, MissionMutationError: class extends Error {},
-    setReading: () => {}, setRetryable: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
+    setReading: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
     setPreviousDraft: () => {}, comparison: () => "draft", setJournal: () => {}, adopt: (value: any) => accepted.push(value),
     readText: async () => configuration,
     readBody: async (_mission: any, selector: any) => ({ after: selector.field === "objective" ? "objective" : "notes" }),
@@ -389,24 +367,34 @@ for (const kind of ["journal", "unified-journal", "configure", "create"] as cons
       fetchMissionSchedule: async (owner: string) => { assert.equal(owner, id); calls.push("document"); return { document: scope.doc } },
       fetchMissionScheduleCreation: async (owner: string, requestID: string) => { assert.equal(owner, id); assert.equal(requestID, "r"); calls.push("creation"); return { document: scope.doc } },
     })
-    scope.held = () => ({ payload: JSON.stringify(request) })
+    scope.held = () => ({ payload: JSON.stringify(request), state: "uncertain" })
     await production("./mission-editor-schedule.ts", "reconcile", scope)()
     assert.deepEqual(calls, kind === "unified-journal" ? ["journal", "document"] : kind === "journal" ? ["journal"] : kind === "create" ? ["creation"] : ["document"])
     assert.deepEqual(scope.released, ["r"]); assert.equal(scope.accepted.length, 1)
   })
 }
 
-test("schedule retry preparation reads the original receipt then dispatches the original remote retry", async () => {
+test("schedule reconcile automatically retries a positively recorded partial preparation once", async () => {
   const calls: any[] = [], request = { action: "configure", missionID: "m", requestID: "r", expectedRevision: 1, directory: "/repo" }
+  const partial = { pending: true, document: { ...scopeDoc(), control: { action: "configure", requestID: "r", expectedRevision: 1, pending: true } } }
+  const complete = { pending: false, document: { ...scopeDoc(), revision: 2, control: { action: "configure", requestID: "r", expectedRevision: 1, pending: false } } }
+  function scopeDoc() { return { id: "m", revision: 1, kind: "one-time", configuration: { objective: "objective", notes: "notes" }, edit: { reason: null }, observation: { state: "complete" } } }
   const scope = scheduleScope({
-    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return { document: scope.doc } },
-    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return { document: scope.doc } },
+    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return partial },
+    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return complete },
   })
-  const hold = { payload: JSON.stringify(request) }; scope.held = () => hold
-  await production("./mission-editor-schedule.ts", "retryPreparation", scope)()
+  let hold = { payload: JSON.stringify(request), state: "uncertain" as "pending" | "uncertain" }
+  scope.held = () => hold
+  scope.exactMissionScheduleEditorReceipt = (_request: any, result: any) => result === complete
+  scope.resumeMissionScheduleEditor = () => { hold = { ...hold, state: "pending" }; return true }
+  scope.retainMissionScheduleEditor = () => { hold = { ...hold, state: "uncertain" } }
+  await production("./mission-editor-schedule.ts", "reconcile", scope)()
   assert.deepEqual(calls.map(call => call[0]), ["read", "retry"])
-  assert.deepEqual(calls[0].slice(1), [id, "m", { directory: "/repo", requestID: "r" }])
-  assert.deepEqual(calls[1].slice(1), [id, { ...request, retry: true }]); assert.deepEqual(scope.released, ["r"])
+  assert.deepEqual(calls[0].slice(1, 4), [id, "m", { directory: "/repo", requestID: "r" }])
+  assert.ok(calls[0][4] instanceof AbortSignal)
+  assert.deepEqual(calls[1].slice(1, 3), [id, { ...request, retry: true }])
+  assert.ok(calls[1][3] instanceof AbortSignal)
+  assert.deepEqual(scope.released, ["r"])
 })
 
 function editorScope(api: Record<string, any>, kind: "edit" | "delete") {
@@ -464,27 +452,6 @@ test("cleanup retry reaches remote deletion after its positive intent read", asy
   assert.deepEqual(calls, ["read", "delete", "refresh"])
 })
 
-for (const action of ["run-now", "pause"] as const) {
-  test(`recurrence ${action} dispatch and explicit status each reach their remote sibling endpoint`, async () => {
-    const calls: any[] = [], intent = { scheduleID: "s", requestID: "r", action, expectedRevision: 1 }, settled: string[] = []
-    const api = Object.fromEntries(["runMissionRecurrenceNow", "controlMissionRecurrence", "missionRecurrenceRunNowStatus", "missionRecurrenceControlStatus"]
-      .map(method => [method, async (...args: any[]) => { calls.push([method, ...args]); return {} }]))
-    const env = fixture(api), scope = { ...env,
-      props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo", enabled: () => true, retryEnabled: () => true }, generation: 1,
-      retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => intent,
-      holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
-      setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, busy: () => false,
-      completedRecurrenceManual: () => true, rejectedRecurrenceControl: () => undefined, partialRecurrenceControl: () => false,
-      finish: () => settled.push("control"), settle: () => settled.push("manual"), heldIntent: () => intent, witness: undefined,
-    }
-    await production("./mission-recurrence-list.tsx", "act", scope)(action)
-    await production("./mission-recurrence-list.tsx", "check", scope)()
-    assert.deepEqual(calls.map(call => call[0]), action === "run-now"
-      ? ["runMissionRecurrenceNow", "missionRecurrenceRunNowStatus"] : ["controlMissionRecurrence", "missionRecurrenceControlStatus"])
-    assert.ok(calls.every(call => call[1] === id)); assert.equal(settled.length, 2)
-  })
-}
-
 test("lifecycle reconcile authorizes only its exact request after its own read", async () => {
   const env = fixture({}), read = deferred(), input = { requestId: "r", action: "pause", expectedRevision: 1 }
   const scope = { ...env, props: { instanceId: id }, identity: () => "scope", epoch: 1, alive: true,
@@ -518,10 +485,12 @@ function controlScope(api: Record<string, any>) {
   const scope: Record<string, any> = { ...env, holds, refreshed, doc,
     props: { instanceId: id, directory: "/repo", document: () => doc, active: () => true, refresh: () => refreshed.push("refresh") },
     capable: () => true, capture: () => env.captureBackendOperation(id).current, identity: () => "scope", held: () => undefined,
+    capabilityOwner: () => ({ signal: env.captureBackendOperation(id).signal }), reconcileRead: undefined, stopReconcile: () => {},
     setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
     HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
-    partialReceipt: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
+    partialReceipt: () => undefined, pendingMissionScheduleRevision: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
+    notDispatchedMissionScheduleAttempt: () => false, undispatchedMissionScheduleCheck: () => false, validDeletionReceipt: () => false,
     settle: (_key: string, hold: any) => { holds.delete("scope"); refreshed.push(hold.phase) },
     receipt: () => assert.fail("direct complete ACK must settle without another read"),
   }
@@ -556,7 +525,9 @@ test("schedule activation reconciliation uses the read-only settings endpoint", 
   } })
   Object.assign(scope, { held: () => hold, busy: () => false }); scope.holds.set("scope", hold)
   await production("./mission-schedule-controls.ts", "reconcile", scope)()
-  assert.deepEqual(calls, [[id, "m", { requestID: "r", expectedDocumentRevision: 1 }]])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].slice(0, 4), [id, "m", { requestID: "r", expectedDocumentRevision: 1 }, false])
+  assert.ok(calls[0][4] instanceof AbortSignal)
   assert.ok(scope.refreshed.includes("activation"))
 })
 
@@ -578,10 +549,142 @@ test("schedule control passive capability display is owner routed", async () => 
   let published: string | undefined, dispose!: () => void
   const effect = production("./mission-schedule-controls.ts", "createEffect", { ...env,
     props: { instanceId: id, directory: "/repo", refreshVersion: () => 0, active: () => true },
-    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined,
+    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined, stopReconcile: () => {},
     capture: () => env.captureBackendOperation(id).current, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {},
     feedback: () => undefined, setCapability: (value: string) => { published = value },
   }, "fetchMissionScheduleCapability")
   createRoot(close => { dispose = close; createEffect(effect) }); await flush()
   assert.deepEqual(calls, ["capability"]); assert.equal(published, "available"); dispose()
+})
+
+test("schedule check label uses checkStatus and dispatches check without confirmation", async () => {
+  const calls: any[] = [], confirms: string[] = []
+  const doc = { id: "m", revision: 2, availableActions: ["check"], configuration: { title: "Sync", launch: { when: [] } } }
+  const scope = controlScope({
+    fetchMissionSchedule: async () => ({ document: doc }),
+    controlMissionSchedule: async (...args: any[]) => {
+      calls.push(args)
+      return { document: { ...doc, revision: 3, control: { requestID: args[2].requestID, expectedRevision: 2, action: "check", pending: false } } }
+    },
+  })
+  scope.props.document = () => doc
+  scope.showConfirmDialog = async (message: string) => { confirms.push(message); return false }
+  const label = production("./mission-schedule-controls.ts", "label", { t: (key: string) => key })
+  assert.equal(label("check"), "missionsPanel.action.checkStatus")
+  await production("./mission-schedule-controls.ts", "act", scope)("check")
+  assert.deepEqual(confirms, [])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][2].action, "check")
+})
+
+test("schedule check proceeds across 503 schedule-pending preflight reads, settles compacted deletions directly or via GET, handles undispatched/busy responses, and rejects malformed tombstones", async () => {
+  const { HttpResponseError } = await import("../lib/retryable-file-search")
+  const { notDispatchedMissionScheduleAttempt, pendingMissionScheduleRevision, refusedMissionScheduleReceipt, undispatchedMissionScheduleCheck } = await import("../lib/mission-schedule-receipt")
+  const { exactMissionScheduleControl } = await import("./mission-schedule-controls")
+  const calls: any[] = [], feedbacks: Array<string | undefined> = [], settled: Array<number | undefined> = []
+  const doc = { id: "msn_stuck", revision: 21, availableActions: ["check", "pause", "play"], configuration: { title: "Sync", launch: { when: [] } } }
+  const pending503 = (revision: number) => new HttpResponseError("pending", 503, null, "schedule-pending", {
+    pending: true, code: "schedule-pending",
+    document: { id: doc.id, revision, control: { requestID: "reconcile_20", expectedRevision: 20, action: "reconcile", pending: false } },
+  })
+  const makeTombstone = (checkRequestID: string) => ({
+    pending: false, deleted: true, document: null,
+    deletionReceipt: { id: doc.id, requestID: "delete_orig", expectedRevision: 5, deleteManagedSessions: false },
+    checkReceipt: { id: doc.id, requestID: checkRequestID, expectedRevision: 21, action: "check" as const },
+  })
+  const makeScope = (preflightRevision: number, overrides: Record<string, any> = {}) => {
+    const scope = controlScope({
+      fetchMissionSchedule: async (_owner: string, _id: string, input: any) => {
+        if (input?.requestID) return makeTombstone(input.requestID)
+        throw pending503(preflightRevision)
+      },
+      controlMissionSchedule: async (...args: any[]) => { calls.push(args); return makeTombstone(args[2].requestID) },
+      ...overrides,
+    })
+    scope.props.document = () => doc
+    scope.pendingMissionScheduleRevision = pendingMissionScheduleRevision
+    scope.refusedMissionScheduleReceipt = refusedMissionScheduleReceipt
+    scope.notDispatchedMissionScheduleAttempt = notDispatchedMissionScheduleAttempt
+    scope.undispatchedMissionScheduleCheck = undispatchedMissionScheduleCheck
+    scope.exactMissionScheduleControl = exactMissionScheduleControl
+    scope.setFeedback = (value?: string) => { feedbacks.push(value) }
+    scope.settle = (_key: string, hold: any, _current: any, revision?: number) => {
+      scope.holds.delete("scope"); settled.push(revision); scope.refreshed.push(hold.phase)
+    }
+    return scope
+  }
+  // Matching revision on 503 schedule-pending dispatches check and settles compacted tombstone with revision=undefined.
+  await production("./mission-schedule-controls.ts", "act", makeScope(21))("check")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][2].action, "check")
+  assert.equal(calls[0][2].expectedRevision, 21)
+  assert.deepEqual(settled, [undefined])
+  // Lost POST response recovers via GET receipt() using persisted checkReceipt without another write.
+  settled.length = 0
+  const lostScope = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => { calls.push(args); throw new Error("network dropped") },
+  })
+  await production("./mission-schedule-controls.ts", "act", lostScope)("check")
+  assert.equal(calls.length, 2)
+  assert.equal(lostScope.holds.size, 1)
+  const lostHold = lostScope.holds.get("scope")
+  await production("./mission-schedule-controls.ts", "receipt", lostScope)("scope", lostHold, () => true)
+  assert.equal(lostScope.holds.size, 0)
+  assert.deepEqual(settled, [undefined])
+  // Second-client Check clears fresh UI hold cleanly when backend reports notDispatched (original already settled).
+  const undispatchedScope = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => ({
+      pending: false,
+      document: { id: doc.id, revision: 22, control: { requestID: "other_play", expectedRevision: 20, action: "play", pending: false } },
+      notDispatched: { missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "check" as const },
+    }),
+  })
+  await production("./mission-schedule-controls.ts", "act", undispatchedScope)("check")
+  assert.equal(undispatchedScope.holds.size, 0)
+  // Lost 200 on an undispatched Check recovers via GET 409 schedule-busy (dispatched:false).
+  const lostUndispatched = makeScope(21, {
+    fetchMissionSchedule: async (_owner: string, _id: string, input: any) => {
+      if (input?.requestID) throw new HttpResponseError("busy", 409, null, "schedule-busy", {
+        pending: true, dispatched: false, missionID: doc.id, requestID: input.requestID, expectedRevision: 21, action: "check",
+      })
+      throw pending503(21)
+    },
+    controlMissionSchedule: async () => { throw new Error("lost 200") },
+  })
+  await production("./mission-schedule-controls.ts", "act", lostUndispatched)("check")
+  assert.equal(lostUndispatched.holds.size, 1)
+  await production("./mission-schedule-controls.ts", "receipt", lostUndispatched)("scope", lostUndispatched.holds.get("scope"), () => true)
+  assert.equal(lostUndispatched.holds.size, 0)
+  // Second-client Pause hitting another client's backend hold receives per-attempt 409 schedule-busy (dispatched:false) and releases its fresh UI hold.
+  feedbacks.length = 0
+  const concurrentPause = makeScope(21, {
+    controlMissionSchedule: async (...args: any[]) => {
+      throw new HttpResponseError("busy", 409, null, "schedule-busy", {
+        pending: true, dispatched: false, missionID: doc.id, requestID: args[2].requestID, expectedRevision: 21, action: "pause",
+      })
+    },
+  })
+  await production("./mission-schedule-controls.ts", "act", concurrentPause)("pause")
+  assert.equal(concurrentPause.holds.size, 0)
+  assert.ok(feedbacks.includes("missions.scheduleList.conflict"))
+  // Stale revision on 503 schedule-pending reports conflict without dispatching.
+  feedbacks.length = 0
+  await production("./mission-schedule-controls.ts", "act", makeScope(22))("check")
+  assert.equal(calls.length, 2)
+  assert.ok(feedbacks.includes("missions.scheduleList.conflict"))
+  // Non-recovery play still fails on 503 schedule-pending without dispatching.
+  feedbacks.length = 0
+  await production("./mission-schedule-controls.ts", "act", makeScope(21))("play")
+  assert.equal(calls.length, 2)
+  assert.ok(feedbacks.includes("missions.scheduleList.readFailed"))
+  // Malformed tombstones and missing pending flag never satisfy exactMissionScheduleControl.
+  const hold = { phase: "control" as const, action: "check" as const, requestID: "req_check_1", expectedRevision: 21, partial: false, pending: false, document: doc as any }
+  const good = makeTombstone("req_check_1")
+  assert.equal(exactMissionScheduleControl(good, hold, doc.id), true)
+  assert.equal(exactMissionScheduleControl({ deleted: true, document: null, deletionReceipt: good.deletionReceipt, checkReceipt: good.checkReceipt } as any, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ pending: false, deleted: true, document: null }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, deletionReceipt: { ...good.deletionReceipt, requestID: "" } }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, deletionReceipt: { ...good.deletionReceipt, expectedRevision: -1 } }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, checkReceipt: undefined }, hold, doc.id), false)
+  assert.equal(exactMissionScheduleControl({ ...good, checkReceipt: { ...good.checkReceipt, requestID: "req_other" } }, hold, doc.id), false)
 })

@@ -1,6 +1,6 @@
 {
   "valid": [
-    {"op":"tree"}, {"op":"viewport"}, {"op":"checkpoint"}, {"op":"release-handles"},
+    {"op":"tree"}, {"op":"viewport"}, {"op":"checkpoint"}, {"op":"history"}, {"op":"release-handles"},
     {"op":"resolve","node":42}, {"op":"geometry","node":42}, {"op":"scroll-into-view","node":42},
     {"op":"hit-test","x":1,"y":2},
     {"op":"call","function":"select","handle":"h","args":[["é漢🙂"]]},
@@ -14,11 +14,14 @@
     {"op":"wheel","event":{"type":"mouseWheel","x":4,"y":5,"deltaX":0,"deltaY":100}},
     {"op":"keyboard","event":{"type":"keyDown","key":" ","code":"Space","text":" ","windowsVirtualKeyCode":32,"modifiers":0}},
     {"op":"keyboard","event":{"type":"keyUp","key":"Control","buttons":0,"modifiers":0}},
-    {"op":"insert-text","text":""}
+    {"op":"insert-text","text":""},
+    {"op":"diagnostics","after":0}, {"op":"diagnostics","after":9007199254740991}, {"op":"response-body","request":"1000.2"}, {"op":"response-body","request":"7.1","session":"F1A2"}
   ],
   "invalid": [
+    {"op":"diagnostics"}, {"op":"diagnostics","after":-1}, {"op":"diagnostics","after":1.5}, {"op":"diagnostics","after":0,"extra":true},
+    {"op":"response-body","request":""}, {"op":"response-body","request":"1","session":""}, {"op":"response-body","request":"1","session":3}, {"op":"response-body","request":7}, {"op":"response-body"},
     null, [], "tree", {}, {"op":"evaluate","source":"alert(1)"},
-    {"op":"tree","extra":true}, {"op":"viewport","extra":true}, {"op":"checkpoint","extra":true}, {"op":"release-handles","extra":true},
+    {"op":"tree","extra":true}, {"op":"history","extra":true}, {"op":"viewport","extra":true}, {"op":"checkpoint","extra":true}, {"op":"release-handles","extra":true},
     {"op":"resolve","node":0}, {"op":"resolve","node":1.5}, {"op":"resolve","node":1,"extra":true},
     {"op":"call","function":"mark-input","args":[]}, {"op":"call","function":"unmark-input","args":[]},
     {"op":"call","function":"__proto__","args":[]}, {"op":"call","function":"constructor","args":[]},

@@ -52,6 +52,9 @@ import type { MissionDocumentAccess } from "../missions/mission-document-one-tim
 import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 import type { MissionBusinessControl } from "../missions/business-control"
 import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
+import { missionProgramInput, missionProgramWire } from "../missions/program-tool"
+import { legacySchedule, legacyScheduleKey, legacyTombstone, type LegacySchedule } from "../missions/legacy-schedules"
+import { missionLaunchPolicySchema, requiresMissionCalendar } from "../missions/launch-policy"
 import { parseProjectRead, projectReadWire } from "../missions/project-read-tool"
 import { projectMissionController, projectControlResult } from "../missions/project-control"
 import { projectControlInput, projectConfigureInput, projectDeleteInput, projectControlWire, projectConfigureWire, projectDeleteWire } from "../missions/project-control-tool"
@@ -141,21 +144,14 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         content(input: unknown): Promise<unknown>
         tasks(input: unknown): Promise<unknown>
         panelPage(input: unknown): Promise<unknown>
-        recurrenceSnapshot(input: unknown): Promise<unknown>
-        recurrenceList(input: unknown): Promise<unknown>
-        recurrenceControl(input: unknown): Promise<unknown>
-        recurrenceControlStatus(input: unknown): Promise<unknown>
-        recurrenceRunNow(input: unknown): Promise<unknown>
-        recurrenceRunNowStatus(input: unknown): Promise<unknown>
-        recurrenceRead(input: unknown): Promise<unknown>
-        recurrenceCreate(input: unknown): Promise<unknown>
         recurrenceCurrent(input: unknown): Promise<unknown>
         recurrenceCurrentPage(input: unknown): Promise<unknown>
         recurrenceCurrentContent(input: unknown): Promise<unknown>
-        recurrencePassageRead(input: unknown): Promise<unknown>
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
+        legacySchedules(input: unknown): Promise<unknown>
+        retireLegacySchedule(input: unknown): Promise<unknown>
         create(input: unknown, context: MutationContext): Promise<unknown>
         creationReceipt(input: unknown): Promise<unknown>
         update(input: unknown, context: MutationContext): Promise<unknown>
@@ -175,7 +171,8 @@ export interface MissionsPluginPolicy {
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
   policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
-  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess): Promise<() => Promise<void>> {
+  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess,
+  coordinatorGoal?: { reconcile(mission: MissionMap): Promise<unknown>; cleanupMission(missionID: string): Promise<void> }): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -238,7 +235,13 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       const session = await context.session.get({ sessionID: input.targetSessionID ?? coordinatorID })
       await validateNativeExecution(context, session.location.directory, input)
     },
-    changed: (missionID, revision) => rpcRegistration?.events.emit("changed", { missionID, revision }) ?? Promise.resolve(),
+    changed: async (missionID, revision) => {
+      await rpcRegistration?.events.emit("changed", { missionID, revision })
+      if (!coordinatorGoal) return
+      // Every Mission change passes here: the control's journal follows its range, and a Mission without the option stops at this read.
+      const mission = await control.coordinatorGoalMission(missionID).catch(() => undefined)
+      if (mission) await coordinatorGoal.reconcile(mission).catch(() => undefined)
+    },
   })
 
   try {
@@ -288,18 +291,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       },
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
-      recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceList: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceControl: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceControlStatus: async () => { throw new Error("Native recurrence status unavailable") },
-      recurrenceRunNow: async () => { throw new Error("Native recurrence admission unavailable") },
-      recurrenceRunNowStatus: async () => { throw new Error("Native recurrence status unavailable") },
-      recurrenceRead: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrenceCreate: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrent: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrentPage: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrentContent: async () => { throw new Error("Native recurrence graph unavailable") },
-      recurrencePassageRead: async () => { throw new Error("Native recurrence reader graph unavailable") },
       recover: async (input, context) => {
         assertActive()
         const value = object(input)
@@ -329,10 +323,33 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           sessionID: requiredText(value.sessionID, "sessionID", 240),
         })))
       },
+      legacySchedules: async () => {
+        assertActive()
+        const prefix = legacyScheduleKey(context.location.project), schedules: LegacySchedule[] = []
+        for (let after: string | undefined; schedules.length < 64;) {
+          const page = await context.storage.scan({ prefix, after, limit: 64 })
+          for (const entry of page.entries) { const found = legacySchedule(entry.value); if (found && schedules.length < 64) schedules.push(found) }
+          if (page.entries.length < 64) break
+          after = page.entries.at(-1)!.key
+        }
+        return { schedules: JSON.parse(JSON.stringify(schedules)) }
+      },
+      retireLegacySchedule: async input => {
+        assertActive()
+        const key = legacyScheduleKey(context.location.project, requiredText(object(input).id, "id", 100))
+        const tombstone = legacyTombstone(await context.storage.get(key), Date.now())
+        if (tombstone) await context.storage.set(key, tombstone as MissionJsonValue)
+        return { retired: true as const }
+      },
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
       creationReceipt: async input => { assertActive(); return control.creationReceipt(parseCreateMissionInput(input)) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
-      delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
+      delete: async (input, context) => { assertActive(); return mutationResult(context, async () => {
+        const parsed = parseDeleteMissionInput(input)
+        const result = await control.delete(parsed)
+        await coordinatorGoal?.cleanupMission(parsed.missionID).catch(() => undefined)
+        return result
+      }) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       projectControl: tracked(handlers.projectControl),
@@ -345,16 +362,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       documentCapabilities: tracked(handlers.documentCapabilities),
       documentActivation: tracked(handlers.documentActivation),
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission), creationReceipt: tracked(handlers.creationReceipt),
-      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
-      recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
-      recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
-      recurrenceRead: tracked(handlers.recurrenceRead),
-      recurrenceList: tracked(handlers.recurrenceList),
-      recurrenceCreate: tracked(handlers.recurrenceCreate),
+      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage),
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
       recurrenceCurrentPage: tracked(handlers.recurrenceCurrentPage),
-      recurrencePassageRead: tracked(handlers.recurrencePassageRead),
       recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
+      legacySchedules: tracked(handlers.legacySchedules), retireLegacySchedule: tracked(handlers.retireLegacySchedule),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
       update: tracked(handlers.update), delete: tracked(handlers.delete),
     })
@@ -563,11 +575,14 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Prepare a separate Mission without starting a passage in this conversation. Any owned project session may prepare. launch is the editor's ordered criteria list: adjacent same-kind cards mean OR, schedule→event IF, event→schedule ELSE. Absent, empty or sole now is one-time; calendars require explicit complete agent/model profiles after preference resolution. A new coordinator is the default; coordinatorSessionID explicitly selects an eligible root for scheduling only, including your own root. A busy root is accepted: its passage prompt queues natively. Source conversations are excluded. watchedConversationIDs adds followed context. startOnCreation defaults false; true requires the user's explicit automatic first-Play request. Only a fresh creation acknowledgement may continue; recovery never sends Play. mission.schedule controls project schedules. Results separate prepared, activated, refused and uncertain; retain original requestID and all inputs on retries. Keep one owning CodeNomad backend available. The author can inspect its target or list preparations. inspect with start instead attaches THIS root as coordinator.",
+        description: "Prepare a separate Mission without starting a passage in this conversation. Any owned project session may prepare. launch is the editor's ordered criteria list: adjacent same-kind cards mean OR, schedule→event IF, event→schedule ELSE. Absent, empty or sole now is one-time; a repeating schedule or an event is refused with use-mission-program: mission.program saves such a Mission. A new coordinator is the default; coordinatorSessionID explicitly selects an eligible root for scheduling only, including your own root. A busy root is accepted: its passage prompt queues natively. Source conversations are excluded. watchedConversationIDs adds followed context. startOnCreation defaults false; true requires the user's explicit automatic first-Play request. Only a fresh creation acknowledgement may continue; recovery never sends Play. mission.schedule controls project schedules. Results separate prepared, activated, refused and uncertain; retain original requestID and all inputs on retries. Keep one owning CodeNomad backend available. The author can inspect its target or list preparations. inspect with start instead attaches THIS root as coordinator.",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
+          // A repeating schedule or an event makes a programmed Mission: mission.program saves it.
+          const launch = missionLaunchPolicySchema.safeParse((input as { launch?: unknown } | null)?.launch)
+          if (launch.success && requiresMissionCalendar(launch.data)) return textResult({ outcome: "refused", phase: "creation", code: "use-mission-program" })
           const selected = await route(tool.sessionID, "prepare", input)
           await tool.progress({ status: "Preparing a separate mission" })
           selected.current()
@@ -598,7 +613,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "schedule",
-        description: "List, read or control project schedules, including human-created schedules, from any owned conversation. list pages by after/limit; read optionally names an original requestID. capabilities diagnoses scheduling and explicit OFF; activate prepares settings, activation-read reads its original requestID/expectedRevision without Play. Mutations require a stable requestID and fresh expectedRevision. configure edits the complete configuration, including eligible one-time/schedule conversion; retry: true explicitly resumes only a positively confirmed partial original edit. Play/Resume preserve explicit OFF. You can select your own eligible root; adoption waits for an idle root and excludes followed/trigger sources. owner: daily selects daily documents: list/read, create with creation fields (paused, no missionID/revision), play/pause/resume/stop/run-now/check. Recover daily creation with read plus its original requestID and creation fields alone; absence stays pending. Other exact daily reads add receiptAction and expectedRevision; partial Pause/Stop accepts retry: true. On uncertainty read the original identity; never resend or replace it to evade a hold. Exact completed replays have no effects; changed inputs conflict. Stop is terminal; delete preserves conversations unless deleteManagedSessions: true. Keep one owning backend available.",
+        description: "List, read or control the project schedules created before programmed Missions (mission.program creates and controls those), including human-created schedules, from any owned conversation. list pages by after/limit; read optionally names an original requestID. capabilities diagnoses scheduling and explicit OFF; activate prepares settings, activation-read reads its original requestID/expectedRevision without Play. Mutations require a stable requestID and fresh expectedRevision. configure edits the complete configuration, including eligible one-time/schedule conversion; retry: true explicitly resumes only a positively confirmed partial original edit. Play/Resume preserve explicit OFF. You can select your own eligible root; adoption waits for an idle root and excludes followed/trigger sources. On uncertainty read the original identity; never resend or replace it to evade a hold. Exact completed replays have no effects; changed inputs conflict. Stop is terminal; delete preserves conversations unless deleteManagedSessions: true. Keep one owning backend available.",
         input: scheduleToolWire,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -613,6 +628,20 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             return textResult({ status: 503, pending: true, missionID: request.missionID,
               requestID: request.requestID, action: request.action, code: "schedule-unconfirmed" })
           }
+        },
+      })
+      add({
+        name: "program",
+        description: "Programmed Missions of this conversation's directory: a Mission launched again by a repeating schedule or by Git/forge events, each launch replacing the previous one in the same coordinator conversation, with CodeNomad open or closed. list returns each one's id, title, paused, missionID (the Mission it is right now), launch criteria, nextDueAt and last run. save takes a stable id (3-100 letters, digits, _ or -) and the complete configuration: it creates that programmed Mission or replaces it, so repeating a save changes nothing; paused: true creates it paused. launch.when lists cron rules (expression, zone) and the events that condition them, or events alone, checked every 15 minutes. profiles must name an agent and model for the coordinator and every role of the template. A refusal names its code: calendar-unsupported (with its reason) for a fallback date after events, an end date or count, followed conversations, or the events of other Missions and conversations. pause, resume and delete take the id; delete removes the programming, the current Mission is deleted with mission.delete.",
+        input: missionProgramWire,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          if (!schedule) throw new Error("Programmed Mission controls are unavailable")
+          const program = missionProgramInput.parse(input)
+          const selected = await route(tool.sessionID, "schedule", input)
+          selected.current()
+          return textResult(await schedule(tool.sessionID, { program }))
         },
       })
       add({
@@ -696,11 +725,11 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
         try {
           const selected = await select(event.sessionID, "inspect", {})
           if (!selected) {
-            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule", "settings", "control", "configure", "delete"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule", "program", "settings", "control", "configure", "delete"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
-           if (!schedule) delete event.tools.mission_schedule
+           if (!schedule) { delete event.tools.mission_schedule; delete event.tools.mission_program }
            if (!settings) delete event.tools.mission_settings
           if (!projectControl) for (const name of ["control", "configure", "delete"]) delete event.tools[`mission_${name}`]
           const backendActions = await executeMissionBusiness(selected, async control => control.backendActions)
@@ -771,6 +800,7 @@ const prepareSchema = {
     taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
     startOnCreation: { type: "boolean", description: "Default false. True only for the user's explicit automatic first-Play request; recovered creation leaves Play explicit." },
     ...missionPreparationOptionsWire,
+    coordinatorGoal: { type: "boolean", description: "Default false. One-time Missions only: keep the coordinator active with OpenCode's /goal across turns and restarts." },
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,
@@ -803,7 +833,7 @@ const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
-    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage; passage reads archived daily results. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. playbook reads exact steps, roles and prompts for template and optional taskMode (native by default). Use alone; continue each view's explicit pages/cursors." },
+    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. playbook reads exact steps, roles and prompts for template and optional taskMode (native by default). Use alone; continue each view's explicit pages/cursors." },
     taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
     taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
     list: { type: "boolean", const: true, description: "List every Mission in the owned project, newest first. Use alone, or with listOffset." },
@@ -837,6 +867,7 @@ const inspectSchema = {
         notes: { type: "string", maxLength: 20_000 },
         profiles: { ...missionProfilesSchema, description: MISSION_PROFILES_DESCRIPTION },
         taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omission inherits Missions preferences (type exception, then global), then native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
+        coordinatorGoal: { type: "boolean", description: "Default false. Keep the coordinator active with OpenCode's /goal across turns and restarts." },
       },
       required: ["objective", "template"],
       additionalProperties: false,
@@ -923,6 +954,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
   const start = object(value.start)
   const template = requiredText(start.template, "start.template", 40)
   if (!isTemplate(template)) throw new Error("start.template is unsupported")
+  if (start.coordinatorGoal !== undefined && typeof start.coordinatorGoal !== "boolean") throw new Error("start.coordinatorGoal must be boolean")
   return {
     missionID,
     start: {
@@ -930,6 +962,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
       ...(start.title === undefined ? {} : { title: missionTitle(start.title) }),
       template,
       ...(start.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(start.taskMode) }),
+      ...(start.coordinatorGoal === undefined ? {} : { coordinatorGoal: start.coordinatorGoal as boolean }),
       notes: optionalBodyText(start.notes, "start.notes", 20_000),
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
@@ -1010,16 +1043,18 @@ const reviseSchema = {
   additionalProperties: false,
 }
 
-function parseCreateMissionInput(input: unknown): MissionCreateInput {
+export function parseCreateMissionInput(input: unknown): MissionCreateInput {
   const value = object(input)
   const template = requiredText(value.template, "template", 40)
   if (!isTemplate(template)) throw new Error("template is unsupported")
   if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
   if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
+  if (value.coordinatorGoal !== undefined && typeof value.coordinatorGoal !== "boolean") throw new Error("coordinatorGoal must be boolean")
   return {
     ...(value.permissions === undefined ? {} : { permissions: sessionPermissionRules.parse(value.permissions) }),
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
+    ...(value.coordinatorGoal === undefined ? {} : { coordinatorGoal: value.coordinatorGoal as boolean }),
     ...(value.preparationOptions === undefined ? {} : { preparationOptions: missionPreparationOptionsSchema.strict().parse(value.preparationOptions) }),
     requestID: requiredText(value.requestID, "requestID", 128),
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),

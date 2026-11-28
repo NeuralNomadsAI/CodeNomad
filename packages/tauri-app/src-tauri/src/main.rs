@@ -293,6 +293,31 @@ pub(crate) fn require_preferences_or_local_app_webview(
     }
 }
 
+/// Runs synchronous native work off the async executor: Wry getters post to the native thread and
+/// block until it answers, and certificate checks touch the disk, so neither may hold a Tokio worker.
+pub(crate) async fn off_executor<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// `require_local_app_webview` for async commands, run off the async executor.
+async fn require_local_app_webview_async(webview: &tauri::Webview) -> Result<Url, String> {
+    let webview = webview.clone();
+    off_executor(move || require_local_app_webview(&webview, &webview.state::<AppState>())).await
+}
+
+/// `require_preferences_or_local_app_webview` for async commands, run off the async executor.
+async fn require_preferences_or_local_app_webview_async(webview: &tauri::Webview) -> Result<Url, String> {
+    let webview = webview.clone();
+    off_executor(move || {
+        require_preferences_or_local_app_webview(&webview, &webview.state::<AppState>())
+    })
+    .await
+}
+
 pub(crate) fn require_local_app_webview(
     webview: &tauri::Webview,
     state: &AppState,
@@ -435,7 +460,7 @@ async fn window_control(
     state: tauri::State<'_, AppState>,
     action: String,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     let window = webview.window();
     match action.as_str() {
         "minimize" => {
@@ -443,11 +468,15 @@ async fn window_control(
             window.minimize()
         }
         "maximize" => {
-            if window.is_maximized().unwrap_or(false) {
-                window.unmaximize()
-            } else {
-                window.maximize()
-            }
+            return off_executor(move || {
+                if window.is_maximized().unwrap_or(false) {
+                    window.unmaximize()
+                } else {
+                    window.maximize()
+                }
+                .map_err(|error| error.to_string())
+            })
+            .await;
         }
         "close" => {
             if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app).await? {
@@ -507,13 +536,13 @@ async fn popup_titlebar_menu(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "A native titlebar menu is already open".to_string())?;
     let admission = NativeMenuAdmission(Arc::clone(&state.native_menu_popup_pending));
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
     let app = webview.app_handle().clone();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     app.clone()
         .run_on_main_thread(move || {
             let admission = admission;
@@ -546,10 +575,7 @@ async fn popup_titlebar_menu(
             let _ = sender.send(result);
         })
         .map_err(|error| error.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || receiver.recv())
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?
+    receiver.await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -558,7 +584,7 @@ async fn browser_target_register(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetRegistration,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let window = webview.window();
     let controller = state.browser_controller.clone();
     tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
@@ -574,7 +600,7 @@ async fn browser_target_update(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
@@ -590,7 +616,7 @@ async fn browser_target_action(
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetAction,
 ) -> Result<serde_json::Value, String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.action(&app, &owner, payload))
@@ -773,7 +799,7 @@ async fn cli_renew_managed_session(
     app: AppHandle,
 ) -> Result<bool, String> {
     let state = app.state::<AppState>();
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     let manager = state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || manager.renew_managed_session(&app))
         .await
@@ -787,7 +813,7 @@ async fn cli_restart(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<CliStatus, String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     let manager = state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Admit before stopping, without holding the coordinator across the
@@ -823,10 +849,9 @@ fn wake_lock_start(
 #[tauri::command]
 async fn wake_lock_start(
     webview: tauri::Webview,
-    state: tauri::State<'_, AppState>,
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+    require_local_app_webview_async(&webview).await?;
     change_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG))).await
 }
 
@@ -856,8 +881,8 @@ fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Res
 
 #[cfg(not(windows))]
 #[tauri::command]
-async fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
+async fn wake_lock_stop(webview: tauri::Webview) -> Result<(), String> {
+    require_local_app_webview_async(&webview).await?;
     change_wake_lock(webview.app_handle(), webview.label(), None).await
 }
 
@@ -1505,36 +1530,37 @@ fn clear_remote_window_metadata(
     true
 }
 
-#[tauri::command(async)]
-fn needs_local_certificate_install(
-    webview: tauri::Webview,
-    state: tauri::State<AppState>,
-) -> Result<bool, String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
-    #[cfg(not(target_os = "linux"))]
-    {
-        let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-            format!("Failed to load the local HTTPS certificate for the remote proxy window: {err}")
-        })?;
-        return cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
-            format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
-        });
-    }
+#[tauri::command]
+async fn needs_local_certificate_install(webview: tauri::Webview) -> Result<bool, String> {
+    off_executor(move || {
+        require_preferences_or_local_app_webview(&webview, &webview.state::<AppState>())?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                format!(
+                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                )
+            })?;
+            return cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
+                format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
+            });
+        }
 
-    #[cfg(target_os = "linux")]
-    {
-        Ok(false)
-    }
+        #[cfg(target_os = "linux")]
+        {
+            Ok(false)
+        }
+    })
+    .await
 }
 
 #[tauri::command]
 async fn open_remote_window(
     webview: tauri::Webview,
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_webview(&webview, &state)?;
+    require_preferences_or_local_app_webview_async(&webview).await?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -2046,21 +2072,32 @@ fn main() {
     launch_queue.enqueue(first_intent);
     let singleton_queue = Arc::clone(&launch_queue);
     let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
+    // The singleton callback runs on the native thread (inside WM_COPYDATA on Windows): it only
+    // hands the raw launch to one ordered worker, which checks folders and reads the config.
+    let (forward_launch, forwarded_launches) =
+        std::sync::mpsc::channel::<(AppHandle, Vec<String>, std::path::PathBuf)>();
+    std::thread::Builder::new()
+        .name("forwarded-launch".into())
+        .spawn(move || {
+            for (app, arguments, cwd) in forwarded_launches {
+                #[cfg(windows)]
+                let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
+                #[cfg(not(windows))]
+                let intent = launch::parse_launch_intent(&arguments, &cwd);
+                singleton_queue.enqueue(launch::prepare_second_launch_intent(
+                    intent,
+                    &second_launch_config,
+                ));
+                schedule_launch_drain(app, Arc::clone(&singleton_queue));
+            }
+        })
+        .expect("start the forwarded launch worker");
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
-        let cwd = std::path::PathBuf::from(callback_cwd);
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
         if arguments == [developer_relaunch::MARKER] {
             return;
         }
-        #[cfg(windows)]
-        let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
-        #[cfg(not(windows))]
-        let intent = launch::parse_launch_intent(&arguments, &cwd);
-        singleton_queue.enqueue(launch::prepare_second_launch_intent(
-            intent,
-            &second_launch_config,
-        ));
-        schedule_launch_drain(app.clone(), Arc::clone(&singleton_queue));
+        let _ = forward_launch.send((app.clone(), arguments, callback_cwd.into()));
     });
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
@@ -2336,6 +2373,7 @@ fn main() {
             desktop_updater::install_desktop_update,
             desktop_updater::take_desktop_update_failure,
             workspace_open::open_workspace_target,
+            workspace_open::open_local_path,
             set_workspace_menu_enabled,
             browser_target_register,
             browser_target_update,

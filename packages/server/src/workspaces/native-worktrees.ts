@@ -78,9 +78,9 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   const mainHost = await toHost(current.project.canonical)
   check()
   if (!mainHost) throw new Error("OpenCode resolved a different local repository")
-  const main = await readCheckout(mainHost)
+  const main = await sameDirectory(local.root, mainHost) ? local : await readCheckout(mainHost)
   check()
-  const sameRepository = await sameDirectory(local.common, main.common)
+  const sameRepository = main === local || await sameDirectory(local.common, main.common)
   check()
   if (!sameRepository) throw new Error("OpenCode resolved a different local repository")
   const requestOptions = { ...locationRequestOptions(location, { includeDirectory: true }),

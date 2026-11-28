@@ -92,6 +92,9 @@ const ROUTING_BYTES: usize = 32 << 20;
 const ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 /// A session's directory from its last located event or native read (TS `sessionLocations`).
 const LOCATION_TTL: Duration = Duration::from_secs(2);
+/// Bound for PTY/shell/form location caches (no TTL, matching TS `ptyLocations`/`shellLocations`/`formLocations`:
+/// entries live until their terminal event, reconnect reset, or LRU eviction at the cap).
+const ENTITY_LOCATION_LIMIT: usize = 1024;
 /// Per-workspace resync pulse backoff when routing fails (TS `ROUTING_RESYNC_{MIN,MAX}_MS`).
 const ROUTING_RESYNC_MIN: Duration = Duration::from_secs(1);
 const ROUTING_RESYNC_MAX: Duration = Duration::from_secs(30);
@@ -186,9 +189,100 @@ struct ResyncState {
 }
 
 #[derive(Default)]
+struct EntityLocations {
+    order: VecDeque<String>,
+    entries: HashMap<String, CachedLocation>,
+}
+
+impl EntityLocations {
+    fn get(&self, id: &str) -> Option<CachedLocation> {
+        self.entries.get(id).cloned()
+    }
+
+    fn insert(&mut self, id: &str, loc: CachedLocation) {
+        if self.entries.contains_key(id) {
+            self.order.retain(|k| k != id);
+        } else {
+            while self.entries.len() >= ENTITY_LOCATION_LIMIT {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.entries.remove(&oldest);
+                } else {
+                    break;
+                }
+            }
+        }
+        self.order.push_back(id.to_owned());
+        self.entries.insert(id.to_owned(), loc);
+    }
+
+    fn remove(&mut self, id: &str) {
+        if self.entries.remove(id).is_some() {
+            self.order.retain(|k| k != id);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+}
+
+#[derive(Default)]
+struct LocationCaches {
+    sessions: HashMap<String, (Instant, CachedLocation)>,
+    pty: EntityLocations,
+    shell: EntityLocations,
+    form: EntityLocations,
+}
+
+impl LocationCaches {
+    fn clear(&mut self) {
+        self.sessions.clear();
+        self.pty.clear();
+        self.shell.clear();
+        self.form.clear();
+    }
+}
+
+fn pty_id<'a>(kind: &str, data: &'a Value) -> Option<&'a str> {
+    if !kind.starts_with("pty.") {
+        return None;
+    }
+    data["id"].as_str().or(data["info"]["id"].as_str()).filter(|s| !s.is_empty())
+}
+
+fn shell_id<'a>(kind: &str, data: &'a Value) -> Option<&'a str> {
+    if !kind.starts_with("shell.") {
+        return None;
+    }
+    data["id"].as_str().or(data["info"]["id"].as_str()).filter(|s| !s.is_empty())
+}
+
+fn form_id<'a>(kind: &str, data: &'a Value) -> Option<&'a str> {
+    if !kind.starts_with("form.") {
+        return None;
+    }
+    data["id"].as_str().or(data["form"]["id"].as_str()).filter(|s| !s.is_empty())
+}
+
+fn pty_info_location(kind: &str, data: &Value) -> Option<CachedLocation> {
+    if !matches!(kind, "pty.created" | "pty.updated") {
+        return None;
+    }
+    data["info"]["cwd"].as_str().filter(|s| !s.is_empty()).map(|dir| CachedLocation::Directory(dir.to_owned()))
+}
+
+fn shell_info_location(kind: &str, data: &Value) -> Option<CachedLocation> {
+    if kind != "shell.created" {
+        return None;
+    }
+    data["info"]["cwd"].as_str().filter(|s| !s.is_empty()).map(|dir| CachedLocation::Directory(dir.to_owned()))
+}
+
+#[derive(Default)]
 struct Routes {
     held: Mutex<Held>,
-    locations: Mutex<(u64, HashMap<String, (Instant, CachedLocation)>)>,
+    locations: Mutex<(u64, LocationCaches)>,
     resyncs: Mutex<(u64, HashMap<Uuid, ResyncState>)>,
 }
 
@@ -290,35 +384,91 @@ impl Routes {
             }
         }
     }
-    /// The location a session event is routed by: its envelope's, else a fresh cached one.
-    /// Preserves native `workspaceID` selectors so events for foreign workspaces are never
-    /// delivered to local workspaces (TS `instance-events.ts:375-386`, `manager.ts:337-342`).
+    /// The location an event is routed by: its envelope's, else cached PTY/shell/form/session
+    /// locations or `info.cwd` fallbacks. Preserves native `workspaceID` selectors so events for
+    /// foreign workspaces are never delivered to local workspaces (TS `instance-events.ts:288-324`).
     fn location(&self, generation: u64, kind: &str, session: Option<&str>, event: &Value) -> Option<CachedLocation> {
+        let data = &event["data"];
         let located = if event["location"].get("workspaceID").is_some() {
             Some(CachedLocation::ForeignWorkspace)
         } else {
-            event["location"]["directory"].as_str().map(|dir| CachedLocation::Directory(dir.to_owned()))
+            event["location"]["directory"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|dir| CachedLocation::Directory(dir.to_owned()))
         };
-        let Some(session) = session else { return located };
-        let mut guard = self.locations.lock().unwrap();
-        if guard.0 != generation {
+        let pty = pty_id(kind, data);
+        let shell = shell_id(kind, data);
+        let form = form_id(kind, data);
+        if session.is_none() && pty.is_none() && shell.is_none() && form.is_none() {
             return located;
         }
-        let cache = &mut guard.1;
-        let now = Instant::now();
-        if matches!(kind, "session.moved" | "session.deleted") {
-            cache.remove(session);
-        } else if let Some(loc) = &located {
-            Self::cache(cache, session, loc.clone(), now);
-        } else {
-            return cache.get(session).filter(|(until, _)| *until > now).map(|(_, loc)| loc.clone());
+        let mut guard = self.locations.lock().unwrap();
+        if guard.0 != generation {
+            return located.or_else(|| pty_info_location(kind, data)).or_else(|| shell_info_location(kind, data));
         }
-        located
+        let caches = &mut guard.1;
+        let now = Instant::now();
+        if let Some(sid) = session
+            && matches!(kind, "session.moved" | "session.deleted")
+        {
+            caches.sessions.remove(sid);
+        }
+        let resolved = located
+            .or_else(|| pty.and_then(|id| caches.pty.get(id)))
+            .or_else(|| pty_info_location(kind, data))
+            .or_else(|| shell.and_then(|id| caches.shell.get(id)))
+            .or_else(|| shell_info_location(kind, data))
+            .or_else(|| form.and_then(|id| caches.form.get(id)))
+            .or_else(|| {
+                session.filter(|_| !matches!(kind, "session.moved" | "session.deleted")).and_then(|sid| {
+                    caches.sessions.get(sid).filter(|(until, _)| *until > now).map(|(_, loc)| loc.clone())
+                })
+            });
+        if let Some(loc) = &resolved {
+            if let Some(sid) = session
+                && !matches!(kind, "session.moved" | "session.deleted")
+            {
+                Self::cache(&mut caches.sessions, sid, loc.clone(), now);
+            }
+            if let Some(id) = pty {
+                if kind == "pty.deleted" {
+                    caches.pty.remove(id);
+                } else {
+                    caches.pty.insert(id, loc.clone());
+                }
+            }
+            if let Some(id) = shell {
+                if kind == "shell.deleted" {
+                    caches.shell.remove(id);
+                } else {
+                    caches.shell.insert(id, loc.clone());
+                }
+            }
+            if let Some(id) = form {
+                if matches!(kind, "form.cancelled" | "form.replied") {
+                    caches.form.remove(id);
+                } else {
+                    caches.form.insert(id, loc.clone());
+                }
+            }
+        }
+        resolved
     }
     fn learn(&self, generation: u64, session: &str, loc: CachedLocation) {
         let mut guard = self.locations.lock().unwrap();
         if guard.0 == generation {
-            Self::cache(&mut guard.1, session, loc, Instant::now());
+            Self::cache(&mut guard.1.sessions, session, loc, Instant::now());
+        }
+    }
+    fn learn_form(&self, generation: u64, kind: &str, form: &str, loc: CachedLocation) {
+        let mut guard = self.locations.lock().unwrap();
+        if guard.0 == generation {
+            if matches!(kind, "form.cancelled" | "form.replied") {
+                guard.1.form.remove(form);
+            } else {
+                guard.1.form.insert(form, loc);
+            }
         }
     }
 
@@ -333,17 +483,17 @@ impl Routes {
     }
 }
 
-/// FIFO key of a native event (TS `eventKey`): its session, PTY or shell, else its location.
+/// FIFO key of a native event (TS `eventKey`): its session, PTY, shell or form, else its location.
 fn lane(event: &Value) -> String {
     let (kind, data) = (event["type"].as_str().unwrap_or_default(), &event["data"]);
-    let entity = |prefix: &str| data["id"].as_str().or(data["info"]["id"].as_str()).map(|id| format!("{prefix}:{id}"));
     data["sessionID"]
         .as_str()
         .or(data["form"]["sessionID"].as_str().filter(|_| kind == "form.created"))
         .filter(|s| !s.is_empty() && *s != "global")
         .map(|s| format!("session:{s}"))
-        .or_else(|| kind.starts_with("pty.").then(|| entity("pty")).flatten())
-        .or_else(|| kind.starts_with("shell.").then(|| entity("shell")).flatten())
+        .or_else(|| pty_id(kind, data).map(|id| format!("pty:{id}")))
+        .or_else(|| shell_id(kind, data).map(|id| format!("shell:{id}")))
+        .or_else(|| form_id(kind, data).map(|id| format!("form:{id}")))
         .unwrap_or_else(|| format!("location:{}\0{}", event["location"]["directory"], event["location"]["workspaceID"]))
 }
 
@@ -798,6 +948,7 @@ async fn route(
         .as_str()
         .or_else(|| (kind == "form.created").then(|| event["data"]["form"]["sessionID"].as_str()).flatten())
         .filter(|s| *s != "global" && crate::opencode::valid_id(s));
+    let form = form_id(kind, &event["data"]);
     let mut resolved = routes.location(generation, kind, session, &event);
     let mut unresolved_session = false;
     if resolved.is_none()
@@ -807,6 +958,9 @@ async fn route(
             SessionLocationLookup::Found(loc) => {
                 if kind != "session.deleted" {
                     routes.learn(generation, session, loc.clone());
+                }
+                if let Some(fid) = form {
+                    routes.learn_form(generation, kind, fid, loc.clone());
                 }
                 resolved = Some(loc);
             }
@@ -823,6 +977,7 @@ async fn route(
     };
     let session_id: Option<Arc<str>> = session.map(Arc::from);
     crate::sessions::favorites::deleted(app, &event);
+    crate::sessions::cleanup::deleted(app, &event);
     let is_moved = kind == "session.moved"
         && session_id.is_some()
         && event["data"]["location"]["directory"]
@@ -841,6 +996,16 @@ async fn route(
             && app.native.current(&endpoint)
         {
             routes.request_session_resync(app, sid, app_generation);
+        } else if session_id.is_none()
+            && !foreign_workspace
+            && event["location"].get("workspaceID").is_none()
+            && (pty_id(kind, &event["data"]).is_some() || shell_id(kind, &event["data"]).is_some() || form.is_some())
+            && app.native.current(&endpoint)
+        {
+            let open: Vec<Uuid> = app.inner.lock().unwrap().workspaces.iter().map(|w| w.id).collect();
+            for wid in open {
+                routes.request_routing_resync(app, wid, app_generation);
+            }
         }
         return;
     }
@@ -1182,7 +1347,8 @@ mod tests {
             "a move forgets the location"
         );
         routes.learn(gen0, "ses_a", CachedLocation::Directory("/v".to_owned()));
-        routes.locations.lock().unwrap().1.get_mut("ses_a").unwrap().0 = Instant::now() - Duration::from_millis(1);
+        routes.locations.lock().unwrap().1.sessions.get_mut("ses_a").unwrap().0 =
+            Instant::now() - Duration::from_millis(1);
         assert_eq!(
             routes.location(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
@@ -1194,6 +1360,139 @@ mod tests {
             routes.location(gen1, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
             "stale subscription worker cannot repopulate locations after reconnect"
+        );
+    }
+
+    #[test]
+    fn pty_shell_and_form_locationless_events_cache_and_fallback_to_info_cwd() {
+        let routes = Routes::default();
+        let gen0 = routes.reset_locations();
+        let dir = |s: &str| Some(CachedLocation::Directory(s.to_owned()));
+
+        // PTY created without envelope location falls back to data.info.cwd and caches for exited/deleted.
+        assert_eq!(
+            routes.location(
+                gen0,
+                "pty.created",
+                None,
+                &json!({"type":"pty.created","data":{"info":{"id":"pty-1","cwd":"/repo-b"}}})
+            ),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "pty.exited", None, &json!({"type":"pty.exited","data":{"id":"pty-1","exitCode":0}})),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "pty.deleted", None, &json!({"type":"pty.deleted","data":{"id":"pty-1"}})),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "pty.exited", None, &json!({"type":"pty.exited","data":{"id":"pty-1"}})),
+            None,
+            "pty.deleted evicts cached location"
+        );
+
+        // Shell created without envelope location falls back to data.info.cwd and caches for exited/deleted.
+        assert_eq!(
+            routes.location(
+                gen0,
+                "shell.created",
+                None,
+                &json!({"type":"shell.created","data":{"info":{"id":"sh-1","cwd":"/repo-b"}}})
+            ),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "shell.exited", None, &json!({"type":"shell.exited","data":{"id":"sh-1","exit":0}})),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "shell.deleted", None, &json!({"type":"shell.deleted","data":{"id":"sh-1"}})),
+            dir("/repo-b")
+        );
+        assert_eq!(
+            routes.location(gen0, "shell.exited", None, &json!({"type":"shell.exited","data":{"id":"sh-1"}})),
+            None,
+            "shell.deleted evicts cached location"
+        );
+
+        // Foreign workspaceID on located pty.created stays foreign even if follow-up pty.updated has local info.cwd.
+        assert_eq!(
+            routes.location(
+                gen0,
+                "pty.created",
+                None,
+                &json!({
+                    "type":"pty.created",
+                    "location":{"directory":"/repo","workspaceID":"ws_foreign"},
+                    "data":{"info":{"id":"pty-f","cwd":"/repo"}}
+                })
+            ),
+            Some(CachedLocation::ForeignWorkspace)
+        );
+        assert_eq!(
+            routes.location(
+                gen0,
+                "pty.updated",
+                None,
+                &json!({"type":"pty.updated","data":{"info":{"id":"pty-f","cwd":"/repo/sub"}}})
+            ),
+            Some(CachedLocation::ForeignWorkspace)
+        );
+        assert_eq!(
+            routes.location(gen0, "pty.deleted", None, &json!({"type":"pty.deleted","data":{"id":"pty-f"}})),
+            Some(CachedLocation::ForeignWorkspace)
+        );
+
+        // Form location caches across locationless replied/cancelled and evicts on terminal event.
+        assert_eq!(
+            routes.location(
+                gen0,
+                "form.created",
+                None,
+                &json!({"type":"form.created","location":{"directory":"/repo"},"data":{"form":{"id":"frm-1","sessionID":"global"}}})
+            ),
+            dir("/repo")
+        );
+        assert_eq!(
+            routes.location(gen0, "form.replied", None, &json!({"type":"form.replied","data":{"id":"frm-1"}})),
+            dir("/repo")
+        );
+        assert_eq!(
+            routes.location(gen0, "form.cancelled", None, &json!({"type":"form.cancelled","data":{"id":"frm-1"}})),
+            None,
+            "form.replied evicts cached form location"
+        );
+        assert_eq!(lane(&json!({"type":"form.replied","data":{"id":"frm-1"}})), "form:frm-1");
+
+        // Reconnect resets all entity caches; cap at 1024 without TTL and refresh order on re-insert.
+        let mut bounded = EntityLocations::default();
+        for i in 0..ENTITY_LOCATION_LIMIT {
+            bounded.insert(&format!("sh-{i}"), CachedLocation::Directory("/repo".into()));
+        }
+        // Re-inserting sh-0 refreshes its position so sh-1 is evicted first when the cap overflows.
+        bounded.insert("sh-0", CachedLocation::Directory("/repo/refreshed".into()));
+        bounded.insert(&format!("sh-{ENTITY_LOCATION_LIMIT}"), CachedLocation::Directory("/repo".into()));
+        assert_eq!(bounded.entries.len(), ENTITY_LOCATION_LIMIT);
+        assert_eq!(bounded.get("sh-0"), dir("/repo/refreshed"));
+        assert_eq!(bounded.get("sh-1"), None);
+        assert_eq!(bounded.get(&format!("sh-{ENTITY_LOCATION_LIMIT}")), dir("/repo"));
+
+        assert_eq!(
+            routes.location(
+                gen0,
+                "shell.created",
+                None,
+                &json!({"type":"shell.created","data":{"info":{"id":"sh-keep","cwd":"/repo"}}})
+            ),
+            dir("/repo")
+        );
+        let gen1 = routes.reset_locations();
+        assert_eq!(
+            routes.location(gen1, "shell.exited", None, &json!({"type":"shell.exited","data":{"id":"sh-keep"}})),
+            None,
+            "reset_locations clears pty/shell/form caches"
         );
     }
 
@@ -1813,6 +2112,106 @@ mod tests {
         let _ = drain_hub(&app, &sub);
         Routes::pulse_routing_resync(&app, ws.id, live_gen);
         assert!(drain_hub(&app, &sub).is_empty(), "removed workspace must never receive late resync pulse");
+
+        let _ = routes.reset_locations();
+        http.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn pty_and_shell_locationless_events_deliver_to_owning_workspace_and_resync_unknown() {
+        use axum::{Router, http::StatusCode, response::IntoResponse, routing::any};
+
+        let dir = crate::shared::test_dir("bridge-m12-pty-shell");
+        let ws_root = dir.join("project");
+        let foreign_root = dir.join("foreign");
+        std::fs::create_dir_all(&ws_root).unwrap();
+        std::fs::create_dir_all(&foreign_root).unwrap();
+        let ws_root = dunce::canonicalize(&ws_root).unwrap();
+        let foreign_root = dunce::canonicalize(&foreign_root).unwrap();
+        let root_str = ws_root.to_string_lossy().into_owned();
+        let foreign_str = foreign_root.to_string_lossy().into_owned();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let http = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(|| async { StatusCode::NOT_FOUND.into_response() })))
+                .await
+                .unwrap()
+        });
+
+        let (app, ws) = build_bridge_test_app(&dir, &ws_root, addr);
+        let app_gen = app.inner.lock().unwrap().generation;
+        let endpoint = app.native.endpoint().unwrap();
+        let routes = Arc::new(Routes::default());
+        let lanes = Arc::new(Lanes::default());
+        let generation = routes.reset_locations();
+        let sub = app.events.subscribe();
+
+        // 1. Locationless pty.created (with info.cwd) -> pty.exited -> pty.deleted all deliver to owning workspace.
+        for (idx, ev) in [
+            json!({"type": "pty.created", "data": {"info": {"id": "pty-1", "cwd": root_str}}}),
+            json!({"type": "pty.exited", "data": {"id": "pty-1", "exitCode": 0}}),
+            json!({"type": "pty.deleted", "data": {"id": "pty-1"}}),
+            json!({"type": "shell.created", "data": {"info": {"id": "sh-1", "cwd": root_str}}}),
+            json!({"type": "shell.exited", "data": {"id": "sh-1", "exit": 0}}),
+            json!({"type": "shell.deleted", "data": {"id": "sh-1"}}),
+            // Foreign cwd shell must NOT deliver to this workspace.
+            json!({"type": "shell.created", "data": {"info": {"id": "sh-foreign", "cwd": foreign_str}}}),
+            json!({"type": "shell.exited", "data": {"id": "sh-foreign", "exit": 0}}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = lane(&ev);
+            let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+            route(
+                &app,
+                &routes,
+                &lanes,
+                key,
+                Arc::new(ev),
+                Arc::clone(&endpoint),
+                (Instant::now(), idx as i64),
+                generation,
+                app_gen,
+                lease,
+            )
+            .await;
+        }
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let delivered = drain_hub(&app, &sub);
+        let types: Vec<&str> = delivered
+            .iter()
+            .filter(|f| f["type"] == "instance.event" && f["instanceId"] == ws.id.to_string())
+            .filter_map(|f| f["event"]["type"].as_str())
+            .collect();
+        let pty_types: Vec<&str> = types.iter().copied().filter(|t| t.starts_with("pty.")).collect();
+        let shell_types: Vec<&str> = types.iter().copied().filter(|t| t.starts_with("shell.")).collect();
+        assert_eq!(types.len(), 6, "unexpected events delivered: {types:?}");
+        assert_eq!(pty_types, vec!["pty.created", "pty.exited", "pty.deleted"]);
+        assert_eq!(shell_types, vec!["shell.created", "shell.exited", "shell.deleted"]);
+
+        // 2. Uncached locationless shell.exited triggers a routing resync pulse instead of silent drop.
+        let unknown = json!({"type": "shell.exited", "data": {"id": "sh-unknown", "exit": 1}});
+        let lease = Arc::new(BytesLease { lanes: Arc::downgrade(&lanes), bytes: 0 });
+        route(
+            &app,
+            &routes,
+            &lanes,
+            lane(&unknown),
+            Arc::new(unknown),
+            Arc::clone(&endpoint),
+            (Instant::now(), 99),
+            generation,
+            app_gen,
+            lease,
+        )
+        .await;
+        let resync = drain_hub(&app, &sub);
+        assert_eq!(resync.len(), 2, "unknown locationless shell event must pulse resync: {resync:?}");
+        assert_eq!(resync[0]["status"], "error");
+        assert_eq!(resync[1]["status"], "connected");
 
         let _ = routes.reset_locations();
         http.abort();

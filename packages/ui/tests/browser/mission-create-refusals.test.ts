@@ -6,7 +6,6 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
-import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -46,9 +45,7 @@ async function setup(page: Page, answer: (route: Route, attempt: number, body: R
   await page.route("**/api/workspaces/fixture/missions**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
-    if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence")
-      ? { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }
-      : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (request.method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     if (request.method() === "POST" && path.endsWith("/missions")) {
       const body = request.postDataJSON(); attempts.push(body)
       return answer(route, attempts.length, body)
@@ -91,13 +88,13 @@ test("pre-send creation refusals keep the draft, re-enable Create and explain th
   } finally { await page.close() }
 })
 
-/** Scheduled creation: answers scheduled POSTs through `answer`. */
+/** A programmed Mission: answers its saves through `answer`, and records the identity each one names. */
 async function setupDaily(page: Page, answer: (route: Route, attempt: number) => Promise<void> | void) {
   const fixture = await setup(page, route => route.abort())
-  const attempts: Array<Record<string, unknown>> = []
-  await page.route("**/api/workspaces/fixture/missions/scheduled", route => {
-    if (route.request().method() !== "POST") return route.fallback()
-    attempts.push(route.request().postDataJSON())
+  const attempts: string[] = []
+  await page.route("**/api/workspaces/fixture/missions/calendars/*", route => {
+    if (route.request().method() !== "PUT") return route.fallback()
+    attempts.push(new URL(route.request().url()).pathname.split("/").at(-1)!)
     return answer(route, attempts.length)
   })
   await fixture.objective.fill("Review merged changes daily")
@@ -106,16 +103,18 @@ async function setupDaily(page: Page, answer: (route: Route, attempt: number) =>
   return { ...fixture, attempts }
 }
 
-test("daily pre-send refusals keep the draft and Create available with the same request identity", async () => {
+test("daily refusals and failures keep the draft and Create available, and save the same programmed Mission again", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const refusals = [
-    { status: 400, json: { error: "Invalid schedule input", code: "schedule-input-invalid" }, message: /could not be saved/ },
-    { status: 401, json: { error: "Human authentication required", code: "schedule-human-required" }, message: /could not be saved/ },
+    { status: 400, json: { error: "Invalid Mission calendar request", code: "calendar-input-invalid" }, message: /could not be saved/ },
+    { status: 422, json: { error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: "event" }, message: /cannot be scheduled/ },
+    { status: 422, json: { error: "The conversation does not run the coordinator's agent and model", code: "calendar-coordinator-profile" }, message: /does not use the coordinator's agent, model and thinking/ },
+    { status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" }, message: /could not be saved/ },
   ]
   try {
     const fixture = await setupDaily(page, async (route, attempt) => attempt <= refusals.length
       ? route.fulfill({ status: refusals[attempt - 1]!.status, json: refusals[attempt - 1]!.json })
-      : route.fulfill({ json: await pausedMissionScheduleReceipt(route.request().postDataJSON()) }))
+      : route.fulfill({ json: { calendars: [] } }))
     for (const refusal of refusals) {
       await submitReady(page)
       await fixture.submit.click()
@@ -127,26 +126,10 @@ test("daily pre-send refusals keep the draft and Create available with the same 
     await fixture.submit.click()
     await fixture.form.waitFor({ state: "detached" })
     assert.equal(fixture.attempts.length, refusals.length + 1, "only explicit user submissions were sent")
-    assert.equal(new Set(fixture.attempts.map(body => body.requestID)).size, 1, "an unchanged draft keeps its request identity")
+    assert.equal(new Set(fixture.attempts).size, 1, "every save names the same programmed Mission")
+    assert.match(fixture.attempts[0]!, /^cal_[a-f0-9]{32}$/)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
-})
-
-test("a daily codeless or uncertain failure stays held without a resend", async () => {
-  for (const json of [{ error: "Recurrence creation unavailable or uncertain" }, { error: "settlement unknown", code: "creation-uncertain" }]) {
-    const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
-    try {
-      const fixture = await setupDaily(page, route => route.fulfill({ status: json.code ? 409 : 503, json }))
-      await submitReady(page)
-      await fixture.submit.click()
-      await page.waitForFunction(() => (document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
-      await fixture.form.evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
-      await page.waitForTimeout(200)
-      assert.equal(await fixture.submit.isDisabled(), true, JSON.stringify(json))
-      assert.equal(fixture.attempts.length, 1, "no automatic or manual replay")
-      assert.deepEqual(fixture.errors, [])
-    } finally { await page.close() }
-  }
 })
 
 test("a codeless server failure stays an exact uncertain hold without a resend", async () => {

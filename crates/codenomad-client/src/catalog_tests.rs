@@ -700,20 +700,19 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
             path: "/trial".into(),
             temporary: false,
         };
-        for (id, missing) in [
-            ("missing", true),
-            ("other", false),
-            ("unready", false),
-            ("moved", true),
-            ("forbidden", false),
+        for (id, missing, deleted) in [
+            ("missing", true, true),
+            ("other", false, false),
+            ("unready", false, false),
+            ("moved", true, false),
+            ("forbidden", false, false),
         ] {
+            let err = backend.bind_session(&project, id, false).await.unwrap_err();
+            assert_eq!(err.is::<crate::catalog::SessionMissing>(), missing);
             assert_eq!(
-                backend
-                    .bind_session(&project, id, false)
-                    .await
-                    .unwrap_err()
-                    .is::<crate::catalog::SessionMissing>(),
-                missing
+                err.downcast_ref::<crate::catalog::SessionMissing>()
+                    .is_some_and(|reason| reason.is_deleted()),
+                deleted
             );
         }
     });
@@ -780,6 +779,12 @@ fn catalogue_omissions_require_targeted_absence() {
                 404,
                 json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
             ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/moved",
+                None,
+                403,
+                json!({"reason":"session_located_elsewhere"}),
+            ),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
         let project = crate::catalog::Project {
@@ -787,12 +792,24 @@ fn catalogue_omissions_require_targeted_absence() {
             path: "/trial".into(),
             temporary: false,
         };
-        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let ids = [
+            "unresponsive",
+            "reordered",
+            "unavailable",
+            "deleted",
+            "moved",
+        ]
+        .map(str::to_owned);
         let (out, results) = async_channel::bounded(ids.len());
         backend
             .confirm_missing_sessions(&project, ids.into(), out, || {})
             .await;
-        assert_eq!(results.try_recv().unwrap().0, "deleted");
+        let first = results.try_recv().unwrap();
+        assert_eq!(first.0, "deleted");
+        assert_eq!(first.2, crate::catalog::SessionAbsence::NotFound);
+        let second = results.try_recv().unwrap();
+        assert_eq!(second.0, "moved");
+        assert_eq!(second.2, crate::catalog::SessionAbsence::LocatedElsewhere);
         assert!(results.try_recv().is_err());
     });
 }
@@ -918,5 +935,59 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
             .err()
             .unwrap();
         assert!(!unavailable.is::<crate::catalog::CreateRejected>());
+    });
+}
+
+#[test]
+fn attest_server_reprobes_on_voluntary_stream_handoff_but_not_on_transport_drop() {
+    run(async {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let body =
+            br#"{"apiContract":1,"serverId":"fixture","capabilities":["settings-atomic-patches"]}"#;
+        let worker = thread::spawn(move || {
+            for step in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf);
+                if step == 0 || step == 2 {
+                    arrived_tx.send(step).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).unwrap();
+                socket.write_all(body).unwrap();
+            }
+        });
+
+        let backend = Backend::unauthenticated(&address).unwrap();
+        let guard_handoff = backend.client.track_stream("outgoing");
+        assert!(guard_handoff.try_mark_open(&backend.client, true));
+        let client = backend.client.clone();
+        let detach = thread::spawn(move || {
+            assert_eq!(arrived_rx.recv().unwrap(), 0);
+            guard_handoff.close_and_revoke(&client, true, false);
+            release_tx.send(()).unwrap();
+            let guard_drop = client.track_stream("dropped");
+            assert!(guard_drop.try_mark_open(&client, true));
+            assert_eq!(arrived_rx.recv().unwrap(), 2);
+            guard_drop.close_and_revoke(&client, true, true);
+            release_tx.send(()).unwrap();
+        });
+
+        assert_eq!(backend.attest_server().await.unwrap(), "fixture");
+        assert!(backend.client.supports_atomic_settings_patches());
+        assert!(!backend.client.needs_capability_recheck());
+        assert_eq!(
+            backend.attest_server().await.unwrap_err().to_string(),
+            "Transport changed during server attestation"
+        );
+        detach.join().unwrap();
+        worker.join().unwrap();
     });
 }

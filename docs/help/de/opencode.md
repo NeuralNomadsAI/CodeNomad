@@ -17,8 +17,8 @@ Die Karte **OpenCode-Version** zeigt **Laufender Dienst** separat an, wenn seine
 
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
-| Minimum | OpenCode **2.3.0** | Für diese CodeNomad-Version erforderlich. Mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
-| Empfohlen | OpenCode **2.3.0** | Für CodeNomad **1.1.0**. CodeNomad **1.1.1** setzt **2.3.2** voraus und empfiehlt diese Version. |
+| Minimum | OpenCode **2.4.0** | Für diese CodeNomad-Version erforderlich. Mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
+| Empfohlen | OpenCode **2.4.1** | Für CodeNomad **1.2.0**. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 ## Host, WSL und gemeinsamer Dienst {#execution-host}

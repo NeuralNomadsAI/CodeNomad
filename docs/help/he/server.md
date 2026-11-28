@@ -8,7 +8,7 @@
 
 1. התקינו Node.js 24 LTS ו־npm.
 2. הוסיפו Git ל־**PATH של תהליך שרת הקצה**. Git בתוך WSL בלבד אינו מספיק לשרת קצה ב־Windows.
-3. התקינו או בחרו OpenCode: המינימום הנדרש הוא **2.3.0**. ראו [הגדרת OpenCode](opencode.md).
+3. התקינו או בחרו OpenCode: המינימום הנדרש הוא **2.4.0**. ראו [הגדרת OpenCode](opencode.md).
 4. בחרו את התיקייה שממנה תפעילו את השרת, או העבירו `--workspace-root` במפורש.
 
 ללא Git, שיחות נשארות זמינות רק בתיקייה הפיזית שנפתחה במפורש; פעולות Git ו־worktree נכשלות. התקינו Git והפעילו מחדש את שרת הקצה לאחר שינוי PATH. שורש סביבת עבודה מגביל פתיחה/עיון, לא הרצת סוכן: ראו [אבטחה](security.md).
@@ -80,7 +80,7 @@ HTTPS מעדיף את יציאה **9898** ו־HTTP את **9899**. ללא דרי�
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; מאפשר עיון בכל מערכת הקבצים. אינו הגדרת ארגז חול לסוכן. |
 | `--config <path>` | `CLI_CONFIG` | ברירת מחדל פעילה פתורה: `~/.config/codenomad/config.yaml`. מקבל תיקייה או קובץ YAML למיקום מפורש. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; רמות מתועדות: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; אחרת כותב לקובץ שנבחר. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, ובנוסף `logs/server.log` לצד קובץ התצורה; קובץ שנבחר מחליף את שניהם. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; שם משתמש לאימות בזמן ריצה. קובץ אימות שמור שומר את שם המשתמש שלו כשאין סיסמת זמן ריצה שדורסת אותו. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | לא מוגדר; סיסמה לזמן ריצה בלבד, גוברת על קובץ האימות המנוהל. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; תווים שאינם אותיות, ספרות, `_` ו־`-` הופכים ל־`_`. |

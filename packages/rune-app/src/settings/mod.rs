@@ -27,6 +27,17 @@ pub(crate) use transcript_preset::Row as TranscriptRow;
 pub(crate) fn show_timeline(s: &crate::State) -> bool {
     s.settings.shared.borrow().show_timeline()
 }
+
+pub(crate) fn auto_cleanup_blank_sessions(s: &crate::State) -> bool {
+    s.settings.shared.borrow().auto_cleanup_blank_sessions()
+}
+
+pub(crate) fn keep_unseen_subagent_idle_status(s: &crate::State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .keep_unseen_subagent_idle_status()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -57,7 +68,9 @@ pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_n
 pub(crate) use delivery::{
     notification_fixture, notification_fixture_for, notification_test_config,
 };
-pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{
+    matches_shortcut, shortcut_label, with_shortcut_label, with_shortcut_label_excluding,
+};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{
@@ -227,6 +240,12 @@ pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.revision += 1;
 }
 
+#[cfg(test)]
+pub(crate) fn fixture_config_doc(s: &mut State, doc: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config_doc(doc);
+    s.revision += 1;
+}
+
 pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
     let changed = memory::cleanup::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
@@ -309,6 +328,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
         let observation = watch.map(|watch| watch.take_provider_changes());
+        let location_changes = watch
+            .map(|watch| watch.take_provider_location_changes())
+            .unwrap_or_default();
         let moves = watch
             .map(|watch| watch.take_provider_moves())
             .unwrap_or_default();
@@ -331,10 +353,18 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .provider_target
                 .as_ref()
                 .map(|target| target.revision());
-            if let Some(target) = &mut shared.provider_target
-                && !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation)
-            {
-                shared.provider_target = None;
+            let mut native_changed = false;
+            if let Some(target) = &mut shared.provider_target {
+                if !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation) {
+                    shared.provider_target = None;
+                } else {
+                    if let Some((_, status)) = stats_changes.as_ref() {
+                        native_changed = target.observe_native_status(*status);
+                    }
+                    if target.matches(&location_changes) {
+                        target.invalidate_location();
+                    }
+                }
             }
             let stats_changed = shared
                 .provider_target
@@ -356,6 +386,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .as_ref()
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
+                || native_changed
                 || bound
                 || stats_changed
                 || integrations_changed)
@@ -542,6 +573,11 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_settings(s: &State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_settings(settings);
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

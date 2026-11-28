@@ -25,7 +25,7 @@ type NativeSessionService = {
   create(input: NativeCreateInput): NativeEffect
   environment(input: { sessionID: string; variables: Record<string, string> }): NativeEffect
   prompt(input: AutonomousMissionCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
-  synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
+  synthetic(input: AutonomousMissionCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
   cancelInbox?(input: { sessionID: string; inboxID: string }): NativeEffect
   messages?(input: { sessionID: string; order: "asc" | "desc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
@@ -40,12 +40,6 @@ export type NativeCreateInput = {
 export type NativeRootPlacement = Pick<NativeCreateInput, "id" | "agent" | "model" | "metadata"> & {
   projectID: string; parentID?: string; location: { directory: string; workspaceID?: string }
 }
-export type NativeRecurrenceLifecycleCommand = { kind: "synthetic"; input: {
-  sessionID: string; id: string; text: string; description: string; delivery: "queue"; resume: true
-  metadata: { "codenomad.mission": { version: 1; missionID: string; kind: "lifecycle"; operationID: string;
-    taskMode: "native" | "independent";
-    recurrence: { grantID?: string; passageID: string; messageID: string; coordinatorSessionID: string } } }
-} }
 export type NativeDocumentPassageCommand = { kind: "prompt" | "synthetic";
   input: Parameters<MissionSessionAdapter["prompt"]>[0] & { description?: string } }
 
@@ -261,7 +255,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       const result = await run(() => service.environment({ sessionID: input.sessionID, variables }), variablesShape, options, current, expected, true)
       if (!isDeepStrictEqual(result, variables)) rejectAuthority("effect-unavailable")
     },
-    admit: async (command: AutonomousMissionCommand | NativeRecurrenceLifecycleCommand | NativeDocumentPassageCommand, options: { signal?: AbortSignal },
+    admit: async (command: AutonomousMissionCommand | NativeDocumentPassageCommand, options: { signal?: AbortSignal },
       current: () => true, expected?: NativeRootPlacement) => {
       const input = structuredClone(command.input)
       if (expected && input.sessionID !== expected.id) rejectAuthority("binding-mismatch")

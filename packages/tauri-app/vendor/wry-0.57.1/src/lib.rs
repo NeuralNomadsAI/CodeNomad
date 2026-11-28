@@ -389,6 +389,8 @@ mod preview_origin;
 use wkwebview::*;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use wkwebview::{PrintMargin, PrintOptions, WryWebView};
+#[cfg(target_os = "macos")]
+pub use wkwebview::file_panels::set_file_panels_refused;
 
 #[cfg(target_os = "windows")]
 pub(crate) mod webview2;

@@ -18,7 +18,7 @@ try {
     config = path.join(configDirectory, "opencode.jsonc")
     await writeFile(config, original)
     dispose = await installDesktopPluginPresence("missions", await readFile(directoryOf("plugin.mjs")),
-      { config: configDirectory, data: path.join(root, "presence") }, undefined, undefined, await readFile(directoryOf("provider.mjs")))
+      { config: configDirectory, data: path.join(root, "presence") })
     return {}
   }, async ({ client, root, connection, requests }) => {
     const directory = path.join(root, "project")
