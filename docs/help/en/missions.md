@@ -74,7 +74,7 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 ## Scheduling {#daily-schedules}
 
-A Mission with a repeating schedule or an event stays one row in the list: each launch replaces the previous one in the same coordinator conversation, and waits while the previous launch is still active. Its detail shows **Launch when**, **Desired state** with **Pause** or **Resume**, the next wake or check, **Launched passages** and **Past runs** (the last 20 launches). With **Start automatically** off, it is created paused. **Edit selected mission** reopens the creation form, and the next launch uses what you save. **Delete selected mission…** removes its scheduling first.
+A Mission with a repeating schedule or an event stays one row in the list: each launch replaces the previous one in the same coordinator conversation, and waits while the previous launch is still active. Its detail shows **Launch when**, **Desired state**, the next wake or check, **Launched passages** and **Past runs** (the last 20 launches). With **Start automatically** off, it is created paused. **Edit selected mission** reopens the creation form, and the next launch uses what you save. **Delete selected mission…** removes its scheduling first. While no launch is under way, ▶ and ⏸ in the toolbar resume or pause its scheduling and ■ stops it permanently, leaving the Mission in the list; during a launch they command that launch, and the ⋯ menu pauses or resumes the scheduling.
 
 ### Criteria {#native-scheduling}
 
@@ -134,7 +134,8 @@ The flag shows the Mission's state; its chevron carries its tasks' attention sta
 | --- | --- |
 | Red | An open question or permission needs your answer. Select the asking Mission or task to open the interruption dock. |
 | Yellow | Native work was observed running. |
-| Orange pause symbol | Paused. |
+| Accent pause symbol | Paused while under way: resume it to continue. |
+| Orange pause symbol | Scheduling paused: nothing launches until you resume it. |
 | Orange warning triangle | Interrupted, with an action to continue. |
 | Green | A Mission, task or successful scheduled run awaits review in this window. |
 | Accent icon with a small static neutral line below | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |

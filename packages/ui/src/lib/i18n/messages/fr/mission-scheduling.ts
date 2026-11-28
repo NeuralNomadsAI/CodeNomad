@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Remplacer par une nouvelle politique de lancement",
   "missions.scheduling.error.retained": "Conservez la politique enregistrée ou remplacez-la explicitement avant de modifier la programmation.",
   "missions.scheduling.title": "Programmation",
+  "missions.scheduling.stop": "Arrêter définitivement la programmation",
+  "missions.scheduling.stopConfirm": "Arrêter définitivement cette programmation ? Plus aucun lancement ne partira. La mission reste dans la liste.",
   "missions.scheduling.when": "Lancer quand",
   "missions.scheduling.connector.else": "sinon",
   "missions.scheduling.connector.if": "si",

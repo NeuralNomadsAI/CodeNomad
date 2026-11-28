@@ -25,7 +25,7 @@ export function missionProgramming(calendar: MissionCalendarView, t: Translate, 
     state: t(`missions.scheduleList.state.${calendar.paused ? "paused" : "running"}`),
     /** The row's mark: the launch's own while it is under way, asks or awaits review; `between` launches, the programming's. */
     mark: (launch: MissionMark, between: boolean): MissionMark => !between || launch !== "idle" && launch !== "prepared" ? launch
-      : !calendar.paused ? due.length ? "waiting" : launch : launch === "prepared" ? launch : "paused",
+      : calendar.paused ? "suspended" : due.length ? "waiting" : launch,
     /** The Mission row's additions. */
     row: [criteria, calendar.paused ? t("missions.scheduleList.state.paused") : `${nextLabel} · ${next}`].filter(Boolean),
     /** Past launches, newest first: a Mission removed before it ended reads as stopped. */

@@ -1,8 +1,9 @@
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
 /** Colour carries attention; the waiting underline and pause/warning shapes
- * distinguish states independently of the palette's accent contrast. */
-export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
+ * distinguish states independently of the palette's accent contrast. `paused` is work paused under way, to be resumed;
+ * `suspended` is a programming or schedule that launches nothing until resumed. */
+export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "suspended" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
 export interface MissionPickerEntry {
   /** `mission:<id>` or `scheduled:<id>`. */
@@ -56,7 +57,7 @@ function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, see
   if (facts.interrupted) return "interrupted"
   if (facts.uncertain) return "unconfirmed"
   if (facts.prepared) return "prepared"
-  if (facts.state === "paused") return "paused"
+  if (facts.state === "paused") return "suspended"
   if (facts.pending) return "working"
   if (facts.outcome === "failed") return "interrupted"
   if (facts.outcome === "completed" && !seen) return "done"

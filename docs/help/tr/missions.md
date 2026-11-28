@@ -70,7 +70,7 @@ Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir a
 
 ## Zamanlama {#daily-schedules}
 
-Yinelenen bir zamanlaması veya olayı olan görev listede tek satır olarak kalır: her başlatma, aynı koordinatör konuşmasında öncekinin yerini alır ve önceki hâlâ etkinken bekler. Ayrıntısında **Şu durumda başlat**, **Duraklat** veya **Sürdür** ile **İstenen durum**, sonraki uyanma veya denetim, **Başlatılan geçişler** ve **Önceki çalıştırmalar** (son 20 başlatma) görünür. **Otomatik başlat** kapalıyken duraklatılmış olarak oluşturulur. **Seçili görevi düzenle** oluşturma formunu yeniden açar ve sonraki başlatma kaydettiğinizi kullanır. **Seçili görevi sil…** önce zamanlamasını kaldırır.
+Yinelenen bir zamanlaması veya olayı olan görev listede tek satır olarak kalır: her başlatma, aynı koordinatör konuşmasında öncekinin yerini alır ve önceki hâlâ etkinken bekler. Ayrıntısında **Şu durumda başlat**, **İstenen durum**, sonraki uyanma veya denetim, **Başlatılan geçişler** ve **Önceki çalıştırmalar** (son 20 başlatma) görünür. **Otomatik başlat** kapalıyken duraklatılmış olarak oluşturulur. **Seçili görevi düzenle** oluşturma formunu yeniden açar ve sonraki başlatma kaydettiğinizi kullanır. **Seçili görevi sil…** önce zamanlamasını kaldırır. Çalışan bir başlatma yokken araç çubuğundaki ▶ ve ⏸ zamanlamasını sürdürür veya duraklatır, ■ ise görevi listede bırakarak zamanlamayı kalıcı olarak durdurur; bir başlatma sırasında bu düğmeler o başlatmayı yönetir ve ⋯ menüsü zamanlamayı duraklatır veya sürdürür.
 
 ### Ölçütler {#native-scheduling}
 
@@ -118,7 +118,7 @@ Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İşler y
 
 ### Renkler ve durumlar {#status-colours}
 
-Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, sarı gözlenen çalışmayı gösterir. Turuncu duraklatma simgesi duraklamayı, turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
+Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, sarı gözlenen çalışmayı gösterir. Vurgu rengindeki duraklatma simgesi çalışırken duraklatılan bir Görevi, turuncu duraklatma simgesi siz sürdürene kadar hiçbir şey başlatmayan duraklatılmış bir zamanlamayı, turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
 
 Altında küçük, sabit ve nötr bir çizgi olan vurgu renkli simge **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Çizgisiz vurgu simgesi hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar, durdurulmuş zamanlamalar ve **Durum doğrulanmadı** nötrdür; durum metnini okuyun.
 

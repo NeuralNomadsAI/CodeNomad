@@ -106,6 +106,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "החלפה במדיניות תזמון חדשה",
   "missions.scheduling.error.retained": "יש להשאיר את המדיניות השמורה ללא שינוי או להחליף אותה במפורש לפני עריכת התזמון.",
   "missions.scheduling.title": "תזמון",
+  "missions.scheduling.stop": "עצירת התזמון לצמיתות",
+  "missions.scheduling.stopConfirm": "לעצור את התזמון הזה לצמיתות? לא תתחיל הפעלה נוספת. המשימה נשארת ברשימה.",
   "missions.scheduling.when": "להפעיל כאשר",
   "missions.scheduling.connector.else": "אחרת",
   "missions.scheduling.connector.if": "אם",
