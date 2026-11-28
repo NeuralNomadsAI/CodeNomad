@@ -566,8 +566,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         (shell::ContextMeterDensity::DialOnly, false)
     };
     let meter = (project || active_conversation).then(|| context_meter(s, meter_density));
-    let show_center_title =
-        !left_open && !title.is_empty() && (row_budget == 0.0 || row_budget >= 320.0);
+    let show_center_title = !left_open && !title.is_empty();
     let center_title =
         show_center_title.then(|| shell::panel_title(title).key("chat-title").role("heading"));
     let retry = connection_retry(s);

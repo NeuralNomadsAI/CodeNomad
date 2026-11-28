@@ -67,7 +67,7 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
 
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,policy,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y),onRestart,attestedGet}){
   const text=value=>page.getByText(value,{exact:true})
-  const connecting=text(messages['instanceShell.connection.connecting'])
+  const connecting=page.getByRole('img',{name:messages['instanceShell.connection.connecting'],exact:true})
   const before=eventSources()
   assert(before>0)
   await command('live')
