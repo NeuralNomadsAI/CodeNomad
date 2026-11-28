@@ -33,7 +33,7 @@ pub(crate) const CANCEL_BUTTON: &str = "clone-cancel";
 pub(crate) const SUBMIT_BUTTON: &str = "clone-submit";
 
 struct InFlight {
-    connection_generation: u64,
+    request_id: u64,
     origin: Backend,
     rx: Receiver<Result<ClonedWorkspace, CloneWorkspaceError>>,
 }
@@ -41,6 +41,7 @@ struct InFlight {
 #[derive(Default)]
 pub(crate) struct CloneDialog {
     open: bool,
+    request_id: u64,
     repository_url: TextEdit,
     destination_path: TextEdit,
     clone_parent: Option<String>,
@@ -73,6 +74,7 @@ impl CloneDialog {
 
     pub(crate) fn dismiss(&mut self) {
         self.open = false;
+        self.request_id = self.request_id.wrapping_add(1);
         self.in_flight = None;
         self.return_focus = None;
         self.pending_restore_focus = None;
@@ -84,12 +86,16 @@ impl CloneDialog {
         self.dismiss();
     }
 
-    fn dismiss_from_dialog(&mut self) {
-        if self.is_busy() {
-            return;
+    fn hide_dialog(&mut self) {
+        self.open = false;
+        if self.in_flight.is_none() {
+            self.reset_form();
         }
+    }
+
+    fn dismiss_from_dialog(&mut self) {
         let restore = self.return_focus.take();
-        self.dismiss();
+        self.hide_dialog();
         self.pending_restore_focus = restore;
     }
 }
@@ -104,7 +110,9 @@ pub(crate) fn host_supports_clone(s: &State) -> bool {
 pub(crate) fn is_open(s: &State) -> bool {
     launcher_replaces_project(s)
         && s.screen.launcher().is_some_and(|l| {
-            l.clone_dialog.open && l.connection.is_some() && !l.authentication_required
+            l.clone_dialog.open
+                && (l.clone_dialog.is_busy()
+                    || (l.connection.is_some() && !l.authentication_required))
         })
 }
 
@@ -113,6 +121,17 @@ pub(crate) fn is_composing(s: &State) -> bool {
         && s.screen
             .launcher()
             .is_some_and(|l| l.clone_dialog.is_composing())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_preedit(s: &mut State, text: &str) {
+    if let Some(l) = s.screen.launcher_mut() {
+        l.clone_dialog.repository_url.ime(&rune::edit::Ime::Preedit(
+            text.to_owned(),
+            None,
+            Vec::new(),
+        ));
+    }
 }
 
 fn suggested_clone_parent(s: &State) -> Option<String> {
@@ -151,6 +170,23 @@ fn clone_destination_browse_path(s: &State) -> Option<String> {
     }
 }
 
+fn blocked_by_higher_modal(s: &State) -> bool {
+    if directory_browser::is_open(s) {
+        return true;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::chat::authentication::open(s) {
+        return true;
+    }
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+}
+
 pub(crate) fn open(s: &mut State, tx: &mut Tx) {
     if !host_supports_clone(s)
         || !workspace::input_ready(s)
@@ -160,12 +196,14 @@ pub(crate) fn open(s: &mut State, tx: &mut Tx) {
     {
         return;
     }
+    crate::shell::Panels::dismiss_outside(s, tx);
     super::dismiss_recent_menu(s, tx);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
-    l.clone_dialog.reset_form();
-    l.clone_dialog.in_flight = None;
+    if !l.clone_dialog.is_busy() {
+        l.clone_dialog.reset_form();
+    }
     l.clone_dialog.open = true;
     l.clone_dialog.return_focus = Some(TRIGGER_KEY.to_owned());
     l.clone_dialog.pending_restore_focus = None;
@@ -178,11 +216,11 @@ pub(crate) fn close(s: &mut State, tx: &mut Tx) {
         let Some(l) = s.screen.launcher_mut() else {
             return;
         };
-        if !l.clone_dialog.open || l.clone_dialog.is_busy() {
+        if !l.clone_dialog.open {
             return;
         }
         let restore = l.clone_dialog.return_focus.take();
-        l.clone_dialog.dismiss();
+        l.clone_dialog.hide_dialog();
         restore
     };
     if let Some(target) = target {
@@ -239,7 +277,9 @@ pub(crate) fn browse_destination_in_dialog(s: &mut State, tx: &mut Tx) {
         initial,
         Some(BROWSE_BUTTON.to_owned()),
         Some(Rc::new(|s, path, _| {
-            choose_parent(s, path);
+            if is_open(s) {
+                choose_parent(s, path);
+            }
         })),
         tx,
     );
@@ -253,9 +293,11 @@ pub(crate) fn browse_destination(s: &mut State, tx: &mut Tx) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let scope = s.input_scope.clone();
+            let directory = clone_destination_browse_path(s).map(std::path::PathBuf::from);
             tx.open_folder(
                 rune::file_dialog::FileDialogOptions {
                     title: t("folderSelection.clone.destination.title").into(),
+                    directory,
                     ..Default::default()
                 },
                 move |s: &mut State, result, tx| {
@@ -295,12 +337,13 @@ pub(crate) fn submit(s: &mut State, tx: &mut Tx) {
         return;
     };
     let cleanup = l.clone_dialog.cleanup;
-    let connection_generation = l.connection_generation;
+    l.clone_dialog.request_id = l.clone_dialog.request_id.wrapping_add(1);
+    let request_id = l.clone_dialog.request_id;
     let wake = l.wake.clone();
     let (out, rx) = bounded(1);
     l.clone_dialog.error = None;
     l.clone_dialog.in_flight = Some(InFlight {
-        connection_generation,
+        request_id,
         origin: backend.clone(),
         rx,
     });
@@ -318,11 +361,13 @@ pub(crate) fn submit(s: &mut State, tx: &mut Tx) {
 }
 
 pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
-    if !is_open(s) || directory_browser::is_open(s) {
+    if !is_open(s) || is_composing(s) || blocked_by_higher_modal(s) {
         return false;
     }
-    if event.key == Key::Escape && event.mods == Mods::default() && !tx.key_repeat() {
-        close(s, tx);
+    if event.key == Key::Escape && event.mods == Mods::default() {
+        if !tx.key_repeat() {
+            close(s, tx);
+        }
         return true;
     }
     false
@@ -341,10 +386,18 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
 
+    let has_in_flight = s
+        .screen
+        .launcher()
+        .is_some_and(|l| l.clone_dialog.in_flight.is_some());
     let unavailable = !launcher_replaces_project(s)
-        || s.screen
-            .launcher()
-            .is_none_or(|l| l.connection.is_none() || l.authentication_required);
+        || s.screen.launcher().is_none_or(|l| {
+            if has_in_flight {
+                l.connection.is_none() && !l.authentication_required
+            } else {
+                l.connection.is_none() || l.authentication_required
+            }
+        });
     if unavailable {
         if let Some(l) = s.screen.launcher_mut()
             && (l.clone_dialog.open || l.clone_dialog.in_flight.is_some())
@@ -358,14 +411,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let settled = s.screen.launcher_mut().and_then(|l| {
         let result = l.clone_dialog.in_flight.as_ref()?.rx.try_recv().ok()?;
         let flight = l.clone_dialog.in_flight.take()?;
-        let same_gen = flight.connection_generation == l.connection_generation;
-        Some((same_gen, flight.origin, result))
+        let same_req = flight.request_id == l.clone_dialog.request_id;
+        Some((same_req, flight.origin, result))
     });
 
-    let Some((same_gen, origin, result)) = settled else {
+    let Some((same_req, origin, result)) = settled else {
         return changed;
     };
-    if !same_gen {
+    if !same_req {
         return true;
     }
 
@@ -388,12 +441,21 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Err(err) => {
             if let Some(l) = s.screen.launcher_mut() {
-                let message = err.to_string();
-                l.clone_dialog.error = Some(if message.trim().is_empty() {
-                    t("rune.open_error").to_owned()
+                let server_message = match &err {
+                    CloneWorkspaceError::Conflict(Some(msg))
+                    | CloneWorkspaceError::BadRequest(Some(msg)) => {
+                        let trimmed = msg.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+                    }
+                    _ => None,
+                };
+                if l.clone_dialog.open {
+                    l.clone_dialog.error =
+                        Some(server_message.unwrap_or_else(|| t("rune.open_error").to_owned()));
                 } else {
-                    message
-                });
+                    l.clone_dialog.reset_form();
+                    l.error = Some("rune.open_error");
+                }
             }
         }
     }
@@ -522,7 +584,7 @@ pub(crate) fn append_overlay(s: &State, layer: &mut Vec<El>) {
     let cancel = dialog_theme::secondary_button(
         CANCEL_BUTTON,
         t("folderSelection.clone.dialog.cancel"),
-        busy,
+        false,
         {
             let scope = scope.clone();
             move |s: &mut State, tx| {
@@ -554,7 +616,7 @@ pub(crate) fn append_overlay(s: &State, layer: &mut Vec<El>) {
         DIALOG_KEY,
         t("folderSelection.clone.dialog.title"),
         t("directoryBrowser.close"),
-        busy || browser_open,
+        browser_open,
         repo_section,
         dest_section,
         cleanup,

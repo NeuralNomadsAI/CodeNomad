@@ -40,17 +40,26 @@ fn settle(rt: &mut Runtime<State>) {
     }
 }
 
-fn wait_until(rt: &mut Runtime<State>, label: &str, mut pred: impl FnMut(&State) -> bool) {
+fn wait_until_locale(
+    rt: &mut Runtime<State>,
+    locale: &'static str,
+    label: &str,
+    mut pred: impl FnMut(&State) -> bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !pred(&rt.state) {
         assert!(Instant::now() < deadline, "timeout waiting for {label}");
         rt.update(|s, tx| {
-            let _ = crate::poll(s, 0.0, tx);
+            let _ = strings::with_locale(locale, || crate::poll(s, 0.0, tx));
         });
         rt.frame(1.0 / 60.0);
         thread::sleep(Duration::from_millis(5));
     }
     settle(rt);
+}
+
+fn wait_until(rt: &mut Runtime<State>, label: &str, pred: impl FnMut(&State) -> bool) {
+    wait_until_locale(rt, "en", label, pred);
 }
 
 fn connected_state(backend: Backend) -> State {
@@ -70,6 +79,10 @@ struct MockCloneServer {
     clone_requests: Arc<Mutex<Vec<serde_json::Value>>>,
     workspace_requests: Arc<Mutex<Vec<serde_json::Value>>>,
     fail_conflict: Arc<AtomicBool>,
+    fail_unavailable: Arc<AtomicBool>,
+    fail_server_error: Arc<AtomicBool>,
+    hold_clone: Arc<AtomicBool>,
+    clone_arrived: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 }
 
@@ -92,59 +105,76 @@ impl MockCloneServer {
         let clone_requests = Arc::new(Mutex::new(Vec::new()));
         let workspace_requests = Arc::new(Mutex::new(Vec::new()));
         let fail_conflict = Arc::new(AtomicBool::new(false));
+        let fail_unavailable = Arc::new(AtomicBool::new(false));
+        let fail_server_error = Arc::new(AtomicBool::new(false));
+        let hold_clone = Arc::new(AtomicBool::new(false));
+        let clone_arrived = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let cr = clone_requests.clone();
         let wr = workspace_requests.clone();
         let fc = fail_conflict.clone();
+        let fu = fail_unavailable.clone();
+        let fs = fail_server_error.clone();
+        let hc = hold_clone.clone();
+        let ca = clone_arrived.clone();
         let st = stop.clone();
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 if st.load(Ordering::SeqCst) {
                     break;
                 }
-                let mut stream = stream;
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 4096];
-                let mut header_end = 0usize;
-                loop {
-                    match stream.read(&mut tmp) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            buf.extend_from_slice(&tmp[..n]);
-                            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                                header_end = pos + 4;
-                                break;
+                let cr = cr.clone();
+                let wr = wr.clone();
+                let fc = fc.clone();
+                let fu = fu.clone();
+                let fs = fs.clone();
+                let hc = hc.clone();
+                let ca = ca.clone();
+                let st_inner = st.clone();
+                thread::spawn(move || {
+                    let mut stream = stream;
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = Vec::new();
+                    let mut tmp = [0u8; 4096];
+                    let mut header_end = 0usize;
+                    loop {
+                        match stream.read(&mut tmp) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                buf.extend_from_slice(&tmp[..n]);
+                                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                                    header_end = pos + 4;
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-                if header_end == 0 {
-                    continue;
-                }
-                let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
-                let content_len = head
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().ok())
-                            .flatten()
-                    })
-                    .unwrap_or(0);
-                while buf.len() < header_end + content_len {
-                    match stream.read(&mut tmp) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                    if header_end == 0 {
+                        return;
                     }
-                }
-                let first = head.lines().next().unwrap_or("");
-                let mut parts = first.split_whitespace();
-                let method = parts.next().unwrap_or("");
-                let path = parts.next().unwrap_or("");
-                let body_end = (header_end + content_len).min(buf.len());
-                let body_str = String::from_utf8_lossy(&buf[header_end..body_end]);
-                let (status, body) = match (method, path) {
+                    let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+                    let content_len = head
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    while buf.len() < header_end + content_len {
+                        match stream.read(&mut tmp) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                        }
+                    }
+                    let first = head.lines().next().unwrap_or("");
+                    let mut parts = first.split_whitespace();
+                    let method = parts.next().unwrap_or("");
+                    let path = parts.next().unwrap_or("");
+                    let body_end = (header_end + content_len).min(buf.len());
+                    let body_str = String::from_utf8_lossy(&buf[header_end..body_end]);
+                    let (status, body) = match (method, path) {
                     ("GET", p) if p.starts_with("/api/meta") => {
                         let caps = if advertise_clone {
                             json!(["workspace-clone", "temporary-workspaces"])
@@ -163,6 +193,10 @@ impl MockCloneServer {
                             .to_string(),
                         )
                     }
+                    ("GET", p) if p.starts_with("/api/storage/config/ui") => (
+                        "200 OK",
+                        json!({ "settings": {} }).to_string(),
+                    ),
                     ("GET", p) if p.starts_with("/api/filesystem") => (
                         "200 OK",
                         json!({
@@ -185,7 +219,19 @@ impl MockCloneServer {
                         let parsed: serde_json::Value =
                             serde_json::from_str(&body_str).unwrap_or(json!({}));
                         cr.lock().unwrap().push(parsed.clone());
-                        if fc.load(Ordering::SeqCst) {
+                        ca.store(true, Ordering::SeqCst);
+                        let wait_end = Instant::now() + Duration::from_secs(5);
+                        while hc.load(Ordering::SeqCst)
+                            && !st_inner.load(Ordering::SeqCst)
+                            && Instant::now() < wait_end
+                        {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        if fs.load(Ordering::SeqCst) {
+                            ("500 Internal Server Error", String::new())
+                        } else if fu.load(Ordering::SeqCst) {
+                            ("503 Service Unavailable", "{}".to_owned())
+                        } else if fc.load(Ordering::SeqCst) {
                             (
                                 "409 Conflict",
                                 json!({ "error": "Destination folder already exists." }).to_string(),
@@ -235,11 +281,12 @@ impl MockCloneServer {
                     ),
                     _ => ("200 OK", json!({}).to_string()),
                 };
-                let resp = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(resp.as_bytes());
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                });
             }
         });
         Self {
@@ -247,6 +294,10 @@ impl MockCloneServer {
             clone_requests,
             workspace_requests,
             fail_conflict,
+            fail_unavailable,
+            fail_server_error,
+            hold_clone,
+            clone_arrived,
             stop,
         }
     }
@@ -377,7 +428,7 @@ fn a6_clone_button_capability_gate_and_clone_modal_flow() {
     assert!(rt.find(clone_dialog::TRIGGER_KEY).is_some());
     assert!(rt.find("new-temporary-tab").is_some());
 
-    // Open modal, verify Escape closes it, then reopen to exercise the form flow.
+    // Open modal, verify Escape closes it and restores focus to the trigger, then reopen.
     tap(&mut rt, clone_dialog::TRIGGER_KEY);
     settle(&mut rt);
     assert!(clone_dialog::is_open(&rt.state));
@@ -390,6 +441,12 @@ fn a6_clone_button_capability_gate_and_clone_modal_flow() {
     rt.key_up(esc);
     settle(&mut rt);
     assert!(!clone_dialog::is_open(&rt.state));
+    let mut focused_after_esc = None;
+    rt.update(|_, tx| focused_after_esc = tx.focused().map(str::to_owned));
+    assert_eq!(
+        focused_after_esc.as_deref(),
+        Some(clone_dialog::TRIGGER_KEY)
+    );
 
     // Reopen modal for full validation + clone submission flow.
     tap(&mut rt, clone_dialog::TRIGGER_KEY);
@@ -496,6 +553,190 @@ fn a6_clone_button_capability_gate_and_clone_modal_flow() {
     let opened = srv.workspace_requests.lock().unwrap();
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0]["path"], "/Users/alice/clones/demo");
+    assert_eq!(
+        rt.state
+            .screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .map(|p| p.path.as_str()),
+        Some("/Users/alice/clones/demo")
+    );
+}
+
+fn french(s: &State, cx: &mut rune::Cx<State>) -> rune::El {
+    strings::with_locale("fr", || crate::view(s, cx))
+}
+
+#[test]
+fn a6_ime_higher_modal_french_errors_and_dismissable_clone_across_renewal() {
+    let srv = MockCloneServer::start(true);
+    let backend = Backend::unauthenticated(&srv.base).unwrap();
+    let rt_tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _ = rt_tokio.block_on(backend.attest_server()).unwrap();
+
+    let mut s = connected_state(backend);
+    if let Some(l) = s.screen.launcher_mut() {
+        l.server_id = Some("srv-clone".into());
+    }
+    settings::fixture_state(&mut s, json!({}));
+    let mut rt = Runtime::new(s, french, (1120.0, 800.0), Env::new(true, 1.0));
+    rt.on_key =
+        Some(|s, event, tx| strings::with_locale("fr", || crate::shell::keys(s, event, tx)));
+    let hydrate_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        rt.update(|s, tx| {
+            let _ = strings::with_locale("fr", || crate::poll(s, 0.0, tx));
+        });
+        rt.frame(1.0 / 60.0);
+        if rt.find("preferences-bootstrap").is_none()
+            && rt.find(clone_dialog::TRIGGER_KEY).is_some()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < hydrate_deadline,
+            "timeout waiting for French home hydration"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    settle(&mut rt);
+
+    let esc = rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    };
+
+    // 1. Escape during IME composition must not close the clone modal.
+    tap(&mut rt, clone_dialog::TRIGGER_KEY);
+    settle(&mut rt);
+    assert!(clone_dialog::is_open(&rt.state));
+    clone_dialog::fixture_preedit(&mut rt.state, "ni");
+    rt.key(esc.clone());
+    settle(&mut rt);
+    rt.key_up(esc.clone());
+    settle(&mut rt);
+    assert!(
+        clone_dialog::is_open(&rt.state),
+        "Escape during IME composition must leave clone modal open"
+    );
+    clone_dialog::fixture_preedit(&mut rt.state, "");
+    settle(&mut rt);
+
+    // 2. Escape when directory_browser is open on top closes only directory_browser.
+    rt.update(clone_dialog::browse_destination_in_dialog);
+    wait_until(&mut rt, "directory browser over clone modal", |s| {
+        crate::shell::directory_browser::is_open(s)
+    });
+    rt.key(esc.clone());
+    settle(&mut rt);
+    rt.key_up(esc.clone());
+    settle(&mut rt);
+    assert!(!crate::shell::directory_browser::is_open(&rt.state));
+    assert!(
+        clone_dialog::is_open(&rt.state),
+        "Closing directory browser with Escape must keep clone modal open underneath"
+    );
+
+    // 3. Detail-less 503 and 500 in locale "fr" render French fallback with zero English strings.
+    tap(&mut rt, clone_dialog::REPO_URL_FIELD);
+    rt.paste("https://github.com/NeuralNomadsAI/demo.git");
+    settle(&mut rt);
+    tap(&mut rt, clone_dialog::DEST_PATH_FIELD);
+    rt.paste("/Users/alice/clones/demo");
+    settle(&mut rt);
+
+    let french_fallback = strings::with_locale("fr", || strings::t("rune.open_error"));
+
+    srv.fail_unavailable.store(true, Ordering::SeqCst);
+    tap(&mut rt, clone_dialog::SUBMIT_BUTTON);
+    wait_until_locale(&mut rt, "fr", "503 unavailable settled", |s| {
+        s.screen
+            .launcher()
+            .is_some_and(|l| !l.clone_dialog.is_busy())
+    });
+    let a11y_503 = rt.accessibility_json().to_string();
+    assert!(
+        a11y_503.contains(french_fallback),
+        "503 error must render French fallback ({french_fallback}): {a11y_503}"
+    );
+    assert!(!a11y_503.contains("workspace cloning unavailable"));
+
+    srv.fail_unavailable.store(false, Ordering::SeqCst);
+    srv.fail_server_error.store(true, Ordering::SeqCst);
+    tap(&mut rt, clone_dialog::SUBMIT_BUTTON);
+    wait_until_locale(&mut rt, "fr", "500 server error settled", |s| {
+        s.screen
+            .launcher()
+            .is_some_and(|l| !l.clone_dialog.is_busy())
+    });
+    let a11y_500 = rt.accessibility_json().to_string();
+    assert!(
+        a11y_500.contains(french_fallback),
+        "500 error must render French fallback ({french_fallback}): {a11y_500}"
+    );
+    assert!(!a11y_500.contains("HTTP 500"));
+
+    // 4. Escape closes modal while clone is in-flight, and same-server renewal + completion still opens workspace.
+    srv.fail_server_error.store(false, Ordering::SeqCst);
+    srv.hold_clone.store(true, Ordering::SeqCst);
+    srv.clone_arrived.store(false, Ordering::SeqCst);
+    tap(&mut rt, clone_dialog::SUBMIT_BUTTON);
+    let arrived_deadline = Instant::now() + Duration::from_secs(5);
+    while !srv.clone_arrived.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < arrived_deadline,
+            "clone POST never reached mock server"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // Dismissing via Escape while clone is running closes the dialog and restores focus without trapping Home.
+    rt.key(esc.clone());
+    settle(&mut rt);
+    rt.key_up(esc);
+    settle(&mut rt);
+    assert!(
+        !clone_dialog::is_open(&rt.state),
+        "Escape during in-flight clone must close modal instead of trapping Home"
+    );
+    let mut focused_after_busy_esc = None;
+    rt.update(|_, tx| focused_after_busy_esc = tx.focused().map(str::to_owned));
+    assert_eq!(
+        focused_after_busy_esc.as_deref(),
+        Some(clone_dialog::TRIGGER_KEY)
+    );
+
+    // Managed renewal with a fresh Backend for the same server_id increments connection_generation.
+    let renewed = Backend::unauthenticated(&srv.base).unwrap();
+    let _ = rt_tokio.block_on(renewed.attest_server()).unwrap();
+    let gen_before = rt
+        .state
+        .screen
+        .launcher()
+        .map(|l| l.connection_generation())
+        .unwrap();
+    rt.update(|s, tx| {
+        crate::launcher::apply_connected(s, renewed, None, "srv-clone".into(), None, tx);
+    });
+    settle(&mut rt);
+    let gen_after = rt
+        .state
+        .screen
+        .launcher()
+        .map(|l| l.connection_generation())
+        .unwrap();
+    assert_ne!(gen_before, gen_after);
+
+    // Release the clone response and verify the cloned workspace still opens cleanly.
+    srv.hold_clone.store(false, Ordering::SeqCst);
+    wait_until(&mut rt, "clone completes after dismiss + renewal", |s| {
+        s.screen
+            .launcher()
+            .is_some_and(|l| l.project.is_some() && !l.pending)
+    });
     assert_eq!(
         rt.state
             .screen

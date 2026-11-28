@@ -486,14 +486,6 @@ pub(crate) fn recent_menu_open(s: &State) -> bool {
         .is_some_and(|l| l.open_recent_menu.is_some())
 }
 
-pub(crate) fn clone_dialog_open(s: &State) -> bool {
-    clone_dialog::is_open(s)
-}
-
-pub(crate) fn clone_dialog_composing(s: &State) -> bool {
-    clone_dialog::is_composing(s)
-}
-
 pub(crate) fn dismiss_recent_menu(s: &mut State, tx: &mut Tx) {
     let open = s.screen.launcher().and_then(|l| l.open_recent_menu.clone());
     if let Some(key) = open {
@@ -1649,6 +1641,10 @@ fn apply_connected(
     l.managed_renewal_failed_for = None;
     l.managed_renewal_attempts = 0;
     l.projects_refresh = None;
+    let same_server = l
+        .server_id
+        .as_deref()
+        .is_some_and(|prev_id| !prev_id.is_empty() && prev_id == server_id);
     let connection_changed = !reauthenticated
         && l.connection
             .as_ref()
@@ -1661,7 +1657,9 @@ fn apply_connected(
         l.last_patched_recents = None;
         l.version_meta = None;
         l.meta_flight = None;
-        l.clone_dialog.reset_for_new_connection();
+        if !same_server {
+            l.clone_dialog.reset_for_new_connection();
+        }
     }
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);

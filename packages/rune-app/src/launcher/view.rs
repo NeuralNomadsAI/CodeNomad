@@ -246,11 +246,11 @@ pub fn view(s: &State) -> El {
             "new-temporary-tab",
             &icons::HOURGLASS,
             t("newTab.temporary"),
-            settings::with_shortcut_label(
+            Some(settings::with_shortcut_label(
                 s,
                 t("folderSelection.temporary.description"),
                 "new-temporary-instance",
-            ),
+            )),
             !temporary::can_create(s),
             screen::action_tx(&scope, |s, tx| {
                 temporary::create(s, tx);
@@ -262,7 +262,7 @@ pub fn view(s: &State) -> El {
             launcher::clone_dialog::TRIGGER_KEY,
             &theme::GIT_BRANCH,
             t("folderSelection.clone.button"),
-            t("folderSelection.clone.button").to_owned(),
+            None,
             l.pending || waiting,
             screen::action_tx(&scope, |s, tx| {
                 launcher::clone_dialog::open(s, tx);
@@ -410,10 +410,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     let Some(l) = s.screen.launcher() else {
         return;
     };
-    if l.connection.is_none() || l.authentication_required {
-        return;
-    }
-    if l.open_recent_menu.is_some() {
+    if l.connection.is_some() && !l.authentication_required && l.open_recent_menu.is_some() {
         let waiting = !workspace::input_ready(s);
         let recents = recent::collect_recent_entries(s);
         for entry in &recents {

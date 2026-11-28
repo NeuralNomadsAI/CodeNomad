@@ -132,8 +132,10 @@ export async function journeyBrowser(host, web, report, executablePath){
     })
     await step('open-project',async()=>{
       await press(button(label('folderSelection.servers.dialog.connect')))
-      await input(label('instanceInfo.labels.folder'),project)
-      await page.keyboard.press('Enter')
+      await press(button(label('folderSelection.browseMenu.thisComputer')))
+      await button(label('directoryBrowser.openCurrent')).waitFor()
+      await input(label('directoryBrowser.currentFolder.inputAriaLabel'),project)
+      await press(button(label('directoryBrowser.openCurrent')))
       await named('tab',project).waitFor()
     })
     let id

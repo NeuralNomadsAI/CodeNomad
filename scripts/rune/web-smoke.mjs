@@ -457,8 +457,8 @@ try {
           const folderLabel = messages['directoryBrowser.currentFolder.inputAriaLabel']
           const folderName = path.basename(values.project)
           const waitFolderValue = expected => page.waitForFunction(
-            ({label, expected}) => [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
-              .some(el => el.getAttribute('aria-label') === label && el.textContent === expected),
+            ({label, expected}) => [...document.querySelectorAll('textarea, input, [data-rune-a11y] [role="textbox"]')]
+              .some(el => el.getAttribute('aria-label') === label && ((typeof el.value === 'string' && el.value === expected) || el.textContent === expected)),
             {label: folderLabel, expected},
             {timeout: 15_000},
           )

@@ -130,8 +130,13 @@ pub(super) fn blocked_by_higher_modal(s: &State) -> bool {
     shortcuts::authentication_required(s)
 }
 
-fn blocked_for_open(s: &State) -> bool {
-    blocked_by_higher_modal(s) || shortcuts::modal_open(s)
+fn blocked_for_open(s: &State, allow_clone_dialog: bool) -> bool {
+    blocked_by_higher_modal(s)
+        || if allow_clone_dialog {
+            shortcuts::modal_open_excluding_clone(s)
+        } else {
+            shortcuts::modal_open(s)
+        }
 }
 
 pub(crate) fn is_open(s: &State) -> bool {
@@ -188,7 +193,7 @@ pub(crate) fn open_with_callback(
     on_select: Option<SelectCallback>,
     tx: &mut Tx,
 ) -> bool {
-    if is_open(s) || blocked_for_open(s) || !can_open(s) {
+    if is_open(s) || blocked_for_open(s, on_select.is_some()) || !can_open(s) {
         return false;
     }
     let Some((backend, connection_generation, default_seed)) = s.screen.launcher().and_then(|l| {

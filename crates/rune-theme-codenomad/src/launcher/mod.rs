@@ -76,18 +76,19 @@ pub fn shell(
         .full_width()
         .max_w(SHELL_MAX_WIDTH)
         .separate(Space::Md)
-        .children(actions)
         .child(hero)
         .child(main.grow(1.0))
         .children(status)
         .children(footer);
-    let container = row()
+    let centered = row().full_width().grow(1.0).justify_center().child(inner);
+    let container = col()
         .full_width()
         .grow(1.0)
-        .justify_center()
         .px(pad_x)
         .py(pad_y)
-        .child(inner);
+        .separate(Space::Sm)
+        .children(actions)
+        .child(centered);
     let scroll_body = col()
         .full_width()
         .remaining()
@@ -135,23 +136,43 @@ pub fn top_action_button<S: 'static>(
     key: &str,
     glyph: &'static Icon,
     label: &str,
-    help: String,
+    help: Option<String>,
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
-    let action = Rc::new(press);
-    let on_press = action.clone();
-    let btn = Button::new(label)
-        .icon(glyph)
-        .disabled(disabled)
-        .help(help)
-        .on_press_tx(move |s, tx| on_press(s, tx))
-        .build(&kit(dark()))
-        .key(key.to_owned());
-    if disabled {
-        btn
+    let t = tokens(dark());
+    let height = t.length(Length::ControlSmall).px();
+    let icon_size = t.length(Length::Icon).px();
+    let mut label_style = t.text(TextRole::Small);
+    label_style.weight = t.number("font-weight-medium").px();
+    let ink = if disabled {
+        t.color("text-muted")
     } else {
-        btn.on_key(layout::enter_action(action))
+        t.color("text-secondary")
+    };
+    let mut btn = row()
+        .h(height)
+        .center()
+        .px(t.space(Space::Sm).px())
+        .separate(Space::Xs)
+        .fill(t.color("surface-control"))
+        .border(1.0, t.color("border-base"))
+        .role("button")
+        .label(label)
+        .key(key.to_owned())
+        .child(icon(glyph, icon_size).color(ink).a11y_hidden())
+        .child(text(label).font(label_style).color(ink).a11y_hidden());
+    if let Some(help) = help {
+        btn = btn.help(help);
+    }
+    if disabled {
+        btn.disabled(true)
+    } else {
+        let action = Rc::new(press);
+        let on_press = action.clone();
+        btn.hover(t.color("surface-hover"))
+            .on_press_tx(move |s, tx| on_press(s, tx))
+            .on_key(layout::enter_action(action))
     }
 }
 

@@ -52,7 +52,7 @@ export async function guardJourney(context,{origin,project,web,refused,attestedF
       return {status:response.status,headers:outHeaders,ok:response.ok,bytes,fulfill:()=>route.fulfill({status:response.status,headers:outHeaders,body:bytes})}
     }finally{clearTimeout(timer)}
   }
-  const policy=workspacePolicy({origin,project,assets:await bundleAssetPaths(web),allowOwned({method,path,body,query,native}){
+  const policy=workspacePolicy({origin,project,assets:await bundleAssetPaths(web),directoryBrowser:true,allowOwned({method,path,body,query,native}){
     if(native){
       if(query.has('directory')&&query.get('directory')!==project)return false
       if(method==='GET')return /^(agent|command|model(?:\/default)?|provider|location|project|session|session\/active|vcs\/status)$/.test(path)

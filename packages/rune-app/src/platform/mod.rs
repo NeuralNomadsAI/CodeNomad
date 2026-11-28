@@ -420,8 +420,8 @@ pub fn scene_is(name: &str) -> bool {
     }
 }
 /// Whether this machine's folder picker can name a folder of the server. A browser has none,
-/// and a phone's folders aren't the server's: there the launcher lists the server's own
-/// (`launcher/folders.rs`).
+/// and a phone's folders aren't the server's: there the launcher opens the shared server
+/// directory browser (`shell/directory_browser`).
 pub fn folder_picker_available() -> bool {
     cfg!(not(any(target_arch = "wasm32", target_os = "android")))
 }

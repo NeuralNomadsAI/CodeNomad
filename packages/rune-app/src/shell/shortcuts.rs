@@ -26,7 +26,7 @@ const SESSION_TAB_IDS: [&str; 9] = [
     "session-tab-9",
 ];
 
-pub(super) fn modal_open(s: &State) -> bool {
+pub(super) fn modal_open_excluding_clone(s: &State) -> bool {
     #[cfg(target_arch = "wasm32")]
     if crate::platform::pairing::required(s) {
         return true;
@@ -54,13 +54,16 @@ pub(super) fn modal_open(s: &State) -> bool {
                 || s.transcript_display.pictures.preview_open()))
 }
 
+pub(super) fn modal_open(s: &State) -> bool {
+    modal_open_excluding_clone(s) || crate::launcher::clone_dialog::is_open(s)
+}
+
 fn overlay_open(s: &State) -> bool {
     s.composer.picker.open()
         || s.agent.as_ref().is_some_and(|a| a.picker)
         || crate::git::overlay_open(s)
         || crate::timeline::search::overlay_open(s)
         || crate::launcher::recent_menu_open(s)
-        || crate::launcher::clone_dialog_open(s)
         || (!s.screen.is_launcher() && s.transcript_display.messages.menu_open())
 }
 
@@ -76,7 +79,7 @@ fn any_editor_composing(s: &State) -> bool {
         || crate::git::is_composing(s)
         || workspace::missions_composing(s)
         || crate::timeline::search::is_composing(s)
-        || crate::launcher::clone_dialog_composing(s)
+        || crate::launcher::clone_dialog::is_composing(s)
         || s.screen.launcher().is_some_and(|l| {
             l.address.is_composing()
                 || l.password.is_composing()

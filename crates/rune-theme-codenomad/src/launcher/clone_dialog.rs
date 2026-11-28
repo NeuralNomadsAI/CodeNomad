@@ -4,7 +4,7 @@ use crate::{
     layout::{self, Layout, dark},
     tokens,
 };
-use rune::{El, KeyEvent, Tx, col, text};
+use rune::{El, KeyEvent, Tx, col, row, text};
 use rune_kit::{Button, ButtonVariant, Checkbox};
 use std::rc::Rc;
 
@@ -64,13 +64,28 @@ pub fn primary_button<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
+    let is_dark = dark();
+    let t = tokens(is_dark);
+    let mut theme = kit(is_dark).clone();
+    let fill = t.color("accent-primary");
+    let hover = t.color("accent-hover");
+    let ink = t.color("text-on-accent");
+    theme.c.bg_contrast = fill;
+    theme.c.bg_accent = fill;
+    theme.c.contrast_hover = hover;
+    theme.c.contrast_pressed = hover;
+    theme.c.submit_hover = hover;
+    theme.c.submit_fg = ink;
+    theme.c.submit_icon = ink;
+    theme.c.text_contrast = ink;
+    theme.c.icon_contrast = ink;
     let action = Rc::new(press);
     let on_press = action.clone();
     let btn = Button::new(label)
         .variant(ButtonVariant::Submit)
         .disabled(disabled)
         .on_press_tx(move |s, tx| on_press(s, tx))
-        .build(&kit(dark()))
+        .build(&theme)
         .key(key.to_owned());
     if disabled {
         btn
@@ -84,7 +99,7 @@ pub fn modal<S: 'static>(
     key: &str,
     title: &str,
     close_label: &str,
-    busy: bool,
+    close_disabled: bool,
     repo_section: El,
     dest_section: El,
     cleanup: El,
@@ -96,7 +111,9 @@ pub fn modal<S: 'static>(
     layer: &mut Vec<El>,
 ) {
     let on_close = Rc::new(on_close);
-    let footer = layout::action_row()
+    let footer = row()
+        .full_width()
+        .justify_end()
         .separate(Space::Sm)
         .child(cancel)
         .child(submit);
@@ -118,8 +135,8 @@ pub fn modal<S: 'static>(
         .open(true)
         .fit()
         .width(DIALOG_WIDTH)
-        .close_disabled(busy)
-        .click_outside(!busy)
+        .close_disabled(close_disabled)
+        .click_outside(!close_disabled)
         .child(body)
         .on_close(move |s: &mut S| on_close(s))
         .build(&kit(dark()), layer);
