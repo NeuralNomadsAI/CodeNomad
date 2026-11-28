@@ -182,7 +182,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "У этого календаря нет будущего времени.",
   "missions.scheduling.error.capability": "Планирование недоступно. Сохраните черновик или удалите критерии запуска.",
   "missions.scheduling.error.unsupported": "Эти условия запуска нельзя запланировать.",
-  "missions.scheduling.error.coordinatorProfile": "Существующий разговор не использует агента, модель и мышление координатора. Приведите их в соответствие или используйте новую сессию.",
   "missions.scheduleList.activationRefused.layer.project": "Конфигурация проекта",
   "missions.scheduleList.activationRefused.layer.global": "Глобальная конфигурация",
   "missions.scheduleList.activationRefused.layer.inherited": "Унаследованная конфигурация",

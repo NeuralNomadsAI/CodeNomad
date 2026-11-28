@@ -297,12 +297,9 @@ test("transport selections and durable defaults require complete profiles and ex
   }
 })
 
-test("inspect start creates no standalone intention on mismatch, document refusal or journal failure", async () => {
+test("inspect start creates no standalone intention on document refusal or journal failure", async () => {
   const f = fixture()
   const start = { objective: "Inspect", template: "custom" as const }
-  f.setPreferences([{ template: "all", profiles: { coordinator: { agent: "different" } } }])
-  await assert.rejects(f.control.inspect(f.coordinator, { start }, "mismatch"), /Missions preferences.*profiles\.coordinator/)
-  f.setPreferences([])
   f.failBeforeDocument()
   await assert.rejects(f.control.inspect(f.coordinator, { start }, "document"), /Document write unavailable/)
   f.fail()
