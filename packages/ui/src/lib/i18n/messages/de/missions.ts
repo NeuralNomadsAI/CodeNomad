@@ -326,7 +326,6 @@ export const missionMessages = {
   "missions.control.report.late": "Nach Aufgabenrückzug oder Missionsstopp gemeldet",
   "missions.control.history.before": "Vorher",
   "missions.control.history.after": "Nachher",
-  "missions.recurrence.instructionsTooLong": "Wiederkehrende Startanweisungen auf {limit} Zeichen begrenzen.",
   "missions.recurrence.sourceInputTooLong": "Anweisungen und Kontext verfolgter Gespräche müssen in {limit} Zeichen passen. Anweisungen kürzen oder Gespräche entfernen.",
   "missions.recurrence.sourceLocationUnavailable": "Aktualisieren Sie den Quellenort.",
   "missions.cleanup.error.revisionConflict": "Mission geändert. Abbrechen und vor dem Löschen erneut auswählen.",

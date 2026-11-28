@@ -2,13 +2,12 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId } fro
 import { DragDropProvider, DragDropSensors, SortableProvider, closestCenter, type DragEventHandler } from "@thisbeyond/solid-dnd"
 import { Plus } from "lucide-solid"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
-import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type MissionSourcePage, type SelectedSource } from "./mission-scheduling-sources"
 import { isMissionEventKind, isMissionPickerSource, missionCardConnectors, missionSchedulingPolicy, MissionSchedulingError, MISSION_CRITERIA_LIMIT, newMissionCriterion,
-  newMissionSchedulingDraft, type MissionSchedulingDraft } from "./mission-scheduling-data"
+  newMissionSchedulingDraft, orderMissionCriteria, type MissionSchedulingDraft } from "./mission-scheduling-data"
 
 
 /** Shared controlled scheduling fields. This component performs no reads or mutations. */
@@ -16,7 +15,6 @@ export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
   repository?: MissionRepositoryDiscovery
   paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined
-  capability: "available" | "activatable" | "missing" | "loading"
   active?: () => boolean
   /** A started Mission keeps the criteria it was created with. */
   started?: boolean; disabled?: boolean
@@ -26,17 +24,14 @@ export function MissionScheduling(props: {
   const { t } = useI18n(), description = createUniqueId(), errorID = createUniqueId(), zoneList = createUniqueId(), whenID = createUniqueId()
   const zones = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? []
   const patch = (change: Partial<MissionSchedulingDraft>) => props.onChange({ ...props.draft, ...change })
-  const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next })
+  const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: orderMissionCriteria(next) })
   const retained = () => props.draft.stored?.reason
   const locked = () => !!props.disabled || !!props.started || !!retained() || props.active?.() === false
-  const unavailable = () => props.capability === "missing" || props.capability === "loading"
   const criteria = () => props.draft.criteria
   const result = createMemo((): { error?: string; index?: number; policy?: MissionLaunchPolicy } => {
     try {
-      const policy = missionSchedulingPolicy(props.draft, props.directory), calendar = requiresMissionCalendar(policy)
-      if (props.capability === "loading" && calendar) return {}
-      if (unavailable() && calendar) return { error: "capability" }
-       const missing = criteria().findIndex(row => isMissionPickerSource(row.kind)
+      const policy = missionSchedulingPolicy(props.draft, props.directory)
+      const missing = criteria().findIndex(row => isMissionPickerSource(row.kind)
         && !props.sources[row.kind]?.some(item => item.id === row.source))
       if (missing >= 0) return props.paging?.(criteria()[missing].kind as SelectedSource, criteria()[missing].source)?.loading() ? {} : { error: "source", index: missing }
       return { policy }
@@ -56,14 +51,13 @@ export function MissionScheduling(props: {
     return t(visibleError() === "source" ? row?.kind === "files-changed" ? "missions.scheduling.error.files" : "missions.scheduling.chooseSource"
       : `missions.scheduling.error.${visibleError()}`)
   }
-  const reason = () => props.started ? t("missions.scheduling.lock.journal")
-    : props.capability === "missing" && result().error !== "capability" ? t("missions.scheduling.capability.missing") : undefined
+  const reason = () => props.started ? t("missions.scheduling.lock.journal") : undefined
   const rowError = (index: number) => visibleError() && result().index === index ? errorID : undefined
   const ids = createMemo(() => criteria().map(row => row.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]) })
   // While dragging, the connectors follow the order the cards are shown in (the sortable's
   // projected order); the stored order changes only on drop.
   const [preview, setPreview] = createSignal<string[]>()
-  const shown = createMemo(() => (preview() ?? ids()).map(id => criteria().find(row => row.id === id)!).filter(Boolean))
+  const shown = createMemo(() => orderMissionCriteria((preview() ?? ids()).map(id => criteria().find(row => row.id === id)!).filter(Boolean)))
   const connectors = createMemo(() => missionCardConnectors(shown()))
   const connectorOf = (id: string) => {
     const position = shown().findIndex(row => row.id === id)
@@ -71,16 +65,20 @@ export function MissionScheduling(props: {
   }
   const roleText = (index: number) => index === 0 ? t("missions.scheduling.when")
     : t(`missions.scheduling.connector.${missionCardConnectors(criteria())[index - 1]}`)
+  // A new card follows the last one, so it stays where it is added: an event after events, a schedule otherwise.
+  const addedKind = () => { const last = criteria().at(-1); return last && isMissionEventKind(last.kind) ? "branch-commits" : "daily" }
   const [moved, setMoved] = createSignal("")
   let list: HTMLDivElement | undefined
   // Cards are keyed by id: a move reorders their nodes without remounting, the grip keeps
   // focus (restored if the browser drops it) and a live region announces the new place.
   const reorder = (from: number, to: number) => {
     if (from === to || to < 0 || to >= criteria().length) return
-    const next = [...criteria()], [row] = next.splice(from, 1)
-    next.splice(to, 0, row)
+    const rows = [...criteria()], [row] = rows.splice(from, 1)
+    rows.splice(to, 0, row)
+    const next = orderMissionCriteria(rows), position = next.indexOf(row)
+    if (position === from) return
     patchCriteria(next)
-    setMoved(t("missions.scheduling.moved", { position: String(to + 1), count: String(next.length), role: roleText(to) }))
+    setMoved(t("missions.scheduling.moved", { position: String(position + 1), count: String(next.length), role: roleText(position) }))
     queueMicrotask(() => list?.querySelector<HTMLElement>(`[data-criterion="${row.id}"] [data-drag-handle]`)?.focus())
   }
   const projected = (from: string, to: string) => {
@@ -129,8 +127,8 @@ export function MissionScheduling(props: {
           </DragDropSensors>
         </DragDropProvider>
         <p class="sr-only" aria-live="polite">{moved()}</p>
-        <button type="button" class="button-primary mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
-          onClick={() => patchCriteria([...criteria(), newMissionCriterion("daily", criteria())])}><Plus class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.scheduling.addCriterion")}</button>
+        <button type="button" class="button-primary mission-scheduling-add" disabled={criteria().length >= MISSION_CRITERIA_LIMIT}
+          onClick={() => patchCriteria([...criteria(), newMissionCriterion(addedKind(), criteria())])}><Plus class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.scheduling.addCriterion")}</button>
       </div>
       <Show when={criteria().length && zoneShown()}>
         <label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList}

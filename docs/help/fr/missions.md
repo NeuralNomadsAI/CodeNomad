@@ -94,11 +94,10 @@ Choisissez **Activité du dépôt → Événement**, puis les filtres éventuels
 
 Les contrôles de forge utilisent `gh`, `glab` ou `tea` sur l’hôte OpenCode, même avec CodeNomad fermé ; les dépôts publics peuvent être lus anonymement. Une forge auto-hébergée exige une CLI connectée à cet hôte. **github.com** propose aussi les notifications du compte et les alertes Dependabot via `gh` connecté, avec accès aux [notifications](https://docs.github.com/en/rest/activity/notifications) ou aux [alertes en lecture](https://docs.github.com/en/rest/dependabot/alerts). Les notifications conservent leur état de lecture ; les alertes incluent celles corrigées ou ignorées. Les notifications enregistrées avec un **Dépôt GitHub** vide couvrent le compte. Le premier démarrage fixe la référence.
 
-Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
+Un événement peut suivre des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
 
 - **ou** combine des horaires voisins, ou des événements voisins.
 - **si** : les événements après des horaires sont leurs conditions. À chaque horaire, l’un d’eux doit avoir changé depuis le dernier passage réussi.
-- **sinon** : les horaires après des événements sont un repli. Ils lancent seulement si les critères au-dessus n’ont lancé aucun passage depuis leur créneau précédent, ou leur activation. Les événements placés après ce repli le conditionnent.
 
 Les événements en tête peuvent lancer un passage à chaque nouvelle occurrence ; ils sont vérifiés toutes les 15 minutes. Le premier démarrage fixe la référence des sources. Un passage réussi la fait avancer ; un échec la conserve. Les passages ne se chevauchent pas.
 
@@ -110,7 +109,7 @@ Vous pouvez demander à un agent de préparer la programmation dans sa conversat
 
 Une politique enregistrée que l’éditeur ne sait pas représenter reste sous **Politique de lancement enregistrée** jusqu’à son remplacement explicite. Vérifiez les éventuelles limites de fin ou de nombre de passages avant de modifier.
 
-Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis choisissez une conversation, y compris pour une Mission immédiate. Avant Play, changez une sélection ou utilisez son bouton × pour la retirer.
+Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis choisissez une conversation, pour une Mission immédiate. Avant Play, changez une sélection ou utilisez son bouton × pour la retirer.
 
 Choisissez **Nouveaux commits sur une branche locale** pour suivre une référence Git locale, ou **Nouveaux commits sur une branche distante** et saisissez le nom de la branche (par exemple `dev`). La vérification interroge directement le dépôt distant détecté, sans `git fetch` local. Plusieurs commits entre deux vérifications déclenchent un seul passage.
 

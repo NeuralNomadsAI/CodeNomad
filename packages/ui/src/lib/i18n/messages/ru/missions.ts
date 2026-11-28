@@ -326,7 +326,6 @@ export const missionMessages = {
   "missions.control.report.late": "Отчёт получен после снятия задачи или остановки миссии",
   "missions.control.history.before": "До",
   "missions.control.history.after": "После",
-  "missions.recurrence.instructionsTooLong": "Ограничьте инструкции повторного запуска {limit} символами.",
   "missions.recurrence.sourceInputTooLong": "Инструкции и контекст разговоров должны помещаться в {limit} символов. Сократите инструкции или удалите отслеживаемые разговоры.",
   "missions.recurrence.sourceLocationUnavailable": "Обновите расположение источников.",
   "missions.cleanup.error.revisionConflict": "Миссия изменилась. Отмените и выберите её заново перед удалением.",
