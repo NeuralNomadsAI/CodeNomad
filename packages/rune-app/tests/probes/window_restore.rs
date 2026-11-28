@@ -80,13 +80,11 @@ fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
     wait(rt, "selected conversation", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, title: &str, id: &str) {
-    wait_control(rt, "folder-path");
-    type_text(
-        rt,
-        "folder-path",
-        &std::env::var("RUNE_TEST_FOLDER").unwrap(),
-    );
-    tap(rt, "open-folder");
+    wait_control(rt, "browse");
+    tap(rt, "browse");
+    rt.resolve_file_dialog(Some(std::env::var("RUNE_TEST_FOLDER").unwrap().into()))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
     wait(rt, "new occurrence", |s| {
         s.screen
             .launcher()

@@ -317,20 +317,6 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
         );
     }
 
-    // 3. Connected server's known projects (preserves `project-{id}` keys for probes/shortcuts).
-    for project in &l.projects {
-        let open_tab = crate::workspace::open_tab_for_folder(s, &project.path);
-        upsert(
-            &project.path,
-            None,
-            None,
-            project.temporary,
-            open_tab,
-            Some(project.id.clone()),
-            None,
-        );
-    }
-
     // Sort newest-accessed entries first; entries without a timestamp preserve insertion order.
     entries.sort_by(|a, b| match (a.last_accessed, b.last_accessed) {
         (Some(ta), Some(tb)) => tb.cmp(&ta),

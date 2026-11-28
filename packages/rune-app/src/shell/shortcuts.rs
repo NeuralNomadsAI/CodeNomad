@@ -60,6 +60,7 @@ fn overlay_open(s: &State) -> bool {
         || crate::git::overlay_open(s)
         || crate::timeline::search::overlay_open(s)
         || crate::launcher::recent_menu_open(s)
+        || crate::launcher::clone_dialog_open(s)
         || (!s.screen.is_launcher() && s.transcript_display.messages.menu_open())
 }
 
@@ -75,6 +76,7 @@ fn any_editor_composing(s: &State) -> bool {
         || crate::git::is_composing(s)
         || workspace::missions_composing(s)
         || crate::timeline::search::is_composing(s)
+        || crate::launcher::clone_dialog_composing(s)
         || s.screen.launcher().is_some_and(|l| {
             l.address.is_composing()
                 || l.password.is_composing()
@@ -139,7 +141,7 @@ fn home_focus_allows_browse(tx: &Tx) -> bool {
     match tx.focused() {
         None => true,
         Some(key) if key.ends_with("/input") => false,
-        Some("browse" | "open-folder" | "new-temporary-tab" | "refresh-projects") => true,
+        Some("browse" | "new-temporary-tab" | "refresh-projects") => true,
         Some(key) => {
             (key.starts_with("project-") && !key.starts_with("project-tabs-"))
                 || key.starts_with("recent-")

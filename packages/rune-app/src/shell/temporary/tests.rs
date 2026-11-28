@@ -228,7 +228,7 @@ fn connected_runtime(backend: Backend) -> Runtime<State> {
             let _ = crate::poll(s, 0.0, tx);
         });
         rt.frame(1.0 / 60.0);
-        if rt.find("open-folder").is_some() {
+        if rt.find("browse").is_some() {
             break;
         }
         assert!(

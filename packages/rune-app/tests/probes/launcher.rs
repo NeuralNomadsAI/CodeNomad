@@ -46,10 +46,12 @@ pub fn run() {
         s.screen.launcher().unwrap().connection.is_some()
     });
     assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
-    super::window_restore::wait_control(&mut rt, "folder-path");
+    super::window_restore::wait_control(&mut rt, "browse");
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
-    super::window_restore::type_text(&mut rt, "folder-path", "relative-invalid");
-    tap(&mut rt, "open-folder");
+    tap(&mut rt, "browse");
+    rt.resolve_file_dialog(Some("relative-invalid".into()))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
     wait(&mut rt, "bad folder", |s| {
         s.screen.launcher().unwrap().error.is_some()
     });

@@ -241,8 +241,8 @@ pub fn view(s: &State) -> El {
         );
     }
 
-    let top_actions = if temporary::host_supports_temporary(s) {
-        let temp = theme::top_action_button(
+    let temp = temporary::host_supports_temporary(s).then(|| {
+        theme::top_action_button(
             "new-temporary-tab",
             &icons::HOURGLASS,
             t("newTab.temporary"),
@@ -255,13 +255,23 @@ pub fn view(s: &State) -> El {
             screen::action_tx(&scope, |s, tx| {
                 temporary::create(s, tx);
             }),
-        );
-        Some(theme::top_actions(Some(temp), None))
-    } else {
-        None
-    };
+        )
+    });
+    let clone = launcher::clone_dialog::host_supports_clone(s).then(|| {
+        theme::top_action_button(
+            launcher::clone_dialog::TRIGGER_KEY,
+            &theme::GIT_BRANCH,
+            t("folderSelection.clone.button"),
+            t("folderSelection.clone.button").to_owned(),
+            l.pending || waiting,
+            screen::action_tx(&scope, |s, tx| {
+                launcher::clone_dialog::open(s, tx);
+            }),
+        )
+    });
+    let top_actions = (temp.is_some() || clone.is_some()).then(|| theme::top_actions(temp, clone));
 
-    // Left card: Browse (This computer + direct folder input).
+    // Left card: Browse (This computer -> native picker or shared directory browser dialog).
     let browse_count = recent::format_item_count(1);
     let browse_help = crate::platform::folder_picker_available().then(|| {
         settings::with_shortcut_label(
@@ -270,39 +280,15 @@ pub fn view(s: &State) -> El {
             "browse-folder",
         )
     });
-    let folder_input = theme::hinted_literal_field(&l.folder, t("instanceInfo.labels.folder"))
-        .disabled(waiting)
-        .label(t("instanceInfo.labels.folder"))
-        .on_edit(screen::edit(&scope, screen::Editor::Folder))
-        .on_submit(screen::action_tx(&scope, launcher::open))
-        .build(&field_kit(layout::dark()))
-        .key("folder-path");
-    let open_btn = button_tx(
-        "open-folder",
-        t("directoryBrowser.openCurrent"),
-        l.pending || waiting || l.folder.text.trim().is_empty(),
-        screen::action_tx(&scope, launcher::open),
-    );
-    let folder_rows = launcher::folders::rows(l, &scope, l.pending || waiting);
-    let mut direct_block = col()
-        .full_width()
-        .separate(Space::Sm)
-        .child(theme::inline_row(folder_input, open_btn));
-    if !folder_rows.is_empty() {
-        direct_block = direct_block.children(folder_rows);
-    }
-    let browse_body = col()
-        .full_width()
-        .child(theme::browse_row(
-            "browse",
-            &theme::LAPTOP,
-            t("folderSelection.browseMenu.thisComputer"),
-            None,
-            browse_help,
-            l.pending || waiting,
-            screen::action_tx(&scope, launcher::browse),
-        ))
-        .child(theme::section_padding(direct_block));
+    let browse_body = col().full_width().child(theme::browse_row(
+        "browse",
+        &theme::LAPTOP,
+        t("folderSelection.browseMenu.thisComputer"),
+        None,
+        browse_help,
+        l.pending || waiting,
+        screen::action_tx(&scope, launcher::browse),
+    ));
 
     let browse_card = theme::card(
         "launcher-browse-card",
@@ -424,17 +410,20 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     let Some(l) = s.screen.launcher() else {
         return;
     };
-    if l.connection.is_none() || l.authentication_required || l.open_recent_menu.is_none() {
+    if l.connection.is_none() || l.authentication_required {
         return;
     }
-    let waiting = !workspace::input_ready(s);
-    let recents = recent::collect_recent_entries(s);
-    for entry in &recents {
-        let key = recent::path_menu_key(&entry.path);
-        if l.open_recent_menu.as_deref() == Some(key.as_str()) {
-            let (_trigger, popover) = build_recent_menu(s, entry, l.pending || waiting);
-            layer.extend(popover);
-            break;
+    if l.open_recent_menu.is_some() {
+        let waiting = !workspace::input_ready(s);
+        let recents = recent::collect_recent_entries(s);
+        for entry in &recents {
+            let key = recent::path_menu_key(&entry.path);
+            if l.open_recent_menu.as_deref() == Some(key.as_str()) {
+                let (_trigger, popover) = build_recent_menu(s, entry, l.pending || waiting);
+                layer.extend(popover);
+                break;
+            }
         }
     }
+    launcher::clone_dialog::append_overlay(s, layer);
 }

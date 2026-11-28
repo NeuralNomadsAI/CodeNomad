@@ -618,21 +618,12 @@ fn browse_folder_wins_on_home_outside_inputs_and_defers_to_new_instance_otherwis
     assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 1);
     rt.state.screen.launcher_mut().unwrap().pending = false;
 
-    // Focused folder-path field: browse-folder does not fire; new-instance opens a tab.
-    let (x, y) = rt.find("folder-path").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    settle(&mut rt);
-    send_key(&mut rt, Key::Command('n'), primary_mods(false));
-    assert!(rt.file_dialog().is_none());
-    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
-
     // Focus in the tab strip on Home defers Ctrl+N to new-instance, not browse-folder.
     rt.update(|_, tx| tx.focus("project-tabs-new", true));
     settle(&mut rt);
     send_key(&mut rt, Key::Command('n'), primary_mods(false));
     assert!(rt.file_dialog().is_none());
-    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 3);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
 
     // Custom override separates browse-folder from new-instance.
     rt.update(|_, tx| tx.focus("browse", true));

@@ -227,6 +227,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if blank_cleanup::handle_key(s, event, tx)
         || temporary::handle_key(s, event, tx)
         || directory_browser::handle_key(s, event, tx)
+        || crate::launcher::clone_dialog::handle_key(s, event, tx)
         || new_instance_launcher::handle_key(s, event, tx)
         || tab_rename::handle_key(s, event, tx)
         || command_palette::handle_key(s, event, tx)

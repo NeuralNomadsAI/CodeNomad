@@ -363,6 +363,15 @@ fn connected_home_state() -> State {
         l.project = Some(open_project.clone());
     }
     workspace::opened(&mut s, &open_project);
+    crate::settings::fixture_state(
+        &mut s,
+        serde_json::json!({
+            "recentFolders": [
+                { "path": "/Users/alice/work/alpha", "lastAccessed": 2_000_000_000_000u64 },
+                { "path": "/Users/alice/work/beta", "lastAccessed": 1_900_000_000_000u64 }
+            ]
+        }),
+    );
     let mut rt = Runtime::new(s, crate::view, (1040.0, 720.0), Env::new(false, 1.0));
     rt.update(workspace::new_tab);
     rt.state
@@ -399,19 +408,25 @@ fn home_view_adapts_between_two_columns_on_desktop_and_stacked_on_mobile() {
         recent.rect
     );
     assert!(desktop.find("launcher-home-columns-desktop").is_some());
-    assert!(desktop.find("folder-path").is_some());
-    assert!(desktop.find("open-folder").is_some());
+    assert!(
+        desktop.find("folder-path").is_none(),
+        "A3: inline folder-path field must not appear on Home"
+    );
+    assert!(
+        desktop.find("open-folder").is_none(),
+        "A3: inline open-folder button must not appear on Home"
+    );
     assert!(desktop.find("browse").is_some());
     assert!(desktop.find("project-p-alpha").is_some());
     assert!(desktop.find("project-p-beta").is_some());
-    let open_rect = elements
+    let browse_btn = elements
         .iter()
-        .find(|n| n.key.as_deref() == Some("open-folder"))
-        .expect("open button")
+        .find(|n| n.key.as_deref() == Some("browse"))
+        .expect("This computer browse row")
         .rect;
     assert!(
-        open_rect[0] + open_rect[2] <= browse.rect[0] + browse.rect[2] + 0.5,
-        "open button must fit inside browse card: open={open_rect:?} browse={:?}",
+        browse_btn[0] + browse_btn[2] <= browse.rect[0] + browse.rect[2] + 0.5,
+        "browse row must fit inside browse card: row={browse_btn:?} browse={:?}",
         browse.rect
     );
 

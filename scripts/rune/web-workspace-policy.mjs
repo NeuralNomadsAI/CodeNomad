@@ -168,7 +168,7 @@ function hidesFixtureThinking(body){
       /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
 }
 
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,menuPrompt,missions=false,mobilePreferences=false,markerFilters=false,keyboardActions=false,allowOwned}){
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,menuPrompt,missions=false,mobilePreferences=false,directoryBrowser=false,markerFilters=false,keyboardActions=false,allowOwned}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const historyKeys=new Set(project?[project,path.join(path.dirname(project),'linked')]:[])
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
@@ -187,7 +187,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
       if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
-      if(mobilePreferences&&method==='GET'&&p==='/api/filesystem'){
+      if((mobilePreferences||directoryBrowser)&&method==='GET'&&p==='/api/filesystem'){
         const leaf=project?path.basename(project):null
         const target=query.get('path')
         return query.get('includeFiles')===''&&[...query.keys()].every(k=>k==='includeFiles'||k==='path')&&

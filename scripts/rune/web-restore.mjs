@@ -168,7 +168,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
     if(values['keyboard-viewport'])await resetKeyboard()
     context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:browserStorageState})
     page=await context.newPage();page.setDefaultTimeout(20000)
-    const policy=workspacePolicy({origin:url.origin,project:values.project,assets,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
+    const policy=workspacePolicy({origin:url.origin,project:values.project,assets,directoryBrowser:true,keyboardActions:Boolean(values['keyboard-viewport'])}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
       globalThis.__runeRestoreQuota=false
@@ -396,8 +396,16 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
       assert(record.storageLocal.length<=768,'Fixture proof collection exceeded its bound')
       return proof.events.filter(e=>e.sourceDocumentId===documentId)
     }
+      const openProject=async()=>{
+        await press(button(m['folderSelection.browseMenu.thisComputer']))
+        const openBtn=button(m['directoryBrowser.openCurrent'])
+        await openBtn.waitFor({state:'attached'})
+        for(const end=Date.now()+20000;await openBtn.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){assert(Date.now()<end,'directory browser open button remained disabled');await page.waitForTimeout(20)}
+        await type(m['directoryBrowser.currentFolder.inputAriaLabel'],values.project)
+        await press(openBtn)
+      }
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});await boot();await connect()
-      await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
+      await openProject()
       if(values['keyboard-viewport']){
         const headerHeight=palette.numbers[spec.colorScheme]['panel-header-height']
         const panelPad=palette.numbers[spec.colorScheme]['space-sm']
@@ -432,7 +440,7 @@ const resetKeyboard=()=>new Promise((resolve,reject)=>{
         continue
       }
       await press(button(m['instanceTabs.new.ariaLabel']))
-      await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
+      await openProject()
       await openSessions();await press(button(m['rune.more']));await press(sessionRow('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)
       await selected(1);await saved([draftA,draftB]);await capture('before-reload')
       record.syntheticBFCache=await page.evaluate(({key,released,proof})=>{

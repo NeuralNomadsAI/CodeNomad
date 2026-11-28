@@ -1,4 +1,4 @@
-use super::window_restore::{tap, type_text, wait, wait_control};
+use super::window_restore::{tap, wait, wait_control};
 use crate::{State, backend::Backend, init, platform, poll, view, workspace};
 use rune::{Env, Runtime};
 use std::{
@@ -19,13 +19,11 @@ fn window() -> Runtime<State> {
                 .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
-    wait_control(&mut rt, "folder-path");
-    type_text(
-        &mut rt,
-        "folder-path",
-        &std::env::var("RUNE_TEST_FOLDER").unwrap(),
-    );
-    tap(&mut rt, "open-folder");
+    wait_control(&mut rt, "browse");
+    tap(&mut rt, "browse");
+    rt.resolve_file_dialog(Some(std::env::var("RUNE_TEST_FOLDER").unwrap().into()))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
     rt
 }
 pub fn run() {

@@ -1,6 +1,8 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+pub(crate) mod clone_dialog;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod clone_tests;
 mod connection;
-mod folders;
 pub(crate) mod linked;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod managed_renewal_tests;
@@ -24,12 +26,17 @@ use crate::{
 use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::{connect, refresh_projects};
 
-/// Browse: this machine's folder picker where it has one, else the connected server's folders.
+/// Browse: this machine's folder picker where it has one, else the shared directory browser dialog.
 pub fn browse(s: &mut State, tx: &mut Tx) {
     if crate::platform::folder_picker_available() {
         crate::platform::browse(s, tx);
     } else {
-        folders::toggle(s);
+        let _ = crate::shell::directory_browser::open_with_return_focus(
+            s,
+            None,
+            Some("browse".into()),
+            tx,
+        );
     }
 }
 pub(crate) use placement::place;
@@ -143,7 +150,7 @@ pub struct Launcher {
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
     pub(crate) version_meta: Option<VersionMeta>,
     meta_flight: Option<(u64, Receiver<Option<VersionMeta>>)>,
-    folders: folders::Browser,
+    pub(crate) clone_dialog: clone_dialog::CloneDialog,
     wake: rune::Waker,
 }
 enum Reply {
@@ -332,7 +339,7 @@ impl Launcher {
             projects_refresh: None,
             version_meta: None,
             meta_flight: None,
-            folders: Default::default(),
+            clone_dialog: Default::default(),
             wake,
         }
     }
@@ -477,6 +484,14 @@ pub(crate) fn recent_menu_open(s: &State) -> bool {
     s.screen
         .launcher()
         .is_some_and(|l| l.open_recent_menu.is_some())
+}
+
+pub(crate) fn clone_dialog_open(s: &State) -> bool {
+    clone_dialog::is_open(s)
+}
+
+pub(crate) fn clone_dialog_composing(s: &State) -> bool {
+    clone_dialog::is_composing(s)
 }
 
 pub(crate) fn dismiss_recent_menu(s: &mut State, tx: &mut Tx) {
@@ -947,7 +962,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         tx.instant();
         return true;
     }
-    if connection::poll_projects_refresh(s) | folders::poll(s) {
+    if connection::poll_projects_refresh(s) | clone_dialog::poll(s, tx) {
         relayed = true;
     }
     if let Some(l) = s.screen.launcher_mut()
@@ -1054,7 +1069,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
-            l.folders = Default::default();
             if stale_connection && temporary_cleanup.is_some() {
                 drop(opening);
                 if let Some((backend, path, req_id)) = temporary_cleanup {
@@ -1635,7 +1649,6 @@ fn apply_connected(
     l.managed_renewal_failed_for = None;
     l.managed_renewal_attempts = 0;
     l.projects_refresh = None;
-    l.folders = Default::default();
     let connection_changed = !reauthenticated
         && l.connection
             .as_ref()
@@ -1648,6 +1661,7 @@ fn apply_connected(
         l.last_patched_recents = None;
         l.version_meta = None;
         l.meta_flight = None;
+        l.clone_dialog.reset_for_new_connection();
     }
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);

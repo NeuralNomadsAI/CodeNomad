@@ -9,7 +9,7 @@ const wrapKey=on=>`instanceShell.filesShell.${on?'disable':'enable'}WordWrap`
 export async function fileWrapBrowser({values,m,out,browser,storageState,fulfillWorkspaceCreation,writeOutput,recordCleanupError,url,root}) {
   assert(browser&&typeof fulfillWorkspaceCreation==='function'&&typeof writeOutput==='function','Attested browser, fulfillWorkspaceCreation, and writeOutput required for fileWrapBrowser')
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
-  const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
+  const policy=workspacePolicy({origin:url.origin,project:values.project,assets,directoryBrowser:true})
   const proof={headless:true,origin:url.origin,stages:[],refused:[],reads:[],errors:[]}
   let context,primaryError=null,passed=false
   try {
@@ -54,17 +54,24 @@ export async function fileWrapBrowser({values,m,out,browser,storageState,fulfill
     const enter=async page=>{
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000})
       await boot(page)
+      await press(button(page,m['folderSelection.browseMenu.thisComputer']))
+      const openBtn=button(page,m['directoryBrowser.openCurrent'])
+      await openBtn.waitFor({state:'attached'})
+      for(const deadline=Date.now()+20000;await openBtn.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){
+        assert(Date.now()<deadline,'Directory browser open button remained disabled')
+        await new Promise(resolve=>setTimeout(resolve,20))
+      }
       for(const deadline=Date.now()+20000;;){
         const input=page.locator('textarea:focus')
-        if(await input.count()&&await input.getAttribute('aria-label')===m['instanceInfo.labels.folder']){
+        if(await input.count()&&await input.getAttribute('aria-label')===m['directoryBrowser.currentFolder.inputAriaLabel']){
           await input.fill(values.project)
-          await page.keyboard.press('Enter')
           break
         }
         assert(Date.now()<deadline,'Real project path textarea must be focusable')
         await page.keyboard.press('Tab')
         await page.waitForTimeout(20)
       }
+      await press(openBtn)
       await mirror(page).getByRole('tab',{name:values.project,exact:true}).waitFor()
       const label=m['window.menu.leftPanel'],left=button(page,label)
       await left.waitFor()

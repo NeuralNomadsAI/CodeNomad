@@ -1,13 +1,16 @@
 //! Theme primitives for the CodeNomad New tab / Home launcher view.
+pub mod clone_dialog;
 mod icons;
-pub use icons::{BRAND_LOGO, DISCORD, FOLDER, GITHUB, HEART, LAPTOP, STAR, TRASH};
+pub use icons::{
+    BRAND_LOGO, BRAND_LOGO_BACKING, DISCORD, FOLDER, GIT_BRANCH, GITHUB, HEART, LAPTOP, STAR, TRASH,
+};
 
 use crate::{
     Length, Space, TextRole, kit,
     layout::{self, Layout, dark},
     tokens,
 };
-use rune::{El, Icon, ScrollSpec, TextStyle, Tx, col, icon, row, text};
+use rune::{Color, El, Icon, ScrollSpec, TextStyle, Tx, col, icon, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize};
 use std::rc::Rc;
 
@@ -153,11 +156,34 @@ pub fn top_action_button<S: 'static>(
 }
 
 pub fn hero(logo_alt: &str, title: &str, links: Vec<El>) -> El {
-    let t = tokens(dark());
-    let logo = icon(&BRAND_LOGO, LOGO_SIZE)
-        .color(t.color("text-primary"))
+    let is_dark = dark();
+    let t = tokens(is_dark);
+    // Match `CodeNomad-Logo-OnDark.svg` (#fff mark on #000 hex backing) and `OnLight` inverse.
+    let (backing_color, mark_color) = if is_dark {
+        (Color::BLACK, Color::WHITE)
+    } else {
+        (Color::WHITE, Color::BLACK)
+    };
+    let logo = rune::el()
+        .key("launcher-hero-logo")
+        .w(LOGO_SIZE)
+        .h(LOGO_SIZE)
         .role("img")
-        .label(logo_alt);
+        .label(logo_alt)
+        .child(
+            icon(&BRAND_LOGO_BACKING, LOGO_SIZE)
+                .key("launcher-hero-logo-backing")
+                .absolute(0.0, 0.0)
+                .color(backing_color)
+                .a11y_hidden(),
+        )
+        .child(
+            icon(&BRAND_LOGO, LOGO_SIZE)
+                .key("launcher-hero-logo-mark")
+                .absolute(0.0, 0.0)
+                .color(mark_color)
+                .a11y_hidden(),
+        );
     let title_style = TextStyle::new(HERO_TITLE_SIZE, t.number("font-weight-semibold").px())
         .lh(HERO_TITLE_SIZE * t.number("line-height-tight").px());
     let mut link_bar = row().center_y().separate(Space::Sm);

@@ -81,7 +81,7 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
   const inflightRoutes = new Set()
   const createPage = async ({width, height, colorScheme}) => {
     if (cancelled) throw routeError ?? Error('Mobile drawers probe cancelled')
-    const policy = workspacePolicy({origin: url.origin, project: values.project, assets})
+    const policy = workspacePolicy({origin: url.origin, project: values.project, assets, directoryBrowser: true})
     const task = (async () => {
       const created = await browser.newContext({
         viewport: {width, height},
@@ -167,17 +167,24 @@ export async function mobileDrawersBrowser({values, m, out, browser, storageStat
     await (await page.waitForFunction(() => ['web.handover.done', 'web.gpu.failed', 'web.handover.failed']
       .some(name => performance.getEntriesByName(name).length))).dispose()
     await press(button(page, m['folderSelection.servers.dialog.connect']))
+    await press(button(page, m['folderSelection.browseMenu.thisComputer']))
+    const openBtn = button(page, m['directoryBrowser.openCurrent'])
+    await openBtn.waitFor({state: 'attached'})
+    for (const deadline = Date.now() + 20000; await openBtn.evaluate(el => el.disabled || el.getAttribute('aria-disabled') === 'true');) {
+      assert(Date.now() < deadline, 'Directory browser open button remained disabled')
+      await page.waitForTimeout(20)
+    }
     for (const deadline = Date.now() + 20000;;) {
       const input = page.locator('textarea:focus')
-      if (await input.count() && await input.getAttribute('aria-label') === m['instanceInfo.labels.folder']) {
+      if (await input.count() && await input.getAttribute('aria-label') === m['directoryBrowser.currentFolder.inputAriaLabel']) {
         await input.fill(values.project)
-        await page.keyboard.press('Enter')
         break
       }
       assert(Date.now() < deadline, 'Project path textarea must be focusable')
       await page.keyboard.press('Tab')
       await page.waitForTimeout(20)
     }
+    await press(openBtn)
     await mirror(page).getByRole('tab', {name: values.project, exact: true}).waitFor()
     await button(page, m['window.menu.leftPanel']).waitFor()
     await flush(page)

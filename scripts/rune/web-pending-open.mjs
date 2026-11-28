@@ -71,13 +71,14 @@ export async function pendingBrowser({values,m,browser,ownedBrowser,storageState
     const press=async locator=>{await locator.waitFor({state:'attached'});for(const end=Date.now()+20000;await locator.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){assert(Date.now()<end,'control disabled');await page.waitForTimeout(20)}await locator.click({force:true})}
     const boot=()=>page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
     const type=async(label,text)=>{for(let i=0;i<64;i++){const field=page.locator('textarea:focus');if(await field.count()&&await field.getAttribute('aria-label')===label){await field.fill(text);return}await page.keyboard.press('Tab');await page.waitForTimeout(20)}throw Error('Missing product field')}
+    const openProject=async()=>{await press(button(m['folderSelection.browseMenu.thisComputer']));const openBtn=button(m['directoryBrowser.openCurrent']);await openBtn.waitFor({state:'attached'});for(const end=Date.now()+20000;await openBtn.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){assert(Date.now()<end,'directory browser open disabled');await page.waitForTimeout(20)}await type(m['directoryBrowser.currentFolder.inputAriaLabel'],values.project);await press(openBtn)}
     const inventory=async()=>{const r=await attestedFetch(`${origin}/api/workspaces`,{headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok);return (await r.json()).map(row=>row.id)}
       await stage('boot');await page.goto(base+'?locale=fr',{waitUntil:'domcontentloaded',timeout:60000});await boot()
       await stage('connect');await press(button(m['folderSelection.servers.dialog.connect']))
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button(m['window.menu.leftPanel']).waitFor()
+      await openProject();await button(m['window.menu.leftPanel']).waitFor()
       await stage('first-opened');await press(button(m['instanceTabs.new.ariaLabel']))
       if(mode!=='corrupt')await page.waitForFunction(key=>{try{return JSON.parse(sessionStorage.getItem(key)).session.tabs.length===2}catch{return false}},KEY)
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
+      await openProject()
       for(const end=Date.now()+20000;!held;){assert(Date.now()<end,'creation not held');await page.waitForTimeout(20)}
       const before=await inventory();assert.equal(before.length,mode==='post'?1:2)
       if(mode==='quota')await page.evaluate(()=>globalThis.__pendingQuota=true)
@@ -101,7 +102,7 @@ export async function pendingBrowser({values,m,browser,ownedBrowser,storageState
       else assert(closing.some(e=>e.kind==='snapshot')&&closing.some(e=>e.kind==='marker'))
       // Reconnect only after the authoritative inventory has qualified departure.
       await press(button(m['folderSelection.servers.dialog.connect']))
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button(m['window.menu.leftPanel']).waitFor()
+      await openProject();await button(m['window.menu.leftPanel']).waitFor()
       const successor=(await inventory()).filter(id=>!before.includes(id));assert.equal(successor.length,1)
       await page.waitForTimeout(200);assert((await inventory()).includes(successor[0]),'old claim preserves new occurrence')
       results.push({mode,before:before.length,after:after.length,successorProtected:true,oldClaimDispatched:true,receiptUnavailableAtDeparture:true,departedDocumentReceiptDelivered:false,latePostStatus,proof,network})

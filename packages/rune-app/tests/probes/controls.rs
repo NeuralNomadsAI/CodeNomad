@@ -44,11 +44,11 @@ pub fn run() {
     wait(&mut rt, "login", |s| {
         s.screen.launcher().unwrap().connection.is_some()
     });
-    rt.state.screen.launcher_mut().unwrap().folder =
-        TextEdit::new(std::env::var("RUNE_TEST_FOLDER").unwrap());
-    rt.frame(0.0);
-    super::window_restore::wait_control(&mut rt, "open-folder");
-    tap(&mut rt, "open-folder");
+    super::window_restore::wait_control(&mut rt, "browse");
+    tap(&mut rt, "browse");
+    rt.resolve_file_dialog(Some(std::env::var("RUNE_TEST_FOLDER").unwrap().into()))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
     wait(&mut rt, "folder", |s| {
         s.screen.launcher().unwrap().project.is_some()
     });

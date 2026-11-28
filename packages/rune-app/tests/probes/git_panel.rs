@@ -220,15 +220,12 @@ pub(super) fn run() {
                 .screen
                 .launcher()
                 .is_some_and(|l| l.connection.is_some())
-            && focusable(rt, "folder-path")
+            && focusable(rt, "browse")
     });
-    type_text_ready(
-        &mut rt,
-        "folder path input focusable",
-        "folder-path",
-        &std::env::var("RUNE_TEST_FOLDER").unwrap(),
-    );
-    tap_ready(&mut rt, "open-folder button focusable", "open-folder");
+    tap_ready(&mut rt, "browse button focusable", "browse");
+    rt.resolve_file_dialog(Some(std::env::var("RUNE_TEST_FOLDER").unwrap().into()))
+        .unwrap();
+    rt.frame(1.0 / 60.0);
     wait(&mut rt, "existing session listed", |rt| {
         focusable(rt, "session-ses_existing")
     });

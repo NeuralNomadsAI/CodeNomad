@@ -207,7 +207,7 @@ try {
         if(meta)lastPress={...meta,x,y,requestedAt:Date.now()}
         return page.touchscreen.tap(x,y)
       }
-      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline,menuPrompt:moreActionsOnly?menuPrompt:undefined}):null
+      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,directoryBrowser:true,markerFilters:values.timeline,menuPrompt:moreActionsOnly?menuPrompt:undefined}):null
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -454,39 +454,35 @@ try {
           }
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
-          if (values.mobile && !recallScene) {
-            const folderLabel = messages['instanceInfo.labels.folder']
-            const folderName = path.basename(values.project)
-            const waitFolderValue = expected => page.waitForFunction(
-              ({label, expected}) => [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
-                .some(el => el.getAttribute('aria-label') === label && el.textContent === expected),
-              {label: folderLabel, expected},
-              {timeout: 15_000},
-            )
-            const waitBrowse = expectedPath => page.waitForResponse(response => {
-              const requested = new URL(response.url())
-              return requested.pathname === '/api/filesystem' &&
-                requested.searchParams.get('includeFiles') === '' &&
-                requested.searchParams.get('path') === expectedPath &&
-                response.ok()
-            })
-            const rootBrowse = waitBrowse(null)
-            void rootBrowse.catch(() => {})
-            await press(messages['folderSelection.browseMenu.thisComputer'])
-            await rootBrowse
-            await page.getByRole('button', {name: folderName, exact: true}).waitFor()
-            await waitFolderValue(path.dirname(values.project))
-            const subBrowse = waitBrowse(folderName)
-            void subBrowse.catch(() => {})
-            await press(folderName)
-            await subBrowse
-            await page.getByRole('button', {name: messages['directoryBrowser.goToParent'], exact: true}).waitFor()
-            await waitFolderValue(values.project)
-            folderBrowse = true
-            await press(messages['directoryBrowser.openCurrent'])
-          } else {
-            await press(values.project)
-          }
+          const folderLabel = messages['directoryBrowser.currentFolder.inputAriaLabel']
+          const folderName = path.basename(values.project)
+          const waitFolderValue = expected => page.waitForFunction(
+            ({label, expected}) => [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
+              .some(el => el.getAttribute('aria-label') === label && el.textContent === expected),
+            {label: folderLabel, expected},
+            {timeout: 15_000},
+          )
+          const waitBrowse = expectedPath => page.waitForResponse(response => {
+            const requested = new URL(response.url())
+            return requested.pathname === '/api/filesystem' &&
+              requested.searchParams.get('includeFiles') === '' &&
+              requested.searchParams.get('path') === expectedPath &&
+              response.ok()
+          })
+          const rootBrowse = waitBrowse(null)
+          void rootBrowse.catch(() => {})
+          await press(messages['folderSelection.browseMenu.thisComputer'])
+          await rootBrowse
+          await page.getByRole('option', {name: folderName, exact: true}).waitFor()
+          await waitFolderValue(path.dirname(values.project))
+          const subBrowse = waitBrowse(folderName)
+          void subBrowse.catch(() => {})
+          await press(folderName, 'option')
+          await subBrowse
+          await page.getByRole('button', {name: messages['directoryBrowser.goToParent'], exact: true}).waitFor()
+          await waitFolderValue(values.project)
+          if (values.mobile && !recallScene) folderBrowse = true
+          await press(messages['directoryBrowser.openCurrent'])
           if (values.mobile && !recallScene) {
             const right = messages['window.menu.rightPanel']
             const drawer = page.getByRole('region', {name:right, exact:true})

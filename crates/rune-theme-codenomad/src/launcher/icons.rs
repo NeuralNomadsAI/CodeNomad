@@ -1,10 +1,22 @@
 //! Icons for the CodeNomad New tab / Home launcher view.
 use rune::Icon;
 
+pub static BRAND_LOGO_BACKING: Icon = Icon {
+    name: "codenomad-logo-backing",
+    view: 240.0,
+    body: r#"<g transform="translate(120,120)"><path fill="currentColor" d="M0 -104.973 L90.909 -52.486 L90.909 52.486 L0 104.973 L-90.909 52.486 L-90.909 -52.486Z"/></g>"#,
+};
+
 pub static BRAND_LOGO: Icon = Icon {
     name: "codenomad-logo",
     view: 240.0,
     body: r#"<g transform="translate(120,120)"><path fill="currentColor" fill-rule="evenodd" d="M0 -115.47 L100 -57.735 L100 57.735 L0 115.47 L-100 57.735 L-100 -57.735ZM-81.818 -47.238 L-81.818 47.238 L0 94.475 L81.818 47.238 L81.818 -47.238 L0 -94.475ZM-9.091 -68.232 L-63.636 -36.74 L-63.636 36.74 L-9.091 68.232 L-9.091 9.091 L-27.273 9.091 L-27.273 36.74 L-45.455 26.243 L-45.455 -26.243 L-27.273 -36.74 L-27.273 -9.091 L-9.091 -9.091ZM9.091 -68.232 L63.636 -36.74 L63.636 36.74 L45.455 47.238 L45.455 -26.243 L27.273 -36.74 L27.273 57.735 L9.091 68.232Z"/></g>"#,
+};
+
+pub static GIT_BRANCH: Icon = Icon {
+    name: "lucide-git-branch",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></g>"#,
 };
 
 pub static LAPTOP: Icon = Icon {

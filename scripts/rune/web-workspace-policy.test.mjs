@@ -69,6 +69,10 @@ test('mobile launcher folder browse admits only bounded GET /api/filesystem read
   assert(!await smoke.request(req(origin,'private=fixture','GET','?includeFiles=&path=..')))
   assert(!await smoke.request(req(origin,'private=fixture','GET','?includeFiles=&path=forbidden')))
   assert(!await smoke.request(req(origin,'private=fixture','GET','?includeFiles=&path=synthetic&extra=1')))
+  const browser=workspacePolicy({origin,project,directoryBrowser:true})
+  assert(await browser.request(req(origin,'private=fixture')))
+  assert(await browser.request(req(origin,'private=fixture','GET','?includeFiles=&path=synthetic')))
+  assert(!await browser.request(req(origin,'private=fixture','GET','?includeFiles=&path=forbidden')))
   assert(!await workspacePolicy({origin,project}).request(req(origin,'private=fixture')))
 })
 test('invalid admissions leave every workspace unowned; release requires its own claim',()=>{
