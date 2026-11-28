@@ -56,6 +56,31 @@ pub use sessions::{
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VersionMeta {
+    pub server_version: Option<String>,
+    pub ui_version: Option<String>,
+    pub ui_source: Option<String>,
+}
+
+impl VersionMeta {
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        let non_empty = |v: &serde_json::Value| {
+            v.as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        let meta = Self {
+            server_version: non_empty(&value["serverVersion"]),
+            ui_version: non_empty(&value["ui"]["version"]),
+            ui_source: non_empty(&value["ui"]["source"]),
+        };
+        (meta.server_version.is_some() || meta.ui_version.is_some() || meta.ui_source.is_some())
+            .then_some(meta)
+    }
+}
+
 pub struct Launcher {
     pub address: TextEdit,
     pub password: TextEdit,
@@ -116,6 +141,8 @@ pub struct Launcher {
     managed_renewal_attempts: u8,
     pub(crate) projects_stale: bool,
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
+    pub(crate) version_meta: Option<VersionMeta>,
+    meta_flight: Option<(u64, Receiver<Option<VersionMeta>>)>,
     folders: folders::Browser,
     wake: rune::Waker,
 }
@@ -303,6 +330,8 @@ impl Launcher {
             managed_renewal_attempts: 0,
             projects_stale: false,
             projects_refresh: None,
+            version_meta: None,
+            meta_flight: None,
             folders: Default::default(),
             wake,
         }
@@ -920,6 +949,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     if connection::poll_projects_refresh(s) | folders::poll(s) {
         relayed = true;
+    }
+    if let Some(l) = s.screen.launcher_mut()
+        && let Some((generation, rx)) = &l.meta_flight
+        && let Ok(meta) = rx.try_recv()
+    {
+        let current = l.connection_generation;
+        let same_gen = *generation == current;
+        l.meta_flight = None;
+        if same_gen && meta.is_some() {
+            l.version_meta = meta;
+            relayed = true;
+        }
     }
     let blocked = !can_change_session(s)
         || s.screen
@@ -1605,10 +1646,29 @@ fn apply_connected(
         l.recent_save_job = None;
         l.pending_recent_save = None;
         l.last_patched_recents = None;
+        l.version_meta = None;
+        l.meta_flight = None;
     }
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);
     l.server_id = Some(server_id);
+    if l.version_meta.is_none()
+        && l.meta_flight.is_none()
+        && let Some(backend) = l.connection.clone()
+    {
+        let generation = l.connection_generation;
+        let wake = l.wake.clone();
+        let (out, rx) = bounded(1);
+        l.meta_flight = Some((generation, rx));
+        crate::platform::spawn(async move {
+            let meta = codenomad_client::settings::info::metadata(&backend)
+                .await
+                .ok()
+                .and_then(|value| VersionMeta::from_json(&value));
+            let _ = out.send(meta).await;
+            wake();
+        });
+    }
     if let Some(projects) = projects {
         l.projects = projects;
         l.projects_stale = false;

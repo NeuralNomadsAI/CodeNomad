@@ -789,3 +789,375 @@ fn home_view_recents_sort_and_patch_persistence_coalescing_and_rollback() {
         "Rejected PATCH must emit a settings failure notification"
     );
 }
+
+#[test]
+fn home_view_fidelity_hero_card_headers_recents_alignment_and_version_pill() {
+    crate::strings::with_locale("en", || {
+        assert_eq!(
+            recent::format_version_pill(&launcher::VersionMeta {
+                server_version: Some("1.2.0-dev-abc".into()),
+                ui_version: Some("1.2.0-dev-abc".into()),
+                ui_source: Some("bundled".into()),
+            })
+            .as_deref(),
+            Some("App 1.2.0-dev-abc · UI 1.2.0-dev-abc (bundled)")
+        );
+        assert_eq!(
+            recent::format_version_pill(&launcher::VersionMeta {
+                server_version: Some("1.2.0".into()),
+                ui_version: None,
+                ui_source: None,
+            })
+            .as_deref(),
+            Some("App 1.2.0")
+        );
+        assert_eq!(
+            recent::format_version_pill(&launcher::VersionMeta {
+                server_version: None,
+                ui_version: Some("1.2.0".into()),
+                ui_source: None,
+            })
+            .as_deref(),
+            Some("UI 1.2.0")
+        );
+        assert_eq!(
+            recent::format_version_pill(&launcher::VersionMeta::default()),
+            None
+        );
+    });
+
+    for (locale_code, rtl) in [("en", false), ("he", true)] {
+        crate::strings::with_locale(locale_code, || {
+            let mut s = connected_home_state();
+            settings::fixture_state(
+                &mut s,
+                serde_json::json!({
+                    "locale": locale_code,
+                    "recentFolders": [
+                        { "path": "/Users/alice/work/alpha", "lastAccessed": 5000 },
+                        { "path": "D:\\cn-cargo\\android-native\\serve-profiles\\da8d385e-05cc-4e54-b2b5-b49adda07351\\projects\\synthetic", "lastAccessed": 4000 }
+                    ]
+                }),
+            );
+            s.screen.launcher_mut().unwrap().version_meta = Some(launcher::VersionMeta {
+                server_version: Some("1.2.0-dev-abc".into()),
+                ui_version: Some("1.2.0-dev-abc".into()),
+                ui_source: Some("bundled".into()),
+            });
+            let mut rt = Runtime::new(s, crate::view, (1120.0, 800.0), Env::new(false, 1.0));
+            rt.frame(0.0);
+            rt.frame(0.02);
+
+            let elements = rt.elements();
+            let find_el = |key: &str| {
+                elements
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("missing element {key} in locale {locale_code}"))
+            };
+
+            // A2: large bold hero title taller than card headings.
+            let hero_title = find_el("launcher-hero-title");
+            let browse_title = find_el("launcher-browse-card-title");
+            assert_eq!(hero_title.role, "heading");
+            assert_eq!(hero_title.text.as_deref(), Some("CodeNomad"));
+            assert!(
+                hero_title.rect[3] >= 24.0 && hero_title.rect[3] > browse_title.rect[3],
+                "hero title must be large (~28px): hero={:?} browse={:?}",
+                hero_title.rect,
+                browse_title.rect
+            );
+
+            // A1: 4 bordered uniform-height hero link buttons in visual order.
+            let link_keys = [
+                "launcher-link-sponsor",
+                "launcher-link-github",
+                "launcher-link-stars",
+                "launcher-link-discord",
+            ];
+            let links: Vec<_> = link_keys.iter().map(|k| find_el(k)).collect();
+            let h0 = links[0].rect[3];
+            assert!(h0 >= 24.0, "hero link button height too small: {h0}");
+            for link in &links {
+                assert_eq!(link.role, "button");
+                assert!(
+                    (link.rect[3] - h0).abs() <= 0.5,
+                    "hero link buttons must share uniform height: {:?}",
+                    links.iter().map(|l| (&l.key, l.rect)).collect::<Vec<_>>()
+                );
+            }
+            for pair in links.windows(2) {
+                if rtl {
+                    assert!(
+                        pair[1].rect[0] + pair[1].rect[2] <= pair[0].rect[0] + 0.5,
+                        "RTL hero links must not overlap: {:?} {:?}",
+                        pair[0].rect,
+                        pair[1].rect
+                    );
+                } else {
+                    assert!(
+                        pair[0].rect[0] + pair[0].rect[2] <= pair[1].rect[0] + 0.5,
+                        "LTR hero links must not overlap: {:?} {:?}",
+                        pair[0].rect,
+                        pair[1].rect
+                    );
+                }
+            }
+
+            // A4: two-line card headers (count sits below title).
+            for card in ["launcher-browse-card", "launcher-recent-card"] {
+                let title = find_el(&format!("{card}-title"));
+                let count = find_el(&format!("{card}-count"));
+                assert!(
+                    count.rect[1] >= title.rect[1] + title.rect[3] - 1.0,
+                    "{card} count must sit below title: title={:?} count={:?}",
+                    title.rect,
+                    count.rect
+                );
+            }
+
+            // A5 & A11: recent row line 2 shows localized source prefix and aligns under name.
+            let name = find_el("project-p-alpha-name");
+            let meta = find_el("project-p-alpha-meta");
+            let _path = find_el("project-p-alpha-path");
+            let expected_prefix = format!("{} ·", t("folderSelection.browseMenu.thisComputer"));
+            assert!(
+                elements
+                    .iter()
+                    .any(|n| n.text.as_deref() == Some(expected_prefix.as_str())),
+                "recent row must show localized source prefix {expected_prefix:?}"
+            );
+            if rtl {
+                let name_end = name.rect[0] + name.rect[2];
+                let meta_end = meta.rect[0] + meta.rect[2];
+                assert!(
+                    (name_end - meta_end).abs() <= 1.5,
+                    "RTL line 2 must align under project name: name={:?} meta={:?}",
+                    name.rect,
+                    meta.rect
+                );
+            } else {
+                assert!(
+                    (name.rect[0] - meta.rect[0]).abs() <= 1.5,
+                    "LTR line 2 must align under project name: name={:?} meta={:?}",
+                    name.rect,
+                    meta.rect
+                );
+            }
+
+            // A7: centered version pill at bottom of shell.
+            let shell = find_el("launcher-home-shell");
+            let pill = find_el("launcher-version-pill");
+            let recent_card = find_el("launcher-recent-card");
+            assert!(
+                pill.rect[1] >= recent_card.rect[1] + recent_card.rect[3] - 1.0,
+                "version pill must sit below cards: recent={:?} pill={:?}",
+                recent_card.rect,
+                pill.rect
+            );
+            assert!(
+                pill.rect[1] + pill.rect[3] <= 800.0 + 1.0,
+                "version pill must stay inside desktop viewport: pill={:?}",
+                pill.rect
+            );
+            let pill_center = pill.rect[0] + pill.rect[2] * 0.5;
+            let shell_center = shell.rect[0] + shell.rect[2] * 0.5;
+            assert!(
+                (pill_center - shell_center).abs() <= 2.0,
+                "version pill must be centered: pill={:?} shell={:?}",
+                pill.rect,
+                shell.rect
+            );
+        });
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn home_view_loads_meta_temporary_button_and_scrolls_20_recents_within_viewport() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let server = std::thread::spawn(move || {
+        let meta = r#"{"serverId":"srv-fidelity","apiContract":1,"serverVersion":"1.2.0-dev-test","capabilities":["temporary-workspaces"],"ui":{"version":"1.2.0-dev-test","source":"bundled"}}"#;
+        while !stop_flag.load(Ordering::SeqCst) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            if stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let req = String::from_utf8_lossy(&buf);
+            let path = req
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("");
+            let body = if path.starts_with("/api/meta") {
+                meta
+            } else {
+                "{}"
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    let backend = crate::backend::Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+    let attest = backend.clone();
+    let (done_tx, done_rx) = crate::bounded(1);
+    crate::platform::spawn(async move {
+        let _ = done_tx.try_send(attest.attest_server().await.is_ok());
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(ok) = done_rx.try_recv() {
+            assert!(ok, "attest_server failed against mock loopback");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "attest_server timeout"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let mut recent_rows = Vec::new();
+    for i in 0..20 {
+        recent_rows.push(serde_json::json!({
+            "path": format!("/Users/alice/work/project-{i:02}"),
+            "lastAccessed": 100_000 - i * 1_000,
+        }));
+    }
+
+    let build_state = || {
+        let s = connected_home_state();
+        let mut rt = Runtime::new(s, crate::view, (610.0, 1016.0), Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            launcher::apply_connected(
+                s,
+                backend.clone(),
+                Some(Vec::new()),
+                "srv-fidelity".into(),
+                None,
+                tx,
+            );
+            workspace::new_tab(s, tx);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            rt.update(|s, tx| {
+                launcher::poll(s, tx);
+            });
+            if rt.state.screen.launcher().unwrap().version_meta.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            rt.state.screen.launcher().unwrap().version_meta.is_some(),
+            "version_meta must load from /api/meta"
+        );
+        settings::fixture_state(
+            &mut rt.state,
+            serde_json::json!({ "locale": "en", "recentFolders": recent_rows }),
+        );
+        rt.state
+    };
+
+    // A6 + A7 + A12 across stacked (610x1016) and desktop (1120x800).
+    crate::strings::with_locale("en", || {
+        for (w, h) in [(610.0, 1016.0), (1120.0, 800.0)] {
+            let mut rt = Runtime::new(build_state(), crate::view, (w, h), Env::new(false, 1.0));
+            rt.frame(0.0);
+            rt.frame(0.02);
+
+            let elements = rt.elements();
+            let find_el = |key: &str| {
+                elements
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("missing {key} at {w}x{h}"))
+            };
+
+            // A6: Temporary tab button mounts when server advertises temporary-workspaces.
+            let temp = find_el("new-temporary-tab");
+            assert!(temp.rect[1] >= 0.0, "top bar pushed off top at {w}x{h}");
+
+            // A7: /api/meta populated version pill at bottom of viewport.
+            let pill = find_el("launcher-version-pill");
+            let pill_y_before = pill.rect[1];
+            assert!(
+                pill.rect[1] + pill.rect[3] <= h + 1.0,
+                "version pill pushed off bottom at {w}x{h}: pill={:?}",
+                pill.rect
+            );
+            let expected_pill = "App 1.2.0-dev-test · UI 1.2.0-dev-test (bundled)";
+            assert!(
+                elements
+                    .iter()
+                    .any(|n| n.text.as_deref() == Some(expected_pill)),
+                "version pill must display /api/meta versions at {w}x{h}; texts={:?}",
+                elements
+                    .iter()
+                    .filter_map(|n| n.text.as_deref())
+                    .filter(|txt| txt.contains("1.2.0") || txt.contains("UI"))
+                    .collect::<Vec<_>>()
+            );
+
+            // A12: 20 recents scroll inside launcher-recent-card without moving the footer pill.
+            let count = find_el("launcher-recent-card-count");
+            assert_eq!(count.text.as_deref(), Some("20 items"));
+            let card = find_el("launcher-recent-card");
+            assert!(
+                card.rect[1] + card.rect[3] <= pill.rect[1] + 1.0,
+                "recent card overflowed into version pill at {w}x{h}: card={:?} pill={:?}",
+                card.rect,
+                pill.rect
+            );
+            let first_key = recent::recent_row_key("/Users/alice/work/project-00");
+            let first_y_before = find_el(&first_key).rect[1];
+            let cx = card.rect[0] + card.rect[2] * 0.5;
+            let cy = card.rect[1] + card.rect[3] * 0.5;
+            rt.wheel(cx, cy, -240.0);
+            rt.frame(0.02);
+            let elements_after = rt.elements();
+            let first_y_after = elements_after
+                .iter()
+                .find(|n| n.key.as_deref() == Some(first_key.as_str()))
+                .expect("first recent row after scroll")
+                .rect[1];
+            let pill_y_after = elements_after
+                .iter()
+                .find(|n| n.key.as_deref() == Some("launcher-version-pill"))
+                .expect("version pill after scroll")
+                .rect[1];
+            assert!(
+                first_y_after < first_y_before - 10.0,
+                "recent list must scroll inside its card at {w}x{h}: before={first_y_before} after={first_y_after}"
+            );
+            assert!(
+                (pill_y_after - pill_y_before).abs() <= 0.5,
+                "version pill must stay pinned while recent list scrolls at {w}x{h}: before={pill_y_before} after={pill_y_after}"
+            );
+        }
+    });
+
+    stop.store(true, Ordering::SeqCst);
+    let _ = std::net::TcpStream::connect(addr);
+    let _ = server.join();
+}

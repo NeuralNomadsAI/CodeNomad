@@ -173,6 +173,36 @@ pub(crate) fn format_item_count(count: usize) -> String {
     catalogue::format(strings::locale(), key, &[("count", &rendered)])
 }
 
+/// Formats the bottom version pill like Solid's `VersionPill`: `App <v> · UI <v> (<source>)`.
+pub(crate) fn format_version_pill(meta: &super::VersionMeta) -> Option<String> {
+    let locale = strings::locale();
+    let mut parts = Vec::new();
+    if let Some(version) = meta.server_version.as_deref() {
+        parts.push(catalogue::format(
+            locale,
+            "versionPill.appWithVersion",
+            &[("version", version)],
+        ));
+    }
+    if meta.ui_version.is_some() || meta.ui_source.is_some() {
+        let mut ui = match meta.ui_version.as_deref() {
+            Some(version) => {
+                catalogue::format(locale, "versionPill.uiWithVersion", &[("version", version)])
+            }
+            None => strings::t("versionPill.ui").to_owned(),
+        };
+        if let Some(source) = meta.ui_source.as_deref() {
+            ui.push_str(&catalogue::format(
+                locale,
+                "versionPill.source",
+                &[("source", source)],
+            ));
+        }
+        parts.push(ui);
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 pub(crate) fn now_epoch_ms() -> u64 {
     #[cfg(target_arch = "wasm32")]
     {

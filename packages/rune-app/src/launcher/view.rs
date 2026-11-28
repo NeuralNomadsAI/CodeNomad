@@ -166,6 +166,15 @@ fn hero_section(s: &State) -> El {
             }),
         ),
         theme::link_button(
+            "launcher-link-stars",
+            &theme::STAR,
+            None,
+            t("folderSelection.links.githubStars"),
+            screen::action_tx(&scope, |_, tx| {
+                let _ = tx.open_url_then(GITHUB_URL, |_: &mut State, _, _| {});
+            }),
+        ),
+        theme::link_button(
             "launcher-link-discord",
             &theme::DISCORD,
             None,
@@ -205,6 +214,12 @@ pub fn view(s: &State) -> El {
         None
     };
 
+    let version_footer = l
+        .version_meta
+        .as_ref()
+        .and_then(recent::format_version_pill)
+        .map(|label| theme::version_pill(&label));
+
     if l.connection.is_none() || l.authentication_required {
         let card = theme::card(
             "launcher-connect-card",
@@ -214,9 +229,16 @@ pub fn view(s: &State) -> El {
             None,
             connect_form(s, l, busy),
             None,
-            true,
+            false,
         );
-        return theme::shell(stacked, None, hero, theme::single_column(card), status);
+        return theme::shell(
+            stacked,
+            None,
+            hero,
+            theme::single_column(card),
+            status,
+            version_footer,
+        );
     }
 
     let top_actions = if temporary::host_supports_temporary(s) {
@@ -290,13 +312,14 @@ pub fn view(s: &State) -> El {
         None,
         browse_body,
         None,
-        stacked,
+        !stacked,
     );
 
     // Right card: Recent tabs.
     let recents = recent::collect_recent_entries(s);
     let recent_count = recent::format_item_count(recents.len());
     let now_ms = recent::now_epoch_ms();
+    let local_source_prefix = format!("{} ·", t("folderSelection.browseMenu.thisComputer"));
     let retry = l.projects_stale.then(|| {
         theme::subtle_button(
             "refresh-projects",
@@ -355,6 +378,7 @@ pub fn view(s: &State) -> El {
                 &primary_key,
                 glyph,
                 &entry.display_name,
+                Some(&local_source_prefix),
                 &entry.display_path,
                 rel.as_deref(),
                 open_badge,
@@ -383,7 +407,7 @@ pub fn view(s: &State) -> El {
         recent_header_right,
         recent_body,
         None,
-        stacked,
+        true,
     );
 
     theme::shell(
@@ -392,6 +416,7 @@ pub fn view(s: &State) -> El {
         hero,
         theme::columns(stacked, browse_card, recent_card),
         status,
+        version_footer,
     )
 }
 

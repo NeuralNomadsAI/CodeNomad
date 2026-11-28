@@ -1,21 +1,23 @@
 //! Theme primitives for the CodeNomad New tab / Home launcher view.
 mod icons;
-pub use icons::{BRAND_LOGO, DISCORD, FOLDER, GITHUB, HEART, LAPTOP, TRASH};
+pub use icons::{BRAND_LOGO, DISCORD, FOLDER, GITHUB, HEART, LAPTOP, STAR, TRASH};
 
 use crate::{
     Length, Space, TextRole, kit,
     layout::{self, Layout, dark},
     tokens,
 };
-use rune::{El, Icon, ScrollSpec, Tx, col, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant};
+use rune::{El, Icon, ScrollSpec, TextStyle, Tx, col, icon, row, text};
+use rune_kit::{Button, ButtonVariant, ControlSize};
 use std::rc::Rc;
 
 /// Mirrors `@media (max-width: 639px)` in `styles/components/folder-home.css`.
 pub const MOBILE_BREAKPOINT: f32 = 640.0;
 const SHELL_MAX_WIDTH: f32 = 960.0;
 const LOGO_SIZE: f32 = 64.0;
+const HERO_TITLE_SIZE: f32 = 28.0;
 const PANEL_MIN_HEIGHT: f32 = 256.0;
+const STACKED_RECENT_MIN_HEIGHT: f32 = 160.0;
 
 pub fn is_stacked(viewport_width: f32) -> bool {
     viewport_width > 0.0 && viewport_width < MOBILE_BREAKPOINT
@@ -47,7 +49,14 @@ pub fn recent_header_right(retry: Option<El>, source_label: &str) -> El {
     }
 }
 
-pub fn shell(stacked: bool, actions: Option<El>, hero: El, main: El, status: Option<El>) -> El {
+pub fn shell(
+    stacked: bool,
+    actions: Option<El>,
+    hero: El,
+    main: El,
+    status: Option<El>,
+    footer: Option<El>,
+) -> El {
     let t = tokens(dark());
     let pad_x = if stacked {
         t.space(Space::Md).px()
@@ -63,14 +72,17 @@ pub fn shell(stacked: bool, actions: Option<El>, hero: El, main: El, status: Opt
         .key("launcher-home-shell")
         .full_width()
         .max_w(SHELL_MAX_WIDTH)
+        .full_height()
         .min_h(0.0)
-        .separate(Space::Lg)
+        .separate(Space::Md)
         .children(actions)
         .child(hero)
-        .child(if stacked { main } else { main.remaining() })
-        .children(status);
+        .child(main.remaining())
+        .children(status)
+        .children(footer);
     let container = row()
         .full_width()
+        .full_height()
         .min_h(0.0)
         .justify_center()
         .px(pad_x)
@@ -83,11 +95,7 @@ pub fn shell(stacked: bool, actions: Option<El>, hero: El, main: El, status: Opt
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(if stacked {
-            container
-        } else {
-            container.full_height()
-        });
+        .child(container);
     col()
         .key("launcher-home-root")
         .full_width()
@@ -95,6 +103,20 @@ pub fn shell(stacked: bool, actions: Option<El>, hero: El, main: El, status: Opt
         .min_h(0.0)
         .fill(t.color("surface-shade-light"))
         .child(scroll_body)
+}
+
+pub fn version_pill(label: &str) -> El {
+    let t = tokens(dark());
+    row()
+        .key("launcher-version-pill")
+        .full_width()
+        .justify_center()
+        .child(
+            text(label)
+                .text_role(TextRole::Small)
+                .color(t.color("text-muted"))
+                .truncate(),
+        )
 }
 
 pub fn top_actions(left: Option<El>, right: Option<El>) -> El {
@@ -139,6 +161,8 @@ pub fn hero(logo_alt: &str, title: &str, links: Vec<El>) -> El {
         .color(t.color("text-primary"))
         .role("img")
         .label(logo_alt);
+    let title_style = TextStyle::new(HERO_TITLE_SIZE, t.number("font-weight-semibold").px())
+        .lh(HERO_TITLE_SIZE * t.number("line-height-tight").px());
     let mut link_bar = row().center_y().separate(Space::Sm);
     for link in links {
         link_bar = link_bar.child(link);
@@ -150,7 +174,8 @@ pub fn hero(logo_alt: &str, title: &str, links: Vec<El>) -> El {
         .child(logo)
         .child(
             text(title)
-                .text_role(TextRole::Title)
+                .key("launcher-hero-title")
+                .font(title_style)
                 .color(t.color("text-primary"))
                 .role("heading"),
         )
@@ -164,27 +189,42 @@ pub fn link_button<S: 'static>(
     a11y_label: &str,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
+    let t = tokens(dark());
+    let height = t.length(Length::Control).px();
+    let icon_size = t.length(Length::Icon).px();
     let action = Rc::new(press);
     let on_press = action.clone();
+    let mut btn = row()
+        .h(height)
+        .min_w(height)
+        .center()
+        .separate(Space::Xs)
+        .fill(t.color("surface-control"))
+        .border(1.0, t.color("border-base"))
+        .hover(t.color("surface-hover"))
+        .role("button")
+        .help(a11y_label)
+        .on_press_tx(move |s, tx| on_press(s, tx))
+        .on_key(layout::enter_action(action))
+        .key(key.to_owned())
+        .child(
+            icon(glyph, icon_size)
+                .color(t.color("text-primary"))
+                .a11y_hidden(),
+        );
     match label_text {
-        Some(caption) => Button::new(caption)
-            .icon(glyph)
-            .control_size(ControlSize::Small)
-            .help(a11y_label)
-            .on_press_tx(move |s, tx| on_press(s, tx))
-            .build(&kit(dark()))
-            .label(a11y_label)
-            .on_key(layout::enter_action(action))
-            .key(key.to_owned()),
-        None => IconButton::new(glyph)
-            .variant(IconButtonVariant::Neutral)
-            .control_size(ControlSize::Small)
-            .label(a11y_label)
-            .help(a11y_label)
-            .on_press_tx(move |s, tx| on_press(s, tx))
-            .build(&kit(dark()))
-            .on_key(layout::enter_action(action))
-            .key(key.to_owned()),
+        Some(caption) => {
+            btn = btn.px(t.space(Space::Sm).px()).child(
+                text(caption)
+                    .text_role(TextRole::Label)
+                    .color(t.color("text-primary")),
+            );
+            if caption != a11y_label {
+                btn = btn.description(a11y_label);
+            }
+            btn
+        }
+        None => btn.label(a11y_label),
     }
 }
 
@@ -193,9 +233,10 @@ pub fn columns(stacked: bool, left: El, right: El) -> El {
         col()
             .key("launcher-home-columns-stacked")
             .full_width()
+            .min_h(0.0)
             .separate(Space::Md)
             .child(left)
-            .child(right)
+            .child(right.remaining().min_h(STACKED_RECENT_MIN_HEIGHT))
     } else {
         row()
             .key("launcher-home-columns-desktop")
@@ -237,14 +278,20 @@ pub fn card(
     header_right: Option<El>,
     body: El,
     footer: Option<El>,
-    stacked: bool,
+    scrollable: bool,
 ) -> El {
     let t = tokens(dark());
     let pad_x = t.space(Space::Md).px();
     let pad_y = t.space(Space::Sm).px();
-    let mut title_block = row().center_y().separate(Space::Sm).min_w(0.0).child(
+    let title_style = TextStyle::new(
+        t.number("font-size-lg").px(),
+        t.number("font-weight-semibold").px(),
+    )
+    .lh(t.number("font-size-lg").px() * t.number("line-height-tight").px());
+    let mut title_block = col().shrink().min_w(0.0).separate(Space::Xxs).child(
         text(title)
-            .text_role(TextRole::Label)
+            .key(format!("{key}-title"))
+            .font(title_style)
             .color(t.color("text-primary"))
             .role("heading")
             .truncate(),
@@ -252,6 +299,7 @@ pub fn card(
     if let Some(count) = count {
         title_block = title_block.child(
             text(count)
+                .key(format!("{key}-count"))
                 .text_role(TextRole::Small)
                 .color(t.color("text-muted"))
                 .truncate(),
@@ -270,9 +318,7 @@ pub fn card(
     if let Some(right) = header_right {
         header = header.child(right);
     }
-    let body_wrap = if stacked {
-        col().full_width().min_h(0.0).child(body)
-    } else {
+    let body_wrap = if scrollable {
         col()
             .full_width()
             .remaining()
@@ -281,6 +327,8 @@ pub fn card(
                 stick_bottom: false,
             })
             .child(body)
+    } else {
+        col().full_width().min_h(0.0).child(body)
     };
     let mut panel = col()
         .key(key.to_owned())
@@ -433,6 +481,7 @@ pub fn recent_row<S: 'static>(
     primary_key: &str,
     glyph: &'static Icon,
     display_name: &str,
+    source_prefix: Option<&str>,
     display_path: &str,
     relative_time: Option<&str>,
     open_badge: Option<El>,
@@ -445,15 +494,24 @@ pub fn recent_row<S: 'static>(
     let icon_size = t.length(Length::Icon).px();
     let pad_x = t.space(Space::Md).px();
     let pad_y = t.space(Space::Sm).px();
+    let small_size = t.number("font-size-xs").px();
+    let mono_small = TextStyle::new(small_size, t.number("font-weight-regular").px())
+        .lh(small_size * t.number("line-height-normal").px())
+        .mono();
 
     let title_line = row()
         .full_width()
         .center_y()
         .separate(Space::Sm)
         .min_w(0.0)
-        .child(icon(glyph, icon_size).color(t.color("text-muted")))
+        .child(
+            icon(glyph, icon_size)
+                .color(t.color("text-muted"))
+                .a11y_hidden(),
+        )
         .child(
             text(display_name)
+                .key(format!("{primary_key}-name"))
                 .text_role(TextRole::Label)
                 .color(if disabled {
                     t.color("text-muted")
@@ -462,33 +520,56 @@ pub fn recent_row<S: 'static>(
                 })
                 .truncate()
                 .grow(1.0)
+                .shrink()
                 .min_w(0.0),
         );
 
-    let mut path_line = row()
-        .full_width()
+    let mut meta_content = row()
+        .grow(1.0)
+        .shrink()
         .center_y()
-        .separate(Space::Sm)
+        .separate(Space::Xs)
         .min_w(0.0)
-        .child(
-            text(display_path)
+        .key(format!("{primary_key}-meta"));
+    if let Some(prefix) = source_prefix {
+        meta_content = meta_content.child(
+            text(prefix)
                 .text_role(TextRole::Small)
                 .color(t.color("text-muted"))
-                .literal_direction()
-                .truncate()
-                .grow(1.0)
-                .min_w(0.0),
+                .truncate(),
         );
+    }
+    meta_content = meta_content.child(
+        text(display_path)
+            .key(format!("{primary_key}-path"))
+            .font(mono_small)
+            .color(t.color("text-muted"))
+            .literal_direction()
+            .elide_head()
+            .grow(1.0)
+            .shrink()
+            .min_w(0.0),
+    );
     if let Some(rel) = relative_time {
-        path_line = path_line.child(
+        meta_content = meta_content.child(
             text(rel)
                 .text_role(TextRole::Small)
                 .color(t.color("text-muted")),
         );
     }
 
+    // Align line 2 under the project name in both LTR and RTL using the same icon width + gap.
+    let path_line = row()
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .min_w(0.0)
+        .child(rune::el().w(icon_size).h(1.0).a11y_hidden())
+        .child(meta_content);
+
     let mut primary = col()
         .grow(1.0)
+        .shrink()
         .min_w(0.0)
         .separate(Space::Xs)
         .py(pad_y)
