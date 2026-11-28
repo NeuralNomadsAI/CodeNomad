@@ -3,6 +3,7 @@ use crate::{
     backend::{Backend, read_json},
     history::{Result, valid_id},
 };
+use futures_lite::StreamExt;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -22,6 +23,37 @@ pub struct Permission {
     pub supported: bool,
     pub tool: Option<ToolSource>,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormLocation {
+    pub directory: String,
+    pub workspace_id: Option<String>,
+}
+
+impl FormLocation {
+    pub fn request_headers(&self) -> Vec<(&'static str, String)> {
+        let mut headers = vec![(
+            "x-opencode-directory",
+            encode_uri_component(&self.directory),
+        )];
+        if let Some(workspace_id) = &self.workspace_id {
+            let context = json!({
+                "directory": self.directory,
+                "workspaceID": workspace_id,
+            })
+            .to_string();
+            headers.push(("x-codenomad-location", encode_uri_component(&context)));
+        }
+        headers
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum FormOwner {
+    #[default]
+    Session,
+    Global(Option<FormLocation>),
+}
+
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
@@ -29,6 +61,27 @@ pub struct Form {
     pub fields: Vec<Value>,
     pub tool: Option<ToolSource>,
     pub infer_websearch: bool,
+    pub owner: FormOwner,
+}
+
+fn encode_uri_component(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(input.len());
+    for &b in input.as_bytes() {
+        let unescaped = b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            );
+        if unescaped {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0x0F) as usize] as char);
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -59,6 +112,87 @@ fn tool_source(row: &Value) -> Option<ToolSource> {
         call: call.into(),
     })
 }
+#[derive(Clone)]
+pub struct FormsSnapshot {
+    pub forms: Vec<Form>,
+    /// Whether every project global-form directory was authoritatively scanned without errors
+    /// or truncation. When `false`, previously known `FormOwner::Global` forms whose directory
+    /// is not listed in `scanned_global_directories` must be retained.
+    pub global_complete: bool,
+    pub scanned_global_directories: Vec<String>,
+}
+
+impl FormsSnapshot {
+    pub fn complete(forms: Vec<Form>) -> Self {
+        Self {
+            forms,
+            global_complete: true,
+            scanned_global_directories: Vec::new(),
+        }
+    }
+
+    pub fn merge_prior(self, prior: &[Form], settled_id: Option<&str>) -> Vec<Form> {
+        if self.global_complete {
+            return self.forms;
+        }
+        let mut merged = self.forms;
+        let mut seen: std::collections::HashSet<String> =
+            merged.iter().map(|form| form.id.clone()).collect();
+        for existing in prior {
+            if merged.len() >= 128 {
+                break;
+            }
+            if settled_id == Some(existing.id.as_str()) {
+                continue;
+            }
+            let FormOwner::Global(ref location) = existing.owner else {
+                continue;
+            };
+            let dir_scanned = location.as_ref().is_some_and(|loc| {
+                self.scanned_global_directories
+                    .iter()
+                    .any(|scanned| crate::same_server_path(scanned, &loc.directory))
+            });
+            if !dir_scanned && seen.insert(existing.id.clone()) {
+                merged.push(existing.clone());
+            }
+        }
+        merged
+    }
+}
+
+struct GlobalFormsScan {
+    forms: Vec<Form>,
+    complete: bool,
+    scanned_directories: Vec<String>,
+}
+
+impl GlobalFormsScan {
+    fn incomplete() -> Self {
+        Self {
+            forms: Vec::new(),
+            complete: false,
+            scanned_directories: Vec::new(),
+        }
+    }
+}
+
+enum PendingRequestsOutcome {
+    Supported(GlobalFormsScan),
+    Unsupported,
+    Failed,
+}
+
+fn push_scanned_directory(scanned: &mut Vec<String>, directory: &str) {
+    if !directory.trim().is_empty()
+        && !scanned
+            .iter()
+            .any(|existing| crate::same_server_path(existing, directory))
+    {
+        scanned.push(directory.to_owned());
+    }
+}
+
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
@@ -87,9 +221,16 @@ fn root_directory(session: &Value, id: &str) -> Option<String> {
 pub enum Action {
     Model(Value),
     Permission(String, String, String),
-    Answer(String, Value, Vec<Value>),
-    Cancel(String),
+    Answer(String, Value, Vec<Value>, FormOwner),
+    Cancel(String, FormOwner),
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormReplyOutcome {
+    Ok,
+    ValidationRejected(Option<String>),
+    Failed,
+}
+
 impl Backend {
     pub async fn notification_label(&self) -> Option<String> {
         if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
@@ -315,11 +456,392 @@ impl Backend {
             .and_then(|v| permissions(&v, &self.session))
             .ok()
     }
-    pub async fn forms_snapshot(&self) -> Option<Vec<Form>> {
-        self.control_get(&format!("session/{}/form", self.session))
+    pub async fn forms_snapshot(&self) -> Option<FormsSnapshot> {
+        let deadline = crate::runtime::Instant::now() + CONTROL_READ_BUDGET;
+        let session_raw = self
+            .control_get_within(
+                &format!("session/{}/form", self.session),
+                CONTROL_READ_BUDGET,
+            )
             .await
-            .and_then(|v| forms(&v, &self.session))
-            .ok()
+            .ok()?;
+        let mut out = forms(&session_raw, &self.session).ok()?;
+        let mut seen: std::collections::HashSet<String> =
+            out.iter().map(|form| form.id.clone()).collect();
+        let global = self.global_forms_within(deadline).await;
+        let mut truncated = false;
+        for form in global.forms {
+            if out.len() >= 128 {
+                truncated = true;
+                break;
+            }
+            if seen.insert(form.id.clone()) {
+                out.push(form);
+            }
+        }
+        Some(FormsSnapshot {
+            forms: out,
+            global_complete: global.complete && !truncated,
+            scanned_global_directories: if truncated {
+                Vec::new()
+            } else {
+                global.scanned_directories
+            },
+        })
+    }
+
+    async fn workspace_form_directories(
+        &self,
+        deadline: crate::runtime::Instant,
+    ) -> Option<(Vec<String>, bool)> {
+        let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
+        if timeout.is_zero() {
+            return None;
+        }
+        let response = self
+            .client
+            .get(format!(
+                "{}api/workspaces/{}/worktrees",
+                self.base, self.workspace
+            ))
+            .timeout(timeout)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .ok()?;
+        let data = read_json(response).await.ok()?;
+        let trees = data["worktrees"].as_array()?;
+        if trees.len() > 128 {
+            return None;
+        }
+        let mut dirs = Vec::new();
+        let mut all_fit = true;
+        for tree in trees {
+            if tree["nestedFolderMissing"].as_bool() == Some(true) {
+                continue;
+            }
+            let Some(dir) = tree["serviceDirectory"]
+                .as_str()
+                .or_else(|| tree["directory"].as_str())
+                .filter(|d| !d.trim().is_empty() && !d.contains('\0') && d.len() <= 4096)
+            else {
+                all_fit = false;
+                continue;
+            };
+            if !dirs.iter().any(|existing: &String| existing == dir) {
+                if dirs.len() >= 64 {
+                    all_fit = false;
+                    break;
+                }
+                dirs.push(dir.to_owned());
+            }
+        }
+        Some((dirs, all_fit))
+    }
+
+    async fn pending_requests_global_forms(
+        &self,
+        directories: &[String],
+        all_dirs_fit: bool,
+        deadline: crate::runtime::Instant,
+    ) -> PendingRequestsOutcome {
+        if directories.is_empty() {
+            return PendingRequestsOutcome::Unsupported;
+        }
+        let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
+        if timeout.is_zero() {
+            return PendingRequestsOutcome::Failed;
+        }
+        let query: Vec<(&str, &str)> = directories
+            .iter()
+            .take(64)
+            .map(|dir| ("directories", dir.as_str()))
+            .collect();
+        let response = match self
+            .client
+            .get(format!(
+                "{}api/workspaces/{}/pending-requests",
+                self.base, self.workspace
+            ))
+            .query(&query)
+            .timeout(timeout)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(_) => return PendingRequestsOutcome::Failed,
+        };
+        let status = response.status();
+        if matches!(status.as_u16(), 404 | 405 | 501) {
+            return PendingRequestsOutcome::Unsupported;
+        }
+        if !status.is_success() {
+            return PendingRequestsOutcome::Failed;
+        }
+        let Ok(body) = read_json(response).await else {
+            return PendingRequestsOutcome::Failed;
+        };
+        if body["supported"] == false {
+            return PendingRequestsOutcome::Unsupported;
+        }
+        if body["supported"] != true {
+            return PendingRequestsOutcome::Failed;
+        }
+        let Some(entries) = body["directories"].as_array() else {
+            return PendingRequestsOutcome::Failed;
+        };
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut scanned_directories = Vec::new();
+        let mut all_ok = all_dirs_fit && entries.len() <= 64;
+        for entry in entries.iter().take(64) {
+            if entry["status"] != "ok" {
+                all_ok = false;
+                continue;
+            }
+            let Some(entry_dir) = entry["directory"].as_str().filter(|d| !d.trim().is_empty())
+            else {
+                all_ok = false;
+                continue;
+            };
+            let Some(locations) = entry["locations"].as_array() else {
+                all_ok = false;
+                continue;
+            };
+            let mut entry_complete = locations.len() <= 64;
+            let mut loc_dirs = Vec::new();
+            for loc_entry in locations.iter().take(64) {
+                let location = parse_form_location(&loc_entry["location"], Some(entry_dir));
+                if let Some(ref loc) = location {
+                    loc_dirs.push(loc.directory.clone());
+                }
+                if let Some(form_rows) = loc_entry["forms"].as_array() {
+                    if form_rows.len() > 128 {
+                        entry_complete = false;
+                    } else {
+                        let before = out.len();
+                        decode_global_form_rows(form_rows, &location, &mut seen, &mut out);
+                        if out.len() >= 128 && out.len() > before {
+                            entry_complete = false;
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                } else {
+                    entry_complete = false;
+                }
+            }
+            if entry_complete {
+                push_scanned_directory(&mut scanned_directories, entry_dir);
+                for dir in loc_dirs {
+                    push_scanned_directory(&mut scanned_directories, &dir);
+                }
+            } else {
+                all_ok = false;
+            }
+            if out.len() >= 128 {
+                all_ok = false;
+                break;
+            }
+        }
+        let all_requested_scanned = directories.iter().all(|requested| {
+            scanned_directories
+                .iter()
+                .any(|scanned| crate::same_server_path(scanned, requested))
+        });
+        PendingRequestsOutcome::Supported(GlobalFormsScan {
+            forms: out,
+            complete: all_ok && all_requested_scanned,
+            scanned_directories,
+        })
+    }
+
+    async fn list_global_forms_at(
+        &self,
+        location: Option<&FormLocation>,
+        deadline: crate::runtime::Instant,
+    ) -> Result<(Vec<Form>, Option<FormLocation>, bool)> {
+        let timeout = deadline.saturating_duration_since(crate::runtime::Instant::now());
+        if timeout.is_zero() {
+            return Err("control read timed out".into());
+        }
+        let mut req = self.client.get(self.control_url("form")).timeout(timeout);
+        let fallback_dir = location.map(|loc| loc.directory.as_str());
+        if let Some(loc) = location {
+            req = req.query(&[("location[directory]", loc.directory.as_str())]);
+            if let Some(workspace_id) = &loc.workspace_id {
+                let context = json!({
+                    "directory": loc.directory,
+                    "workspaceID": workspace_id,
+                })
+                .to_string();
+                req = req.header("x-codenomad-location", encode_uri_component(&context));
+            }
+        }
+        let response = req.send().await?.error_for_status()?;
+        let body = read_json(response).await?;
+        let rows = rows(&body)?;
+        let resolved_location = parse_form_location(&body["location"], fallback_dir);
+        let complete = body["complete"].as_bool() != Some(false) && rows.len() <= 128;
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        decode_global_form_rows(rows, &resolved_location, &mut seen, &mut out);
+        Ok((out, resolved_location, complete))
+    }
+
+    async fn global_forms_within(&self, deadline: crate::runtime::Instant) -> GlobalFormsScan {
+        let Some((directories, all_dirs_fit)) = self.workspace_form_directories(deadline).await
+        else {
+            // Worktree discovery failed: attempt a best-effort unscoped read so new default-scope
+            // global forms appear, while keeping the scan incomplete to retain other worktrees' forms.
+            if let Ok((forms, resolved_location, complete)) =
+                self.list_global_forms_at(None, deadline).await
+            {
+                let mut scanned_directories = Vec::new();
+                if complete && let Some(loc) = resolved_location {
+                    push_scanned_directory(&mut scanned_directories, &loc.directory);
+                }
+                return GlobalFormsScan {
+                    forms,
+                    complete: false,
+                    scanned_directories,
+                };
+            }
+            return GlobalFormsScan::incomplete();
+        };
+        if directories.is_empty() {
+            if let Ok((forms, resolved_location, complete)) =
+                self.list_global_forms_at(None, deadline).await
+            {
+                let mut scanned_directories = Vec::new();
+                if complete && let Some(loc) = resolved_location {
+                    push_scanned_directory(&mut scanned_directories, &loc.directory);
+                }
+                return GlobalFormsScan {
+                    forms,
+                    complete: all_dirs_fit && complete,
+                    scanned_directories,
+                };
+            }
+            return GlobalFormsScan::incomplete();
+        }
+        match self
+            .pending_requests_global_forms(&directories, all_dirs_fit, deadline)
+            .await
+        {
+            PendingRequestsOutcome::Supported(scan) => return scan,
+            PendingRequestsOutcome::Failed => return GlobalFormsScan::incomplete(),
+            PendingRequestsOutcome::Unsupported => {}
+        }
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut scanned_directories = Vec::new();
+        let mut all_ok = all_dirs_fit && directories.len() <= 16;
+        for dir in directories.iter().take(16) {
+            let loc = FormLocation {
+                directory: dir.clone(),
+                workspace_id: None,
+            };
+            match self.list_global_forms_at(Some(&loc), deadline).await {
+                Ok((forms, resolved_location, complete)) => {
+                    let mut truncated = false;
+                    for form in forms {
+                        if out.len() >= 128 {
+                            truncated = true;
+                            break;
+                        }
+                        if seen.insert(form.id.clone()) {
+                            out.push(form);
+                        }
+                    }
+                    if complete && !truncated {
+                        push_scanned_directory(&mut scanned_directories, dir);
+                        if let Some(resolved) = resolved_location {
+                            push_scanned_directory(&mut scanned_directories, &resolved.directory);
+                        }
+                    } else {
+                        all_ok = false;
+                    }
+                    if truncated {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    all_ok = false;
+                }
+            }
+        }
+        GlobalFormsScan {
+            forms: out,
+            complete: all_ok,
+            scanned_directories,
+        }
+    }
+
+    async fn pending_forms_for_owner(&self, owner: &FormOwner) -> Result<Vec<Form>> {
+        match owner {
+            FormOwner::Session => forms(
+                &self
+                    .control_get(&format!("session/{}/form", self.session))
+                    .await?,
+                &self.session,
+            ),
+            FormOwner::Global(location) => {
+                let deadline = crate::runtime::Instant::now() + CONTROL_READ_BUDGET;
+                match self.list_global_forms_at(location.as_ref(), deadline).await {
+                    Ok((found, _, _))
+                        if !found.is_empty()
+                            || location.as_ref().is_none_or(|l| l.workspace_id.is_none()) =>
+                    {
+                        Ok(found)
+                    }
+                    result => {
+                        if let Some(loc) = location
+                            && loc.workspace_id.is_some()
+                            && let PendingRequestsOutcome::Supported(scan) = self
+                                .pending_requests_global_forms(
+                                    std::slice::from_ref(&loc.directory),
+                                    true,
+                                    deadline,
+                                )
+                                .await
+                            && (scan.complete
+                                || scan
+                                    .scanned_directories
+                                    .iter()
+                                    .any(|d| crate::same_server_path(d, &loc.directory)))
+                        {
+                            return Ok(scan
+                                .forms
+                                .into_iter()
+                                .filter(|f| f.owner == *owner)
+                                .collect());
+                        }
+                        result.map(|(found, _, _)| found)
+                    }
+                }
+            }
+        }
+    }
+
+    fn owner_form_base(&self, owner: &FormOwner) -> String {
+        match owner {
+            FormOwner::Session => format!("session/{}", self.session),
+            FormOwner::Global(_) => "session/global".into(),
+        }
+    }
+
+    fn apply_owner_headers(
+        &self,
+        mut req: reqwest::RequestBuilder,
+        owner: &FormOwner,
+    ) -> reqwest::RequestBuilder {
+        if let FormOwner::Global(Some(location)) = owner {
+            for (name, value) in location.request_headers() {
+                req = req.header(name, value);
+            }
+        }
+        req
     }
     async fn action_model_within(
         &self,
@@ -378,34 +900,91 @@ impl Backend {
                 )
                 .await
             }
-            Action::Answer(id, answer, fields) => {
-                let pending = forms(
-                    &self.control_get(&format!("{path}/form")).await?,
-                    &self.session,
-                )?;
+            Action::Answer(id, answer, fields, owner) => {
+                let pending = self.pending_forms_for_owner(owner).await?;
                 if !pending.iter().any(|f| f.id == *id && f.fields == *fields) {
                     return Err("question changed".into());
                 }
-                self.control_post(&format!("{path}/form/{id}/reply"), json!({"answer":answer}))
-                    .await
+                let base = self.owner_form_base(owner);
+                let req = self
+                    .client
+                    .post(self.control_url(&format!("{base}/form/{id}/reply")))
+                    .json(&json!({"answer": answer}))
+                    .timeout(Duration::from_secs(10));
+                self.apply_owner_headers(req, owner)
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                Ok(())
             }
-            Action::Cancel(id) => {
-                let pending = forms(
-                    &self.control_get(&format!("{path}/form")).await?,
-                    &self.session,
-                )?;
+            Action::Cancel(id, owner) => {
+                let pending = self.pending_forms_for_owner(owner).await?;
                 if !pending.iter().any(|f| f.id == *id) {
                     return Err("question is no longer pending".into());
                 }
-                self.client
-                    .delete(self.control_url(&format!("{path}/form/{id}")))
-                    .timeout(Duration::from_secs(10))
+                let base = self.owner_form_base(owner);
+                let req = self
+                    .client
+                    .delete(self.control_url(&format!("{base}/form/{id}")))
+                    .timeout(Duration::from_secs(10));
+                self.apply_owner_headers(req, owner)
                     .send()
                     .await?
                     .error_for_status()?;
                 Ok(())
             }
         }
+    }
+    pub async fn agent_form_action(&self, action: &Action) -> FormReplyOutcome {
+        let Action::Answer(id, answer, fields, owner) = action else {
+            return match self.agent_action(action).await {
+                Ok(()) => FormReplyOutcome::Ok,
+                Err(_) => FormReplyOutcome::Failed,
+            };
+        };
+        let Ok(pending) = self.pending_forms_for_owner(owner).await else {
+            return FormReplyOutcome::Failed;
+        };
+        if !pending.iter().any(|f| f.id == *id && f.fields == *fields) {
+            return FormReplyOutcome::Failed;
+        }
+        let base = self.owner_form_base(owner);
+        let req = self
+            .client
+            .post(self.control_url(&format!("{base}/form/{id}/reply")))
+            .json(&json!({"answer": answer}))
+            .timeout(Duration::from_secs(10));
+        let Ok(response) = self.apply_owner_headers(req, owner).send().await else {
+            return FormReplyOutcome::Failed;
+        };
+        let status = response.status();
+        if status.is_success() {
+            return FormReplyOutcome::Ok;
+        }
+        if matches!(status.as_u16(), 400 | 422) {
+            const MAX_REJECTION_BODY_BYTES: usize = 16_384;
+            let mut buf = Vec::new();
+            let mut chunks = response.bytes_stream();
+            while let Some(chunk) = chunks.next().await {
+                let Ok(chunk) = chunk else {
+                    break;
+                };
+                let remaining = MAX_REJECTION_BODY_BYTES.saturating_sub(buf.len());
+                if remaining == 0 {
+                    break;
+                }
+                let take = chunk.len().min(remaining);
+                buf.extend_from_slice(&chunk[..take]);
+                if buf.len() >= MAX_REJECTION_BODY_BYTES {
+                    break;
+                }
+            }
+            drop(chunks);
+            let text = String::from_utf8_lossy(&buf).trim().to_string();
+            let body = (!text.is_empty()).then_some(text);
+            return FormReplyOutcome::ValidationRejected(body);
+        }
+        FormReplyOutcome::Failed
     }
     pub async fn interrupt(&self) -> Result<()> {
         self.control_post(
@@ -508,6 +1087,87 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
     }
     Ok(out)
 }
+fn parse_form_location(value: &Value, fallback_dir: Option<&str>) -> Option<FormLocation> {
+    let valid_dir = |s: &str| !s.trim().is_empty() && !s.contains('\0') && s.len() <= 4096;
+    let directory = value["directory"]
+        .as_str()
+        .filter(|d| valid_dir(d))
+        .or_else(|| fallback_dir.filter(|d| valid_dir(d)))?
+        .to_owned();
+    let workspace_id = value["workspaceID"]
+        .as_str()
+        .filter(|id| !id.trim().is_empty() && !id.contains('\0') && id.len() <= 256)
+        .map(str::to_owned);
+    Some(FormLocation {
+        directory,
+        workspace_id,
+    })
+}
+
+fn decode_form_row(
+    row: &Value,
+    owner: FormOwner,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<Form> {
+    let id = string(&row["id"], 256)?;
+    if !valid_id(&id) || !seen.insert(id.clone()) {
+        return Err("invalid question identity".into());
+    }
+    let fields = row["fields"]
+        .as_array()
+        .filter(|v| !v.is_empty() && v.len() <= 32)
+        .ok_or("invalid question fields")?
+        .clone();
+    let metadata = &row["metadata"];
+    let source = metadata
+        .get("tool")
+        .filter(|v| v.is_object())
+        .or_else(|| metadata.get("source").filter(|v| v.is_object()))
+        .unwrap_or(&Value::Null);
+    let explicit = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| source.get(*key))
+            .or_else(|| {
+                keys.iter()
+                    .filter(|key| **key != "id")
+                    .find_map(|key| metadata.get(*key))
+            })
+            .unwrap_or(&Value::Null)
+    };
+    let tool = target(
+        explicit(&["messageID", "messageId"]),
+        explicit(&["id", "callID", "callId"]),
+    )
+    .or_else(|| tool_source(row));
+    Ok(Form {
+        id,
+        title: string(&row["title"], 4096)?,
+        fields,
+        infer_websearch: metadata["kind"] == "websearch.provider",
+        tool,
+        owner,
+    })
+}
+
+fn decode_global_form_rows(
+    rows: &[Value],
+    location: &Option<FormLocation>,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<Form>,
+) {
+    for row in rows {
+        if out.len() >= 128 {
+            break;
+        }
+        if row["sessionID"] != "global" {
+            continue;
+        }
+        if let Ok(form) = decode_form_row(row, FormOwner::Global(location.clone()), seen) {
+            out.push(form);
+        }
+    }
+}
+
 pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
     let mut out = vec![];
     let mut seen = std::collections::HashSet::new();
@@ -515,43 +1175,7 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
         if row["sessionID"] != session {
             return Err("foreign question".into());
         }
-        let id = string(&row["id"], 256)?;
-        if !valid_id(&id) || !seen.insert(id.clone()) {
-            return Err("invalid question identity".into());
-        }
-        let fields = row["fields"]
-            .as_array()
-            .filter(|v| !v.is_empty() && v.len() <= 32)
-            .ok_or("invalid question fields")?
-            .clone();
-        let metadata = &row["metadata"];
-        let source = metadata
-            .get("tool")
-            .filter(|v| v.is_object())
-            .or_else(|| metadata.get("source").filter(|v| v.is_object()))
-            .unwrap_or(&Value::Null);
-        let explicit = |keys: &[&str]| {
-            keys.iter()
-                .find_map(|key| source.get(*key))
-                .or_else(|| {
-                    keys.iter()
-                        .filter(|key| **key != "id")
-                        .find_map(|key| metadata.get(*key))
-                })
-                .unwrap_or(&Value::Null)
-        };
-        let tool = target(
-            explicit(&["messageID", "messageId"]),
-            explicit(&["id", "callID", "callId"]),
-        )
-        .or_else(|| tool_source(row));
-        out.push(Form {
-            id,
-            title: string(&row["title"], 4096)?,
-            fields,
-            infer_websearch: tool.is_none() && metadata["kind"] == "websearch.provider",
-            tool,
-        });
+        out.push(decode_form_row(row, FormOwner::Session, &mut seen)?);
     }
     Ok(out)
 }
@@ -859,9 +1483,21 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert!(seen.lock().unwrap()[0].contains("/session/ses_split/permission"));
         let forms = rt.block_on(backend.forms_snapshot()).unwrap();
-        assert_eq!(forms.len(), 1);
-        assert_eq!(seen.lock().unwrap().len(), 2);
-        assert!(seen.lock().unwrap()[1].contains("/session/ses_split/form"));
+        assert_eq!(forms.forms.len(), 1);
+        let requests = seen.lock().unwrap().clone();
+        assert!(
+            requests
+                .iter()
+                .any(|line| line.contains("/session/ses_split/form")),
+            "forms_snapshot must read session form endpoint: {requests:?}"
+        );
+        assert!(
+            !requests
+                .iter()
+                .skip(1)
+                .any(|line| line.contains("/permission") || line.contains("/model")),
+            "forms_snapshot must not read unrelated permission or model endpoints: {requests:?}"
+        );
     }
 
     #[test]
@@ -911,5 +1547,351 @@ mod tests {
                 .all(|line| !line.contains("/permission") && !line.contains("/form")),
             "Action::Model must not read unrelated permission or form endpoints: {requests:?}"
         );
+    }
+
+    #[test]
+    fn form_reply_streams_at_most_16kib_on_400_and_treats_503_as_transient_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+        let handle = std::thread::spawn(move || {
+            let fields_json = r#"[{"key":"code","type":"string","required":true}]"#;
+            let form_body = format!(
+                r#"{{"data":[{{"id":"f1","sessionID":"ses_f","title":"Q","fields":{fields_json}}}]}}"#
+            );
+            let mut reply_count = 0usize;
+            for incoming in listener.incoming() {
+                if stop_srv.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(mut stream) = incoming else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let first_line = head.lines().next().unwrap_or("");
+                if first_line.starts_with("GET ") && first_line.contains("/form HTTP") {
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        form_body.len(),
+                        form_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                } else if first_line.starts_with("POST ") && first_line.contains("/form/f1/reply") {
+                    reply_count += 1;
+                    if reply_count == 1 {
+                        // Stream 20 KiB then hold the connection open for 5s before closing:
+                        // client must stop at 16 KiB without waiting for EOF.
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                        );
+                        let chunk = "x".repeat(20_000);
+                        let header = format!("{:x}\r\n", chunk.len());
+                        let _ = stream.write_all(header.as_bytes());
+                        let _ = stream.write_all(chunk.as_bytes());
+                        let _ = stream.write_all(b"\r\n");
+                        let _ = stream.flush();
+                        std::thread::sleep(Duration::from_secs(3));
+                    } else {
+                        let msg = "service unavailable";
+                        let resp = format!(
+                            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            msg.len(),
+                            msg
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                }
+            }
+        });
+        let backend = test_backend(addr, "ses_f");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let action = Action::Answer(
+            "f1".into(),
+            json!({"code": "abc"}),
+            vec![json!({"key":"code","type":"string","required":true})],
+            FormOwner::Session,
+        );
+        let t0 = std::time::Instant::now();
+        let outcome_400 = rt.block_on(backend.agent_form_action(&action));
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "400 rejection must stop reading after 16 KiB without waiting for slow EOF"
+        );
+        match outcome_400 {
+            FormReplyOutcome::ValidationRejected(Some(body)) => {
+                assert_eq!(body.len(), 16_384);
+            }
+            other => panic!("expected capped ValidationRejected, got {other:?}"),
+        }
+        let outcome_503 = rt.block_on(backend.agent_form_action(&action));
+        assert_eq!(
+            outcome_503,
+            FormReplyOutcome::Failed,
+            "HTTP 503 must classify as transient Failed, not ValidationRejected"
+        );
+        stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(addr);
+        let _ = handle.join();
+    }
+
+    #[test]
+    fn global_forms_discovered_and_routed_with_native_location_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+        let recorded = Arc::new(Mutex::new(
+            Vec::<(String, Option<String>, Option<String>)>::new(),
+        ));
+        let recorded_srv = recorded.clone();
+        let mode = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mode_srv = mode.clone();
+        let handle = std::thread::spawn(move || {
+            for incoming in listener.incoming() {
+                if stop_srv.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(mut stream) = incoming else {
+                    break;
+                };
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let first_line = head.lines().next().unwrap_or("").to_string();
+                let header = |name: &str| {
+                    head.lines().find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+                    })
+                };
+                let dir_hdr = header("x-opencode-directory");
+                let loc_hdr = header("x-codenomad-location");
+                recorded_srv
+                    .lock()
+                    .unwrap()
+                    .push((first_line.clone(), dir_hdr, loc_hdr));
+                let cur_mode = mode_srv.load(Ordering::SeqCst);
+                let (status_line, body) = if first_line.starts_with("GET ")
+                    && first_line.contains("/session/ses_g/form")
+                {
+                    (
+                        "200 OK",
+                        r#"{"data":[{"id":"f_sess","sessionID":"ses_g","title":"Session Q","fields":[{"key":"ok","type":"boolean"}]}]}"#.to_string(),
+                    )
+                } else if first_line.starts_with("GET ")
+                    && first_line.contains("/api/workspaces/ws1/worktrees")
+                {
+                    match cur_mode {
+                        0 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/工作/100% ready"}]}"#.to_string(),
+                        ),
+                        1 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/worktree"}]}"#.to_string(),
+                        ),
+                        2 => (
+                            "200 OK",
+                            r#"{"worktrees":[{"directory":"/工作/100% ready"}]}"#.to_string(),
+                        ),
+                        _ => (
+                            "500 Internal Server Error",
+                            r#"{"error":"worktrees down"}"#.to_string(),
+                        ),
+                    }
+                } else if first_line.starts_with("GET ")
+                    && first_line.contains("/api/workspaces/ws1/pending-requests")
+                {
+                    match cur_mode {
+                        0 => (
+                            "200 OK",
+                            r#"{"supported":true,"directories":[{"directory":"/工作/100% ready","status":"ok","locations":[{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"permissions":[],"forms":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]},{"id":"f_other","sessionID":"ses_other","title":"Other","fields":[{"key":"x","type":"string"}]}]}]}]}"#.to_string(),
+                        ),
+                        1 => ("200 OK", r#"{"supported":false}"#.to_string()),
+                        _ => (
+                            "200 OK",
+                            r#"{"supported":true,"directories":[{"directory":"/工作/100% ready","status":"error","reason":"changed"}]}"#.to_string(),
+                        ),
+                    }
+                } else if first_line.starts_with("GET ")
+                    && first_line.contains("/instance/api/form")
+                {
+                    if cur_mode == 0 {
+                        (
+                            "200 OK",
+                            r#"{"location":{"directory":"/工作/100% ready","workspaceID":"ws-legacy"},"data":[{"id":"f_global_legacy","sessionID":"global","title":"MCP Auth","fields":[{"key":"auth","type":"external","url":"https://example.com/auth"}]}]}"#.to_string(),
+                        )
+                    } else if cur_mode == 1 {
+                        (
+                            "200 OK",
+                            r#"{"location":{"directory":"/worktree"},"data":[{"id":"f_global_plain","sessionID":"global","title":"MCP Plain","fields":[{"key":"auth","type":"external","url":"https://example.com/plain"}]},{"id":"f_foreign","sessionID":"ses_other","title":"Foreign","fields":[{"key":"x","type":"string"}]}]}"#.to_string(),
+                        )
+                    } else {
+                        ("503 Service Unavailable", r#"{"error":"busy"}"#.to_string())
+                    }
+                } else {
+                    ("200 OK", r#"{"ok":true}"#.to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        let backend = test_backend(addr, "ses_g");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        // Mode 0: pending-requests discovers global form with Unicode directory + legacy workspaceID.
+        let discovered_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(discovered_snap.global_complete);
+        let discovered = discovered_snap.forms;
+        assert_eq!(
+            discovered.len(),
+            2,
+            "must include session form + global form (ignoring other sessions)"
+        );
+        assert_eq!(discovered[0].id, "f_sess");
+        assert_eq!(discovered[0].owner, FormOwner::Session);
+        assert_eq!(discovered[1].id, "f_global_legacy");
+        let expected_legacy_loc = FormLocation {
+            directory: "/工作/100% ready".into(),
+            workspace_id: Some("ws-legacy".into()),
+        };
+        assert_eq!(
+            discovered[1].owner,
+            FormOwner::Global(Some(expected_legacy_loc.clone()))
+        );
+        recorded.lock().unwrap().clear();
+
+        let reply_outcome = rt.block_on(backend.agent_form_action(&Action::Answer(
+            "f_global_legacy".into(),
+            json!({"auth": true}),
+            discovered[1].fields.clone(),
+            discovered[1].owner.clone(),
+        )));
+        assert_eq!(reply_outcome, FormReplyOutcome::Ok);
+        rt.block_on(backend.agent_action(&Action::Cancel(
+            "f_global_legacy".into(),
+            discovered[1].owner.clone(),
+        )))
+        .unwrap();
+
+        let calls = recorded.lock().unwrap().clone();
+        let reply_call = calls
+            .iter()
+            .find(|(line, _, _)| {
+                line.starts_with("POST ")
+                    && line.contains("/session/global/form/f_global_legacy/reply")
+            })
+            .expect("global form reply must target /session/global/form/{id}/reply");
+        assert_eq!(
+            reply_call.1.as_deref(),
+            Some("%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready")
+        );
+        assert!(
+            reply_call
+                .2
+                .as_deref()
+                .is_some_and(|v| v.contains("ws-legacy")),
+            "legacy global form reply must carry x-codenomad-location: {:?}",
+            reply_call.2
+        );
+        let cancel_call = calls
+            .iter()
+            .find(|(line, _, _)| {
+                line.starts_with("DELETE ") && line.contains("/session/global/form/f_global_legacy")
+            })
+            .expect("global form cancel must target /session/global/form/{id}");
+        assert_eq!(
+            cancel_call.1.as_deref(),
+            Some("%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready")
+        );
+        assert!(cancel_call.2.is_some());
+
+        // Mode 1: fallback to GET /api/form when pending-requests is unsupported; no workspaceID
+        // means x-opencode-directory only (no x-codenomad-location).
+        mode.store(1, Ordering::SeqCst);
+        let discovered_fallback_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(discovered_fallback_snap.global_complete);
+        let discovered_fallback = discovered_fallback_snap.forms;
+        assert_eq!(discovered_fallback.len(), 2);
+        assert_eq!(discovered_fallback[1].id, "f_global_plain");
+        assert_eq!(
+            discovered_fallback[1].owner,
+            FormOwner::Global(Some(FormLocation {
+                directory: "/worktree".into(),
+                workspace_id: None,
+            }))
+        );
+        recorded.lock().unwrap().clear();
+        let plain_outcome = rt.block_on(backend.agent_form_action(&Action::Answer(
+            "f_global_plain".into(),
+            json!({"auth": true}),
+            discovered_fallback[1].fields.clone(),
+            discovered_fallback[1].owner.clone(),
+        )));
+        assert_eq!(plain_outcome, FormReplyOutcome::Ok);
+        let plain_calls = recorded.lock().unwrap().clone();
+        let plain_reply = plain_calls
+            .iter()
+            .find(|(line, _, _)| {
+                line.starts_with("POST ")
+                    && line.contains("/session/global/form/f_global_plain/reply")
+            })
+            .expect("plain global form reply must target /session/global/form/{id}/reply");
+        assert_eq!(plain_reply.1.as_deref(), Some("%2Fworktree"));
+        assert_eq!(plain_reply.2, None);
+
+        // Mode 2: pending-requests status:"error" marks scan incomplete and retains prior global form.
+        mode.store(2, Ordering::SeqCst);
+        let partial_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(!partial_snap.global_complete);
+        assert!(partial_snap.scanned_global_directories.is_empty());
+        let merged = partial_snap.merge_prior(&discovered, None);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[1].id, "f_global_legacy");
+
+        // Mode 3: worktrees 500 + unscoped /api/form 503 marks scan incomplete and retains prior global form.
+        mode.store(3, Ordering::SeqCst);
+        let failed_wt_snap = rt.block_on(backend.forms_snapshot()).unwrap();
+        assert!(!failed_wt_snap.global_complete);
+        assert!(failed_wt_snap.scanned_global_directories.is_empty());
+        let merged_wt = failed_wt_snap.merge_prior(&discovered, None);
+        assert_eq!(merged_wt.len(), 2);
+        assert_eq!(merged_wt[1].id, "f_global_legacy");
+
+        // Session-owned form sends neither location header.
+        recorded.lock().unwrap().clear();
+        let sess_outcome = rt.block_on(backend.agent_form_action(&Action::Answer(
+            "f_sess".into(),
+            json!({"ok": true}),
+            discovered_fallback[0].fields.clone(),
+            FormOwner::Session,
+        )));
+        assert_eq!(sess_outcome, FormReplyOutcome::Ok);
+        let sess_calls = recorded.lock().unwrap().clone();
+        let sess_reply = sess_calls
+            .iter()
+            .find(|(line, _, _)| {
+                line.starts_with("POST ") && line.contains("/session/ses_g/form/f_sess/reply")
+            })
+            .expect("session form reply must target /session/{id}/form/{id}/reply");
+        assert_eq!(sess_reply.1, None);
+        assert_eq!(sess_reply.2, None);
+
+        stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(addr);
+        let _ = handle.join();
     }
 }

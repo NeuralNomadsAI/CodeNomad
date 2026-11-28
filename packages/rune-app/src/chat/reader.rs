@@ -72,8 +72,8 @@ pub(crate) struct Reader {
     resume_manual_seq: Option<u64>,
     reconciled_manual_scroll: bool,
     last_taken: Option<(u64, u64)>,
-    deferred_sync: Option<DeferredSync>,
-    sync_undo: Option<SyncUndo>,
+    deferred_sync: Option<Box<DeferredSync>>,
+    sync_undo: Option<Box<SyncUndo>>,
     awaiting_manual_probe: ManualProbeWait,
     installed: bool,
     hidden: bool,
@@ -304,7 +304,7 @@ impl Reader {
         if generation != self.generation || connection != self.connection.load(SeqCst) {
             return;
         }
-        self.sync_undo = Some(SyncUndo {
+        self.sync_undo = Some(Box::new(SyncUndo {
             generation,
             connection,
             page,
@@ -324,7 +324,7 @@ impl Reader {
             saved_max: saved_scroll.2,
             age: 0,
             last_clock: clock,
-        });
+        }));
     }
 
     pub(crate) fn take_next(
@@ -336,7 +336,7 @@ impl Reader {
         clock: Option<f64>,
     ) -> Option<Event> {
         self.last_taken = None;
-        if let Some(deferred) = self.deferred_sync.take() {
+        if let Some(mut deferred) = self.deferred_sync.take() {
             if !self.hidden
                 && deferred.generation == self.generation
                 && deferred.connection == self.connection.load(SeqCst)
@@ -347,11 +347,9 @@ impl Reader {
                 }
                 let scroll_seq = reading.scroll_seq();
                 if reading.awaiting_wheel_replay() {
-                    self.deferred_sync = Some(DeferredSync {
-                        last_clock: clock,
-                        last_seq: scroll_seq,
-                        ..deferred
-                    });
+                    deferred.last_clock = clock;
+                    deferred.last_seq = scroll_seq;
+                    self.deferred_sync = Some(deferred);
                     return None;
                 }
                 if clock.is_some()
@@ -371,12 +369,10 @@ impl Reader {
                     self.last_taken = Some((deferred.generation, deferred.connection));
                     return Some(deferred.event);
                 }
-                self.deferred_sync = Some(DeferredSync {
-                    stage: deferred.stage + 1,
-                    last_clock: clock,
-                    last_seq: scroll_seq,
-                    ..deferred
-                });
+                deferred.stage += 1;
+                deferred.last_clock = clock;
+                deferred.last_seq = scroll_seq;
+                self.deferred_sync = Some(deferred);
                 return None;
             }
             self.record_settled_inbox(&deferred.event);
@@ -387,7 +383,7 @@ impl Reader {
                 && connection == self.connection.load(SeqCst)
             {
                 if defer_sync && self.resume_pending && matches!(event, Event::ReaderSync { .. }) {
-                    self.deferred_sync = Some(DeferredSync {
+                    self.deferred_sync = Some(Box::new(DeferredSync {
                         generation,
                         connection,
                         event,
@@ -395,7 +391,7 @@ impl Reader {
                         min_seq: 0,
                         last_clock: clock,
                         last_seq: reading.scroll_seq(),
-                    });
+                    }));
                     return None;
                 }
                 self.last_taken = Some((generation, connection));
@@ -915,7 +911,7 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
         reader.reconciled_manual_scroll = false;
         reader.awaiting_manual_probe = ManualProbeWait::Idle;
         reader.discard_deferred_sync();
-        reader.deferred_sync = Some(DeferredSync {
+        reader.deferred_sync = Some(Box::new(DeferredSync {
             generation: undo.generation,
             connection: undo.connection,
             event: Event::ReaderSync {
@@ -926,7 +922,7 @@ pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx
             min_seq: min_scroll_seq,
             last_clock: Some(tx.clock()),
             last_seq: scroll_seq,
-        });
+        }));
     }
     tx.wake_after(std::time::Duration::ZERO);
     true

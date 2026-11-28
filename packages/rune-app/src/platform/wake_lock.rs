@@ -173,6 +173,7 @@ mod tests {
                 fields: vec![],
                 tool: None,
                 infer_websearch: false,
+                owner: Default::default(),
             });
         }
         ui

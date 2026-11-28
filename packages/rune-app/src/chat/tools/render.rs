@@ -327,6 +327,14 @@ fn render_body(
         );
     }
     let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+    let owner_conversation = if let Some(child_id) = ancestors.last().copied() {
+        document::Conversation::Child {
+            parent: owner_parent,
+            id: child_id,
+        }
+    } else {
+        document::Conversation::Root
+    };
     let tool_expand_key = message
         .strip_prefix("child:")
         .and_then(|v| v.split_once(':'))
@@ -453,6 +461,16 @@ fn render_body(
             && !claimed.get()
         {
             let prompt = super::string(&tool.input, &["prompt"]);
+            let output_conversation = (ancestors.len() < task::MAX_DEPTH)
+                .then(|| task::watched_child(tool))
+                .flatten()
+                .filter(|id| !ancestors.contains(id))
+                .map_or(document::Conversation::None, |id| {
+                    document::Conversation::Child {
+                        parent: task::parent_child(message),
+                        id,
+                    }
+                });
             if (!prompt.is_empty()
                 && document::bounded_prose_matches_for(
                     s,
@@ -460,6 +478,7 @@ fn render_body(
                     &format!("{key}-task-prompt"),
                     prompt,
                     task::PANE_LIMIT,
+                    owner_conversation,
                     q,
                 ))
                 || (!parts[0].is_empty()
@@ -469,6 +488,7 @@ fn render_body(
                         &format!("{key}-task-output"),
                         parts[0],
                         task::PANE_LIMIT,
+                        output_conversation,
                         q,
                     ))
             {
@@ -612,16 +632,31 @@ fn render_body(
                     if let Some(q) = query
                         && let Some(claimed) = q.claimed
                         && !claimed.get()
-                        && document::skill_prose_matches(s, key, &output_key, parts[0], q)
+                        && document::skill_prose_matches(
+                            s,
+                            key,
+                            &output_key,
+                            parts[0],
+                            owner_conversation,
+                            q,
+                        )
                     {
                         claimed.set(true);
                     }
                 } else {
+                    let clip_key = format!("{output_key}-pane");
                     block = block.child(crate::chat::reading::inner_scroller(
-                        markdown::tool_pane(
-                            document::prose_search(s, message, key, output_key, parts[0], query),
-                            false,
-                        ),
+                        document::clipped_tool_pane(s, &clip_key, false, || {
+                            document::prose_search(
+                                s,
+                                message,
+                                key,
+                                output_key,
+                                parts[0],
+                                owner_conversation,
+                                query,
+                            )
+                        }),
                         false,
                     ));
                 }
@@ -637,14 +672,16 @@ fn render_body(
                             &output_key,
                             parts[0],
                             TOOL_LIMIT,
+                            owner_conversation,
                             q,
                         )
                     {
                         claimed.set(true);
                     }
                 } else {
+                    let clip_key = format!("{output_key}-pane");
                     block = block.child(crate::chat::reading::inner_scroller(
-                        markdown::tool_pane(
+                        document::clipped_tool_pane(s, &clip_key, false, || {
                             document::prose_pane_search(
                                 s,
                                 message,
@@ -653,10 +690,10 @@ fn render_body(
                                 parts[0],
                                 tool.status == "running",
                                 TOOL_LIMIT,
+                                owner_conversation,
                                 query,
-                            ),
-                            false,
-                        ),
+                            )
+                        }),
                         false,
                     ));
                 }

@@ -26,6 +26,13 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             s.shell.file_wrap = ui.file_wrap.unwrap_or(false);
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let booting = s
+        .screen
+        .launcher()
+        .is_some_and(crate::launcher::Launcher::booting);
+    #[cfg(target_arch = "wasm32")]
+    let booting = false;
     let became_ready = loading && !ui.persistence.loading;
     if ui.persistence.restore_enabled
         && !ui.persistence.mutating
@@ -33,7 +40,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         s.saved_outlines.poll(store, s.wake.clone());
     }
-    if became_ready {
+    if became_ready && !booting {
         ui.ready = true;
         #[cfg(target_arch = "wasm32")]
         if let Some(wrap) = platform::storage::browser_file_wrap() {

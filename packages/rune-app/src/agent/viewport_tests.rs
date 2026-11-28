@@ -214,7 +214,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
         let mut state = state();
         let ui = state.agent.as_mut().unwrap();
         ui.selected = "form-fixture".into();
-        ui.forms.push(Form { tool: None, infer_websearch: false, id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
+        ui.forms.push(Form { tool: None, infer_websearch: false, owner: Default::default(), id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
         agent_forms::seed(&ui.forms, &mut ui.drafts);
         let mut rt = runtime(state, size);
         reveal(&mut rt, "field-field23");
@@ -272,6 +272,7 @@ fn audit_settlement_during_edit(permission: bool) {
         ui.forms.push(Form {
             tool: None,
             infer_websearch: false,
+            owner: Default::default(),
             id: ui.selected.clone(),
             title: "Synthetic question".into(),
             fields: vec![json!({"key":"answer","type":"string"})],
@@ -447,6 +448,7 @@ fn keyboard_viewport_matrix_preserves_reading_draft_and_actions() {
                 ui.forms.push(Form {
                     tool: None,
                     infer_websearch: false,
+                    owner: Default::default(),
                     id: "form-1".into(),
                     title: "Choose a target".into(),
                     fields: (0..12)
@@ -1767,7 +1769,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     seed_passages(&mut s, 16);
     let form = Form {
         tool: None,
-        infer_websearch: false,
+        infer_websearch: false, owner: Default::default(),
         id: "q-focus".into(),
         title: "Scrollable question with multiple fields".into(),
         fields: (0..6)
@@ -2458,6 +2460,7 @@ fn wheel_after_bottom_clamped_resize_cases_26_to_30() {
     ui.forms.push(Form {
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
         id: "form-r2m1".into(),
         title: "Key collision check".into(),
         fields,
@@ -2803,6 +2806,7 @@ fn wheel_after_bottom_clamped_resize_cases_31_to_34() {
     let form_33 = Form {
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
         id: "form-33".into(),
         title: "Confirm deployment target?".into(),
         fields: vec![serde_json::json!({

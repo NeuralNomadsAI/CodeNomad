@@ -16,7 +16,7 @@ pub fn fixture(s: &mut State) {
         title: "Fixture conversation".into(),
     }];
     s.screen = Screen::Chat {
-        launcher: Some(launcher),
+        launcher: Some(Box::new(launcher)),
     };
     s.chat_title = "Fixture conversation".into();
     s.phase = Phase::Ready;

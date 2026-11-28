@@ -52,10 +52,41 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    native_stream_offline: std::collections::HashSet<String>,
+    pending_native_outage: bool,
     direct_access_lock: std::sync::Mutex<Option<(String, codenomad_client::Receiver<()>)>>,
 }
 
 impl Preferences {
+    pub(super) fn set_native_stream_online(&mut self, workspace: &str, connected: bool) {
+        if connected {
+            self.native_stream_offline.remove(workspace);
+        } else {
+            if !self.native_stream_offline.contains(workspace)
+                && self.native_stream_offline.len() >= 128
+            {
+                self.native_stream_offline.clear();
+            }
+            self.native_stream_offline.insert(workspace.to_owned());
+        }
+    }
+
+    pub(super) fn is_native_stream_online(&self, workspace: &str) -> bool {
+        !self.native_stream_offline.contains(workspace)
+    }
+
+    pub(super) fn clear_native_stream_state(&mut self) {
+        self.native_stream_offline.clear();
+        self.pending_native_outage = false;
+    }
+
+    pub(super) fn set_pending_native_outage(&mut self, pending: bool) {
+        self.pending_native_outage = pending;
+    }
+
+    pub(super) fn take_pending_native_outage(&mut self) -> bool {
+        std::mem::take(&mut self.pending_native_outage)
+    }
     pub(super) fn set_direct_access_lock(
         &self,
         owner: String,
@@ -684,6 +715,8 @@ impl Preferences {
         self.authentication_required = false;
         self.transport_lost = same_address;
         self.observed_clients.clear();
+        self.native_stream_offline.clear();
+        self.pending_native_outage = false;
         self.sync_drop_watch();
         self.refresh();
         self.revision += 1;

@@ -121,7 +121,7 @@ fn open_help_and_sponsor_shortcuts_follow_locale_and_respect_guards() {
 
     // Global app scope: also works on the home/launcher view.
     let mut home = init();
-    home.screen = Screen::Launcher(crate::launcher::Launcher::fixture());
+    home.screen = Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
     let mut home_rt = project_runtime(home);
     settings::notification_test_config(
         &home_rt.state,

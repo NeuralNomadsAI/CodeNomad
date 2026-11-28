@@ -199,7 +199,10 @@ fn drain_chat(
                     s.status_services.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
-                    s.transcript_display.pictures.retry_interrupted();
+                    s.transcript_display.pictures.retry_interrupted_in_view(
+                        &s.transcript_display.tool_clock,
+                        s.tool_diff_preferences.history_bounds.get(),
+                    );
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -657,7 +660,7 @@ fn drain_chat(
                         _ => Phase::Reconnecting,
                     };
                 }
-                s.attachments.cancel();
+                s.attachments.offline();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
                     a.attention.disconnected();
@@ -1029,7 +1032,12 @@ fn drain_chat(
         }
     }
     if super::tools::children::Children::poll_and_promote(s)
-        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
+        | s.transcript_display.pictures.poll_in_view(
+            &s.reads,
+            &s.wake,
+            &s.transcript_display.tool_clock,
+            s.tool_diff_preferences.history_bounds.get(),
+        )
         | super::receipts::Receipts::poll(s, visible)
     {
         s.revision += 1;
