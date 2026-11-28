@@ -44,7 +44,7 @@ fn local_readiness_refuses_foreign_and_credential_endpoints() {
 
 #[test]
 fn native_capability_denial_correlates_without_reflecting_params() {
-    let line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"owned-request","method":"opencode.service.start","params":{"password":"SECRET"},"deadline":9999999999999}"#;
+    let line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"owned-request","method":"developer.status","params":{"password":"SECRET"},"deadline":9999999999999}"#;
     let protocol::Line::Native {
         response, expires, ..
     } = protocol::classify(line)
@@ -64,6 +64,236 @@ fn native_capability_denial_correlates_without_reflecting_params() {
     assert_eq!(value["id"], "owned-request");
     assert_eq!(value["ok"], false);
     assert_eq!(value["error"]["code"], "native_error");
+}
+
+#[test]
+fn opencode_service_start_contract_routes_fences_and_executes_bounded() {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let future_deadline = now_ms + 30_000;
+    let valid_line = format!(
+        r#"CODENOMAD_NATIVE_REQUEST:{{"v":1,"id":"start-1","method":"opencode.service.start","params":{{"file":"x","args":[],"env":{{}},"cwd":".","windowsVerbatimArguments":false}},"deadline":{future_deadline}}}"#
+    );
+    assert!(matches!(
+        protocol::classify(&valid_line),
+        protocol::Line::NativeServiceStart { ref id, deadline, .. }
+            if id == "start-1" && deadline == future_deadline
+    ));
+
+    // Expired opencode.service.start is refused directly without spawning.
+    let expired_line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"start-exp","method":"opencode.service.start","params":{"file":"x","args":[],"env":{},"cwd":".","windowsVerbatimArguments":false},"deadline":1}"#;
+    let protocol::Line::Native { response, .. } = protocol::classify(expired_line) else {
+        panic!("Expected immediate expiry refusal");
+    };
+    let expired_val: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(expired_val["ok"], false);
+    assert_eq!(
+        expired_val["error"]["message"],
+        "Native request expired before execution"
+    );
+
+    // Queued ok:true reply that expires before stdin write becomes ok:false expired error.
+    let ok_reply = protocol::native_ok(
+        "start-queued",
+        serde_json::json!({"stdout":"ok","stderr":""}),
+    );
+    let fenced = protocol::fenced_response(ok_reply, Instant::now(), 1);
+    let fenced_val: serde_json::Value = serde_json::from_str(
+        fenced
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fenced_val["id"], "start-queued");
+    assert_eq!(fenced_val["ok"], false);
+    assert_eq!(
+        fenced_val["error"]["message"],
+        "Native request expired before execution"
+    );
+    assert!(fenced_val.get("result").is_none());
+
+    // Unknown params fields and pre-cancelled requests are refused cleanly.
+    assert_eq!(
+        service_start::run(
+            serde_json::json!({
+                "file": "x",
+                "args": [],
+                "env": {},
+                "cwd": ".",
+                "windowsVerbatimArguments": false,
+                "unexpected": "SECRET"
+            }),
+            future_deadline,
+            || false,
+        ),
+        Err(service_start::Error::Failed)
+    );
+    assert_eq!(
+        service_start::run(
+            serde_json::json!({
+                "file": "x",
+                "args": [],
+                "env": {},
+                "cwd": ".",
+                "windowsVerbatimArguments": false
+            }),
+            future_deadline,
+            || true,
+        ),
+        Err(service_start::Error::Cancelled)
+    );
+
+    // Bounded execution: stdout/stderr capture, non-zero exit redaction, output cap, and timeout.
+    let temp = fresh_root("service-start");
+    fs::create_dir_all(&temp).unwrap();
+    let base_env: serde_json::Map<String, serde_json::Value> = std::env::vars()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
+    #[cfg(windows)]
+    {
+        let ok_cmd = temp.join("ok wrapper.cmd");
+        fs::write(&ok_cmd, "@echo off\r\necho %~1\r\necho notice 1>&2\r\n").unwrap();
+        let params = serde_json::json!({
+            "file": "cmd.exe",
+            "args": ["/d", "/s", "/c", format!("\"\"{}\" \"a b\"\"", ok_cmd.display())],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": true,
+        });
+        let result = service_start::run(params, future_deadline, || false).unwrap();
+        assert_eq!(result["stdout"], "a b\r\n");
+        assert!(result["stderr"].as_str().unwrap().contains("notice"));
+
+        let fail_cmd = temp.join("fail.cmd");
+        fs::write(&fail_cmd, "@echo off\r\necho SECRET 1>&2\r\nexit /b 1\r\n").unwrap();
+        let fail_params = serde_json::json!({
+            "file": "cmd.exe",
+            "args": ["/d", "/c", fail_cmd],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        assert_eq!(
+            service_start::run(fail_params, future_deadline, || false),
+            Err(service_start::Error::Failed)
+        );
+    }
+    #[cfg(unix)]
+    {
+        let ok_params = serde_json::json!({
+            "file": "/bin/sh",
+            "args": ["-c", "printf 'started'; printf 'notice' >&2"],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        let result = service_start::run(ok_params, future_deadline, || false).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({"stdout": "started", "stderr": "notice"})
+        );
+
+        let fail_params = serde_json::json!({
+            "file": "/bin/sh",
+            "args": ["-c", "printf 'SECRET' >&2; exit 1"],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        assert_eq!(
+            service_start::run(fail_params, future_deadline, || false),
+            Err(service_start::Error::Failed)
+        );
+    }
+
+    // Async dispatch_service_start delivers ok:true over Control::Native and fences stale generation.
+    let active = Arc::new(AtomicUsize::new(0));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(AtomicU64::new(1));
+    let (tx, rx) = mpsc::sync_channel::<Control>(4);
+    #[cfg(windows)]
+    let dispatch_params = serde_json::json!({
+        "file": "cmd.exe",
+        "args": ["/d", "/c", "echo ok"],
+        "env": base_env,
+        "cwd": temp,
+        "windowsVerbatimArguments": false,
+    });
+    #[cfg(unix)]
+    let dispatch_params = serde_json::json!({
+        "file": "/bin/sh",
+        "args": ["-c", "printf ok"],
+        "env": base_env,
+        "cwd": temp,
+        "windowsVerbatimArguments": false,
+    });
+    dispatch_service_start(
+        "async-start".into(),
+        dispatch_params,
+        Instant::now() + Duration::from_secs(10),
+        future_deadline,
+        &active,
+        &shutdown,
+        &authority,
+        1,
+        &tx,
+    );
+    let Control::Native { response, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("Expected Control::Native reply");
+    };
+    let dispatched: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(dispatched["id"], "async-start");
+    assert_eq!(dispatched["ok"], true);
+    assert!(
+        dispatched["result"]["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("ok")
+    );
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+
+    // Concurrency cap returns an immediate failure without spawning.
+    active.store(MAX_CONCURRENT_SERVICE_STARTS, Ordering::SeqCst);
+    dispatch_service_start(
+        "capped-start".into(),
+        serde_json::json!({}),
+        Instant::now() + Duration::from_secs(10),
+        future_deadline,
+        &active,
+        &shutdown,
+        &authority,
+        1,
+        &tx,
+    );
+    let Control::Native { response, .. } = rx.recv_timeout(Duration::from_secs(1)).unwrap() else {
+        panic!("Expected capped error reply");
+    };
+    let capped: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(capped["id"], "capped-start");
+    assert_eq!(capped["ok"], false);
+    assert_eq!(capped["error"]["message"], "OpenCode service start failed");
+    let _ = fs::remove_dir_all(&temp);
 }
 
 #[test]

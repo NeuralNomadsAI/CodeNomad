@@ -25,6 +25,46 @@ use rune_theme_codenomad::{
 
 pub(crate) use panels::{Panels, toggle as toggle_panel};
 
+pub(crate) fn host_supports_remote_control(s: &State) -> bool {
+    let backend = s
+        .screen
+        .launcher()
+        .and_then(|l| l.connection.clone())
+        .or_else(|| crate::settings::bound_backend(s));
+    backend
+        .is_none_or(|b| b.client.server_identity().is_none() || b.client.supports("remote-control"))
+}
+
+pub(crate) fn remote_control_entry(s: &State, touch: bool, skip_tab: bool) -> Option<El> {
+    if !host_supports_remote_control(s) {
+        return None;
+    }
+    Some(
+        rune_theme_codenomad::tabs::BarAction::Remote
+            .button_tx(
+                touch,
+                t("instanceTabs.remote.ariaLabel"),
+                t("instanceTabs.remote.title"),
+                false,
+                |s: &mut State, tx| {
+                    Panels::dismiss_outside(s, tx);
+                    // Scope boundary: settings/** is untouched in this slice; upgrade to
+                    // `crate::settings::open_remote(s)` once that entrypoint lands.
+                    crate::settings::open_preferences(s);
+                },
+            )
+            .tab_index(if skip_tab { -1 } else { 0 })
+            .key("open-remote-control"),
+    )
+}
+
+fn direct_remote_control_entry(s: &State, touch: bool, skip_tab: bool) -> Option<El> {
+    if s.workspace.is_some() || crate::settings::bound_backend(s).is_none() {
+        return None;
+    }
+    remote_control_entry(s, touch, skip_tab)
+}
+
 fn touch_controls(s: &State, cx: &Cx<State>) -> bool {
     let _ = s;
     #[cfg(test)]
@@ -95,7 +135,8 @@ pub fn view(
                 .full_width()
                 .on_background_press_tx(Panels::dismiss_outside)
                 .child(crate::settings::direct_entry(s, touch, skip_tab))
-                .child(notifications::history_entry(s, touch, skip_tab)),
+                .child(notifications::direct_history_entry(s, touch, skip_tab))
+                .children(direct_remote_control_entry(s, touch, skip_tab)),
         )
         .child(body(s, cx, conversation).remaining())
     }
