@@ -131,8 +131,10 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             let mut panel = col()
                 .separate(Space::Xs)
                 .full_width()
-                .child(text(t("permissionApproval.kind.permission")))
-                .child(text(&p.action));
+                .child(text(t("permissionApproval.kind.permission")));
+            if !p.action.is_empty() {
+                panel = panel.child(text(&p.action));
+            }
             for resource in &p.resources {
                 panel = panel.child(text(resource).wrap().selectable(true))
             }
@@ -157,10 +159,11 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
                 ("reject", "rune.reject", "reject"),
             ] {
                 let id = p.id.clone();
+                let disabled = a.permissions_locked() || (!p.supported && decision != "reject");
                 actions = actions.child(button(
                     key,
                     t(label),
-                    a.permissions_locked() || !p.supported,
+                    disabled,
                     crate::screen::action(&scope, move |s: &mut State| {
                         if let Some(a) = s.agent.as_mut() {
                             a.reply_permission(id.clone(), decision)

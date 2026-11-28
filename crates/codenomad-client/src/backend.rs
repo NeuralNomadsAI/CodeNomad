@@ -516,7 +516,10 @@ impl Backend {
             }
             let next = self.page(target).await?;
             let joined = match history::join(&result.rows, &next.rows) {
-                Err(error) if error.is::<history::ReasoningLimit>() => {
+                Err(error)
+                    if error.is::<history::ReasoningLimit>()
+                        || error.is::<history::ResidentLimit>() =>
+                {
                     let mut latest = self.page(json!({"kind":"latest"})).await?;
                     self.read_running(&mut latest).await?;
                     return Ok(latest);

@@ -118,11 +118,14 @@ pub enum TextProvenance {
     Partial,
     Closed,
 }
+pub(crate) const LIVE_TEXT_BUDGET: usize = 256 * 1024;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
     pub part_index: Option<usize>,
     pub text: String,
     pub provenance: TextProvenance,
+    pub(crate) bounded: bool,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextEvent {
@@ -198,16 +201,23 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
         if row.parts.len() >= 1000 {
             return Err("message part bound reached".into());
         }
-        if row.body.len() + usize::from(count > 0) > 256 * 1024 {
-            return Err("live text budget reached".into());
-        }
+        let exhausted = row.body.len().saturating_add(usize::from(count > 0)) > LIVE_TEXT_BUDGET;
         row.parts.push(Part::Text(Text {
             part_index: None,
             text: String::new(),
-            provenance: TextProvenance::Live,
+            provenance: if exhausted {
+                TextProvenance::Partial
+            } else {
+                TextProvenance::Live
+            },
+            bounded: false,
         }));
         row.body = text_body(&row.parts);
-        return Ok(TextFit::Applied);
+        return Ok(if exhausted {
+            TextFit::Settlement
+        } else {
+            TextFit::Applied
+        });
     }
     let Some(&index) = ordinal
         .and_then(|o| indices.get(o))
@@ -218,8 +228,19 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
     let Part::Text(prior) = &row.parts[index] else {
         unreachable!()
     };
+    let other_bytes: usize = row
+        .parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| match p {
+            Part::Text(t) if i != index => Some(t.text.len()),
+            _ => None,
+        })
+        .sum();
+    let fragment_budget =
+        LIVE_TEXT_BUDGET.saturating_sub(other_bytes.saturating_add(count.saturating_sub(1)));
     let mut fit = TextFit::Applied;
-    let (text, provenance) = match event {
+    let (text, provenance, bounded) = match event {
         TextEvent::Delta { text, .. } => {
             if ordinal.is_some() {
                 if prior.provenance == TextProvenance::Closed {
@@ -229,37 +250,48 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
                     fit = TextFit::Settlement;
                 }
             }
-            if prior.text.len() + text.len() > 256 * 1024 {
-                return Err("live text budget reached".into());
+            if prior.bounded {
+                return Ok(TextFit::Drop);
             }
-            (format!("{}{text}", prior.text), TextProvenance::Live)
+            let room = fragment_budget.saturating_sub(prior.text.len());
+            if text.len() > room {
+                let cut = text.floor_char_boundary(room);
+                fit = TextFit::Settlement;
+                (
+                    format!("{}{}", prior.text, &text[..cut]),
+                    TextProvenance::Partial,
+                    true,
+                )
+            } else if text.is_empty() && prior.provenance == TextProvenance::Partial {
+                (prior.text.clone(), TextProvenance::Partial, false)
+            } else {
+                (format!("{}{text}", prior.text), TextProvenance::Live, false)
+            }
         }
         TextEvent::End { text, .. } => {
-            if text.len() > 256 * 1024 {
-                return Err("live text budget reached".into());
+            if text.len() > fragment_budget {
+                let cut = text.floor_char_boundary(fragment_budget);
+                if prior.provenance == TextProvenance::Closed && prior.text == *text {
+                    (prior.text.clone(), TextProvenance::Closed, false)
+                } else if prior.text.len() > cut && text.starts_with(&prior.text) {
+                    fit = TextFit::Settlement;
+                    (prior.text.clone(), TextProvenance::Partial, true)
+                } else {
+                    fit = TextFit::Settlement;
+                    (text[..cut].to_owned(), TextProvenance::Partial, true)
+                }
+            } else {
+                (text.clone(), TextProvenance::Closed, false)
             }
-            (text.clone(), TextProvenance::Closed)
         }
         TextEvent::Start { .. } => unreachable!(),
     };
-    let bytes = row
-        .parts
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| match p {
-            Part::Text(t) => Some(if i == index { text.len() } else { t.text.len() }),
-            _ => None,
-        })
-        .sum::<usize>()
-        + count.saturating_sub(1);
-    if bytes > 256 * 1024 {
-        return Err("live text budget reached".into());
-    }
     let part_index = prior.part_index;
     row.parts[index] = Part::Text(Text {
         part_index,
         text,
         provenance,
+        bounded,
     });
     row.body = text_body(&row.parts);
     Ok(fit)
@@ -313,7 +345,7 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
             if let Some(live) = texts.get(ordinal) {
                 if fetched.provenance != TextProvenance::Closed
                     && live.text.starts_with(&fetched.text)
-                    && live.text != fetched.text
+                    && (live.text != fetched.text || live.bounded)
                 {
                     let index = fetched.part_index;
                     *fetched = (*live).clone();
@@ -408,6 +440,45 @@ impl Tool {
         self.bytes + self.output_bytes + self.media_bytes()
     }
 
+    pub(crate) fn resident_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn min_resident_bytes(&self) -> usize {
+        self.id.len()
+            + self.name.len()
+            + self.status.len()
+            + size_of::<Tool>()
+            + 2 * size_of::<Value>()
+    }
+
+    pub(crate) fn with_resident_budget(&self, budget: usize) -> Self {
+        if self.bytes <= budget {
+            return self.clone();
+        }
+        let base_bytes = self.id.len() + self.name.len() + self.status.len() + size_of::<Tool>();
+        let min_bytes = base_bytes + 2 * size_of::<Value>();
+        let rem = budget.saturating_sub(min_bytes);
+        let (input, metadata, in_n, in_b, md_n, md_b) =
+            bounded_tool_json(&self.input, &self.metadata, rem, usize::MAX);
+        Self {
+            part_index: self.part_index,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            status: self.status.clone(),
+            input,
+            metadata,
+            output_bytes: md_b + self.error.len() + self.output.len(),
+            output: self.output.clone(),
+            error: self.error.clone(),
+            started: self.started,
+            message_created: self.message_created,
+            ended: self.ended,
+            pictures: self.pictures.clone(),
+            bytes: base_bytes + in_n + in_b + md_n,
+        }
+    }
+
     pub fn with_budget(&self, budget: usize) -> Self {
         if self.retained_bytes() <= budget {
             return self.clone();
@@ -494,7 +565,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
         return Ok(vec![]);
     };
     if parts.len() > crate::history::MAX_BYTES / size_of::<Part>() {
-        return Err("resident history limit reached".into());
+        return Err(crate::history::ResidentLimit.into());
     }
     let mut result = vec![];
     let mut resident = parts.len() * size_of::<Part>();
@@ -519,6 +590,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     } else {
                         TextProvenance::Partial
                     },
+                    bounded: false,
                 }));
             }
         } else if part["type"] == "reasoning" {
@@ -604,10 +676,158 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     }
     Ok(result)
 }
+pub(crate) fn decode_bounded(v: &Value, budget: usize) -> Result<Vec<Part>> {
+    if v["type"] == "user" {
+        return user::decode(v);
+    }
+    if v["type"] == "synthetic"
+        && let Some(report) = subagent::decode(v)
+    {
+        return Ok(vec![Part::SubagentReport(report)]);
+    }
+    let Some(parts) = v["content"].as_array() else {
+        return Ok(vec![]);
+    };
+    let mut result = Vec::new();
+    let mut resident = 0usize;
+    let mut tool_text = 0usize;
+    let mut ids = std::collections::HashSet::new();
+    let mut reasoning_ordinal = 0;
+    let mut media_bytes = media::ROW_IMAGE_BYTES;
+    let null_node = size_of::<Value>();
+    for (index, part) in parts.iter().enumerate() {
+        if part["type"] == "text" {
+            if let Some(text) = part["text"].as_str() {
+                let slot = size_of::<Part>();
+                if resident.saturating_add(slot) > budget {
+                    continue;
+                }
+                let avail = budget - resident - slot;
+                let end = text.floor_char_boundary(text.len().min(avail));
+                let kept = &text[..end];
+                resident = resident.saturating_add(slot + kept.len());
+                let closed = !v["time"]["completed"].is_null()
+                    || !part["native"].is_null()
+                    || !part["state"].is_null();
+                result.push(Part::Text(Text {
+                    part_index: Some(index),
+                    text: kept.into(),
+                    provenance: if closed {
+                        TextProvenance::Closed
+                    } else if text.is_empty() {
+                        TextProvenance::Live
+                    } else {
+                        TextProvenance::Partial
+                    },
+                    bounded: false,
+                }));
+            }
+        } else if part["type"] == "reasoning" {
+            let slot = size_of::<Part>();
+            if resident.saturating_add(slot) <= budget {
+                resident = resident.saturating_add(slot);
+                result.push(Part::Reasoning(reasoning::decode(
+                    part,
+                    reasoning_ordinal,
+                    index,
+                    !v["time"]["completed"].is_null(),
+                )));
+            }
+            reasoning_ordinal += 1;
+        } else if part["type"] == "tool" {
+            let id = part["id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 256)
+                .ok_or("invalid tool id")?;
+            if !ids.insert(id) {
+                return Err("duplicate tool id".into());
+            }
+            let name = part["name"]
+                .as_str()
+                .filter(|s| s.len() <= 256)
+                .ok_or("invalid tool name")?;
+            let state = &part["state"];
+            let status = match state["status"].as_str() {
+                None => "streaming",
+                Some(s) if s.len() <= 64 => s,
+                Some(_) => "unknown",
+            };
+            let base_bytes = id.len() + name.len() + status.len() + size_of::<Tool>();
+            let min_tool = size_of::<Part>() + base_bytes + 2 * null_node;
+            if resident.saturating_add(min_tool) > budget {
+                continue;
+            }
+            let rem = budget - resident - min_tool;
+            let rem_tool_text = crate::history::MAX_TOOL_TEXT_BYTES.saturating_sub(tool_text);
+            let (input, metadata, in_n, in_b, md_n, md_b) =
+                bounded_tool_json(&state["input"], &state["metadata"], rem, rem_tool_text);
+            let mut text_rem =
+                crate::history::MAX_TOOL_TEXT_BYTES.saturating_sub(tool_text.saturating_add(md_b));
+            let raw_error = state["error"]["message"].as_str().unwrap_or_default();
+            let err_end = raw_error.floor_char_boundary(raw_error.len().min(text_rem));
+            let error = raw_error[..err_end].to_owned();
+            text_rem = text_rem.saturating_sub(error.len());
+            let mut output = String::new();
+            for (item_index, item) in state["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["type"] == "text")
+                .filter_map(|item| item["text"].as_str())
+                .enumerate()
+            {
+                let sep = usize::from(item_index > 0);
+                if text_rem < sep {
+                    break;
+                }
+                let take = (text_rem - sep).min(item.len());
+                let end = item.floor_char_boundary(take);
+                if sep > 0 {
+                    output.push('\n');
+                }
+                output.push_str(&item[..end]);
+                text_rem -= sep + end;
+                if end < item.len() {
+                    break;
+                }
+            }
+            let bytes = base_bytes + in_n + in_b + md_n;
+            let output_bytes = md_b + error.len() + output.len();
+            resident = resident.saturating_add(size_of::<Part>() + bytes);
+            tool_text = tool_text.saturating_add(output_bytes);
+            result.push(Part::Tool(Arc::new(Tool {
+                part_index: Some(index),
+                id: id.into(),
+                name: name.into(),
+                status: status.into(),
+                input,
+                metadata,
+                output,
+                error,
+                pictures: media::tool_pictures(
+                    state,
+                    v["id"].as_str().unwrap_or_default(),
+                    index,
+                    &mut media_bytes,
+                ),
+                started: part["time"]["ran"]
+                    .as_u64()
+                    .filter(|at| *at > 0)
+                    .or_else(|| part["time"]["created"].as_u64())
+                    .filter(|at| *at > 0),
+                message_created: v["time"]["created"].as_u64().filter(|at| *at > 0),
+                ended: part["time"]["completed"].as_u64().filter(|at| *at > 0),
+                bytes,
+                output_bytes,
+            })));
+        }
+    }
+    Ok(result)
+}
 fn charge(resident: &mut usize, added: usize) -> Result<()> {
     *resident = resident.saturating_add(added);
     if *resident > crate::history::MAX_BYTES {
-        return Err("resident history limit reached".into());
+        return Err(crate::history::ResidentLimit.into());
     }
     Ok(())
 }
@@ -634,6 +854,31 @@ fn resident_json(v: &Value) -> (usize, usize) {
         Value::String(s) => (root, s.len()),
         _ => (root, 0),
     }
+}
+
+fn bounded_tool_json(
+    raw_input: &Value,
+    raw_metadata: &Value,
+    mut rem: usize,
+    rem_tool_text: usize,
+) -> (Value, Value, usize, usize, usize, usize) {
+    let null_node = size_of::<Value>();
+    let (in_n, in_b) = resident_json(raw_input);
+    let in_extra = in_n.saturating_add(in_b).saturating_sub(null_node);
+    let (input, in_n, in_b) = if in_extra <= rem {
+        rem -= in_extra;
+        (raw_input.clone(), in_n, in_b)
+    } else {
+        (Value::Null, null_node, 0)
+    };
+    let (md_n, md_b) = resident_json(raw_metadata);
+    let md_extra = md_n.saturating_sub(null_node);
+    let (metadata, md_n, md_b) = if md_extra <= rem && md_b <= rem_tool_text {
+        (raw_metadata.clone(), md_n, md_b)
+    } else {
+        (Value::Null, null_node, 0)
+    };
+    (input, metadata, in_n, in_b, md_n, md_b)
 }
 
 pub fn bytes(parts: &[Part]) -> usize {
