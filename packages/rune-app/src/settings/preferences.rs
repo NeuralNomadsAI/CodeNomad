@@ -29,6 +29,7 @@ pub(super) struct Preferences {
     pub(super) open_providers: bool,
     pub(super) memory: super::memory::Setting,
     pub(super) missions: super::missions::Shared,
+    pub(super) speech: super::speech::Shared,
     pub(super) startup: super::startup_state::StartupState,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
@@ -41,6 +42,7 @@ pub(super) struct Preferences {
     server: Document,
     show_server: bool,
     show_environment: bool,
+    show_speech: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -59,6 +61,10 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    fn server_active(&self) -> bool {
+        self.show_server || self.show_environment || self.show_speech || self.server.unsettled()
+    }
+
     pub(super) fn set_native_stream_online(&mut self, workspace: &str, connected: bool) {
         if connected {
             self.native_stream_offline.remove(workspace);
@@ -88,6 +94,7 @@ impl Preferences {
     pub(super) fn take_pending_native_outage(&mut self) -> bool {
         std::mem::take(&mut self.pending_native_outage)
     }
+
     pub(super) fn set_direct_access_lock(
         &self,
         owner: String,
@@ -347,7 +354,7 @@ impl Preferences {
     pub(super) fn revalidate_transport(&mut self) {
         self.config.retry_revalidation(self.transport_lost);
         self.state.retry_revalidation(self.transport_lost);
-        if self.show_server || self.show_environment || self.server.unsettled() {
+        if self.server_active() {
             self.server.retry_revalidation(self.transport_lost);
         }
     }
@@ -687,6 +694,7 @@ impl Preferences {
             && !self.state.has_unconfirmed()
             && !self.server.has_unconfirmed()
             && !self.missions.has_unconfirmed()
+            && !self.speech.has_unconfirmed()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -706,6 +714,10 @@ impl Preferences {
             || self
                 .missions
                 .draining(can_start_missions_write, config_refreshing)
+            || self.speech.draining()
+            || (self.speech.needs_reconciliation()
+                && !self.server.read_failed()
+                && self.server.refreshing())
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -734,6 +746,7 @@ impl Preferences {
         self.server.rebind(same_address);
         self.memory.bind(same_address);
         self.missions.rebind(same_address);
+        self.speech.rebind(same_address);
         self.opencode_install.cancel_check();
         self.backend = owner;
         self.seen_drop_generation = self
@@ -780,7 +793,7 @@ impl Preferences {
         if self.transport_lost {
             self.config.retry_revalidation(true);
             self.state.retry_revalidation(true);
-            if self.show_server || self.show_environment || self.server.unsettled() {
+            if self.server_active() {
                 self.server.retry_revalidation(true);
             }
         }
@@ -957,7 +970,7 @@ impl Preferences {
 
     #[cfg(test)]
     pub fn invalidate(&mut self, owner: Owner) {
-        let server_active = self.show_server || self.show_environment || self.server.unsettled();
+        let server_active = self.server_active();
         if owner != Owner::Server || server_active {
             self.doc_mut(owner).invalidate();
         }
@@ -967,7 +980,7 @@ impl Preferences {
     }
 
     pub fn invalidate_from_sse(&mut self, owner: Owner) {
-        let server_active = self.show_server || self.show_environment || self.server.unsettled();
+        let server_active = self.server_active();
         if owner != Owner::Server || server_active {
             self.doc_mut(owner).invalidate_from_sse();
         }
@@ -1116,6 +1129,74 @@ impl Preferences {
         });
     }
 
+    fn apply_speech_effects(&mut self, effects: super::speech::ServerEffects) -> (bool, bool) {
+        if let Some((snapshot, guard)) = effects.applied {
+            let expected_seq = guard.map(|(seq, _, _)| seq);
+            let expected_pub = guard.map(|(_, pub_seq, _)| pub_seq);
+            let rev_stale = guard.is_some_and(|(_, _, rev)| {
+                self.backend
+                    .as_ref()
+                    .is_some_and(|b| b.client.preferences_revision(Owner::Server) != rev)
+            });
+            if rev_stale {
+                self.server.invalidate();
+            } else {
+                let _ = self
+                    .server
+                    .apply_external_snapshot(snapshot, expected_seq, expected_pub);
+            }
+        }
+        if effects.invalidate {
+            self.server.invalidate();
+        }
+        if effects.changed {
+            self.revision += 1;
+        }
+        (effects.changed, effects.settled)
+    }
+
+    fn run_speech_op<R>(
+        &mut self,
+        op: impl FnOnce(&mut super::speech::Shared, &super::speech::ServerContext<'_>) -> R,
+    ) -> R {
+        let can_retry = self.backend.is_some() && !self.authentication_required;
+        let server_ready = self.speech_server_ready();
+        let server_guard = self.backend.as_ref().map(|b| {
+            (
+                self.server.invalidation_seq(),
+                self.server.publish_seq(),
+                b.client.preferences_revision(Owner::Server),
+            )
+        });
+        let ctx = super::speech::ServerContext {
+            backend: self.backend.as_ref(),
+            server_ready,
+            server_guard,
+            invalidation_guard: self.server.invalidation_seq_guard(),
+            write_authority: self.server.write_authority(),
+            transport_lost: self.transport_lost,
+            can_retry,
+        };
+        op(&mut self.speech, &ctx)
+    }
+
+    pub(super) fn poll_speech_writes(&mut self) -> bool {
+        let effects = self.run_speech_op(|speech, ctx| speech.poll(ctx));
+        self.apply_speech_effects(effects).0
+    }
+
+    pub(super) fn start_speech_save(
+        &mut self,
+        patch: serde_json::Value,
+        wake: &rune::Waker,
+    ) -> bool {
+        let started = self.run_speech_op(|speech, ctx| speech.start_save(ctx, patch, wake));
+        if started {
+            self.revision += 1;
+        }
+        started
+    }
+
     #[cfg(test)]
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
@@ -1160,9 +1241,7 @@ impl Preferences {
             if config {
                 self.config.invalidate_from_sse();
             }
-            if (config | stream.take_server_changed())
-                && (self.show_server || self.show_environment || self.server.unsettled())
-            {
+            if (config | stream.take_server_changed()) && (self.server_active()) {
                 self.server.invalidate_from_sse();
             }
             if state {
@@ -1217,14 +1296,15 @@ impl Preferences {
                 || self.config.has_unconfirmed()
                 || self.missions.needs_config_revalidation(),
             revalidate_idle || self.state.has_unconfirmed(),
-            (self.show_server || self.show_environment || self.server.unsettled())
-                && (revalidate_idle || self.server.has_unconfirmed()),
+            (self.server_active() && revalidate_idle)
+                || self.server.has_unconfirmed()
+                || self.speech.needs_reconciliation(),
         );
         #[cfg(target_arch = "wasm32")]
         let (poll_config, poll_state, poll_server) = (
             true,
             true,
-            self.show_server || self.show_environment || self.server.unsettled(),
+            self.server_active() || self.speech.needs_reconciliation(),
         );
         let (mut config_changed, mut config_settled) = if poll_config {
             self.config.poll(
@@ -1244,7 +1324,7 @@ impl Preferences {
             self.transport_lost = false;
             if revalidate_idle {
                 self.state.retry_revalidation(false);
-                if self.show_server || self.show_environment || self.server.unsettled() {
+                if self.server_active() {
                     self.server.retry_revalidation(false);
                 }
             }
@@ -1306,10 +1386,26 @@ impl Preferences {
             config_changed |= followup_changed;
             config_settled |= followup_settled;
         }
+        let (mut speech_changed, mut speech_settled) = {
+            let effects = self.run_speech_op(|speech, ctx| speech.poll(ctx));
+            self.apply_speech_effects(effects)
+        };
+        if self.speech.needs_reconciliation() {
+            if let Some(snapshot) = self.server.confirmed().cloned() {
+                if self.speech.reconcile_snapshot(&snapshot) {
+                    speech_changed = true;
+                }
+                speech_settled = true;
+            } else if self.server.read_failed() {
+                self.speech.note_readback_failed();
+                speech_settled = true;
+            }
+        }
         let changed = config_changed
             | state_changed
             | server_changed
             | missions_changed
+            | speech_changed
             | memory_writes
             | self.memory.poll(
                 &backend,
@@ -1327,7 +1423,8 @@ impl Preferences {
                 &window,
             )
             | install;
-        let settled = config_settled | state_settled | server_settled | missions_settled;
+        let settled =
+            config_settled | state_settled | server_settled | missions_settled | speech_settled;
         let dropped_mid_poll = self.observe_transport_drops();
         if changed {
             self.revision += 1;

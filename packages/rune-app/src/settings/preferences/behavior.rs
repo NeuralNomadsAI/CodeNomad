@@ -15,6 +15,7 @@ pub(in crate::settings) enum GeneralToggle {
     AutoExpandActiveSubsessions,
     FollowUpBehavior,
     KeepComputerAwake,
+    PromptVoiceInput,
 }
 
 impl GeneralToggle {
@@ -26,6 +27,7 @@ impl GeneralToggle {
             Self::AutoExpandActiveSubsessions => "autoExpandActiveSubsessions",
             Self::FollowUpBehavior => "followUpBehavior",
             Self::KeepComputerAwake => "keepComputerAwake",
+            Self::PromptVoiceInput => "showPromptVoiceInput",
         }
     }
 
@@ -41,6 +43,7 @@ impl GeneralToggle {
             }
             Self::FollowUpBehavior => "settings.behavior.followUpBehavior.title",
             Self::KeepComputerAwake => "settings.behavior.keepComputerAwake.title",
+            Self::PromptVoiceInput => "settings.behavior.promptVoiceInput.title",
         }
     }
 
@@ -61,14 +64,17 @@ impl GeneralToggle {
     pub(in crate::settings) fn default_value(self) -> bool {
         matches!(
             self,
-            Self::MessageTimeline | Self::DiffViewMode | Self::AutoExpandActiveSubsessions
+            Self::MessageTimeline
+                | Self::DiffViewMode
+                | Self::AutoExpandActiveSubsessions
+                | Self::PromptVoiceInput
         )
     }
 
     pub(in crate::settings) fn read(self, settings: &Value) -> bool {
         let value = &settings[self.key()];
         match self {
-            Self::MessageTimeline | Self::AutoExpandActiveSubsessions => {
+            Self::MessageTimeline | Self::AutoExpandActiveSubsessions | Self::PromptVoiceInput => {
                 value.as_bool().unwrap_or(true)
             }
             Self::ScrollControlsInTimelineCorner | Self::KeepComputerAwake => {
@@ -97,6 +103,21 @@ impl Preferences {
 
     pub(in crate::settings) fn general_toggle_pending(&self, toggle: GeneralToggle) -> bool {
         self.config.choice_pending(Choice::GeneralBehavior(toggle))
+    }
+
+    pub(in crate::settings) fn general_toggle_failed(&self, toggle: GeneralToggle) -> bool {
+        self.config.choice_failed(Choice::GeneralBehavior(toggle))
+    }
+
+    pub(in crate::settings) fn retry_general_toggle(&mut self, toggle: GeneralToggle) {
+        if self.can_retry() {
+            self.config
+                .retry(|choice| choice == Choice::GeneralBehavior(toggle));
+            self.revision += 1;
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
     }
 
     pub(in crate::settings) fn set_general_toggle(&mut self, toggle: GeneralToggle, value: bool) {

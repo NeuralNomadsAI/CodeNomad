@@ -56,6 +56,7 @@ pub(super) struct Window {
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
     missions: super::missions::Missions,
+    speech: super::speech::Speech,
     integrations: super::integrations::Panel,
     stats: super::stats::Dashboard,
     remote: remote::Remote,
@@ -85,6 +86,7 @@ enum Section {
     Conversation,
     OpenCode,
     Notifications,
+    Voice,
     Providers,
     Missions,
     Integrations,
@@ -195,6 +197,10 @@ impl Window {
         if self.section != Section::Missions {
             self.missions.close();
         }
+        if self.section != Section::Voice {
+            self.speech.close();
+            self.shared.borrow_mut().show_speech(false);
+        }
         if self.section != Section::Integrations {
             self.integrations.suspend();
         }
@@ -237,10 +243,12 @@ impl Window {
             let mut prefs = self.shared.borrow_mut();
             prefs.hide_opencode();
             prefs.show_environment(false);
+            prefs.show_speech(false);
         }
         self.logging.close();
         self.remote.close();
         self.missions.close();
+        self.speech.close();
         self.providers.suspend();
         self.integrations.suspend();
         if self.config_files.dirty() {
@@ -319,6 +327,7 @@ impl Window {
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
         self.missions.close();
+        self.speech.close();
         self.providers.suspend();
         self.integrations.suspend();
         {
@@ -327,6 +336,7 @@ impl Window {
             prefs.window_wake = None;
             prefs.hide_opencode();
             prefs.show_environment(false);
+            prefs.show_speech(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
             prefs.open_providers = false;
@@ -352,6 +362,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
+        let voice_label = t("settings.nav.voice");
         let providers_label = t("settings.nav.providers");
         let missions_label = t("settings.nav.missions");
         let integrations_label = t("settings.nav.integrations");
@@ -367,6 +378,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
+            Section::Voice => voice_label,
             Section::Providers => providers_label,
             Section::Missions => missions_label,
             Section::Integrations => integrations_label,
@@ -401,6 +413,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     notifications_label,
                     s.section == Section::Notifications,
                 ),
+                ("settings-voice", voice_label, s.section == Section::Voice),
                 (
                     "settings-providers",
                     providers_label,
@@ -454,6 +467,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
+                    "settings-voice" => Section::Voice,
                     "settings-providers" => Section::Providers,
                     "settings-missions" => Section::Missions,
                     "settings-integrations" => Section::Integrations,
@@ -595,6 +609,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     &s.shared,
                     s.notification_permission,
                     |_: &mut Window| {},
+                ),
+            ),
+            Section::Voice => (
+                "voice",
+                s.speech.view(
+                    &s.shared,
+                    !s.closing && s.confirm_close.is_none(),
+                    &mut layers,
+                    |s: &mut Window| &mut s.speech,
                 ),
             ),
             Section::Providers => (

@@ -9,6 +9,7 @@ mod opencode_actions;
 pub mod provider_auth;
 mod providers;
 pub mod remote;
+pub mod speech;
 pub mod stats;
 pub mod websearch;
 use crate::{

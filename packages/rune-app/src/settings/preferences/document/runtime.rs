@@ -209,6 +209,7 @@ impl Document {
                     (!patched && self.read.queued) || flight_epoch != self.transport_epoch;
                 if !stale_publish || self.snapshot.is_none() {
                     self.snapshot = Some(snapshot);
+                    self.publish_seq = self.publish_seq.wrapping_add(1);
                 }
                 if matches!(operation, Operation::Read { .. })
                     && flight_epoch == self.transport_epoch
