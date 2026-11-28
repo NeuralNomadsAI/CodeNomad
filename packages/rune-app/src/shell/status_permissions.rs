@@ -3,9 +3,9 @@ use codenomad_client::{
     Receiver, Sender, bounded,
     permission_mode::{Mode, Snapshot, WriteIssue},
 };
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{
-    Space,
+    Space, attachment,
     layout::{self, Layout},
     settings,
 };
@@ -318,11 +318,17 @@ pub(crate) fn confirmation(s: &State) -> Option<El> {
         return None;
     }
     if !owner.unconfirmed() {
-        return Some(text(t("permissions.applying")).role("status"));
+        return Some(
+            attachment::status_badge(t("permissions.applying"))
+                .key("permission-confirmation-status"),
+        );
     }
     Some(
         layout::action_row()
-            .child(text(t("permissions.unconfirmed")).role("status"))
+            .child(
+                attachment::status_badge(t("permissions.unconfirmed"))
+                    .key("permission-confirmation-status"),
+            )
             .child(retry(s)),
     )
 }
@@ -357,61 +363,67 @@ pub(super) fn view(s: &State) -> Option<El> {
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    let mut body = col().separate(Space::Xs);
-    if mode.is_some() {
-        body = body.child(
-            settings::committing_segments(
-                title,
-                &MODES.map(label),
-                MODES.iter().position(|candidate| Some(*candidate) == mode),
-                crate::strings::locale(),
-                {
-                    let scope = s.input_scope.clone();
-                    move |s: &mut State, index| {
-                        if s.current_scope(&scope)
-                            && s.status_permissions.expanded
-                            && let Some(&mode) = MODES.get(index)
-                        {
-                            Permissions::change(s, mode);
-                        }
-                    }
-                },
-            )
-            .key("permission-mode")
-            .aria_disabled(!owner.available()),
-        );
-    }
-    if let Some(status) = status {
-        body = body.child(text(status).role("status"));
-    }
-    if owner.failed {
-        body = body.child(retry(s).key("permission-mode-retry"));
-    }
-    if let Some(key) = owner.issue_key() {
-        body = body.child(text(t(key)).role("alert"));
-    }
     let info = t("permissions.info.label");
     let help = format!(
-        "{}: {}\n{}: {}\n{}",
+        "{} — {}\n{} — {}\n{}",
         label(Mode::Autonomous),
         t("permissions.info.autonomous"),
         label(Mode::Supervised),
         t("permissions.info.supervised"),
         t("permissions.info.scope")
     );
-    body = body.child(
-        layout::button(
-            "?",
-            false,
-            screen::action(&s.input_scope, |s| {
-                s.status_permissions.info = !s.status_permissions.info;
-            }),
-        )
-        .key("permission-mode-info")
-        .label(info)
-        .help(help)
-        .help_open(owner.info),
-    );
+    let info_button = settings::info_tip(
+        info,
+        &help,
+        owner.info,
+        screen::action(&s.input_scope, |s| {
+            s.status_permissions.info = !s.status_permissions.info;
+        }),
+    )
+    .key("permission-mode-info");
+    let mut body = col().full_width().separate(Space::Xs);
+    if mode.is_some() {
+        body = body.child(
+            layout::action_row()
+                .child(
+                    settings::committing_segments(
+                        title,
+                        &MODES.map(label),
+                        MODES.iter().position(|candidate| Some(*candidate) == mode),
+                        crate::strings::locale(),
+                        {
+                            let scope = s.input_scope.clone();
+                            move |s: &mut State, index| {
+                                if s.current_scope(&scope)
+                                    && s.status_permissions.expanded
+                                    && let Some(&mode) = MODES.get(index)
+                                {
+                                    Permissions::change(s, mode);
+                                }
+                            }
+                        },
+                    )
+                    .key("permission-mode")
+                    .aria_disabled(!owner.available()),
+                )
+                .child(info_button),
+        );
+    } else {
+        let mut row = layout::action_row().child(info_button);
+        if owner.failed {
+            row = row.child(retry(s).key("permission-mode-retry"));
+        }
+        body = body.child(row);
+    }
+    if let Some(status) = status {
+        body = body.child(attachment::status_badge(status).key("permission-mode-status"));
+    }
+    if owner.failed && mode.is_some() {
+        body = body.child(retry(s).key("permission-mode-retry"));
+    }
+    if let Some(key) = owner.issue_key() {
+        body = body.child(settings::palette::save_error(t(key)).key("permission-mode-error"));
+    }
     Some(
         settings::disclosure(
             &summary,
