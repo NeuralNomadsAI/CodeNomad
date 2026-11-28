@@ -172,7 +172,7 @@ export default { ...desktop, async setup(ctx) {
     assert.deepEqual(primaryTools.at(-1)!.filter(name => name.startsWith("mission_")), [],
       "model requests omit Missions tools without presence")
     releaseModel!(); releaseModel = undefined
-    await client.session.wait({ sessionID: idle.id }, { signal: AbortSignal.timeout(10_000) })
+    await client.experimental.session.wait({ sessionID: idle.id }, { signal: AbortSignal.timeout(10_000) })
     await writeFile(lease, "")
     await until(registered)
     assert.equal(await rpc.setups({}, { location }), 2)
@@ -188,7 +188,7 @@ export default { ...desktop, async setup(ctx) {
     await delay(2_500)
     assert.equal(await registered(), true, "active work survives close")
     releaseModel!()
-    await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(10_000) })
+    await client.experimental.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(10_000) })
     await writeFile(lease, "")
     await delay(2_500)
     assert.equal(await registered(), true, "reopen retains the registration")

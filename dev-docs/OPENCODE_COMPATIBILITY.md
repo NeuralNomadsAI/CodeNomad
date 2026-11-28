@@ -2,7 +2,7 @@
 
 ## Background shell inventory
 
-Status consumes `GET /api/experimental/job?kind=shell&status=running` through the authenticated runtime transport, with a ten-second request lifetime and 4 MiB response bound. The pinned client lacks this operation, so `opencode/background-shells.ts` validates its shell-ID projection. The selected Location's `shell.list` supplies command metadata; the owned `/api/workspaces/:id/background-shells` route intersects the records and checks session ownership. Missing or invalid inventory produces a panel load error. Output/removal retain native Shell routes and cursors. Runtime admission remains governed by the required contracts below.
+Status calls `experimental.job.list({ kind: "shell", status: "running" })` through the authenticated, generation-fenced runtime client with a ten-second request lifetime (`opencode/background-shells.ts`). The selected Location's `shell.list` supplies command metadata; the owned `/api/workspaces/:id/background-shells` route intersects the records and checks session ownership. Missing or invalid inventory produces a panel load error. Output/removal retain native Shell routes and cursors. Runtime admission remains governed by the required contracts below.
 
 ## Qualification policy
 
