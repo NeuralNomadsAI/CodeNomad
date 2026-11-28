@@ -21,7 +21,7 @@ kind **or**, schedule → event **if**.
 The editor keeps schedules above events. `missionCalendarAutomations`
 (`missions/calendar-automation.ts`) refuses what a calendar cannot carry: a schedule group after
 events, an end date or count, followed conversations, and the events of other Missions or of
-conversations.
+conversations. A stored policy naming one of those events stays under "Stored scheduling policy" in the form until it is replaced.
 
 ## Wayfinder human decision mark — both execution modes
 

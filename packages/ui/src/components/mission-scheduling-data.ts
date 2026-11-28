@@ -8,7 +8,8 @@ import { branchHeadRefSchema, missionRemoteBranchConditionSchema, missionReposit
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "remote-branch-commits", "conversation-message", "files-changed", "repository-activity", ...missionGithubKinds] as const
+/** The events a programmed Mission waits for: those read from Git and the forges. */
+export const missionEventKinds = ["branch-commits", "remote-branch-commits", "files-changed", "repository-activity", ...missionGithubKinds] as const
 export const isRepositoryCriterion = (kind: string) => kind === "branch-commits" || kind === "remote-branch-commits" || kind === "repository-activity" || isMissionGithubKind(kind)
 export type MissionConditionKind = typeof missionEventKinds[number]
 export type MissionPickerSource = Exclude<MissionConditionKind, "files-changed" | "repository-activity" | "remote-branch-commits" | MissionGithubKind>
@@ -97,9 +98,6 @@ function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKin
     return parsed.data
   }
   switch (row.kind) {
-    case "conversation-message":
-      if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(source)) return fail("source", index)
-      return { kind: row.kind, conversationID: source }
     case "branch-commits":
       if (!directory || !branchHeadRefSchema.safeParse(source).success) return fail("source", index)
       return { kind: row.kind, directory, ref: source }

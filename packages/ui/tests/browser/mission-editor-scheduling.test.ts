@@ -86,6 +86,9 @@ async function setup(page: Page, locale = "en", theme = "dark", taskCount = 0) {
 const form = (page: Page) => page.locator("form.mission-editor")
 const scheduling = (page: Page) => form(page).locator("section.mission-scheduling")
 const addCriterion = (page: Page) => form(page).getByRole("button", { name: "Add a criterion", exact: true }).click()
+/** Adds a followed conversation: the form's conversation source, shown for a Mission launched once. */
+const follow = (page: Page) => form(page).locator("section.mission-create-group:has(> h4) > button.window-action").click()
+const followed = (page: Page, number = 1) => form(page).getByRole("button", { name: `Followed conversation ${number}`, exact: true })
 const ready = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
 
 test("followed conversations can be added, corrected and removed before immediate creation; remount retains sources", async () => {
@@ -207,7 +210,7 @@ test("shared Create stores a paused two-time policy with exact profiles and send
   } finally { await page.close() }
 })
 
-test("source selection belongs to its criterion, loads in its popup and leaves no global conversation or paging controls", async () => {
+test("a source is chosen in its own field, loads in its popup and leaves no global paging controls", async () => {
   const page = await browser.newPage({ viewport: { width: 620, height: 1000 } }), f = await setup(page)
   const nativeReads: URL[] = []
   await page.route("**/workspaces/fixture/instance/api/session**", route => {
@@ -235,9 +238,11 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
     assert.equal(await form(page).getByRole("button", { name: "Load more sources", exact: true }).count(), 0)
     await selectMissionSource(page, 1, "refs/heads/main")
     await ready(page)
-    await kind.selectOption("conversation-message")
-    assert.equal(await source.getAttribute("data-source-id"), "", "changing kind clears the previous criterion's source")
-    await source.click()
+    await kind.selectOption("now")
+    assert.equal(await source.count(), 0, "changing kind removes the previous criterion's source")
+    await follow(page)
+    const conversation = followed(page)
+    await conversation.click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     assert.ok(await page.getByRole("listbox").getByRole("option").count() < 40, "only the popup viewport is mounted")
     const before = nativeReads.length
@@ -251,20 +256,19 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
     await page.getByRole("option", { name: "Later conversation", exact: true }).click()
     assert.ok(nativeReads.some(request => request.searchParams.get("search") === "Later"), "conversation search stays native and project-scoped")
     assert.equal(nativeReads.some(request => request.searchParams.has("cursor")), false, "search never scans every conversation page")
-    assert.equal(await source.getAttribute("data-source-id"), "ses_later")
+    assert.equal(await conversation.getAttribute("data-source-id"), "ses_later")
     await kind.selectOption("daily")
-    assert.equal(await source.count(), 0)
-    assert.equal(await page.getByRole("listbox").count(), 0, "changing criterion disposes its popup and search state")
+    assert.equal(await conversation.count(), 0, "followed conversations belong to a Mission launched once")
+    assert.equal(await page.getByRole("listbox").count(), 0)
     assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
-    await kind.selectOption("conversation-message")
-    assert.equal(await source.getAttribute("data-source-id"), "")
-    await selectMissionSource(page, 1, "ses_1")
+    await kind.selectOption("now")
+    assert.equal(await conversation.getAttribute("data-source-id"), "ses_later", "the followed conversation is kept while the Mission was a programmed one")
     await ready(page)
     await capture(page, "conversation-source-in-criterion.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "conversation-message", conversationID: "ses_1" }] })
-    assert.deepEqual(f.posts[0].configuration.watchedConversationIDs, [], "new-message context comes from the criterion, not an unrelated global source")
+    assert.deepEqual(f.posts[0].watchedConversationIDs, ["ses_later"])
+    assert.equal(f.posts[0].configuration, undefined, "a Mission launched once")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -286,8 +290,8 @@ test("conversation continuation and search failures retry their exact read insid
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Recover only the source read")
     await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await follow(page)
+    const source = followed(page)
     await source.click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     await page.getByRole("listbox").evaluate(element => { element.scrollTop = element.scrollHeight })
@@ -328,7 +332,7 @@ test("conversation continuation and search failures retry their exact read insid
     await ready(page)
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "conversation-message", conversationID: "ses_recovered" }] })
+    assert.deepEqual(f.posts[0].watchedConversationIDs, ["ses_recovered"])
     assert.deepEqual(f.errors, [])
   } catch (error) {
     console.error("Source recovery failure", reads.map(value => value.search), await page.locator(".mission-source-popover").innerText().catch(String),
@@ -337,7 +341,7 @@ test("conversation continuation and search failures retry their exact read insid
   } finally { await page.close() }
 })
 
-test("two conversation criteria keep independent selections across native searches, card moves and remount", async () => {
+test("two followed conversations keep independent selections across native searches and remount", async () => {
   const page = await browser.newPage(), f = await setup(page)
   const sessions = [{ id: "ses_alpha", title: "Alpha saved source" }, { id: "ses_beta", title: "Beta saved source" }]
   await page.route("**/workspaces/fixture/instance/api/session**", route => {
@@ -351,14 +355,14 @@ test("two conversation criteria keep independent selections across native search
     await form(page).getByLabel(objective, { exact: true }).fill("Watch two independent conversations")
     await ready(page)
     const choose = async (number: number, query: string) => {
-      await form(page).getByLabel(`Criterion ${number} type`, { exact: true }).selectOption("conversation-message")
-      await form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true }).click()
+      await follow(page)
+      await followed(page, number).click()
       await page.getByRole("combobox", { name: "Search sources", exact: true }).fill(query)
       await page.getByRole("option", { name: `${query} saved source`, exact: true }).click()
     }
     await choose(1, "Alpha")
-    await addCriterion(page); await choose(2, "Beta"); await ready(page)
-    const source = (number: number) => form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true })
+    await choose(2, "Beta"); await ready(page)
+    const source = (number: number) => followed(page, number)
     assert.match(await source(1).innerText(), /Alpha saved source/)
     assert.match(await source(2).innerText(), /Beta saved source/)
     await source(1).click()
@@ -367,17 +371,15 @@ test("two conversation criteria keep independent selections across native search
     assert.match(await source(2).innerText(), /Beta saved source/)
     await capture(page, "source-search-empty-two-criteria.png")
     await page.keyboard.press("Escape")
-    await form(page).getByRole("button", { name: "Move criterion 2", exact: true }).focus()
-    await page.keyboard.press("Alt+ArrowUp")
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
-    assert.equal(await source(1).getAttribute("data-source-id"), "ses_beta")
-    assert.match(await source(1).innerText(), /Beta saved source/)
-    assert.equal(await source(2).getAttribute("data-source-id"), "ses_alpha")
-    assert.match(await source(2).innerText(), /Alpha saved source/)
+    assert.equal(await source(1).getAttribute("data-source-id"), "ses_alpha")
+    assert.match(await source(1).innerText(), /Alpha saved source/)
+    assert.equal(await source(2).getAttribute("data-source-id"), "ses_beta")
+    assert.match(await source(2).innerText(), /Beta saved source/)
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when: sessions.toReversed().map(row => ({ kind: "conversation-message", conversationID: row.id })) })
+    assert.deepEqual(f.posts[0].watchedConversationIDs, sessions.map(row => row.id))
     assert.deepEqual(f.errors, [])
   } catch (error) {
     console.error("Two source failure", await page.locator(".mission-source-popover").innerText().catch(String),
@@ -399,8 +401,8 @@ test("late source replies stay fenced after a type change or inactive editor, wh
     await form(page).getByLabel(objective, { exact: true }).fill("Keep the current criterion")
     await ready(page)
     const kind = form(page).getByLabel("Criterion 1 type", { exact: true })
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
-    await kind.selectOption("conversation-message"); await source.click()
+    const source = followed(page)
+    await follow(page); await source.click()
     await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Late"); await reached
     await page.evaluate(() => window.schedulingEditor.activate(false))
     await page.getByRole("listbox").waitFor({ state: "detached" })
@@ -427,7 +429,7 @@ for (const [locale, width] of [["en", 620], ["fr", 320], ["he", 320]] as const) 
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).locator("textarea").first().fill(title); await ready(page)
-    await form(page).locator(".mission-criterion select").first().selectOption("conversation-message")
+    await follow(page)
     const source = form(page).locator(".mission-source-select button")
     await source.click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
@@ -451,8 +453,8 @@ test("hovering visible source rows never scrolls them away and pointer clicks ch
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Choose the conversation under the pointer")
     await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await follow(page)
+    const source = followed(page)
     await source.click()
     const list = page.getByRole("listbox")
     await list.getByRole("option").first().waitFor()
@@ -498,8 +500,8 @@ test("conversation search ignores accented case without dropping uppercase-accen
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Find accented conversation titles regardless of case")
     await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await follow(page)
+    const source = followed(page)
     await source.click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     const search = page.getByRole("combobox", { name: "Search sources", exact: true })
@@ -535,8 +537,8 @@ for (const firstMatch of [false, true]) test(`filtered search pages require expl
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Keep Unicode search reads bounded")
     await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await follow(page)
+    const source = followed(page)
     await source.click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     const read = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/api/session"))
@@ -582,8 +584,8 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Handle new messages")
     await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).click()
+    await follow(page)
+    await followed(page).click()
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     const search = page.getByRole("combobox", { name: "Search sources", exact: true })
     await search.focus()
@@ -620,7 +622,7 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
     assert.deepEqual(await page.locator('.mission-source-select input[role="combobox"], .mission-source-popover input[role="combobox"]').evaluateAll(fields => fields.map(field => field.getAttribute("aria-activedescendant"))), [snapshot.actualID, snapshot.actualID])
     const id = await search.evaluate(field => document.getElementById(field.getAttribute("aria-activedescendant")!)!.getAttribute("data-source-id"))
     await page.keyboard.press("Enter")
-    assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), id)
+    assert.equal(await followed(page).getAttribute("data-source-id"), id)
     assert.equal(f.posts.length, 0)
     assert.equal((await page.evaluate(() => (window as any).sourceSubmitCount)), 0)
     assert.equal(nativeReads, beforeReads)
@@ -632,12 +634,12 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
   } finally { try { if (held) await page.evaluate(() => window.sourceScrollDelivery?.dispose()) } finally { await page.close() } }
 })
 
-test("source descendants follow mounted option identities across range, filter, close and criterion lifetimes", async () => {
+test("source descendants follow mounted option identities across range, filter, close and field lifetimes", async () => {
   const page = await browser.newPage(), f = await setup(page)
   await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
     data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } }))
-  const source = (number: number) => form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true })
-  const hidden = (number: number) => form(page).getByRole("group", { name: `Criterion ${number}`, exact: true }).locator('.mission-source-select input')
+  const source = (number: number) => followed(page, number)
+  const hidden = (number: number) => form(page).locator(".mission-source-select input").nth(number - 1)
   const search = page.getByRole("combobox", { name: "Search sources", exact: true })
   const descendants = async (number: number) => {
     const id = await search.getAttribute("aria-activedescendant")
@@ -652,9 +654,7 @@ test("source descendants follow mounted option identities across range, filter, 
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Keep source option lifetimes isolated"); await ready(page)
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
-    await addCriterion(page)
-    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("conversation-message")
+    await follow(page); await follow(page)
     assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
     assert.equal(await hidden(2).getAttribute("aria-activedescendant"), null)
     await source(1).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
@@ -683,10 +683,11 @@ test("source descendants follow mounted option identities across range, filter, 
     const second = await descendants(2)
     assert.notEqual(second, reopened)
     assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
-    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("daily")
+    await search.press("Escape")
+    await form(page).getByRole("button", { name: "Remove conversation 2", exact: true }).click()
     await page.getByRole("listbox").waitFor({ state: "detached" })
     assert.equal(await page.locator(`[id="${second}"]`).count(), 0)
-    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("conversation-message")
+    await follow(page)
     await source(2).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
     assert.notEqual(await descendants(2), second)
     await page.evaluate(() => window.schedulingEditor.activate(false))
@@ -842,10 +843,10 @@ test("the real editor selects a local branch and a conversation in their own pic
     await form(page).getByLabel(objective, { exact: true }).fill("Check explicit sources")
     await ready(page)
     const condition = form(page).getByLabel("Criterion 1 type", { exact: true })
-    for (const [kind, id] of [["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
-      await condition.selectOption(kind === "branch-commits" ? "repository-activity" : kind)
-      await selectMissionSource(page, 1, id); await ready(page)
-    }
+    await follow(page); await followed(page).click()
+    await page.getByRole("option").and(page.locator('[data-source-id="ses_reference"]')).click(); await ready(page)
+    await condition.selectOption("repository-activity")
+    await selectMissionSource(page, 1, "refs/heads/not-checked-out"); await ready(page)
     await condition.selectOption("files-changed")
     await form(page).getByLabel("Criterion 1 file paths", { exact: true }).fill("src/input.ts")
     await ready(page)
@@ -964,7 +965,6 @@ test("repository detection failures retry on demand; Git stays usable without a 
 test("launch criteria journey: a schedule, an event, if, or, a chain and a drag that keeps schedules first", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1400 } }), f = await setup(page)
   await branches(page)
-  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: { data: [{ id: "ses_reference", title: "Reference conversation" }], cursor: {} } }))
   const connectors = () => form(page).locator(".mission-criterion-connector").allInnerTexts()
   const type = (number: number) => form(page).getByLabel(`Criterion ${number} type`, { exact: true })
   const choose = async (number: number, kind: string, id: string) => {
@@ -1004,17 +1004,16 @@ test("launch criteria journey: a schedule, an event, if, or, a chain and a drag 
     await form(page).getByLabel("Criterion 2 file paths", { exact: true }).fill("package.json")
     assert.deepEqual(await connectors(), ["or"], "commits or files")
     await shot("05-two-events-or.png")
-    // The chain: 18:00 or 20:00, if commits, files or new messages.
+    // The chain: 18:00 or 20:00, if commits or files.
     await addCriterion(page); await type(3).selectOption("daily"); await time(1, "18:00")
     await addCriterion(page); await type(4).selectOption("daily"); await time(2, "20:00")
-    await addCriterion(page); await choose(5, "conversation-message", "ses_reference")
-    assert.deepEqual(await connectors(), ["or", "if", "or", "or"])
+    assert.deepEqual(await connectors(), ["or", "if", "or"])
     await shot("06-chain.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "0 18 * * *", zone: "Europe/Paris" },
       { kind: "cron", expression: "0 20 * * *", zone: "Europe/Paris" }, { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" },
-      { kind: "files-changed", paths: ["package.json"] }, { kind: "conversation-message", conversationID: "ses_reference" }] })
+      { kind: "files-changed", paths: ["package.json"] }] })
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
