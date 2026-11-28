@@ -14,9 +14,9 @@ use crate::{
 use codenomad_client::git::{Repository, Section};
 use rune::{El, Tx, col, el, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, field_kit, git_panel as theme,
+    Space, TextRole, catalogue, git_panel as theme,
     git_panel::ButtonLook::{Neutral, WithIcon},
-    layout::{self, Layout, dark},
+    layout::{self, Layout},
 };
 
 const MODES: [Mode; 3] = [Mode::Workspace, Mode::Changes, Mode::History];

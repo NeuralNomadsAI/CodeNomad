@@ -3,7 +3,6 @@ use crate::git::{
     changes::{self, SECTIONS},
     menu,
 };
-use rune_theme_codenomad::git_panel::ButtonLook::FlatWithHelp;
 
 pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
     let mut body = theme::saved_scroll::<State>("git-changes-body", &ui.changes_scroll)
@@ -96,7 +95,7 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
 }
 
 fn commit_box(s: &State, ui: &Ui) -> El {
-    let mut group = theme::context()
+    let mut group = theme::commit_box()
         .key("git-commit-box")
         .role("group")
         .label(t("gitPanel.actions"));
@@ -122,14 +121,12 @@ fn commit_box(s: &State, ui: &Ui) -> El {
                 .collect::<Vec<_>>()
                 .join("\n");
             group = group.child(
-                button(
-                    s,
+                theme::panel_more_button(
                     name,
-                    FlatWithHelp(help),
+                    Some(help),
                     !ui.can_change_index(),
-                    move |ui, tx| ui.move_paths(&target, tx.focused()),
+                    handler(s, move |ui, tx| ui.move_paths(&target, tx.focused())),
                 )
-                .full_width()
                 .key(format!("git-bulk-{}", section.key())),
             );
         }
@@ -168,9 +165,10 @@ fn file_row(s: &State, ui: &Ui, entry: &changes::Row, width: f32, overlay: &mut 
         .unwrap_or_default();
     let path = id.path.clone();
     let (plus, minus) = (entry.change.additions, entry.change.deletions);
-    let main = theme::file(
+    let main = theme::file_item(
         path.clone(),
         letter,
+        false,
         Some((plus, minus)),
         path,
         disabled,

@@ -222,6 +222,187 @@ pub fn change_section_button<S: 'static>(
         })
 }
 
+pub fn commit_box() -> El {
+    let t = tokens(dark());
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    col()
+        .full_width()
+        .pad(Space::Sm)
+        .separate(Space::Sm)
+        .border_sides([0.0, 0.0, border, 0.0], t.color("border-base"))
+        .border_layout()
+}
+
+pub fn panel_more_button<S: 'static>(
+    label: impl Into<String>,
+    help: Option<String>,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
+    let label = label.into();
+    let mut button = row()
+        .full_width()
+        .justify_center()
+        .items_center()
+        .pad(Space::Sm)
+        .role("button")
+        .label(label.clone())
+        .focusable(!disabled)
+        .disabled(disabled)
+        .focus_ring(focus_width, -focus_width, t.color("focus-ring-color"))
+        .child(
+            text(label)
+                .text_role(TextRole::Small)
+                .color(t.color("text-secondary"))
+                .truncate()
+                .content_direction()
+                .a11y_hidden(),
+        );
+    if let Some(help) = help {
+        button = button.help(help);
+    }
+    if disabled {
+        button.opacity(0.5)
+    } else {
+        let press = Rc::new(press);
+        let key_press = press.clone();
+        button
+            .hover(t.color("surface-hover"))
+            .on_press_tx(move |s, tx| press(s, tx))
+            .on_key(move |s: &mut S, key, tx| {
+                let activate = key.key == rune::Key::Enter
+                    || matches!(&key.key, rune::Key::Text(ch) if ch == " ");
+                if !activate || key.mods != rune::Mods::default() {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    key_press(s, tx);
+                }
+                true
+            })
+    }
+}
+
+pub fn file_item<S: 'static>(
+    path: String,
+    kind: String,
+    colored_status: bool,
+    counts: Option<(u64, u64)>,
+    help: String,
+    disabled: bool,
+    selected: bool,
+    click: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let small = t.text(TextRole::Small);
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
+    let label = counts.map_or_else(
+        || format!("{kind} {path}"),
+        |(a, d)| format!("{kind} {path} +{a} −{d}"),
+    );
+    let status_ink = if colored_status {
+        match kind.as_str() {
+            "A" => t.color("status-success"),
+            "D" => t.color("status-error"),
+            _ => t.color("text-muted"),
+        }
+    } else {
+        t.color("text-muted")
+    };
+    let mut item = row()
+        .remaining()
+        .shrink()
+        .min_w(0.0)
+        .min_h(t.length(crate::Length::TouchCompact).px())
+        .items_center()
+        .px(t.space(Space::Md).px())
+        .py(t.space(Space::Sm).px())
+        .gap(t.space(Space::Sm).px())
+        .role("button")
+        .label(label)
+        .help(help)
+        .focusable(!disabled)
+        .disabled(disabled)
+        .checked(selected)
+        .focus_ring(focus_width, -focus_width, t.color("focus-ring-color"))
+        .child(
+            text(kind)
+                .w(t.length(crate::Length::Icon).px())
+                .font(small.mono())
+                .color(status_ink)
+                .a11y_hidden(),
+        )
+        .child(
+            text(path)
+                .font(small)
+                .color(t.color("text-primary"))
+                .truncate()
+                .remaining()
+                .shrink()
+                .min_w(0.0)
+                .literal_direction()
+                .a11y_hidden(),
+        )
+        .child(counts.map_or_else(rune::el, |(plus, minus)| {
+            changes(plus, minus)
+                .opacity(t.metric("gitCount", "opacity").px())
+                .a11y_hidden()
+        }));
+    if disabled {
+        item.opacity(0.5)
+    } else {
+        let click = Rc::new(click);
+        let key_click = click.clone();
+        item = item
+            .on_press_tx(move |s, tx| click(s, tx))
+            .on_key(move |s: &mut S, key, tx| {
+                let activate = key.key == rune::Key::Enter
+                    || matches!(&key.key, rune::Key::Text(ch) if ch == " ");
+                if !activate || key.mods != rune::Mods::default() {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    key_click(s, tx);
+                }
+                true
+            });
+        item
+    }
+}
+
+pub fn filter_bar(input: El) -> El {
+    let t = tokens(dark());
+    col()
+        .full_width()
+        .px(t.space(Space::Md).px())
+        .py(t.space(Space::Sm).px())
+        .child(input)
+}
+
+pub fn filter_input<S: 'static>(
+    value: &rune::edit::TextEdit,
+    label: &str,
+    edit: impl for<'a> Fn(&'a mut S) -> &'a mut rune::edit::TextEdit + 'static,
+) -> El {
+    let dark = dark();
+    let t = tokens(dark);
+    let small = t.text(TextRole::Small);
+    let height = small.line_px() + 2.0 * t.space(Space::Xs).px();
+    bordered_control(
+        crate::layout::hinted_field(value, label)
+            .label(label)
+            .text_style(small)
+            .height(height)
+            .input_mode(rune::InputMode::Search)
+            .autofill(rune::Autofill::Off)
+            .on_edit(edit)
+            .build(&crate::field_kit(dark)),
+    )
+    .key("git-filter")
+}
+
 pub fn commit_input<S: 'static>(
     draft: &rune::edit::TextEdit,
     label: &str,
@@ -231,23 +412,33 @@ pub fn commit_input<S: 'static>(
     submit: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
     let dark = dark();
+    let t = tokens(dark);
+    let mut btn_kit = crate::kit(dark).clone();
+    btn_kit.c.bg_button_neutral = t.color("surface-canvas");
+    btn_kit.c.hover = t.color("surface-hover");
+    btn_kit.c.pressed = t.color("surface-hover");
     let submit_btn = bordered_control(
         rune_kit::Button::new(submit_label)
             .variant(rune_kit::ButtonVariant::Neutral)
             .control_size(rune_kit::ControlSize::Small)
             .disabled(submit_disabled)
             .on_press_tx(submit)
-            .build(&crate::kit(dark)),
+            .build(&btn_kit),
     )
     .key("git-commit");
+    let mut area_kit = crate::field_kit(dark).clone();
+    area_kit.metrics.text_area = Some(rune_kit::TextAreaMetrics {
+        style: t.text(TextRole::Label),
+        padding: t.space(Space::Xs).px(),
+    });
     bordered_control(
         crate::layout::textarea(draft)
             .label(label)
             .placeholder(label)
-            .auto_grow(2, 6)
+            .auto_grow(1, 6)
             .on_edit(edit)
             .trailing(submit_btn)
-            .build(&crate::field_kit(dark)),
+            .build(&area_kit),
     )
     .key("git-commit-message")
 }
@@ -555,16 +746,19 @@ pub fn note(label: impl Into<String>, role: &'static str) -> El {
 
 pub fn changes(additions: u64, deletions: u64) -> El {
     let t = tokens(dark());
+    let small = t.text(TextRole::Small);
+    let bold =
+        rune::TextStyle::new(small.size, t.number("font-weight-bold").px()).lh(small.line_px());
     row()
         .separate(Space::Xs)
         .child(
             text(format!("+{additions}"))
-                .text_role(TextRole::Label)
+                .font(bold)
                 .color(t.color("status-success")),
         )
         .child(
             text(format!("−{deletions}"))
-                .text_role(TextRole::Label)
+                .font(bold)
                 .color(t.color("status-error")),
         )
 }

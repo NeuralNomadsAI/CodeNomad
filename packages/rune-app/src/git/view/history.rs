@@ -1,18 +1,14 @@
 use super::*;
-use rune_theme_codenomad::git_panel::ButtonLook::Flat;
 
 pub(super) fn view(s: &State, ui: &Ui) -> El {
     let name = t("gitPanel.filter");
     let mut body = theme::saved_scroll::<State>("git-history-list", &ui.history_scroll).child(
-        theme::header().key("git-filter-bar").child(
-            layout::hinted_field(&ui.filter, name)
-                .label(name)
-                .input_mode(rune::InputMode::Search)
-                .autofill(rune::Autofill::Off)
-                .on_edit(edit(s, |ui| &mut ui.filter))
-                .build(&field_kit(dark()))
-                .key("git-filter"),
-        ),
+        theme::filter_bar(theme::filter_input(
+            &ui.filter,
+            name,
+            edit(s, |ui| &mut ui.filter),
+        ))
+        .key("git-filter-bar"),
     );
     let filter = ui.filter.text.to_lowercase();
     let dates = ui.history.dates(locale());
@@ -74,14 +70,12 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
     }
     if ui.history.page.as_ref().is_some_and(|page| page.has_more) {
         body = body.child(
-            button(
-                s,
+            theme::panel_more_button(
                 t("gitPanel.more"),
-                Flat,
+                None,
                 ui.loading() || !ui.online,
-                |ui, _| ui.more(),
+                handler(s, |ui, _| ui.more()),
             )
-            .full_width()
             .key("git-history-more"),
         );
     }

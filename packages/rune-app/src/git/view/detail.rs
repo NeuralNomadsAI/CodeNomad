@@ -46,9 +46,10 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
                 .original_path
                 .as_ref()
                 .map_or_else(|| path.clone(), |old| format!("{old} → {path}"));
-            let main = theme::file(
+            let main = theme::file_item(
                 path.clone(),
                 file.kind.clone(),
+                true,
                 None,
                 hover,
                 false,
