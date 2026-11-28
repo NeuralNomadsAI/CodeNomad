@@ -23,7 +23,7 @@ import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { MissionSubagentDepth } from "./mission-subagent-depth"
 import { missionPanelScroll } from "./mission-panel-scroll"
-import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
+import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../../server/src/missions/lifecycle-input"
 import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-read-budget"
 import { MISSION_TITLE_MAX, deriveMissionTitle } from "../../../server/src/missions/mission-title"
 import { getRootClient } from "../stores/opencode-client"
@@ -210,7 +210,7 @@ export function MissionEditor(props: {
     setFieldError({ field, message })
   }
   const errorFor = (field: FieldError["field"]) => fieldError()?.field === field ? fieldError()!.message : undefined
-  const schedule = createMissionEditorScheduling({ instanceId: props.instanceId, directory: props.directory, action, draft,
+  const schedule = createMissionEditorScheduling({ instanceId: props.instanceId, action, draft,
     scope: scheduleScope, owner: identity, active: isActive, captureView: () => {
       const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const generation = getOpenCodeInstanceGeneration(props.instanceId)
@@ -222,41 +222,13 @@ export function MissionEditor(props: {
       setCoordinatorGoal(Boolean(config.coordinatorGoal))
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: mission => props.onSaved(mission) })
-  const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
-  const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
-  const captureStart = createMissionCreationStart({ instanceId: props.instanceId, get projectID() { return props.projectID },
-    get directory() { return props.viewDirectory ?? props.directory ?? props.instanceId }, active: isActive,
-    captureView: () => {
-      const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
-      return () => view() && operation() && props.action === action
-    }, refresh: () => { void missionStore.refresh(props.instanceId); props.onRecurrenceRefresh?.() } })
-  const time = () => schedule.scheduling().criteria.find(row => row.kind === "daily")?.time ?? "09:00", zone = () => schedule.scheduling().zone
-  // A started Mission keeps its plan: only its objective and notes are edited.
-  const journalLocked = () => kind === "edit"
-  const structuralLocked = () => locked() || journalLocked()
-  const textLocked = () => busy() || prefilling() || !schedule.ready() || schedule.conflict()
-    || kind === "edit" && !!original && (original.status !== "active" || original.runState === "stopped")
-  const [policyReady, setPolicyReady] = createSignal(false)
-  const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
-    target: original?.id, directory: schedule.directory,
-    kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
-      ...(watched().length ? ["conversation-message" as const] : []),
-      ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
-     selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionPickerSource(row.kind) && row.source
-      ? [{ kind: row.kind, id: row.source }] : []), ...watched().filter(Boolean).map(id => ({ kind: "conversation-message" as const, id })),
-      ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
-    active: isActive, captureView })
-  const repository = createMissionEditorRepository({ instanceId: props.instanceId, directory: schedule.directory, captureView,
-    active: () => isActive() && schedule.scheduling().criteria.some(row => isRepositoryCriterion(row.kind)) })
-  const watchedIDs = watched
-  const needsSourceLocation = createMemo(() => watchedIDs().length > 0)
-  const watchedValid = () => watchedIDs().length <= 32 && new Set(watchedIDs()).size === watchedIDs().length
-    && watchedIDs().every(id => /^[A-Za-z0-9_.:-]{1,240}$/.test(id))
+  // The service's own directory for this view, read once a source needs it: sources are listed there, and a local branch is named with it.
   const sourceIdentity = createMemo(() => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)]))
   const [sourceLocation, setSourceLocation] = createSignal<{ key: string; directory: string }>()
   const [sourceLocationFailed, setSourceLocationFailed] = createSignal(false)
   const [sourceLocationRevision, setSourceLocationRevision] = createSignal(0)
-  const sourceLocationActive = createMemo(() => needsSourceLocation() && creationReady() && isActive())
+  const sourceLocationActive = createMemo(() => kind === "create" && creationReady() && isActive() && (watched().length > 0
+    || coordinatorSessionID() !== undefined || schedule.scheduling().criteria.some(row => isMissionEventKind(row.kind))))
   createEffect(on([sourceIdentity, sourceLocationRevision, sourceLocationActive], () => {
     if (!sourceLocationActive()) return
     const key = sourceIdentity(), viewCurrent = captureView(), controller = new AbortController()
@@ -275,13 +247,43 @@ export function MissionEditor(props: {
     }).catch(() => { if (current()) setSourceLocationFailed(true) })
     onCleanup(() => { alive = false; controller.abort() })
   }))
-  const sourceLocationReady = () => !needsSourceLocation() || sourceLocation()?.key === sourceIdentity()
+  const directory = () => sourceLocation()?.key === sourceIdentity() ? sourceLocation()!.directory : undefined
+  const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), directory()) } catch { return undefined } })
+  const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
+  // Followed conversations belong to a Mission launched once.
+  const watchedIDs = createMemo(() => mode() === "once" ? watched() : [])
+  const captureStart = createMissionCreationStart({ instanceId: props.instanceId, get projectID() { return props.projectID },
+    get directory() { return props.viewDirectory ?? props.directory ?? props.instanceId }, active: isActive,
+    captureView: () => {
+      const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
+      return () => view() && operation() && props.action === action
+    }, refresh: () => { void missionStore.refresh(props.instanceId); props.onRecurrenceRefresh?.() } })
+  const time = () => schedule.scheduling().criteria.find(row => row.kind === "daily")?.time ?? "09:00", zone = () => schedule.scheduling().zone
+  // A started Mission keeps its plan: only its objective and notes are edited.
+  const journalLocked = () => kind === "edit"
+  const structuralLocked = () => locked() || journalLocked()
+  const textLocked = () => busy() || prefilling() || !schedule.ready() || schedule.conflict()
+    || kind === "edit" && !!original && (original.status !== "active" || original.runState === "stopped")
+  const [policyReady, setPolicyReady] = createSignal(false)
+  const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
+    directory,
+    kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
+      ...(watchedIDs().length ? ["conversation-message" as const] : []),
+      ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
+     selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionPickerSource(row.kind) && row.source
+      ? [{ kind: row.kind, id: row.source }] : []), ...watchedIDs().filter(Boolean).map(id => ({ kind: "conversation-message" as const, id })),
+      ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
+    active: isActive, captureView })
+  const repository = createMissionEditorRepository({ instanceId: props.instanceId, directory, captureView,
+    active: () => isActive() && schedule.scheduling().criteria.some(row => isRepositoryCriterion(row.kind)) })
+  const watchedValid = () => watchedIDs().length <= 32 && new Set(watchedIDs()).size === watchedIDs().length
+    && watchedIDs().every(id => /^[A-Za-z0-9_.:-]{1,240}$/.test(id))
+  const sourceLocationReady = () => !watchedIDs().length || directory() !== undefined
   const coordinatorReady = () => coordinatorSessionID() === undefined || mode() === "recurring"
-    && !watchedIDs().includes(coordinatorSessionID()!)
     && !schedule.scheduling().criteria.some(row => row.kind === "conversation-message" && row.source === coordinatorSessionID())
     && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
-    roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
+    roots: directory() ? [{ directory: directory()! }] : [] })
   let requestId = held?.requestId ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
   // The prepared Mission this form replaces is removed once; its conversation is offered once to what replaces it.
   let conversation = replaces?.coordinatorSessionId, removed = false
@@ -329,17 +331,13 @@ export function MissionEditor(props: {
     if (!structuralLocked()) {
       if (!watchedValid()) { fail("followed", t("missions.recurrence.watchedInvalid")); return }
       if (!sourceLocationReady()) { fail("followed", t("missions.recurrence.sourceLocationUnavailable")); return }
-      if ((mode() === "recurring" || watchedIDs().length) && !sourceInputBudget().sufficient) {
+      if (watchedIDs().length && !sourceInputBudget().sufficient) {
         fail("objective", t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return
       }
     }
     if (!coordinatorReady()) { fail("coordinator", t("missions.scheduling.coordinatorUnavailable")); return }
     if (kind === "create" && mode() === "recurring") {
       if (textLocked() || !structuralLocked() && (!policy() || !policyReady())) return
-      if (!structuralLocked()) {
-        try { recurrenceStartText({ consigne: objective().trim() }) }
-        catch { fail("objective", t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
-      }
       if (missionCreationHold(identity())) { setAdopted(true); return }
       const selected = copyMissionProfiles(effectiveProfiles())
        if (mode() === "recurring" && !structuralLocked() && (!selected?.coordinator?.agent || !selected.coordinator.model?.providerID || !selected.coordinator.model.id
@@ -511,13 +509,13 @@ export function MissionEditor(props: {
       }} /></Show>
     <section class="mission-create-group">
     <label class="mission-create-field" for={ids.objective}><span>{t("missions.create.objective")}</span>
-    <textarea id={ids.objective} rows={1} required maxLength={mode() === "recurring" ? MISSION_LIFECYCLE_TEXT_LIMIT : 20_000} value={objective()}
+    <textarea id={ids.objective} rows={1} required maxLength={20_000} value={objective()}
       placeholder={t("missions.create.objectivePlaceholder")} disabled={textLocked()}
       aria-invalid={Boolean(errorFor("objective"))} aria-describedby={errorFor("objective") ? ids.objectiveError : undefined}
       onInput={e => setObjective(e.currentTarget.value)} /></label>
     {inlineError("objective", ids.objectiveError)}
-    <Show when={(mode() === "recurring" || watchedIDs().length > 0) && sourceLocationReady() && !sourceInputBudget().sufficient && !errorFor("objective")}>
-      <span class="mission-create-field-error" role="alert">{t(watchedIDs().length ? "missions.recurrence.sourceInputTooLong" : "missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })}</span>
+    <Show when={watchedIDs().length > 0 && sourceLocationReady() && !sourceInputBudget().sufficient && !errorFor("objective")}>
+      <span class="mission-create-field-error" role="alert">{t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })}</span>
     </Show>
     <label class="mission-create-field"><span>{t("missions.create.title")}</span>
       <input maxLength={MISSION_TITLE_MAX} value={title()} placeholder={derivedTitle()} disabled={structuralLocked()}
@@ -572,8 +570,8 @@ export function MissionEditor(props: {
         onChange={event => setCoordinatorGoal(event.currentTarget.checked)} />
       <span>{t("missions.scheduling.coordinatorGoal")}<SettingsInfoTip text={t("missions.scheduling.coordinatorGoalHint")} /></span>
     </label></Show>
-    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
-      capability={schedule.capability()} started={journalLocked()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+    <MissionScheduling draft={schedule.scheduling()} directory={directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
+      started={journalLocked()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={mode() === "recurring" || coordinatorSessionID() !== undefined}>
       <section class="mission-create-group">
         <label class="mission-create-field"><span>{t("missions.scheduling.coordinatorMode")}<SettingsInfoTip text={t("missions.scheduling.coordinatorHint")} /></span>
@@ -592,7 +590,7 @@ export function MissionEditor(props: {
         <Show when={errorFor("coordinator")}><p role="alert">{errorFor("coordinator")}</p></Show>
       </section>
     </Show>
-    <section class="mission-create-group" aria-label={t("missions.followed.title")}>
+    <Show when={mode() === "once"}><section class="mission-create-group" aria-label={t("missions.followed.title")}>
       <h4>{t("missions.followed.title")}</h4>
       <Index each={watched()}>{(id, index) => <div class="flex items-center gap-2">
         <MissionSourceSelect label={t("missions.followed.source", { number: index + 1 })} value={id()}
@@ -609,12 +607,10 @@ export function MissionEditor(props: {
       <button type="button" class="window-action" disabled={structuralLocked() || !isActive() || watched().length >= 32}
         onClick={() => setWatched(rows => [...rows, ""])}>{t("missions.followed.add")}</button>
       {inlineError("followed", ids.followedError)}
-    </section>
-    <Show when={needsSourceLocation() && sourceLocationFailed() && !errorFor("followed")}>
+    </section></Show>
+    <Show when={sourceLocationFailed() && !errorFor("followed")}>
       <p role="alert">{t("missions.recurrence.sourceLocationUnavailable")}</p>
     </Show>
-    <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}
-      onClick={schedule.retryRead}>{t("missions.control.retry")}</button></Show>
     <Show when={!defaultsReady() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid()}>
       <p role={config.uiConfigLoadFailed() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "alert" : "status"}>
         {t(config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "missions.defaults.invalid"
@@ -628,7 +624,7 @@ export function MissionEditor(props: {
   const createDisabled = () => locked() || !isActive() || !objective().trim() || Boolean(compareError()) || !policyReady()
     || !coordinatorReady()
     || !watchedValid() || !sourceLocationReady()
-    || (mode() === "recurring" || watchedIDs().length > 0) && !sourceInputBudget().sufficient
+    || watchedIDs().length > 0 && !sourceInputBudget().sufficient
   // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
   let body: HTMLDivElement | undefined
   const panelScrolls = action.kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
@@ -659,7 +655,7 @@ export function MissionEditor(props: {
         changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
         onRetry={() => offersReopen() ? reopenEdit() : retryMissionTarget([editedObjective(), editedNotes()])} /></Show>
       <Show when={!schedule.ready()}><p role={schedule.failed() ? "alert" : "status"}>{t(schedule.failed() ? "missions.scheduling.loadFailed" : "missions.control.form.loading")}</p>
-        <Show when={schedule.failed()}><button type="button" class="window-action" onClick={schedule.retryRead}>{t("missions.control.refresh")}</button></Show></Show>
+        <Show when={schedule.failed()}><button type="button" class="window-action" onClick={() => void schedule.reload()}>{t("missions.control.refresh")}</button></Show></Show>
       <Show when={schedule.conflict()}><p role="alert">{t("missions.control.mutation.conflict")}</p>
         <button type="button" class="window-action" disabled={schedule.reading() || !!schedule.held()} onClick={() => void schedule.reload()}>{t("missions.scheduling.reload")}</button></Show>
       <Show when={schedule.previousDraft()}>{previous => <details class="mission-profile-optional"><summary>{t("missions.scheduling.previousDraft")}</summary>
@@ -676,7 +672,7 @@ export function MissionEditor(props: {
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
-      <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
+      <Show when={sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
         onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>
       <Show when={uncertain() && !schedule.held()}><button type="button" class="button-secondary" disabled={creationReading()} onClick={() => {
         if (!isActive()) return

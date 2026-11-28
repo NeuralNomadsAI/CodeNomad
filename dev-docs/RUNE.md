@@ -29,6 +29,15 @@ Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer p
 
 Shared menus focus their container when opened by pointer—entering items directly on arrows, Home/End, PageUp/PageDown and typeahead via Rune's `focus_group`—and focus the first item when activated by keyboard or non-pointer assistive activation (`Up` opens at the last item; `aria-disabled` items stay reachable and inert). The web accessibility mirror exposes `role="menu"` on the container while its focus proxy uses `group`. Confirmation and single-action modal dialogs declare their initial `.autofocus()` control explicitly.
 
+## Tests
+
+The compiler checks what TypeScript needs tests for: types, exhaustive matches, absent values, ownership. Tests cover the rest, with as few as do it.
+
+- **Write a test where a mistake destroys something or cannot be seen**: the server, installation and updates, data (files, Git, authentication), what is parsed from the network or the disk, concurrency. A fix there starts with the test that fails without it.
+- **Look at the interface.** A visual change is ready when its screen, captured beside the original application running on the same data at desktop and phone widths, shows it. Never write tests of the element tree's shape, sizes or colours as evidence of parity.
+- **Interface tests cover behaviour a capture cannot show**: focus and keyboard, accessibility roles and names, error states, a crash that happened.
+- One test per behaviour; none restates the implementation or what the compiler rejects. A screen that is rebuilt drops the structure tests of the one it replaces.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.
@@ -45,9 +54,9 @@ Each Solid component or module is converted as is, then simplified:
 
 1. A sheet generated from the Solid source: props, states, tokens, i18n keys, tests, uses.
 2. Port with kit primitives and the theme only.
-3. Parity: Solid fixture screenshot against Rune's headless PNG (light and dark, with a threshold), accessibility tree, scripted interaction test.
+3. Parity: Rune's headless PNG beside the original application's screen on the same data, at desktop and phone widths; then the accessibility tree and the interactions a capture cannot show ([Tests](#tests)).
 4. Simplify: merge duplicates, drop unused props and states, move logic to state.
-5. Two fresh blind reviews; a blocking or medium finding needs a failing test.
+5. Two fresh blind reviews; a blocking or medium finding needs a failing test where [Tests](#tests) asks for one, and a side-by-side capture where it is visual.
 
 When a whole module reaches parity, its Solid and Tauri version is deleted on `feat/rust-server`. If `dev` later changes a deleted file, the change is ported to the Rune twin; the file is never restored. The [correspondence table](#correspondence) records each pair.
 

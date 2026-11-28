@@ -19,7 +19,6 @@ export const missionMessages = {
   "missions.control.checkStatus": "Check control status",
   "missions.control.run.stopConfirm": "Stop this mission permanently?",
   "missions.simple.profilesNative": "Agents and models: native defaults",
-  "missions.recurrence.instructionsTooLong": "Keep recurring start instructions within {limit} characters.",
   "missions.recurrence.sourceInputTooLong": "Instructions plus followed-conversation context must fit {limit} characters. Shorten the instructions or remove followed conversations.",
   "missions.recurrence.sourceLocationUnavailable": "Refresh the source location.",
   "missions.recurrence.watchedInvalid": "Choose up to 32 different conversations.",

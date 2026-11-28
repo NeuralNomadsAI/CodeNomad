@@ -88,9 +88,9 @@ Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırma
 
 Kontroller OpenCode makinesindeki `gh`, `glab` veya `tea` kullanır, CodeNomad kapalıyken de çalışır; herkese açık depolar anonim okunabilir. Kendi sunucunuz için o sunucuya bağlı CLI gerekir. **github.com**, oturum açmış `gh` ile hesap bildirimleri ve Dependabot uyarıları da sunar; [bildirim](https://docs.github.com/en/rest/activity/notifications) veya [uyarı okuma](https://docs.github.com/en/rest/dependabot/alerts) erişimi gerekir. Okunma durumu korunur; düzeltilen veya kapatılan uyarılar da kapsanır. **GitHub deposu** boş kayıtlı bildirimler hesabı kapsar. İlk başlatma referansı belirler.
 
-Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
+Olaylar; yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
 
-**veya**, bitişik zamanları veya olayları birleştirir. **eğer**, zamanlardan sonraki olayları koşul yapar: son başarılı geçişten beri biri değişmiş olmalıdır. **aksi halde**, olaylardan sonraki zamanı yedek yapar: önceki yuvasından veya etkinleştirilmesinden beri üstteki ölçütler geçiş başlatmamışsa çalışır. Sonraki olaylar bu yedeği koşullandırır.
+**veya**, bitişik zamanları veya olayları birleştirir. **eğer**, zamanlardan sonraki olayları koşul yapar: son başarılı geçişten beri biri değişmiş olmalıdır.
 
 Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı kurar; başarı ilerletir, başarısızlık korur. Geçişler çakışmaz.
 
@@ -102,7 +102,7 @@ Bir ajandan zamanlamayı kendi geçerli kök konuşmasıyla hazırlamasını ist
 
 Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
-**Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
+**Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
 
 Yerel Git başvurusunu izlemek için **Yerel dalda yeni commit'ler** seçeneğini kullanın. Uzak dal için **Uzak dalda yeni commit'ler** seçeneğini ve `dev` gibi bir dal adı girin. Kontrol, yerel fetch olmadan algılanan depoyu doğrudan okur. İki kontrol arasındaki birden fazla commit tek geçiş başlatır.
 

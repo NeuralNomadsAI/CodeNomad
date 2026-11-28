@@ -327,7 +327,6 @@ export const missionMessages = {
   "missions.control.report.late": "कार्य हटाएपछि वा मिसन रोकेपछि प्रतिवेदन गरिएको",
   "missions.control.history.before": "अघि",
   "missions.control.history.after": "पछि",
-  "missions.recurrence.instructionsTooLong": "पुनरावर्ती सुरु निर्देशनहरू {limit} अक्षरभित्र राख्नुहोस्।",
   "missions.recurrence.sourceInputTooLong": "निर्देशन र अनुसरण संवादको सन्दर्भ {limit} अक्षरभित्र हुनुपर्छ। निर्देशन छोट्याउनुहोस् वा अनुसरण संवाद हटाउनुहोस्।",
   "missions.recurrence.sourceLocationUnavailable": "स्रोत स्थान ताजा गर्नुहोस्।",
   "missions.cleanup.error.revisionConflict": "मिसन बदलिएको छ। मेटाउनुअघि रद्द गरेर फेरि चयन गर्नुहोस्।",

@@ -7,7 +7,7 @@ import { isMissionGithubCondition } from "../../../server/src/missions/mission-g
 type Translate = (key: string, params?: Record<string, string>) => string
 
 /** One readable line per launch criterion, in stored order; after the first, each
- * line is prefixed with the connector before it: "or", "if" or "else". */
+ * line is prefixed with the connector before it: "or" or "if". */
 export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translate, locale: string, oneShotAt?: number | null): string[] {
   const model = missionLaunchModel(policy), draft = decodeMissionSchedulingPolicy(policy, undefined, "UTC")
   const date = (at: number, zone: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)
