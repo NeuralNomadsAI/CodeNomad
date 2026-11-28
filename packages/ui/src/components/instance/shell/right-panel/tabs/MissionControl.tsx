@@ -591,8 +591,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // The read map's count, else the row's (absent when unknown: the chevron stays).
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
-      ...(programming ? { recurring: true } : {}),
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity,
+      // A programmed Mission always unfolds: its programming is there before any task.
+      leaf: taskCount === 0 && !programming, ...(programming ? { recurring: true } : {}),
       activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
         ...(programming ? programming.row : []),
@@ -823,7 +824,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             }
           }
         }}
-        expandable={key => key.startsWith("mission:")}
+        expandable={key => key.startsWith("mission:") && !programmingOf(key.slice("mission:".length))}
         preview={key => <MissionTaskPreview instanceId={props.instanceId} missionId={key.slice("mission:".length)} activity={state().activity}
           active={treeShown()}
           selected={(value, task) => isSelectedTask(value.id, task.id)}
