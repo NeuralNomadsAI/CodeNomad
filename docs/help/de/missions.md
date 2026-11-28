@@ -82,7 +82,7 @@ Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage,
 
 Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit; eine nicht erfüllte Bedingung kann diese verbrauchen. Zeitplanung benötigt den verfügbaren OpenCode-Dienst und Ausführungshost.
 
-Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails.
+Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet.
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
@@ -102,7 +102,7 @@ Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die 
 
 Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterhaltung vorzubereiten. Die Durchläufe warten, bis die Unterhaltung inaktiv ist.
 
-Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
+Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
 Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
 
@@ -122,7 +122,7 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause: nichts läuft weiter oder startet, bis Sie fortsetzen; ein orangefarbenes Warndreieck bedeutet Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
-Eine Sanduhr in der Akzentfarbe bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
+Eine Sanduhr in der Akzentfarbe bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse und gestoppte Zeitpläne sind neutral; lesen Sie den Statustext.
 
 Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** wählen Sie die wiederkehrende Zeile im aktiven Fenster ausdrücklich aus oder nutzen **Als gelesen markieren**. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
 
@@ -154,7 +154,7 @@ Eine laufende einmalige Mission weist ihre Aufgaben weiter zu und stellt deren B
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion. Ein nativer Zeitplan bietet **Status prüfen** in seinem Menü **Weitere Aktionen** an.
+Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 

@@ -80,7 +80,7 @@ El primer criterio es **Una vez, ahora**. **Añadir un criterio** agrega otro. E
 
 Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. Se usa la zona guardada; su campo aparece si difiere de la del sistema. Los meses sin el día elegido se omiten. Una vez ahora fija su instante al iniciar y ofrece una sola oportunidad, que una condición puede consumir sin lanzar. Se necesitan OpenCode y el equipo de ejecución disponibles.
 
-Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto. Se conserva un OFF explícito: **Abrir los ajustes de programación**, cuando esté disponible, abre el archivo responsable; **i** muestra el origen o los detalles del entorno.
+Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto.
 
 ### Eventos y combinaciones {#scheduling-conditions}
 
@@ -100,7 +100,7 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
 
-La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
+Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
 En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
 
@@ -120,7 +120,7 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa: nada continúa ni se lanza hasta que la reanude; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
-Un reloj de arena en el color de acento significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
+Un reloj de arena en el color de acento significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados y las programaciones detenidas son neutros; consulta el texto de estado.
 
 Seleccionar o pulsar/barrer iconos verdes confirma resultados; el menú del chevrón ofrece **Marcar como leído**. Para **Ejecución correcta por revisar**, selecciona explícitamente la fila recurrente en la ventana activa o usa **Marcar como leído**. El icono vuelve a espera si la programación sigue activa; en caso contrario, a neutro. Los resultados nuevos que llegan a una fila ya seleccionada permanecen sin leer. Las tareas retiradas conservan historial.
 
@@ -152,7 +152,7 @@ Una Misión puntual en curso sigue asignando sus tareas y entregando sus informe
 
 Pausa puntual deja acabar los pasos actuales sin empezar otros; interrumpir solicita interrupción inmediata. Parar es terminal y requiere confirmación. La pausa de programación cierra futuros inicios y pide interrumpir la pasada actual. Los efectos de herramientas pueden continuar.
 
-Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva. Una programación nativa ofrece **Comprobar estado** en su menú **Más acciones**.
+Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva.
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 

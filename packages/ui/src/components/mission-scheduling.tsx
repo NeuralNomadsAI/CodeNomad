@@ -10,7 +10,6 @@ import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type Mis
 import { isMissionEventKind, isMissionPickerSource, missionCardConnectors, missionSchedulingPolicy, MissionSchedulingError, MISSION_CRITERIA_LIMIT, newMissionCriterion,
   newMissionSchedulingDraft, type MissionSchedulingDraft } from "./mission-scheduling-data"
 
-export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | "terminal" | "deleted" | "journal" | "scope"
 
 /** Shared controlled scheduling fields. This component performs no reads or mutations. */
 export function MissionScheduling(props: {
@@ -19,7 +18,8 @@ export function MissionScheduling(props: {
   paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined
   capability: "available" | "activatable" | "missing" | "loading"
   active?: () => boolean
-  lockReason?: MissionSchedulingLock | null; disabled?: boolean
+  /** A started Mission keeps the criteria it was created with. */
+  started?: boolean; disabled?: boolean
   onChange: (draft: MissionSchedulingDraft) => void
   onPolicy: (policy: MissionLaunchPolicy | undefined) => void
 }) {
@@ -28,7 +28,7 @@ export function MissionScheduling(props: {
   const patch = (change: Partial<MissionSchedulingDraft>) => props.onChange({ ...props.draft, ...change })
   const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next })
   const retained = () => props.draft.stored?.reason
-  const locked = () => !!props.disabled || !!props.lockReason || !!retained() || props.active?.() === false
+  const locked = () => !!props.disabled || !!props.started || !!retained() || props.active?.() === false
   const unavailable = () => props.capability === "missing" || props.capability === "loading"
   const criteria = () => props.draft.criteria
   const result = createMemo((): { error?: string; index?: number; policy?: MissionLaunchPolicy } => {
@@ -56,7 +56,7 @@ export function MissionScheduling(props: {
     return t(visibleError() === "source" ? row?.kind === "files-changed" ? "missions.scheduling.error.files" : "missions.scheduling.chooseSource"
       : `missions.scheduling.error.${visibleError()}`)
   }
-  const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
+  const reason = () => props.started ? t("missions.scheduling.lock.journal")
     : props.capability === "missing" && result().error !== "capability" ? t("missions.scheduling.capability.missing") : undefined
   const rowError = (index: number) => visibleError() && result().index === index ? errorID : undefined
   const ids = createMemo(() => criteria().map(row => row.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]) })
@@ -106,7 +106,7 @@ export function MissionScheduling(props: {
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
       <pre dir="ltr">{JSON.stringify(props.draft.stored!.policy, null, 2)}</pre>
-      <button type="button" class="window-action" disabled={!!props.disabled || !!props.lockReason}
+      <button type="button" class="window-action" disabled={!!props.disabled || !!props.started}
         onClick={() => props.onChange(newMissionSchedulingDraft(props.draft.zone))}>{t("missions.scheduling.retained.replace")}</button>
     </section>}</Show>
     <Show when={!retained()}>

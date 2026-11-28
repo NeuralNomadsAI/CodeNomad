@@ -1,8 +1,7 @@
 import { For, Show, batch, createComputed, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { missionStore as projectMissionStore } from "../stores/missions"
-import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { missionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
 import { applySurface, beginGesture } from "../stores/session-surface"
 import { Markdown } from "./markdown"
@@ -22,11 +21,6 @@ import { missionDerivedSessionIncludes, missionDerivedTaskSession, useMissionTas
 import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
 import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 import { missionBriefed, missionBriefingFreshness } from "./mission-briefing-model"
-import { useMissionCurrentPassage } from "../stores/mission-recurrence"
-import { MissionPassageSectionContent, type MissionPassageSection } from "./mission-passage-section"
-
-import { useMissionSchedules } from "../stores/mission-schedules"
-import { describeMissionCriteria } from "./mission-scheduling-summary"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionOverviewDetails } from "./mission-overview-details"
@@ -54,13 +48,11 @@ const READER_PAGE_SIZE = 9_000
  * while `active` (an open disclosure). `read` is the state of text formatted from bodies
  * read whole: shown once settled. A failed read shows beside the last good page. */
 export function MissionReaderSection(props: { text?: string; body?: MissionReaderBody; active?: boolean; raw?: boolean; identity: string; instanceId: string
-  commitPage?: boolean
-  label: string; source?: MissionPassageSection; read?: MissionBodyRead
+  label: string; read?: MissionBodyRead
   pagination?: { page: number; pageCount: number; content: MissionMarkdownPage; onPage: (page: number) => void } }) {
   const { t } = useI18n()
   const [page, setPage] = createSignal(0)
   const [copyStatus, setCopyStatus] = createSignal("")
-  const [remoteCount, setRemoteCount] = createSignal<number>()
   const [copying, setCopying] = createSignal(false)
   const remote = useMissionBody(() => props.body && props.active !== false ? props.body : undefined,
     () => copying() ? Infinity : missionBodyNeed(remote.state().body, page(), READER_PAGE_SIZE))
@@ -76,7 +68,7 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
   const status = (): MissionBodyRead | undefined => props.read
     ?? (props.body ? { settled: shown() !== undefined, failed: remote.state().status === "error", onRetry: remote.retry } : undefined)
   const currentPage = () => props.pagination?.page ?? page()
-  const pageCount = () => props.pagination?.pageCount ?? remoteCount() ?? Math.max(1, Math.ceil((shown()?.characters ?? 0) / READER_PAGE_SIZE))
+  const pageCount = () => props.pagination?.pageCount ?? Math.max(1, Math.ceil((shown()?.characters ?? 0) / READER_PAGE_SIZE))
   let article: HTMLElement | undefined
   const captureCopy = createMissionViewFence(() => JSON.stringify([props.instanceId, props.identity, shown()?.value]), () => true)
   let previousIdentity: string | undefined
@@ -89,7 +81,7 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
       return
     }
     previousIdentity = identity; previousValue = value
-    setPage(0); setCopyStatus(""); setRemoteCount(undefined); setCopying(false)
+    setPage(0); setCopyStatus(""); setCopying(false)
   })
   const content = createMemo(() => {
     if (props.pagination) return props.pagination.content
@@ -120,11 +112,11 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
   })
   return <article ref={article}>
     <h3>{t(props.label)}</h3>
-    <Show when={pageCount() > 1 || props.pagination || props.source}>
+    <Show when={pageCount() > 1 || props.pagination}>
       <div class="window-toolbar">
         <Show when={pageCount() > 1}><label class="mission-reader-pagination">
           <span>{t("toolCall.permission.diff.page", { page: currentPage() + 1, total: pageCount() })}</span>
-           <Show when={props.pagination || props.source || props.body?.ref.passage || props.commitPage} fallback={<input type="number" class="w-16" min="1" max={pageCount()} value={page() + 1}
+           <Show when={props.pagination} fallback={<input type="number" class="w-16" min="1" max={pageCount()} value={page() + 1}
             aria-label={t("toolCall.permission.diff.page", { page: page() + 1, total: pageCount() })}
             onInput={event => {
               const next = event.currentTarget.valueAsNumber
@@ -139,16 +131,13 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
         <span role="status">{copyStatus()}</span>
       </div>
     </Show>
-    <Show when={props.source} fallback={<>
-      <Show when={content()}>{shownPage => <Show when={props.raw || shownPage().markdownText === null}
-        fallback={<Markdown part={{ type: "text", text: shownPage().markdownText! }} escapeRawHtml instanceId={props.instanceId} />}>
-        <pre>{shownPage().sourceText}</pre>
-      </Show>}</Show>
-      <Show when={!content() || status()?.failed}>
-        <MissionBodyPending failed={status()?.failed ?? false} onRetry={() => status()?.onRetry()} />
-      </Show>
-    </>}>{source => <MissionPassageSectionContent instanceId={props.instanceId} source={source()} page={page()} raw={props.raw}
-      onPageCount={setRemoteCount} />}</Show>
+    <Show when={content()}>{shownPage => <Show when={props.raw || shownPage().markdownText === null}
+      fallback={<Markdown part={{ type: "text", text: shownPage().markdownText! }} escapeRawHtml instanceId={props.instanceId} />}>
+      <pre>{shownPage().sourceText}</pre>
+    </Show>}</Show>
+    <Show when={!content() || status()?.failed}>
+      <MissionBodyPending failed={status()?.failed ?? false} onRetry={() => status()?.onRetry()} />
+    </Show>
   </article>
 }
 
@@ -156,41 +145,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const { t, locale } = useI18n()
   const target = () => missionProjectView(props.instanceId).reader
   const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => target()?.missionId ?? "", () => `report:${target()?.itemId}:technical`)
-  const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID
-  const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: () => instances().get(props.instanceId)?.folder ?? "", scheduleID: () => target()?.recurrence?.scheduleID,
-    active: () => target()?.recurrence?.instanceId === props.instanceId && target()?.recurrence?.projectID === projectID() })
-  const panel = () => currentPassage.inventory() ?? projectMissionStore
-  const missionStore = scopedMissionStore(panel)
-  const passage = () => {
-    const owner = target()?.recurrence, snapshot = currentPassage.snapshot()
-    return owner?.instanceId === props.instanceId && owner.projectID === projectID() && snapshot?.passageID === owner.passageID
-      && snapshot.mission?.id === target()?.missionId ? snapshot : undefined
-  }
-  const mission = () => target()?.recurrence ? passage()?.mission
-    : missionStore.state(props.instanceId).missions.find(m => m.id === target()?.missionId)
+  const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
+  const mission = () => missionStore.state(props.instanceId).missions.find(m => m.id === target()?.missionId)
   const documentAttention = createDocumentAttention()
   createEffect(() => {
     const value = mission()
-    if (!value || value.status !== "completed" || target()?.recurrence || !documentAttention() || value.projectID !== projectID()) return
+    if (!value || value.status !== "completed" || !documentAttention() || value.projectID !== projectID()) return
     untrack(() => markMissionsFinishedSeen(JSON.stringify([props.scope, value.projectID]), [value.id], [value], true))
   })
-  const activity = () => target()?.recurrence ? passage()?.activity : missionStore.state(props.instanceId).activity
-  const sectionSource = (label: string): MissionPassageSection | undefined => {
-    const owner = target()?.recurrence, value = mission(), kind = target()?.kind
-    if (!owner || !value || value.panelPassage || !kind || kind === "recurrence" || kind === "playbook") return
-    const section = label === "missions.tracking.recorded" ? "achieved" : label === "missions.tracking.obstacles" ? "obstacles" : label.split(".").at(-1)!
-    if (!["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"].includes(section)) return
-    return { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
-      missionID: value.id, revision: value.revision, kind, itemId: target()?.itemId,
-      section: section as MissionPassageSection["section"] }
-  }
-  const recurrenceProjectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
-  const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => instances().get(props.instanceId)?.folder ?? "", refresh: () => 0, active: () => target()?.kind === "recurrence"
-      && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
-  const scheduled = () => target()?.kind === "recurrence" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
-    ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
+  const activity = () => missionStore.state(props.instanceId).activity
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
   const reports = createMemo(() => { const value = mission(); return value ? missionReports(value) : [] })
   const report = () => reports().find(report => report.id === target()?.itemId)
@@ -207,17 +170,17 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const wantOwner = `reader:${props.scope}`
   const wantedMission = createMemo(() => {
     const value = target()
-    return value && !value.recurrence && value.kind !== "recurrence" && value.kind !== "playbook" ? value.missionId : undefined
+    return value && value.kind !== "playbook" ? value.missionId : undefined
   })
   createComputed(() => {
-    const instanceId = props.instanceId, missionId = wantedMission(), store = panel()
-    untrack(() => store.want(instanceId, wantOwner, missionId, true))
-    onCleanup(() => store.want(instanceId, wantOwner, undefined))
+    const instanceId = props.instanceId, missionId = wantedMission()
+    untrack(() => missionStore.want(instanceId, wantOwner, missionId, true))
+    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
   })
   const taskPage = () => { const value = mission(); return value && "taskPage" in value ? value.taskPage : undefined }
   const targetRequest = createMemo(() => {
     const value = mission(), current = target(), page = taskPage()
-    if (!value || !page || !current?.itemId || current.recurrence && !value.panelPassage) return undefined
+    if (!value || !page || !current?.itemId) return undefined
     const request: MissionTaskRequest | undefined = current.kind === "task" && !task() ? { ids: [current.itemId] }
       : current.kind === "report" && !report() ? { reportIds: [current.itemId] } : undefined
     return request && { key: JSON.stringify([props.instanceId, props.scope, value.projectID, value.id, page.order, request]), missionId: value.id, request }
@@ -230,7 +193,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   })
   const changeRequest = createMemo(() => {
     const value = mission(), current = target()
-    if (!value || current?.kind !== "change" || current.recurrence && !value.panelPassage || change() || !("panelCollections" in value)) return
+    if (!value || current?.kind !== "change" || change() || !("panelCollections" in value)) return
     return { key: JSON.stringify([props.instanceId, props.scope, value.id, value.panelCollections?.history?.digest, current.itemId]), lane: `field:${value.id}:history` }
   })
   const readChange = (wanted: NonNullable<ReturnType<typeof changeRequest>>) => {
@@ -262,7 +225,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (history) return targetReads().get(history.key) ?? "loading"
     const wanted = targetRequest()
     if (wanted) return targetReads().get(wanted.key) ?? "loading"
-    if (!target()?.recurrence && ["task", "report", "change"].includes(target()?.kind ?? "") && !mission()) {
+    if (["task", "report", "change"].includes(target()?.kind ?? "") && !mission()) {
       const status = missionStore.state(props.instanceId).status
       if (status === "error" || status === "unavailable") return "failed"
       if (status === "loading" || status === "idle") return "loading"
@@ -289,7 +252,6 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
   const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
-    : target()?.kind === "recurrence" ? scheduled()?.configuration.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
     : target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
     : t(target()?.kind === "change" ? "missions.control.history.title"
@@ -341,10 +303,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         applySurface({ instanceId, sessionId }, { kind: "conversation" }, surfaceIntent)
       })
   }
-  // Compact project and current-passage readers resolve their exact body descriptors.
-  const oneTime = () => Boolean(target()) && (!target()!.recurrence || Boolean(mission()?.panelPassage)) && target()!.kind !== "recurrence" && target()!.kind !== "playbook"
-  const reading = { instanceId: () => props.instanceId, mission, oneTime }
-  const readerBody = (selector: MissionContentSelector) => missionReaderBody(props.instanceId, mission(), oneTime(), selector)
+  const reading = { instanceId: () => props.instanceId, mission }
+  const readerBody = (selector: MissionContentSelector) => missionReaderBody(props.instanceId, mission(), selector)
   /** A body section with the value or exact descriptor its map records. */
   const bodySection = (label: string, selector: MissionContentSelector) => ({ label, text: missionOwnBody<string>(mission(), selector) ?? "",
     present: missionBodyPresent(mission(), selector, "text"), body: readerBody(selector) })
@@ -384,7 +344,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     present: boolean, format: (value: T | undefined) => string) => ({ present, text: read.settled() ? format(read.value()) : "", read: read.read() })
   const sections = createMemo<Array<{ label: string; text: string; present?: boolean; raw?: boolean; taskKeys?: string[]; body?: MissionReaderBody
     read?: MissionBodyRead }>>(() => {
-    if (target()?.kind === "recurrence" || playbook()) return []
+    if (playbook()) return []
     if (target()?.kind === "change") {
       const value = change()
       const taskName = (key: string) => mission()?.tasks.find(task => task.key === key)?.title ?? key
@@ -461,7 +421,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   // instance and target identities drive the registration, never store publications.
   // A restored reader waits for session-list restoration before its first read.
   createEffect(() => {
-    if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence" && !playbook()) untrack(() => void missionStore.ensure(props.instanceId))
+    if (sessionListRestored(props.instanceId) && !playbook()) untrack(() => void missionStore.ensure(props.instanceId))
   })
   onMount(() => {
     if (document.activeElement instanceof HTMLElement) returnFocus = document.activeElement
@@ -472,7 +432,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     const ctx = { instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }
     applySurface(ctx, { kind: "conversation" })
   }
-   return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
+  return <section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
       <h2 class="window-title">{title()}</h2>
@@ -486,17 +446,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     <div class="window-body" ref={body}>
       <Show when={mission() && "panelCollections" in mission()!}><MissionPanelPaging instanceId={props.instanceId} lane={`activity:${mission()!.id}`} /></Show>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
-      <Show when={target()?.recurrence && currentPassage.error()}><p role="status">{t(passage() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-      <Show when={target()?.kind === "recurrence"}>
-        <Show when={scheduledState.loading() && !scheduled()}><p role="status">{t("missions.control.loading")}</p></Show>
-        <Show when={scheduledState.error() || scheduledState.selectionError()}><p role="status">{t("missions.scheduleList.readFailed")}</p></Show>
-        <Show when={scheduled()}>{doc => <>
-          <p><bdi>{describeMissionCriteria(doc().configuration.launch, t, locale(), doc().oneShotAt).join("; ")}</bdi></p>
-          <h3>{t("missions.control.objective")}</h3><p>{doc().configuration.objective}</p>
-          <Show when={doc().configuration.notes}><h3>{t("missions.control.notes")}</h3><p>{doc().configuration.notes}</p></Show>
-        </>}</Show>
-      </Show>
-      <Show when={target()?.kind === "overview" && mission()?.coordinatorGoal && !target()?.recurrence}>
+      <Show when={target()?.kind === "overview" && mission()?.coordinatorGoal}>
         <SessionGoalLine instanceId={props.instanceId} sessionId={mission()!.coordinatorSessionId} active />
       </Show>
       <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
@@ -511,22 +461,21 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
       }</Show>
       <Show when={playbook()}>{id => <MissionPlaybookReader instanceId={props.instanceId} playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
-      <Show when={target()?.kind !== "recurrence" && target()?.kind === "task" && task() && mission()} fallback={
-        <Show when={target()?.kind !== "recurrence" && !playbook()}>
+      <Show when={target()?.kind === "task" && task() && mission()} fallback={
+        <Show when={!playbook()}>
         <Show when={sections().length} fallback={<Show when={targetState() === "failed"} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading"
           || targetState() === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
           <MissionBodyPending failed changed={targetChanged()} onRetry={retryTarget} />
         </Show>}>
         <For each={sections().map(section => section.label)}>{label => {
           const section = () => sections().find(section => section.label === label)!
-           return <Show when={section().present ?? section().text}><MissionReaderSection label={label} text={section().text} body={section().body} commitPage={Boolean(mission()?.panelPassage)}
-            read={section().read} raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId}
-            source={sectionSource(label)} />
+           return <Show when={section().present ?? section().text}><MissionReaderSection label={label} text={section().text} body={section().body}
+            read={section().read} raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId} />
             <Show when={section().taskKeys?.length}><div class="mission-briefing-sources"><For each={section().taskKeys}>{key => {
               // A source a compact map's page does not hold is read by key when opened.
               const source = () => mission()?.tasks.find(task => task.key === key)
                return <Show when={source() || taskPage()}><button type="button" class="window-action mission-reader-link"
-                 onClick={() => void openMissionTask(props.instanceId, props.scope, mission, key, target()?.recurrence, missionStore)}>
+                 onClick={() => void openMissionTask(props.instanceId, props.scope, mission, key)}>
                 {source()?.title ?? key}
               </button></Show>
             }}</For></div></Show>
@@ -537,11 +486,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       }>
         <MissionTaskReader instanceId={props.instanceId} scope={props.scope} mission={mission()!} task={task()!}
           identity={JSON.stringify([props.instanceId, props.scope, target()])}
-          activity={activity()?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state}
-          recurrence={target()?.recurrence} />
+          activity={activity()?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state} />
       </Show>
       <Show when={target()?.kind === "overview" && mission()}>{value =>
-        <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} recurrence={target()?.recurrence} />}</Show>
+        <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} />}</Show>
       <Show when={target()?.kind === "report" && report()}>{value => <>
         <MissionComparisonReport artifact={reportBodies.artifact.value()} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
         <Show when={mission()}>{map => <MissionDecisionReport mission={map()} report={value()} artifact={reportBodies.artifact.value()}
@@ -550,9 +498,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           <MissionReportNotification report={value()} />
           <Show when={missionReportHas(mission(), value(), "artifact")}><MissionReaderSection label="missions.control.artifact" raw
             text={reportBodies.artifact.settled() ? JSON.stringify(reportBodies.artifact.value(), null, 2) : ""} read={reportBodies.artifact.read()}
-            identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} source={sectionSource("artifact")} /></Show>
+            identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} /></Show>
         </details>
       </>}</Show>
     </div>
-  </section></MissionPanelScope>
+  </section>
 }

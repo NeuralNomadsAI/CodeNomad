@@ -80,7 +80,7 @@ Yinelenen bir zamanlaması veya olayı olan görev listede tek satır olarak kal
 
 Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron seçenekleri vardır. Kayıtlı saat dilimi kullanılır; sistemden farklıysa dilim alanı görünür. Seçilen günün bulunmadığı ay atlanır. Bir kez şimdi, zamanı Başlat'ta alır; koşul bu tek fırsatı çalıştırmadan tüketebilir. OpenCode hizmeti ve yürütme makinesi kullanılabilir olmalıdır.
 
-Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır. Açık OFF korunur: sunulduğunda **Zamanlama ayarlarını aç** sorumlu dosyayı açar; **i** kaynak veya ortam ayrıntılarını gösterir.
+Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır.
 
 ### Olaylar ve birleşimler {#scheduling-conditions}
 
@@ -100,7 +100,7 @@ Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı 
 
 Bir ajandan zamanlamayı kendi geçerli kök konuşmasıyla hazırlamasını isteyebilirsiniz. Geçişler, konuşma boşta kalana kadar bekler.
 
-Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı geçişleri ve geçmişi gösterir. Son 30 sonuç saklanır; toplam sayaçlar korunur. Kabul edilen **Şimdi çalıştır** sayılır. Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
+Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
 **Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
 
@@ -120,7 +120,7 @@ Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İşler y
 
 Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, sarı gözlenen çalışmayı gösterir. Turuncu duraklatma simgesi duraklamayı belirtir: siz sürdürene kadar hiçbir şey devam etmez veya başlamaz; turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
 
-Vurgu renkli kum saati **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Vurgu renkli olağan simge hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar, durdurulmuş zamanlamalar ve **Durum doğrulanmadı** nötrdür; durum metnini okuyun.
+Vurgu renkli kum saati **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Vurgu renkli olağan simge hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar ve durdurulmuş zamanlamalar nötrdür; durum metnini okuyun.
 
 Seçim veya yeşil iş simgesine tıklama/süpürme sonuçları onaylar; şevron menüsünde **Okundu olarak işaretle** bulunur. **İncelenecek başarılı çalıştırma** için etkin pencerede tekrarlanan satırı açıkça seçin veya **Okundu olarak işaretle** kullanın. Zamanlama etkinse simge beklemeye, aksi durumda nötre döner. Zaten seçili satıra gelen yeni sonuçlar okunmamış kalır. Geri çekilen işin geçmişi tutulur.
 
@@ -152,7 +152,7 @@ Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
 Tek seferlik Duraklat, yeni iş başlatmadan mevcut adımları bitirir; hemen kesme, doğrudan kesinti ister. Durdur kalıcıdır ve onay gerekir. Programı duraklatmak gelecekteki başlatmaları kapatır ve mevcut geçişin kesilmesini ister. Araç etkileri devam edebilir.
 
-Doğrulanmamış asıl isteği koruyun: Yerel program görünümü veya düzenleyici açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve yalnızca tam olarak kaydedilmiş kısmi bir hazırlığı kendiliğinden yeniden dener. Sunulduğunda tek seferlik Görev denetimleri için **Durumu denetle**, sıradan tek seferlik oluşturma için **Görev haritasını yenile** seçeneğini kullanın; yerine başka işlem oluşturmayın. Yerel bir program, **Diğer eylemler** menüsünde **Durumu denetle** seçeneğini sunar.
+Doğrulanmamış asıl isteği koruyun: Yerel program görünümü veya düzenleyici açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve yalnızca tam olarak kaydedilmiş kısmi bir hazırlığı kendiliğinden yeniden dener. Sunulduğunda tek seferlik Görev denetimleri için **Durumu denetle**, sıradan tek seferlik oluşturma için **Görev haritasını yenile** seçeneğini kullanın; yerine başka işlem oluşturmayın.
 
 ## Düzenleme, silme ve konuşma temizliği {#cleanup}
 
