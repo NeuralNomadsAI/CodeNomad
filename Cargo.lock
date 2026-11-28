@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "accesskit_atspi_common"
 version = "0.21.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -49,7 +49,7 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.27.2"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "accesskit_windows"
 version = "0.35.2"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -411,23 +411,6 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
-
-[[package]]
-name = "avif-decode"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eee11893966d77d3e18c66fdcfb1c30e2d8df050346609c775ce8eec3390344"
-dependencies = [
- "avif-parse",
- "bytemuck",
- "imgref",
- "lodepng",
- "log",
- "quick-error",
- "rav1d",
- "rgb",
- "yuv",
-]
 
 [[package]]
 name = "avif-parse"
@@ -1769,12 +1752,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
-name = "imgref"
-version = "1.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
-
-[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1999,18 +1976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lodepng"
-version = "3.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe7982db11054edc023a1b424dddcc65be18f71fa46ec6bde2efcfc1fb6b22da"
-dependencies = [
- "crc32fast",
- "flate2",
- "libc",
- "rgb",
-]
-
-[[package]]
 name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2090,7 +2055,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "30.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -2708,7 +2673,7 @@ checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
 [[package]]
 name = "parley_engine"
 version = "0.12.0"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "fontique",
  "harfrust",
@@ -3333,7 +3298,7 @@ dependencies = [
 [[package]]
 name = "rune"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "accesskit",
  "accesskit_android",
@@ -3407,7 +3372,7 @@ dependencies = [
 [[package]]
 name = "rune-core"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "js-sys",
  "libc",
@@ -3426,7 +3391,7 @@ dependencies = [
 [[package]]
 name = "rune-edit"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "js-sys",
  "parley",
@@ -3440,7 +3405,7 @@ dependencies = [
 [[package]]
 name = "rune-gpu"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "bytemuck",
  "objc2 0.6.5",
@@ -3458,7 +3423,7 @@ dependencies = [
 [[package]]
 name = "rune-highlights"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "unicode-ident",
  "wasmparser",
@@ -3467,26 +3432,29 @@ dependencies = [
 [[package]]
 name = "rune-image"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
- "avif-decode",
+ "avif-parse",
  "blake3",
  "image",
  "js-sys",
+ "libc",
  "moxcms",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "rav1d",
  "resvg",
  "rune-core",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "windows-sys 0.61.2",
+ "yuv",
 ]
 
 [[package]]
 name = "rune-kit"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "icu_normalizer",
  "pulldown-cmark",
@@ -3500,7 +3468,7 @@ dependencies = [
 [[package]]
 name = "rune-media"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "ash",
  "blake3",
@@ -3529,7 +3497,7 @@ dependencies = [
 [[package]]
 name = "rune-mermaid"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "rune",
 ]
@@ -3537,12 +3505,12 @@ dependencies = [
 [[package]]
 name = "rune-motion"
 version = "0.1.0"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 
 [[package]]
 name = "rune-spell"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -3555,7 +3523,7 @@ dependencies = [
 [[package]]
 name = "rune-staging"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "wgpu",
  "windows",
@@ -3573,7 +3541,7 @@ dependencies = [
 [[package]]
 name = "rune-taffy"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "stacker",
  "taffy",
@@ -3582,7 +3550,7 @@ dependencies = [
 [[package]]
 name = "rune-text"
 version = "0.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "bytemuck",
  "fontique",
@@ -3621,7 +3589,7 @@ dependencies = [
 [[package]]
 name = "rune-tiny-skia-path"
 version = "0.11.4"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -3752,7 +3720,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sctk-adwaita"
 version = "0.10.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "log",
  "smithay-client-toolkit",
@@ -4884,6 +4852,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "wgpu-core-deps-apple",
+ "wgpu-core-deps-emscripten",
  "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
@@ -4896,6 +4865,15 @@ name = "wgpu-core-deps-apple"
 version = "30.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d3f2f24aee039ffe9ef527300daf6b7428c58edeefdaa1700f4fa0fd754df16"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-emscripten"
+version = "30.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55ccf093bd215ae9dc4f96df293e675513ac1f2569f8293a2911cc34ca3505d1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -4921,7 +4899,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -5289,7 +5267,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/NeuralNomadsAI/rune.git?branch=android%2Fnext#078a33c5f1840c0fdbb73e4160a1b7a6ef0541dd"
+source = "git+https://github.com/anomalyco/rune?rev=ab359eec0430d213ee25a06de47e9ae2050659a0#ab359eec0430d213ee25a06de47e9ae2050659a0"
 dependencies = [
  "ahash",
  "android-activity",

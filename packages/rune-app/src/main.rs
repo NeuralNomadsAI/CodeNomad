@@ -1,4 +1,7 @@
-#![forbid(unsafe_code)]
+// Rune's ndroid_main! carries an llow(unsafe_code) for the entry point it exports, which
+// orbid rejects: on Android the lint is denied instead, and nothing else allows it.
+#![cfg_attr(not(target_os = "android"), forbid(unsafe_code))]
+#![cfg_attr(target_os = "android", deny(unsafe_code))]
 mod agent;
 pub(crate) use agent::{form_view as agent_form_view, forms as agent_forms, view as agent_view};
 pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history};

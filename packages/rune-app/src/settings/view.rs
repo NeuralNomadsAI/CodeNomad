@@ -784,19 +784,22 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 },
             ));
         }
-        chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
-            |s: &mut Window, focused, _| {
-                if !focused {
-                    s.recording_shortcut = false;
-                } else {
-                    codenomad_client::stream::probe_stale();
-                    if s.section == Section::OpenCode {
-                        s.check_opencode(Some(false));
-                    } else if s.section == Section::General {
-                        s.shared.borrow_mut().memory.invalidate();
-                    }
+        let frame = chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers);
+        // On Android this window is a page of the phone's one window: clear of its bars and
+        // keyboard, as the shell is.
+        #[cfg(target_os = "android")]
+        let frame = layout::safe_area(cx, frame);
+        frame.on_window_focus(|s: &mut Window, focused, _| {
+            if !focused {
+                s.recording_shortcut = false;
+            } else {
+                codenomad_client::stream::probe_stale();
+                if s.section == Section::OpenCode {
+                    s.check_opencode(Some(false));
+                } else if s.section == Section::General {
+                    s.shared.borrow_mut().memory.invalidate();
                 }
-            },
-        )
+            }
+        })
     })
 }
