@@ -158,14 +158,19 @@ fn parts(s: &State, menu: Rc<Menu<State>>) -> (El, Option<El>) {
     )
 }
 
-pub(in crate::chat) fn header(s: &State, message: &Message, header: El) -> El {
+pub(in crate::chat) fn actions(s: &State, message: &Message) -> Vec<El> {
     let id = &message.id;
-    header
-        .children((!message.body.trim().is_empty()).then(|| {
+    let mut buttons = Vec::new();
+    if !message.body.trim().is_empty() {
+        buttons.push(
             markdown::copy_button(t("messageItem.actions.copy"), copy(s, id))
-                .key(format!("copy-message-{id}"))
-        }))
-        .children(controls(s, message).map(|menu| parts(s, menu).0))
+                .key(format!("copy-message-{id}")),
+        );
+    }
+    if let Some(menu) = controls(s, message) {
+        buttons.push(parts(s, menu).0);
+    }
+    buttons
 }
 
 pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {

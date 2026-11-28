@@ -178,7 +178,7 @@ test("transcript frames and compaction buffers never merge or publish across att
   owner.close()
 })
 
-test("MissionControl actor and scheduled navigation reject late hydration on an identical reattachment", async () => {
+test("MissionControl actor navigation rejects late hydration on an identical reattachment", async () => {
   const path = "../components/instance/shell/right-panel/tabs/MissionControl.tsx"
   const source = readSource(new URL(path, import.meta.url))
   const variables = (statements: ts.NodeArray<ts.Statement>) => statements.filter(ts.isVariableStatement)
@@ -186,22 +186,13 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
   const component = variables(source.statements).find(entry => entry.declaration.name.getText(source) === "MissionControl")!.declaration.initializer as ts.ArrowFunction
   const declarations = variables((component.body as ts.Block).statements)
   const statement = (name: string) => declarations.find(entry => entry.declaration.name.getText(source) === name)!.statement
-  const scheduled = declarations.find(entry => entry.declaration.name.getText(source) === "scheduled")!.declaration.initializer as ts.CallExpression
-  const property = (scheduled.arguments[0] as ts.ObjectLiteralExpression).properties.find(member => member.name?.getText(source) === "onOpenConversation") as ts.PropertyAssignment
-  const callback = property.initializer as ts.ArrowFunction
-  assert.ok(ts.isVoidExpression(callback.body))
-  // Drop only the fire-and-forget `void`, so the test can await the real callback.
-  const awaitable = ts.factory.updateArrowFunction(callback, callback.modifiers, callback.typeParameters, callback.parameters,
-    callback.type, callback.equalsGreaterThanToken, callback.body.expression)
-  const selected = ts.factory.updateSourceFile(source, [statement("navigationOrigin"), statement("openActor"), statement("onOpenActor"),
-    ts.factory.createVariableStatement(undefined, ts.factory.createVariableDeclarationList([
-      ts.factory.createVariableDeclaration("openScheduledConversation", undefined, undefined, awaitable),
-    ], ts.NodeFlags.Const))])
+  const selected = ts.factory.updateSourceFile(source, [statement("navigationOrigin"), statement("openActor"), statement("onOpenActor")])
   const code = ts.transpileModule(ts.createPrinter().printFile(selected), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText
 
-  for (const route of ["actor", "scheduled"] as const) for (const outcome of ["cancel", "resolve"] as const) {
+  const route = "actor"
+  for (const outcome of ["cancel", "resolve"] as const) {
     const owner = lifetime(), hydration = deferred<void>(), client = {}, errors: boolean[] = []
     let navigations = 0, reveals = 0, accepted: (() => boolean) | undefined, signal: AbortSignal | undefined
     const mission = { id: "mission", coordinatorSessionId: "session", actors: [] }
@@ -214,8 +205,7 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
       ...owner, beginGesture: surfaces.beginGesture, applySurface: surfaces.applySurface,
       props: { instanceId: "workspace", activeSessionId: () => "session", onRevealConversation: () => { reveals++ } },
       intent: 0, conversationEpoch: 0, scope: () => "unchanged-view", captureView: () => () => true,
-      currentPassage: { snapshot: () => undefined }, selectedScheduled: () => route === "scheduled" ? "schedule" : undefined,
-      mission: () => mission, missions: () => [mission], includesSession: () => true, scheduled: { ownsSession: () => true },
+      mission: () => mission, missions: () => [mission], rows: () => [], includesSession: () => true,
       instances: () => new Map([["workspace", { client }]]), getOpenCodeInstanceGeneration: () => 1,
       getAuthoritativelyDeletedSessionIdsForInstance: () => new Set(), sessions: () => new Map([["workspace", new Map([["session", {}]])]]),
       setNavigationError: (error: boolean) => { errors.push(error) }, batch: (run: () => void) => run(),
@@ -226,8 +216,8 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
         if (outcome === "cancel") throw new DOMException("Hydration cancelled", "AbortError")
       },
     }
-    const actions = new Function(...Object.keys(bindings), `${code}\nreturn { onOpenActor, openScheduledConversation }`)(...Object.values(bindings))
-    const pending = route === "actor" ? actions.onOpenActor("session") : actions.openScheduledConversation("session")
+    const actions = new Function(...Object.keys(bindings), `${code}\nreturn { onOpenActor }`)(...Object.values(bindings))
+    const pending = actions.onOpenActor("session")
     assert.ok(accepted?.(), `${route}: unchanged view admits hydration`)
     assert.ok(signal && !signal.aborted, `${route}: attachment signal reaches native hydration reads`)
     owner.replace()

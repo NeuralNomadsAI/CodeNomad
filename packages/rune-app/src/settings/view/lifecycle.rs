@@ -17,6 +17,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     s.pending_section = Some(Section::Providers);
                 } else {
                     s.section = Section::Providers;
+                    s.narrow_view = super::NarrowView::Detail;
                 }
             }
             prefs.memory.show(s.section == Section::General);
@@ -51,6 +52,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.pending_section = Some(Section::Providers);
                     } else {
                         s.section = Section::Providers;
+                        s.narrow_view = super::NarrowView::Detail;
                         s.general.close();
                         s.transcript_picker.set(None);
                         s.advanced_help = None;
@@ -60,11 +62,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.opencode = super::opencode::Status::default();
                         s.logging.close();
                         prefs.hide_opencode();
+                        prefs.show_speech(false);
                         prefs.memory.show(false);
                         s.memory_help.clear();
                         s.remote.close();
                         s.info.close();
                         s.missions.close();
+                        s.speech.close();
                         s.integrations.suspend();
                     }
                 }
@@ -110,6 +114,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             drop(prefs);
                             if allowed {
                                 s.switch_section(next);
+                                if s.is_narrow() {
+                                    s.narrow_view = super::NarrowView::Detail;
+                                    tx.focus("settings-narrow-back", true);
+                                }
                                 return true;
                             }
                             prefs = s.shared.borrow_mut();
@@ -204,6 +212,13 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.section == Section::Missions && s.confirm_close.is_none() && !s.closing,
                     )
                 });
+                let speech_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    s.speech.poll(
+                        &mut prefs,
+                        &wake,
+                        s.section == Section::Voice && s.confirm_close.is_none() && !s.closing,
+                    )
+                });
                 let integrations_changed = prefs.window_wake.clone().is_some_and(|wake| {
                     s.integrations.poll(
                         prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
@@ -238,6 +253,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     | info_changed
                     | stats_changed
                     | missions_changed
+                    | speech_changed
                     | integrations_changed
                     | providers_changed
                     | editor_changed
@@ -257,11 +273,16 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
             } else if s.section == Section::Missions && s.missions.cancel_confirm() {
+            } else if s.section == Section::Voice && s.speech.cancel_overlays() {
             } else if s.section == Section::Integrations && s.integrations.dismiss_overlay() {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {
-                    s.request_close(tx);
+                    if s.is_narrow() && s.narrow_view == super::NarrowView::Detail {
+                        s.return_to_narrow_list(tx);
+                    } else {
+                        s.request_close(tx);
+                    }
                 }
             }
             true
@@ -295,7 +316,12 @@ pub(in crate::settings) fn closed(s: &mut Window, _: &mut rune::Tx) {
     s.focused.set(false);
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.shared.borrow_mut().hide_opencode();
+    {
+        let mut prefs = s.shared.borrow_mut();
+        prefs.hide_opencode();
+        prefs.show_speech(false);
+    }
+    s.speech.close();
     if !s.retain_editor_on_native_close() {
         s.close(crate::settings::warn_save_failed);
     }

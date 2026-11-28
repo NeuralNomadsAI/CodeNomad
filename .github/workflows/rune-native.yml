@@ -98,9 +98,9 @@ jobs:
       - name: Check Rust formatting, lints and style policy
         if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
         run: |
-          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -- --check
+          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -p codenomad-windows-install -p codenomad-rune-setup -- --check
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
-          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
+          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -p codenomad-windows-install -p codenomad-rune-setup -- -D clippy::correctness -D clippy::suspicious
           cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
       - name: Run Rust workspace tests
@@ -117,7 +117,6 @@ jobs:
         if: ${{ !cancelled() && steps.build_native.outcome == 'success' }}
         run: |
           node --test scripts/native-fixture-guards.test.mjs
-          node --test scripts/native-fixture-cold-diagnostics.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
         id: build_wasm

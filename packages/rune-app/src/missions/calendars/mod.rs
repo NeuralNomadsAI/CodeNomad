@@ -6,10 +6,8 @@ mod editor_view;
 mod summary;
 mod view;
 
-use crate::platform::{
-    self,
-    reads::{self, Reads},
-};
+use super::detail::CancelToken;
+use crate::platform::{self, reads::Reads};
 use codenomad_client::{
     Receiver, Sender, Wake,
     backend::Backend,
@@ -37,7 +35,7 @@ pub(crate) struct Calendars {
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
     serial: u64,
-    active_read: Option<(u64, Sender<()>)>,
+    active_read: Option<(u64, CancelToken)>,
     active_mutation: Option<u64>,
     owed_refresh: bool,
     pub(super) entries: Vec<CalendarView>,
@@ -119,9 +117,15 @@ impl Calendars {
         self.cancel_reads();
     }
 
+    pub(crate) fn mark_cancel_reads(&self) {
+        if let Some((_, cancel)) = &self.active_read {
+            cancel.mark_aborted();
+        }
+    }
+
     fn cancel_reads(&mut self) {
         if let Some((_, cancel)) = self.active_read.take() {
-            cancel.close();
+            cancel.cancel();
         }
         self.owed_refresh = false;
     }
@@ -147,19 +151,18 @@ impl Calendars {
     fn start_read(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
         self.serial = self.serial.wrapping_add(1);
         let serial = self.serial;
-        let (cancel, cancelled) = bounded(1);
+        let (cancel, signal) = CancelToken::new();
         self.active_read = Some((serial, cancel));
         let backend = backend.clone();
         let reads = reads.clone();
         let out = self.out.clone();
         let wake = wake.clone();
         platform::spawn(async move {
-            let outcome = async {
-                let _permit = reads.background(&cancelled).await?;
-                reads::cancellable(&cancelled, backend.mission_calendars(None)).await
-            }
-            .await;
+            let outcome = signal
+                .with_background(&reads, backend.mission_calendars(None))
+                .await;
             if let Some(outcome) = outcome
+                && !signal.is_cancelled()
                 && out
                     .send(Completion {
                         kind: OpKind::Read,
@@ -214,7 +217,7 @@ impl Calendars {
                     }
                     self.active_mutation = None;
                     if let Some((_, cancel)) = self.active_read.take() {
-                        cancel.close();
+                        cancel.cancel();
                     }
                     changed = true;
                     let owed = std::mem::take(&mut self.owed_refresh);
@@ -266,7 +269,7 @@ impl Calendars {
                 self.unavailable = true;
                 self.failed = false;
                 if kind == OpKind::Mutate {
-                    self.feedback = Some("missions.recurrence.unavailable");
+                    self.feedback = Some("missions.control.unavailable.title");
                 }
             }
             Ok(CalendarOutcome::Unsupported(reason)) => {
@@ -276,7 +279,7 @@ impl Calendars {
                 self.feedback = Some("missions.control.mutation.error");
             }
             Ok(CalendarOutcome::Missing) => {
-                self.feedback = Some("missions.scheduleList.conflict");
+                self.feedback = Some("missions.control.mutation.conflict");
                 self.delete_confirm = None;
                 self.editor = None;
             }
@@ -377,7 +380,7 @@ impl Calendars {
     fn spawn_mutation(&mut self, backend: &Backend, wake: &Wake, op: MutationOp) {
         // Cancel any in-flight GET so an older snapshot cannot overwrite this mutation's result.
         if let Some((_, cancel)) = self.active_read.take() {
-            cancel.close();
+            cancel.cancel();
         }
         self.owed_refresh = false;
         self.serial = self.serial.wrapping_add(1);

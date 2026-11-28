@@ -1,5 +1,11 @@
-//! Session favorites per workspace under the data folder, pruned when the daemon deletes a session.
-use crate::{App, Shared, Workspace, auth::Principal, storage};
+//! Session favorites per workspace persisted in `state.yaml` under the `sessionFavorites` owner,
+//! shared bidirectionally with the TypeScript server and pruned when the daemon deletes a session.
+use crate::{
+    App, Shared, Workspace,
+    auth::Principal,
+    settings::{Failure, Kind, document::Doc},
+    storage,
+};
 use axum::{
     Extension, Json,
     extract::{Path, Query, State, rejection::JsonRejection},
@@ -9,17 +15,14 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    sync::{Mutex, atomic::Ordering::Relaxed},
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::Path as FsPath, sync::atomic::Ordering::Relaxed, time::Duration};
 
 type Entries = BTreeMap<String, Vec<String>>;
 type Store = BTreeMap<String, Entries>;
+const OWNER: &str = "sessionFavorites";
+const LEGACY_FILE: &str = "session-favorites.json";
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FAVORITES: usize = 512;
-static STORE_LOCK: Mutex<()> = Mutex::new(());
 
 fn any_session_id_ok(id: &str) -> bool {
     id.starts_with("ses")
@@ -33,7 +36,6 @@ fn valid_store(state: &Store, check_id: fn(&str) -> bool) -> bool {
     state.iter().all(|(scope, entries)| {
         scope.len() == 64
             && scope.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
-            && entries.len() <= MAX_FAVORITES
             && entries
                 .iter()
                 .all(|(id, ancestors)| check_id(id) && ancestors.len() <= 64 && ancestors.iter().all(|id| check_id(id)))
@@ -54,39 +56,148 @@ async fn belonging(app: &App, session: &Value, workspace: &Workspace) -> bool {
     };
     crate::worktrees::owns(app, workspace, directory).await
 }
-fn key(workspace: &Workspace) -> String {
-    let mut path = workspace.path.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) {
-        path = path.to_lowercase();
-    }
-    format!("{:x}", Sha256::digest(path.as_bytes()))
+/// Matches TS `canonicalWorktreeIdentity(workspace.path)` hashed with SHA-256 hex.
+fn key_for_path(path: &FsPath) -> String {
+    let normalized = crate::files::node_path::Style::host().normalize(&path.to_string_lossy());
+    let identity = if cfg!(windows) { normalized.to_lowercase() } else { normalized };
+    format!("{:x}", Sha256::digest(identity.as_bytes()))
 }
-fn read(app: &App) -> Result<Store, Status> {
-    let path = app.data.join("session-favorites.json");
-    match std::fs::symlink_metadata(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Store::new()),
-        Err(_) => return Err(Status::SERVICE_UNAVAILABLE),
-        Ok(meta) if meta.file_type().is_symlink() && std::fs::metadata(&path).is_err() => {
-            return Err(Status::SERVICE_UNAVAILABLE);
-        }
-        Ok(_) => {}
-    }
-    let data = storage::read_bounded(&path, json!({}), MAX_FILE).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
-    let state: Store = serde_json::from_value(data).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
-    if !valid_store(&state, id_ok) {
+fn key(workspace: &Workspace) -> String {
+    key_for_path(&workspace.path)
+}
+fn parse_owner_value(raw: Option<&Value>) -> Result<Store, Status> {
+    let Some(raw) = raw else {
+        return Ok(Store::new());
+    };
+    let state: Store = serde_json::from_value(raw.clone()).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    if !valid_store(&state, any_session_id_ok) {
         return Err(Status::SERVICE_UNAVAILABLE);
     }
     Ok(state)
 }
-fn save(app: &App, store: &Store) -> Result<(), Status> {
-    let value = json!(store);
-    if value.to_string().len() > MAX_FILE {
-        return Err(Status::CONFLICT);
+fn state_yaml_stamp(state_path: &FsPath) -> Result<String, ()> {
+    let link = match std::fs::symlink_metadata(state_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        Err(_) => return Err(()),
+    };
+    let meta = if link.file_type().is_symlink() { std::fs::metadata(state_path).map_err(|_| ())? } else { link };
+    let identity = crate::files::host_identity(state_path).map_err(|_| ())?;
+    let modified =
+        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    Ok(format!("{identity}:{}:{:?}:{:?}", meta.len(), modified, created))
+}
+/// Reads `sessionFavorites` authoritatively from `state.yaml` with a before/after file stamp check.
+/// Returns `Ok(None)` when `state.yaml` is missing or has no `sessionFavorites` key.
+fn read_state_yaml(state_path: &FsPath) -> Result<Option<Store>, Status> {
+    let before = state_yaml_stamp(state_path).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    if before == "missing" {
+        return Ok(None);
     }
-    storage::write(&app.data.join("session-favorites.json"), &value).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
-    app.favorite_revision.fetch_add(1, Relaxed);
-    app.emit(json!({"type":"storage.stateChanged","owner":"sessionFavorites","value":{}}));
-    Ok(())
+    let doc = crate::settings::document::read(state_path).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    let parsed = match doc.get(OWNER) {
+        None => None,
+        Some(raw) => Some(parse_owner_value(Some(raw))?),
+    };
+    if state_yaml_stamp(state_path).ok().as_deref() != Some(before.as_str()) {
+        return Err(Status::SERVICE_UNAVAILABLE);
+    }
+    Ok(parsed)
+}
+fn read_legacy_json(path: &FsPath) -> Result<Option<(Store, bool)>, Status> {
+    let is_symlink = match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(Status::SERVICE_UNAVAILABLE),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            if std::fs::metadata(path).is_err() {
+                return Err(Status::SERVICE_UNAVAILABLE);
+            }
+            true
+        }
+        Ok(_) => false,
+    };
+    let data = storage::read_bounded(path, json!({}), MAX_FILE).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    let state: Store = serde_json::from_value(data).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    if !valid_store(&state, any_session_id_ok) {
+        return Err(Status::SERVICE_UNAVAILABLE);
+    }
+    Ok(Some((state, is_symlink)))
+}
+fn read(app: &App) -> Result<Store, Status> {
+    if let Some(state) = read_state_yaml(&app.settings.location.state)? {
+        return Ok(state);
+    }
+    let legacy_path = app.data.join(LEGACY_FILE);
+    let Some((legacy, is_symlink)) = read_legacy_json(&legacy_path)? else {
+        return Ok(Store::new());
+    };
+    if legacy.is_empty() {
+        if !is_symlink {
+            let _ = std::fs::remove_file(&legacy_path);
+        }
+        return Ok(legacy);
+    }
+    let patch = json!(legacy);
+    match app.settings.patch_checked_committed(
+        Kind::State,
+        OWNER,
+        &patch,
+        &[],
+        |before, after| {
+            // Never overwrite `sessionFavorites` that appeared concurrently (e.g. written by TS).
+            if before.contains_key(OWNER) {
+                return Err(Failure::Conflict);
+            }
+            if after.get(OWNER).is_some_and(|v| v.to_string().len() > MAX_FILE) {
+                return Err(Failure::Conflict);
+            }
+            Ok(())
+        },
+        |_, _| {
+            app.favorite_revision.fetch_add(1, Relaxed);
+        },
+    ) {
+        Ok((saved, _)) => {
+            if !is_symlink {
+                let _ = std::fs::remove_file(&legacy_path);
+            }
+            parse_owner_value(Some(&saved))
+        }
+        Err(Failure::Conflict) => {
+            // Another writer populated `sessionFavorites` in `state.yaml`; prefer it without overwriting.
+            Ok(read_state_yaml(&app.settings.location.state)?.unwrap_or_default())
+        }
+        Err(_) => Err(Status::SERVICE_UNAVAILABLE),
+    }
+}
+fn patch_favorites(
+    app: &App,
+    patch: Value,
+    mut check_before: impl FnMut(&Store) -> Result<(), Failure>,
+) -> Result<Store, Status> {
+    let saved = crate::settings::patch_owner_checked(
+        app,
+        Kind::State,
+        OWNER,
+        patch,
+        |before: &Doc, after: &Doc| {
+            let current = parse_owner_value(before.get(OWNER)).map_err(|_| Failure::Unreadable)?;
+            check_before(&current)?;
+            if after.get(OWNER).is_some_and(|v| v.to_string().len() > MAX_FILE) {
+                return Err(Failure::Conflict);
+            }
+            Ok(())
+        },
+        || {
+            app.favorite_revision.fetch_add(1, Relaxed);
+        },
+    )
+    .map_err(|failure| match failure {
+        Failure::Conflict => Status::CONFLICT,
+        _ => Status::SERVICE_UNAVAILABLE,
+    })?;
+    parse_owner_value(Some(&saved))
 }
 fn display(app: &App, state: &Store, key: &str, cached: bool) -> Response {
     let records: BTreeMap<_, [String; 0]> =
@@ -141,15 +252,9 @@ pub async fn list(
                 if absent.is_empty() || app.workspace(&id).is_err() || app.favorite_revision.load(Relaxed) != revision {
                     return;
                 }
-                let _lock = STORE_LOCK.lock().unwrap();
-                if let Ok(mut state) = read(&app)
-                    && let Some(rows) = state.get_mut(&key)
-                {
-                    for target in absent {
-                        rows.remove(&target);
-                    }
-                    let _ = save(&app, &state);
-                }
+                let deletions: serde_json::Map<String, Value> =
+                    absent.into_iter().map(|target| (target, Value::Null)).collect();
+                let _ = patch_favorites(&app, json!({ key: deletions }), |_| Ok(()));
             });
         }
     }
@@ -174,6 +279,8 @@ pub async fn update(
     let workspace = app.workspace(&id).map_err(|_| Status::NOT_FOUND)?;
     let key = key(&workspace);
     let operation = async {
+        // Ensure `state.yaml` is readable and any one-time legacy import has settled first.
+        let store = read(&app)?;
         if input.favorite {
             let mut cleanup_guards = vec![app.session_cleanup.enter_mutation(&target).ok_or(Status::CONFLICT)?];
             let session = crate::opencode::session_record(&app, &target).await.map_err(|(status, _)| status)?;
@@ -203,25 +310,18 @@ pub async fn update(
             {
                 return Err(Status::CONFLICT);
             }
-            let _lock = STORE_LOCK.lock().unwrap();
-            let mut store = read(&app)?;
-            let entries = store.entry(key.clone()).or_default();
-            if entries.len() == MAX_FAVORITES && !entries.contains_key(&target) {
-                return Err(Status::CONFLICT);
-            }
-            entries.insert(target, parents);
-            save(&app, &store)?;
-            drop(_lock);
+            let patch = json!({ &key: { &target: parents } });
+            let saved = patch_favorites(&app, patch, |current| {
+                let count = current.get(&key).map_or(0, BTreeMap::len);
+                let exists = current.get(&key).is_some_and(|entries| entries.contains_key(&target));
+                if !exists && count >= MAX_FAVORITES { Err(Failure::Conflict) } else { Ok(()) }
+            })?;
             drop(cleanup_guards);
-            Ok(display(&app, &store, &key, false))
+            Ok(display(&app, &saved, &key, false))
+        } else if store.get(&key).is_some_and(|entries| entries.contains_key(&target)) {
+            let saved = patch_favorites(&app, json!({ &key: { &target: Value::Null } }), |_| Ok(()))?;
+            Ok(display(&app, &saved, &key, false))
         } else {
-            let _lock = STORE_LOCK.lock().unwrap();
-            let mut store = read(&app)?;
-            if let Some(entries) = store.get_mut(&key)
-                && entries.remove(&target).is_some()
-            {
-                save(&app, &store)?;
-            }
             Ok(display(&app, &store, &key, false))
         }
     };
@@ -231,51 +331,9 @@ pub async fn update(
     }
 }
 
-fn state_yaml_stamp(state_path: &std::path::Path) -> Result<String, ()> {
-    let link = match std::fs::symlink_metadata(state_path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
-        Err(_) => return Err(()),
-    };
-    let meta = if link.file_type().is_symlink() { std::fs::metadata(state_path).map_err(|_| ())? } else { link };
-    let identity = crate::files::host_identity(state_path).map_err(|_| ())?;
-    let modified =
-        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
-    let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
-    Ok(format!("{identity}:{}:{:?}:{:?}", meta.len(), modified, created))
-}
-
-fn state_yaml_protects(state_path: &std::path::Path, session_id: &str) -> bool {
-    let Ok(before) = state_yaml_stamp(state_path) else {
-        return true;
-    };
-    if before == "missing" {
-        return false;
-    }
-    let Ok(doc) = crate::settings::document::read(state_path) else {
-        return true;
-    };
-    let protected = match doc.get("sessionFavorites") {
-        None => false,
-        Some(raw) => {
-            let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
-                return true;
-            };
-            if !valid_store(&yaml_state, any_session_id_ok) {
-                return true;
-            }
-            store_protects(&yaml_state, session_id)
-        }
-    };
-    if state_yaml_stamp(state_path).ok().as_deref() != Some(before.as_str()) {
-        return true;
-    }
-    protected
-}
-
 pub fn is_protected(app: &App, session_id: &str) -> bool {
     let Ok(state) = read(app) else { return true };
-    store_protects(&state, session_id) || state_yaml_protects(&app.settings.location.state, session_id)
+    store_protects(&state, session_id)
 }
 
 pub fn deleted(app: &App, event: &Value) {
@@ -283,16 +341,21 @@ pub fn deleted(app: &App, event: &Value) {
         return;
     }
     let Some(target) = event["data"]["sessionID"].as_str().filter(|s| id_ok(s)) else { return };
-    let _lock = STORE_LOCK.lock().unwrap();
-    let Ok(mut state) = read(app) else { return };
-    let mut changed = false;
-    for entries in state.values_mut() {
-        let count = entries.len();
-        entries.retain(|id, parents| id != target && !parents.iter().any(|parent| parent == target));
-        changed |= count != entries.len();
+    let Ok(state) = read(app) else { return };
+    let mut patch = serde_json::Map::new();
+    for (scope, entries) in &state {
+        let mut removed = serde_json::Map::new();
+        for (id, parents) in entries {
+            if id == target || parents.iter().any(|parent| parent == target) {
+                removed.insert(id.clone(), Value::Null);
+            }
+        }
+        if !removed.is_empty() {
+            patch.insert(scope.clone(), Value::Object(removed));
+        }
     }
-    if changed {
-        let _ = save(app, &state);
+    if !patch.is_empty() {
+        let _ = patch_favorites(app, Value::Object(patch), |_| Ok(()));
     }
 }
 
@@ -301,26 +364,266 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn test_app(root: &FsPath, native: crate::opencode::Native) -> Shared {
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "opencode".into(),
+            password: None,
+            file: None,
+            cookie: "cn".into(),
+            token: false,
+            skip: true,
+            managed_local: false,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            root.join("config.yaml").to_str().unwrap(),
+        ));
+        std::sync::Arc::new(App::new(
+            auth,
+            0,
+            root.to_path_buf(),
+            root.to_path_buf(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            crate::files::watch::Watches::new(tx),
+            None,
+        ))
+    }
+
+    #[test]
+    fn key_for_path_matches_ts_canonical_worktree_identity() {
+        #[cfg(windows)]
+        {
+            let upper = key_for_path(FsPath::new(r"D:\CodeNomad\Repo"));
+            let slash = key_for_path(FsPath::new("d:/codenomad/repo"));
+            let expected = format!("{:x}", Sha256::digest(r"d:\codenomad\repo".as_bytes()));
+            assert_eq!(upper, expected);
+            assert_eq!(slash, expected);
+        }
+        #[cfg(not(windows))]
+        {
+            let k = key_for_path(FsPath::new("/private/var/repo"));
+            let expected = format!("{:x}", Sha256::digest(b"/private/var/repo"));
+            assert_eq!(k, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn state_yaml_favorites_round_trip_preserves_siblings_and_ts_format() {
+        let dir = dunce::canonicalize(crate::shared::test_dir("favorites-state-yaml")).unwrap();
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let repo_str = repo.to_string_lossy().into_owned();
+        let scope = key_for_path(&repo);
+
+        // Pre-populate `state.yaml` with sibling owners AND a TS-written favorite with ancestry.
+        let state_path = dir.join("state.yaml");
+        std::fs::write(
+            &state_path,
+            format!(
+                "ui:\n  theme: dark\nsessionPermissionBlocks:\n  keep: true\nsessionFavorites:\n  {scope}:\n    ses_from_ts:\n      - ses_ts_parent\n"
+            ),
+        )
+        .unwrap();
+
+        let mock_router = axum::Router::new().route(
+            "/api/session/{session_id}",
+            axum::routing::get({
+                let d = repo_str.clone();
+                move |Path(sid): Path<String>| {
+                    let d = d.clone();
+                    async move {
+                        match sid.as_str() {
+                            "ses_rust_child" => Json(json!({
+                                "id": "ses_rust_child",
+                                "parentID": "ses_rust_root",
+                                "location": { "directory": d }
+                            }))
+                            .into_response(),
+                            "ses_rust_root" => Json(json!({
+                                "id": "ses_rust_root",
+                                "location": { "directory": d }
+                            }))
+                            .into_response(),
+                            _ => Status::NOT_FOUND.into_response(),
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, mock_router).await.unwrap() });
+
+        let app = test_app(&dir, crate::opencode::Native::test_connection(addr));
+        let wid = uuid::Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id: wid,
+            request_id: None,
+            path: repo.clone(),
+            name: None,
+            status: "ready",
+            proxy_path: format!("/workspaces/{wid}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({ "directory": repo_str }),
+            temporary: None,
+        });
+        let principal = Principal(tokio_util::sync::CancellationToken::new());
+
+        // 1. Rust reads TS-written favorites from `state.yaml`, hides ancestry in HTTP response, and protects both.
+        assert!(is_protected(&app, "ses_from_ts"));
+        assert!(is_protected(&app, "ses_ts_parent"));
+        assert!(!is_protected(&app, "ses_other"));
+        let listed = list(
+            State(app.clone()),
+            Extension(principal.clone()),
+            Path(wid.to_string()),
+            Query(ReadQuery { reconcile: None }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.status(), Status::OK);
+        let listed_body: Value =
+            serde_json::from_slice(&axum::body::to_bytes(listed.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert_eq!(listed_body["records"], json!({ "ses_from_ts": [] }));
+
+        // 2. Subscribe to SSE events to verify `storage.stateChanged` redacts `sessionFavorites` value to `{}`.
+        let sub = app.events.subscribe();
+
+        // 3. Adding a favorite writes `state.yaml` under `sessionFavorites` in TS schema without creating legacy JSON.
+        let added = update(
+            State(app.clone()),
+            Extension(principal.clone()),
+            Path((wid.to_string(), "ses_rust_child".into())),
+            Ok(Json(Input { favorite: true })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added.status(), Status::OK);
+        assert!(!dir.join(LEGACY_FILE).exists(), "must not create legacy session-favorites.json");
+        assert!(is_protected(&app, "ses_rust_child"));
+        assert!(is_protected(&app, "ses_rust_root"));
+
+        let doc = crate::settings::document::read(&state_path).unwrap();
+        assert_eq!(doc["ui"]["theme"], "dark");
+        assert_eq!(doc["sessionPermissionBlocks"]["keep"], true);
+        assert_eq!(doc[OWNER][&scope]["ses_from_ts"], json!(["ses_ts_parent"]));
+        assert_eq!(doc[OWNER][&scope]["ses_rust_child"], json!(["ses_rust_root"]));
+
+        let crate::events::Next::Frame(frame) = app.events.pop(&sub) else {
+            panic!("storage.stateChanged not emitted");
+        };
+        let payload: Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(payload, json!({ "type": "storage.stateChanged", "owner": OWNER, "value": {} }));
+        app.events.unsubscribe(&sub);
+
+        // 4. Unfavoriting removes the entry from `state.yaml` via merge patch.
+        let removed = update(
+            State(app.clone()),
+            Extension(principal.clone()),
+            Path((wid.to_string(), "ses_from_ts".into())),
+            Ok(Json(Input { favorite: false })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed.status(), Status::OK);
+        assert!(!is_protected(&app, "ses_from_ts"));
+        assert!(!is_protected(&app, "ses_ts_parent"));
+        assert!(is_protected(&app, "ses_rust_child"));
+        let doc_after = crate::settings::document::read(&state_path).unwrap();
+        assert!(doc_after[OWNER][&scope].get("ses_from_ts").is_none());
+        assert_eq!(doc_after[OWNER][&scope]["ses_rust_child"], json!(["ses_rust_root"]));
+
+        // 5. Corrupt `state.yaml` fails closed on reads, protection checks, and writes.
+        std::fs::write(&state_path, "sessionFavorites: [").unwrap();
+        assert!(is_protected(&app, "ses_other"));
+        assert_eq!(read(&app).unwrap_err(), Status::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            update(
+                State(app.clone()),
+                Extension(principal),
+                Path((wid.to_string(), "ses_rust_child".into())),
+                Ok(Json(Input { favorite: false })),
+            )
+            .await
+            .unwrap_err(),
+            Status::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(std::fs::read_to_string(&state_path).unwrap(), "sessionFavorites: [");
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_json_migrates_once_without_overwriting_existing_ts_favorites() {
+        let dir = dunce::canonicalize(crate::shared::test_dir("favorites-legacy-migration")).unwrap();
+        let scope_legacy = "a".repeat(64);
+        let scope_ts = "b".repeat(64);
+
+        // Case 1: `state.yaml` has `ui` but no `sessionFavorites`, and `session-favorites.json` exists -> migrate once.
+        let app = test_app(&dir, crate::opencode::Native::connect("opencode").unwrap());
+        let state_path = dir.join("state.yaml");
+        let legacy_path = dir.join(LEGACY_FILE);
+        std::fs::write(&state_path, "ui:\n  kept: true\n").unwrap();
+        std::fs::write(&legacy_path, json!({ &scope_legacy: { "ses_old": ["ses_old_parent"] } }).to_string()).unwrap();
+
+        let migrated = read(&app).unwrap();
+        assert_eq!(migrated[&scope_legacy]["ses_old"], vec!["ses_old_parent".to_owned()]);
+        assert!(!legacy_path.exists(), "legacy session-favorites.json should be removed after migration");
+        let doc = crate::settings::document::read(&state_path).unwrap();
+        assert_eq!(doc["ui"]["kept"], true);
+        assert_eq!(doc[OWNER][&scope_legacy]["ses_old"], json!(["ses_old_parent"]));
+
+        // Case 2: `state.yaml` already has `sessionFavorites` (TS data) and a legacy JSON file exists -> never overwrite.
+        let dir2 = dunce::canonicalize(crate::shared::test_dir("favorites-no-overwrite")).unwrap();
+        let app2 = test_app(&dir2, crate::opencode::Native::connect("opencode").unwrap());
+        let state_path2 = dir2.join("state.yaml");
+        let legacy_path2 = dir2.join(LEGACY_FILE);
+        std::fs::write(&state_path2, format!("sessionFavorites:\n  {scope_ts}:\n    ses_ts: []\n")).unwrap();
+        std::fs::write(&legacy_path2, json!({ &scope_legacy: { "ses_stale": [] } }).to_string()).unwrap();
+
+        let kept = read(&app2).unwrap();
+        assert!(kept.contains_key(&scope_ts));
+        assert!(!kept.contains_key(&scope_legacy));
+        let doc2 = crate::settings::document::read(&state_path2).unwrap();
+        assert_eq!(doc2[OWNER][&scope_ts]["ses_ts"], json!([]));
+        assert!(doc2[OWNER].get(&scope_legacy).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
     #[test]
     fn state_yaml_favorites_protect_targets_ancestors_and_fail_closed_on_corrupt_yaml() {
-        let dir = std::env::temp_dir().join(format!("cn-fav-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dunce::canonicalize(crate::shared::test_dir("favorites-fail-closed")).unwrap();
+        let app = test_app(&dir, crate::opencode::Native::connect("opencode").unwrap());
         let state_path = dir.join("state.yaml");
 
         // Missing file protects nothing.
-        assert!(!state_yaml_protects(&state_path, "ses_root"));
+        assert!(!is_protected(&app, "ses_root"));
 
         // Valid state.yaml protects both direct favorite and its ancestor.
         let scope = "a".repeat(64);
         std::fs::write(&state_path, format!("sessionFavorites:\n  {scope}:\n    ses_child:\n      - ses_root\n"))
             .unwrap();
-        assert!(state_yaml_protects(&state_path, "ses_child"));
-        assert!(state_yaml_protects(&state_path, "ses_root"));
-        assert!(!state_yaml_protects(&state_path, "ses_other"));
+        assert!(is_protected(&app, "ses_child"));
+        assert!(is_protected(&app, "ses_root"));
+        assert!(!is_protected(&app, "ses_other"));
 
         // Corrupt state.yaml fails closed (protects everything).
         std::fs::write(&state_path, "sessionFavorites: [").unwrap();
-        assert!(state_yaml_protects(&state_path, "ses_other"));
+        assert!(is_protected(&app, "ses_other"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

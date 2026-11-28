@@ -83,6 +83,10 @@ impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
         self.composer.menu = Default::default();
+        if let Some(l) = self.screen.launcher_mut() {
+            l.recent_menu = Default::default();
+            l.open_recent_menu = None;
+        }
         self.command_palette.dismiss();
         self.tab_rename.dismiss();
         self.temporary.dismiss_dialog();

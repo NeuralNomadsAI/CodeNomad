@@ -489,9 +489,9 @@ impl CalendarEditor {
 pub(crate) fn unsupported_error_key(reason: CalendarUnsupportedReason) -> &'static str {
     match reason {
         CalendarUnsupportedReason::OneTime => "missions.scheduling.error.empty",
-        CalendarUnsupportedReason::FallbackSchedule => "missions.scheduling.error.capability",
-        CalendarUnsupportedReason::Ending => "missions.scheduling.error.capability",
+        CalendarUnsupportedReason::FallbackSchedule => "missions.scheduling.error.unsupported",
+        CalendarUnsupportedReason::Ending => "missions.scheduling.error.unsupported",
         CalendarUnsupportedReason::Event => "missions.scheduling.error.source",
-        CalendarUnsupportedReason::FollowedConversations => "missions.scheduling.error.capability",
+        CalendarUnsupportedReason::FollowedConversations => "missions.scheduling.error.unsupported",
     }
 }

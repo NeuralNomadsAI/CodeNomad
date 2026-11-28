@@ -455,7 +455,13 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
         snap
     };
     rt.update(|s, _| {
-        let msg = user("row-mid");
+        let msg: crate::history::Row = crate::history::decode_message(&json!({
+            "id": "row-mid",
+            "type": "user",
+            "text": "Long transcript below this anchor.\n\n".repeat(14)
+        }))
+        .unwrap()
+        .into();
         s.messages.push(msg.clone());
         s.revision += 1;
         observe(s, &crate::transport::Event::Message((*msg).clone()));
@@ -526,7 +532,13 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
     );
     let active_before_25 = owner(&mut rt.state).jump.active.clone();
     rt.update(|s, _| {
-        let msg = user("row-25");
+        let msg: crate::history::Row = crate::history::decode_message(&json!({
+            "id": "row-25",
+            "type": "user",
+            "text": "Long transcript below this anchor.\n\n".repeat(14)
+        }))
+        .unwrap()
+        .into();
         s.messages.push(msg.clone());
         s.revision += 1;
         observe(s, &crate::transport::Event::Message((*msg).clone()));

@@ -25,6 +25,8 @@ fn session_menu_state(s: &mut State) -> Option<&mut action_menu::State<State>> {
     s.screen.launcher_mut().map(|l| &mut l.session_menu)
 }
 
+use launcher::SessionRowFocus;
+
 fn session_menu_key(id: &str) -> String {
     format!("session-actions-{id}")
 }
@@ -38,6 +40,7 @@ fn build_session_menu(
     scope: &Rc<()>,
     session_id: &str,
     disabled: bool,
+    touch: bool,
     more_label: &'static str,
     copy_label: &'static str,
     reload_label: &'static str,
@@ -76,8 +79,12 @@ fn build_session_menu(
         }
         if let Some(l) = s.screen.launcher_mut() {
             if open {
-                l.open_session_menu = Some(open_id.clone());
-            } else if l.open_session_menu.as_deref() == Some(open_id.as_str()) {
+                l.open_session_menu = Some((open_id.clone(), touch));
+            } else if l
+                .open_session_menu
+                .as_ref()
+                .is_some_and(|(id, _)| id == &open_id)
+            {
                 l.open_session_menu = None;
             }
         }
@@ -270,13 +277,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     let count = filtered.len();
     let for_key = filtered.clone();
     let compact_actions = touch || floating;
-    let menu_viewport = if s.shell.width() > 0.0 {
-        s.shell.width()
-    } else if s.window_size[0] > 0.0 {
-        s.window_size[0]
-    } else {
-        411.0
-    };
+    let menu_viewport = s.shell.width().max(s.window_size[0]);
     // Resolve localized labels before entering `transcript_rows`: its deferred row builder runs
     // during layout after `strings::with_locale` restores the thread-local locale.
     let untitled = t("sessionList.session.untitled");
@@ -326,6 +327,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                     &s.input_scope,
                     &id,
                     disabled,
+                    touch,
                     more_label,
                     copy_label,
                     reload_label,
@@ -363,10 +365,12 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 ];
                 (actions, None)
             };
+            let reveal_actions = selected || l.focused_session_row.as_deref() == Some(id.as_str());
             theme::session_row(
                 &row_key,
                 title,
                 selected,
+                reveal_actions,
                 disabled,
                 i + 1 == count,
                 false,
@@ -384,31 +388,87 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     .role("list")
     .label(title)
     .focus_group()
-    .on_key(move |_: &mut State, event, tx| {
+    .on_key(move |s: &mut State, event, tx| {
         if event.mods != rune::Mods::default() || nav_ids.is_empty() {
             return false;
         }
-        let delta = match event.key {
-            rune::Key::Down => 1_isize,
-            rune::Key::Up => -1_isize,
-            _ => return false,
-        };
-        let Some(focused) = tx.focused() else {
+        let Some(focused) = tx.focused().map(str::to_owned) else {
             return false;
         };
-        let Some(current_id) = focused.strip_prefix("session-") else {
+        let Some((current_id, part)) = launcher::parse_session_row_focus(&focused) else {
             return false;
         };
         let Some(pos) = nav_ids.iter().position(|id| id == current_id) else {
             return false;
         };
-        let next = pos.saturating_add_signed(delta);
-        if next < nav_ids.len() && next != pos {
-            tx.focus(format!("session-{}", nav_ids[next]), true);
-            true
+        let forward = if rtl {
+            rune::Key::Left
         } else {
-            false
+            rune::Key::Right
+        };
+        let backward = if rtl {
+            rune::Key::Right
+        } else {
+            rune::Key::Left
+        };
+        if event.key == rune::Key::Down || event.key == rune::Key::Up {
+            let delta = if event.key == rune::Key::Down {
+                1_isize
+            } else {
+                -1_isize
+            };
+            let next = pos.saturating_add_signed(delta);
+            if next < nav_ids.len() && next != pos {
+                let target_id = &nav_ids[next];
+                tx.scroll_into_view_in("session-list", format!("session-row-{target_id}"));
+                tx.focus(format!("session-{target_id}"), true);
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.focused_session_row = Some(target_id.clone());
+                }
+                return true;
+            }
+            return false;
         }
+        if event.key == forward {
+            let next_key = if compact_actions {
+                matches!(part, SessionRowFocus::Main)
+                    .then(|| format!("session-actions-{current_id}:trigger"))
+            } else {
+                match part {
+                    SessionRowFocus::Main => Some(format!("session-copy-{current_id}")),
+                    SessionRowFocus::Copy if !disabled => {
+                        Some(format!("session-reload-{current_id}"))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(target) = next_key {
+                tx.focus(target, true);
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.focused_session_row = Some(current_id.to_owned());
+                }
+                return true;
+            }
+            return false;
+        }
+        if event.key == backward {
+            let prev_key = match part {
+                SessionRowFocus::Reload => Some(format!("session-copy-{current_id}")),
+                SessionRowFocus::Copy | SessionRowFocus::Overflow => {
+                    Some(format!("session-{current_id}"))
+                }
+                SessionRowFocus::Main => None,
+            };
+            if let Some(target) = prev_key {
+                tx.focus(target, true);
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.focused_session_row = Some(current_id.to_owned());
+                }
+                return true;
+            }
+            return false;
+        }
+        false
     });
     let mut items = col().full_width().child(items);
     if remote_search && l.search_results.pending() {
@@ -433,7 +493,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         items = items.child(git_panel::note(t(error), "alert").key("sessions-error"));
     }
     let show_more = !remote_search && l.next.is_some();
-    let show_retry = l.error.is_some();
+    let show_retry = l.error.is_some() || l.creation_uncertain;
     if show_more || show_retry {
         let mut footer = layout::action_row().pad(Space::Sm).key("sessions-footer");
         if show_more {
@@ -488,12 +548,19 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         );
     }
     let open_menu_overlay = compact_actions
-        .then(|| l.open_session_menu.as_deref())
+        .then(|| l.open_session_menu.as_ref().map(|(id, _)| id.as_str()))
         .flatten()
         .filter(|id| row_ids.iter().any(|visible| visible == id))
         .and_then(|id| {
-            let menu =
-                build_session_menu(scope, id, disabled, more_label, copy_label, reload_label);
+            let menu = build_session_menu(
+                scope,
+                id,
+                disabled,
+                touch,
+                more_label,
+                copy_label,
+                reload_label,
+            );
             let (_, surface) = action_menu::view(
                 &l.session_menu,
                 session_menu_state,
@@ -980,6 +1047,111 @@ mod visual_parity_tests {
         assert!(
             phone_rt.find("session-actions-second:menu").is_none(),
             "activating a menu item must close the session action menu"
+        );
+
+        // Bloquant #2: keyboard access to desktop inline actions (Right/Left + Down from action)
+        // and to phone/floating overflow menu trigger (Right -> Enter -> Escape).
+        rt.update(|_, tx| tx.focus("session-session", true));
+        settle(&mut rt);
+        for key in [Key::Right, Key::Right, Key::Left, Key::Down] {
+            let ev = KeyEvent {
+                key,
+                mods: Mods::default(),
+            };
+            rt.key(ev.clone());
+            settle(&mut rt);
+            rt.key_up(ev);
+        }
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.focused && el.key.as_deref() == Some("session-second")),
+            "Right/Left must reach desktop row actions and Down from an action must advance to the next row"
+        );
+
+        // Step explicitly onto Copy and Reload to verify focus targets directly.
+        rt.update(|_, tx| tx.focus("session-session", true));
+        settle(&mut rt);
+        let right = KeyEvent {
+            key: Key::Right,
+            mods: Mods::default(),
+        };
+        rt.key(right.clone());
+        settle(&mut rt);
+        rt.key_up(right.clone());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.focused && el.key.as_deref() == Some("session-copy-session")),
+            "Right from a desktop session row must focus Copy ID"
+        );
+        rt.key(right.clone());
+        settle(&mut rt);
+        rt.key_up(right);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.focused && el.key.as_deref() == Some("session-reload-session")),
+            "second Right from a desktop session row must focus Reload"
+        );
+
+        // Phone/floating drawer: Right reaches the overflow trigger, Enter opens the menu,
+        // and resizing to docked desktop closes the compact menu cleanly.
+        phone_rt.update(|_, tx| tx.focus("session-session", true));
+        settle(&mut phone_rt);
+        let p_right = KeyEvent {
+            key: Key::Right,
+            mods: Mods::default(),
+        };
+        phone_rt.key(p_right.clone());
+        settle(&mut phone_rt);
+        phone_rt.key_up(p_right);
+        assert!(
+            phone_rt.elements().iter().any(
+                |el| el.focused && el.key.as_deref() == Some("session-actions-session:trigger")
+            ),
+            "Right from a phone/floating session row must focus its overflow menu trigger"
+        );
+        let enter = KeyEvent {
+            key: Key::Enter,
+            mods: Mods::default(),
+        };
+        phone_rt.key(enter.clone());
+        settle(&mut phone_rt);
+        phone_rt.key_up(enter);
+        assert!(
+            phone_rt.find("session-actions-session:menu").is_some(),
+            "Enter on the focused overflow trigger must open the session action menu"
+        );
+        phone_rt.set_viewport((1280.0, 800.0), 1.0);
+        settle(&mut phone_rt);
+        phone_rt.update(|s, tx| {
+            let _ = crate::launcher::poll(s, tx);
+        });
+        settle(&mut phone_rt);
+        assert!(
+            phone_rt.find("session-actions-session:menu").is_none()
+                && phone_rt
+                    .state
+                    .screen
+                    .launcher()
+                    .and_then(|l| l.open_session_menu.as_ref())
+                    .is_none(),
+            "switching from compact floating drawer to docked desktop must dismiss the open overflow menu"
+        );
+
+        // Bloquant #1: creation_uncertain must keep Retry visible even after l.error clears.
+        let mut uncertain = ready_project_state();
+        if let Some(l) = uncertain.screen.launcher_mut() {
+            l.error = None;
+            l.creation_uncertain = true;
+        }
+        let mut uncertain_rt =
+            Runtime::new(uncertain, english, (1280.0, 800.0), Env::new(true, 1.0));
+        settle(&mut uncertain_rt);
+        assert!(
+            uncertain_rt.find("refresh-sessions").is_some(),
+            "Retry button must stay visible while creation_uncertain is set so the user can reconcile"
         );
     }
 }

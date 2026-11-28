@@ -9,14 +9,14 @@ import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
 import { isMissionPickerSource, isRepositoryCriterion, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionPickerSource,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
-export type SelectedSource = MissionPickerSource | "coordinator-session"
+export type SelectedSource = MissionPickerSource | "coordinator-session" | "conversation-message"
 export type MissionSourcePage = { next(): string | undefined; loading(): boolean; failed(): boolean; lookupFailed?(): boolean
   more(): void; retry(): void; search?(query: string): void }
 /** Lists come from the owning authorized project. Absence is an unavailable read. */
 export type MissionSchedulingSourceLists = Partial<Record<SelectedSource, readonly { id: string; label: string }[]>>
 
 /** One "Launch when" criterion: a schedule shortcut writing a cron, or an event. The
- * `connector` to the card above (or / if / else) sits in the gap above it and moves with
+ * `connector` to the card above (or / if) sits in the gap above it and moves with
  * it. The grip drags it (a sortable of the surrounding SortableProvider) or moves it with Alt+↑/↓. */
 export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; number: number; sources: MissionSchedulingSourceLists
   repository?: MissionRepositoryDiscovery

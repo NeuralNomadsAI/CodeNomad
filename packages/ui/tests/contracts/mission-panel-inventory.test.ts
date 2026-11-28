@@ -12,7 +12,7 @@ import { missionPanelWindow, missionPanelPage, missionPanelTextWindow } from "..
 import { missionLifecycleSource } from "../../src/stores/mission-lifecycle-intents"
 import { missionFinishedSeen, markMissionsFinishedSeen } from "../../src/stores/mission-view-state"
 import { panelCleanupSchema, panelHistorySchema } from "../../src/lib/mission-panel-schema"
-import { preparationFixture, scheduledPreparation } from "../../../server/src/missions/mission-preparation-test-fixture"
+import { preparationFixture } from "../../../server/src/missions/mission-preparation-test-fixture"
 import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 function seeded(count = 120, actors = 0) {
@@ -219,15 +219,13 @@ test("headers retain coordinator source identity for exact ACK reconciliation an
   assert.deepEqual(field.values, [document])
 })
 
-test("the selected header reads the merged unified document and preserves dormant ownership", async () => {
+test("the selected header reads the merged unified document", async () => {
   const f = await preparationFixture("/fixture"), selector = { source: "mission" as const, missionID: f.mission.id, header: true as const }
   const before = await f.control.panelPage(selector)
   assert.ok(before.available)
   const header = JSON.parse(before.page.pieces.map(piece => piece.text).join(""))
   assert.deepEqual(header.root.document, (await f.control.snapshot()).missions[0].document)
   assert.ok(header.root.document?.launch)
-  await f.control.configurePreparation({ ...f.request, configuration: scheduledPreparation(f) }, f.native, () => true)
-  assert.deepEqual(await f.control.panelPage(selector), { available: false, reason: "mission-not-found" })
 })
 
 test("observation cycles retire old family membership without synthesizing whole-mission idle", async () => {

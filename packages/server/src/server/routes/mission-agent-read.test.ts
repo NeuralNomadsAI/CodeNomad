@@ -46,13 +46,13 @@ function fixture() {
   return { read, state, calls }
 }
 
-test("owned descendants read human project cleanup and passage views without mutation", async () => {
+test("owned descendants read human project cleanup without mutation", async () => {
   const f = fixture()
   const input = { kind: "panel", input: { source: "cleanups" } }
   const before = await f.read(input), replay = await f.read(input)
   assert.deepEqual(before, replay)
   assert.equal((before as any).entries[0].requestID, "human_cleanup")
-  assert.equal((await f.read({ kind: "current", input: { scheduleID: "human_schedule", owner: "scheduled" } }) as any).passageID, "current_passage")
+  await assert.rejects(f.read({ kind: "current", input: { scheduleID: "human_schedule", owner: "scheduled" } }), /Unknown project Mission read/)
   assert.equal(f.calls.length, 2, "only the named pure native read runs")
 })
 

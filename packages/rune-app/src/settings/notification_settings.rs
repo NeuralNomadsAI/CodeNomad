@@ -112,7 +112,7 @@ pub(super) fn view<S: 'static>(
         .full_width()
         .children(prefs.notifications_error().map(|error| {
             layout::action_row()
-                .child(text(t(error)).role("alert"))
+                .child(chrome::palette::save_error(t(error)))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
@@ -149,14 +149,15 @@ pub(super) fn view<S: 'static>(
                     .key("notifications-allow-focused"),
                 ))
                 .children(match permission {
-                    Permission::Unsupported => {
-                        Some(text(t("settings.notifications.unsupportedNote")).wrap())
-                    }
-                    Permission::Denied => Some(
-                        text(t("settings.notifications.messages.permissionRequestDenied"))
-                            .wrap()
-                            .role("alert"),
+                    Permission::Unsupported => Some(
+                        text(t("settings.notifications.unsupportedNote"))
+                            .text_role(TextRole::Small)
+                            .role("status")
+                            .wrap(),
                     ),
+                    Permission::Denied => Some(chrome::palette::save_error(t(
+                        "settings.notifications.messages.permissionRequestDenied",
+                    ))),
                     _ => None,
                 }),
         ))
@@ -230,5 +231,50 @@ fn a_system_check_requests_permission_in_its_click_but_a_history_check_does_not(
         assert_eq!(runtime.state.prompts, 0);
         click(&mut runtime, "copy-system");
         assert_eq!(runtime.state.prompts, 1);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn notification_settings_renders_status_and_denied_alert_in_both_themes() {
+    struct Harness {
+        dark: bool,
+        prefs: Rc<RefCell<Preferences>>,
+        permission: Permission,
+    }
+    for dark in [false, true] {
+        let shared = Rc::new(RefCell::new(Preferences::default()));
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.fixture();
+            prefs.fixture_locale("en");
+        }
+        for (permission, expected_role) in [
+            (Permission::Unsupported, "\"role\":\"status\""),
+            (Permission::Denied, "\"role\":\"alert\""),
+        ] {
+            let mut rt = rune::Runtime::new(
+                Harness {
+                    dark,
+                    prefs: shared.clone(),
+                    permission,
+                },
+                |s, cx| {
+                    rune_theme_codenomad::settings::render(cx, s.dark, None, |_| {
+                        crate::strings::with_locale("en", || {
+                            view(&s.prefs, s.permission, |_: &mut Harness| {})
+                        })
+                    })
+                },
+                (720.0, 700.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.02);
+            let tree = rt.accessibility_json().to_string();
+            assert!(
+                tree.contains(expected_role),
+                "dark={dark}: missing {expected_role} in notification settings"
+            );
+        }
     }
 }

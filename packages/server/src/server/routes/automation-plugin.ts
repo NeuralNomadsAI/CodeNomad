@@ -13,7 +13,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
-import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { controlAgentMissionProgram } from "./mission-agent-program"
 import { controlAgentMission, verifyAgentMissionControl } from "./mission-agent-control"
 import { controlAgentMissionSettings } from "./mission-agent-settings"
 import { MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
@@ -22,8 +22,6 @@ import type { SubagentDepthSettings } from "../../opencode/subagent-depth-settin
 import { z } from "zod"
 import { readAgentMissionProject } from "./mission-agent-read"
 import type { ForgeWorkItems } from "../../forge/work-items"
-import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
-import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
@@ -32,7 +30,6 @@ import { DeveloperInspectionTargets } from "../../automation/developer-inspectio
 import { isRestartSuccessor, readDeveloperRestart, readDeveloperTarget, sameDeveloperTarget, type DeveloperTarget } from "../../automation/developer-restart"
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
-import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import type { SettingsService } from "../../settings/service"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -50,10 +47,7 @@ interface AutomationPluginRouteDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "mergePatchOwner" | "configYamlPathForAuthority">>
   subagentDepth?: Pick<SubagentDepthSettings, "read" | "update">
-  scheduleSettingsActivation?: ScheduledPreparationDeps["scheduleSettingsActivation"]
-  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
-  verifyScheduleAgentCreation?: VerifyScheduleAgentCreation
   memory?: MemoryService
   forge?: Pick<ForgeWorkItems, "openRepository">
 }
@@ -115,14 +109,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
         { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices }, lifetime.signal) }) }
       catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
-    }
-    if (body?.mode === "recurrence-control-verify") {
-      try {
-        return reply.send({ result: await verifyRecurrenceRequest(body.command, {
-          auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices,
-          verifyAgentCreation: deps.verifyScheduleAgentCreation,
-        }, lifetime.signal) })
-      } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
     if (!body || !["developer-probe", "developer-execute", "developer-restart", "developer-reconnect", "browser-claim", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
@@ -316,17 +302,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const fence = deps.worktreeDeletionFence
          const result = commandKind === "create-root"
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal, deps.permissionModes)
-          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
-             { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation }, deps.permissionModes)
+          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal, deps.permissionModes)
              : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
              : commandKind === "project-control" ? await controlAgentMission(deps, body.sessionID, body.command, signal)
              : commandKind === "project-control-verify" || commandKind === "project-update"
                ? await verifyAgentMissionControl(deps, body.sessionID, body.command, signal)
-            : commandKind === "schedule" ? await controlAgentMissionSchedule({
-             workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
-              bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
-              scheduleCapability: deps.scheduleCapability, permissionModes: deps.permissionModes,
-           }, body.sessionID, body.command, signal)
+            : commandKind === "schedule" ? await controlAgentMissionProgram({ workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence,
+              settings: deps.settings, permissionModes: deps.permissionModes }, body.sessionID, (body.command as { input?: { program?: unknown } } | null)?.input?.program, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
            : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory, deps.permissionModes)

@@ -79,7 +79,7 @@ async function upstream(profile) {
       const raw=Buffer.concat(chunks).toString(),body=raw?JSON.parse(raw):undefined
       calls.push({method:req.method,path:url.pathname,body})
       const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))}
-       if(url.pathname==='/api/info')return send({version:'2.3.2',pid:process.pid})
+       if(url.pathname==='/api/info')return send({version:'2.4.2',pid:process.pid})
        if(url.pathname==='/api/config')return send([{type:'directory',path:path.join(profile,'config')}])
       if(url.pathname==='/api/event'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated\n\n');return}
       if(url.pathname==='/api/location'){

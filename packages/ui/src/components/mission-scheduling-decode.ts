@@ -59,6 +59,7 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
       continue
     }
     if (item.kind === "every" || item.kind === "at" || item.kind === "in") continue
+    if (item.kind === "schedule-success" || item.kind === "mission-completed" || item.kind === "conversation-message") { reason = "retired"; continue }
     const event = item, row = newMissionCriterion(event.kind)
     if (isMissionGithubCondition(event)) {
       row.source = event.repository ?? ""
@@ -69,8 +70,6 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
         row.event = event.event; row.author = event.author; break
       case "remote-branch-commits": row.repository = { provider: event.provider, host: event.host, repository: event.repository };
         row.source = event.ref.slice("refs/heads/".length); break
-      case "schedule-success": case "mission-completed": row.source = event.missionID; break
-      case "conversation-message": row.source = event.conversationID; break
       case "branch-commits": row.source = event.ref; if (event.directory !== directory) reason ??= "source"; break
       case "files-changed": row.files = event.paths.join("\n"); break
     }

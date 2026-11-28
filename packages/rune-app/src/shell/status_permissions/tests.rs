@@ -345,3 +345,88 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
         http.quiet().await;
     });
 }
+
+#[test]
+fn permission_view_uses_info_tip_status_badge_and_semantic_error_tone_in_both_themes() {
+    use rune::{Env, Runtime};
+
+    fn render(s: &State, cx: &mut rune::Cx<State>) -> El {
+        layout::render(cx, |_| {
+            col()
+                .full_width()
+                .full_height()
+                .child(view(s).unwrap())
+                .children(confirmation(s))
+                .child(settings::palette::save_error("ref-error").key("ref-error"))
+                .child(attachment::status_badge("ref-badge").key("ref-badge"))
+        })
+    }
+
+    for dark in [false, true] {
+        let mut s = crate::init();
+        s.status_permissions = Box::new(Permissions {
+            backend: Some(platform::block_on(Backend::connect("http://127.0.0.1:9/", "")).unwrap()),
+            visible: true,
+            online: true,
+            expanded: true,
+            failed: true,
+            issue: Some(WriteIssue::Unconfirmed),
+            confirmed: Some(Snapshot {
+                mode: Mode::Supervised,
+                root: None,
+            }),
+            ..Permissions::default()
+        });
+        let (_close, reply) = bounded(1);
+        s.status_permissions.write = Some((Mode::Autonomous, reply));
+
+        crate::strings::with_locale("en", || {
+            let mut rt = Runtime::new(s, render, (320.0, 420.0), Env::new(dark, 1.0));
+            rt.frame(0.0);
+            let nodes = rt.elements();
+            let find = |key: &str| {
+                nodes
+                    .iter()
+                    .find(|node| node.key.as_deref() == Some(key))
+                    .unwrap_or_else(|| panic!("missing key `{key}` in dark={dark}"))
+            };
+
+            let info = find("permission-mode-info");
+            assert_eq!(info.label.as_deref(), Some("About permission modes"));
+            assert!(
+                info.help
+                    .as_deref()
+                    .is_some_and(|help| help.contains("Autonomous") && help.contains("Supervised")),
+                "info tip must carry mode descriptions: {:?}",
+                info.help
+            );
+            assert_eq!(info.radius, 0.0, "info button must stay square");
+            assert!(
+                nodes
+                    .iter()
+                    .any(|node| node.path.starts_with(&info.path)
+                        && node.text.as_deref() == Some("ⓘ")),
+                "info button must render the shared ⓘ glyph"
+            );
+
+            let badge = find("permission-mode-status");
+            let ref_badge = find("ref-badge");
+            assert_eq!(badge.role, "status");
+            assert_eq!(badge.fill, ref_badge.fill);
+            assert!(badge.radius > 0.0, "status badge must use chip radius");
+            assert_eq!(badge.radius, ref_badge.radius);
+
+            let error = find("permission-mode-error");
+            let ref_error = find("ref-error");
+            assert_eq!(error.role, "alert");
+            assert_eq!(error.text_color, ref_error.text_color);
+
+            let retry_btn = find("permission-mode-retry");
+            assert_eq!(retry_btn.radius, 0.0, "retry button must stay square");
+
+            let confirm_badge = find("permission-confirmation-status");
+            assert_eq!(confirm_badge.role, "status");
+            assert_eq!(confirm_badge.radius, ref_badge.radius);
+        });
+    }
+}

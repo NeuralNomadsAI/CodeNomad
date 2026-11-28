@@ -8,9 +8,10 @@ import { branchHeadRefSchema, missionRemoteBranchConditionSchema, missionReposit
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "remote-branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", "repository-activity", ...missionGithubKinds] as const
+/** The events a programmed Mission waits for: those read from Git and the forges. */
+export const missionEventKinds = ["branch-commits", "remote-branch-commits", "files-changed", "repository-activity", ...missionGithubKinds] as const
 export const isRepositoryCriterion = (kind: string) => kind === "branch-commits" || kind === "remote-branch-commits" || kind === "repository-activity" || isMissionGithubKind(kind)
-export type MissionConditionKind = MissionCondition["kind"]
+export type MissionConditionKind = typeof missionEventKinds[number]
 export type MissionPickerSource = Exclude<MissionConditionKind, "files-changed" | "repository-activity" | "remote-branch-commits" | MissionGithubKind>
 export type MissionCriterionKind = typeof missionScheduleShortcuts[number] | MissionConditionKind
 export const MISSION_CRITERIA_LIMIT = 16
@@ -37,6 +38,9 @@ export const isMissionPickerSource = (kind: MissionCriterionKind): kind is Missi
 /** The connector between each pair of adjacent cards, with the codec's own parser. */
 export const missionCardConnectors = (rows: readonly MissionCriterionDraft[]): MissionCriterionConnector[] =>
   missionCriteriaStructure(rows, kind => !isMissionEventKind(kind as MissionCriterionKind)).connectors
+/** Schedules stay above events: events below a schedule are its condition, events alone launch by themselves. */
+export const orderMissionCriteria = <T extends { kind: MissionCriterionKind }>(rows: readonly T[]): T[] =>
+  [...rows.filter(row => !isMissionEventKind(row.kind)), ...rows.filter(row => isMissionEventKind(row.kind))]
 export function newMissionCriterion(kind: MissionCriterionKind = "daily", existing: readonly MissionCriterionDraft[] = []): MissionCriterionDraft {
   // A new daily row takes the first free hour from 09:00, so adding twice is never a duplicate.
   const taken = new Set(existing.filter(row => row.kind === "daily").map(row => row.time))
@@ -94,12 +98,6 @@ function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKin
     return parsed.data
   }
   switch (row.kind) {
-    case "schedule-success": case "mission-completed":
-      if (!/^[A-Za-z0-9_-]{3,100}$/.test(source)) return fail("source", index)
-      return { kind: row.kind, missionID: source }
-    case "conversation-message":
-      if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(source)) return fail("source", index)
-      return { kind: row.kind, conversationID: source }
     case "branch-commits":
       if (!directory || !branchHeadRefSchema.safeParse(source).success) return fail("source", index)
       return { kind: row.kind, directory, ref: source }

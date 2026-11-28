@@ -123,6 +123,11 @@ pub struct Sessions {
     pub next: Option<String>,
 }
 
+/// Match Solid `projectSessionFamilies` ("activity"): updated desc, then id desc.
+fn sort_root_sessions(sessions: &mut [(u64, Session)]) {
+    sessions.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.id.cmp(&a.1.id)));
+}
+
 impl Backend {
     async fn probe_server_meta(&self) -> Result<(String, Vec<String>, bool, u64, u64, u64)> {
         let (generation, seq, drop_epoch) = self.client.begin_meta_probe();
@@ -398,8 +403,7 @@ impl Backend {
                 sessions.push((member.updated, member.session));
             }
         }
-        // Match Solid `projectSessionFamilies` ("activity"): updated desc, then id desc.
-        sessions.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.id.cmp(&a.1.id)));
+        sort_root_sessions(&mut sessions);
         Ok(Sessions {
             rows: sessions.into_iter().map(|(_, row)| row).collect(),
             next: page.next,
@@ -703,11 +707,12 @@ mod tests {
         let mut rows: Vec<_> = page
             .members
             .into_iter()
-            .map(|m| (m.updated, m.session.id))
+            .map(|m| (m.updated, m.session))
             .collect();
-        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        sort_root_sessions(&mut rows);
+        let ordered: Vec<_> = rows.into_iter().map(|(ts, s)| (ts, s.id)).collect();
         assert_eq!(
-            rows,
+            ordered,
             vec![
                 (500, "ses_recent".into()),
                 (1, "ses_short".into()),

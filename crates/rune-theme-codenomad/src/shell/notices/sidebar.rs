@@ -117,6 +117,7 @@ pub fn session_row<S: 'static>(
     row_key: &str,
     title: &str,
     selected: bool,
+    reveal_actions: bool,
     disabled: bool,
     is_last: bool,
     is_subsession: bool,
@@ -239,11 +240,11 @@ pub fn session_row<S: 'static>(
             .items_center()
             .gap(t.space(Space::Xxs).px())
             .children(inline_actions);
-        actions = actions.group_opacity(if selected { 1.0 } else { 0.0 }, 1.0);
+        actions = actions.group_opacity(if reveal_actions { 1.0 } else { 0.0 }, 1.0);
         inner = inner.child(actions);
     }
 
-    let mut wrapper = row().w_full().min_w(0.0).child(inner);
+    let mut wrapper = row().role("listitem").w_full().min_w(0.0).child(inner);
     if !is_last {
         wrapper = wrapper
             .border_sides([0.0, 0.0, border_w, 0.0], t.color("border-base"))

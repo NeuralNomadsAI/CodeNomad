@@ -78,6 +78,7 @@ pub(super) struct Document {
     transport_epoch: u64,
     epoch_guard: Arc<AtomicU64>,
     invalidation_seq: Arc<AtomicU64>,
+    publish_seq: u64,
     confirmed_epoch: u64,
     snapshot_rev: u64,
     #[cfg(test)]
@@ -210,6 +211,21 @@ impl Document {
         self.read.failed
     }
 
+    pub(super) fn invalidation_seq(&self) -> u64 {
+        self.invalidation_seq.load(Ordering::Acquire)
+    }
+
+    pub(super) fn invalidation_seq_guard(&self) -> (Arc<AtomicU64>, u64) {
+        (
+            self.invalidation_seq.clone(),
+            self.invalidation_seq.load(Ordering::Acquire),
+        )
+    }
+
+    pub(super) fn publish_seq(&self) -> u64 {
+        self.publish_seq
+    }
+
     pub(super) fn write_authority(&self) -> (Arc<AtomicU64>, u64) {
         (self.epoch_guard.clone(), self.transport_epoch)
     }
@@ -224,12 +240,36 @@ impl Document {
             || self.read.failed
     }
 
+    pub(super) fn apply_external_snapshot(
+        &mut self,
+        snapshot: Value,
+        expected_seq: Option<u64>,
+        expected_publish_seq: Option<u64>,
+    ) -> bool {
+        if self.read.reattach
+            || self.read.queued
+            || self.flight.is_some()
+            || expected_seq.is_some_and(|seq| seq != self.invalidation_seq.load(Ordering::Acquire))
+            || expected_publish_seq.is_some_and(|seq| seq != self.publish_seq)
+        {
+            self.invalidate();
+            return false;
+        }
+        self.snapshot = Some(snapshot);
+        self.read.failed = false;
+        self.read.authoritative_required = false;
+        self.invalidation_seq.fetch_add(1, Ordering::Release);
+        self.publish_seq = self.publish_seq.wrapping_add(1);
+        true
+    }
+
     #[cfg(test)]
     pub(super) fn seed_external_snapshot(&mut self, snapshot: Value) {
         self.snapshot = Some(snapshot);
         self.read.failed = false;
         self.read.authoritative_required = false;
         self.invalidation_seq.fetch_add(1, Ordering::Release);
+        self.publish_seq = self.publish_seq.wrapping_add(1);
     }
 
     pub(super) fn awaiting_initial_read(&self) -> bool {

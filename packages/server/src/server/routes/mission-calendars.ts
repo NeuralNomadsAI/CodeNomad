@@ -4,7 +4,6 @@ import { z } from "zod"
 import { isSessionNotFoundError } from "@opencode/client"
 import { missionCalendarAutomations, type MissionCalendarUnsupported } from "../../missions/calendar-automation"
 import { missionCalendarIDSchema } from "../../missions/calendar-run"
-import { matchesExecution } from "../../missions/execution"
 import { missionConfigurationSchema } from "../../missions/launch-policy"
 import type { LegacySchedule } from "../../missions/legacy-schedules"
 import type { MissionRead } from "../../missions/model"
@@ -24,7 +23,7 @@ const body = z.object({ configuration: missionCalendarConfigurationSchema, direc
 export type MissionCalendarOperation = { kind: "list" } | { kind: "pause" | "resume" | "delete"; calendar: string }
   | { kind: "save"; calendar: string; configuration: z.infer<typeof missionCalendarConfigurationSchema>; paused?: boolean }
 export type MissionCalendarOutcome = { calendars: MissionCalendarView[] } | { refused: "calendar-input-invalid" }
-  | { refused: "calendar-unsupported"; reason: MissionCalendarUnsupported } | { refused: "calendar-coordinator-profile" }
+  | { refused: "calendar-unsupported"; reason: MissionCalendarUnsupported }
 
 // Per service connection, the directories where no schedule of the recurring engine is left.
 const takenOver = new WeakMap<object, Set<string>>()
@@ -55,10 +54,6 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
       if (!parsed.success) return { refused: "calendar-input-invalid" }
       const config = parsed.data, unsupported = missionCalendarAutomations(config, id)
       if (!Array.isArray(unsupported)) return { refused: "calendar-unsupported", reason: unsupported.unsupported }
-      // A launch in a conversation needs it to run the coordinator's agent and model: one that differs is said now, not at the launch.
-      const named = restoring || !config.coordinatorSessionID ? undefined
-        : await wait(owned.client.session.get({ sessionID: config.coordinatorSessionID }, { signal }).catch(() => undefined))
-      if (named && !matchesExecution(config.profiles?.coordinator, named)) return { refused: "calendar-coordinator-profile" }
       // Its caller names the programming, so saving it twice is saving the same one.
       const existing = (await wait(calendars.list())).find(item => item.id === id)
       // Until its first launch the programmed Mission is an ordinary prepared one: it has its line and can be played by hand.
@@ -81,7 +76,6 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
      * or an ordinary prepared Mission when its launch criteria do not carry over; then nothing of the schedule is left.
      * The programmed Mission is saved paused and resumed last, so the two never launch together. */
     const takeOver = async (schedule: LegacySchedule) => {
-      if (schedule.busy) return
       let programmed = (await wait(calendars.list())).some(item => item.id === schedule.id)
       if (!programmed) {
         const { roots: _roots, profileID: _profile, executionHost: _host, coordinatorSelectionAuthor: _author, ...stored } = schedule.configuration
@@ -136,7 +130,6 @@ export function registerMissionCalendars(app: FastifyInstance, deps: MissionCale
         : method === "POST" ? { kind: selected.data.action!, calendar: calendar! } : method === "DELETE" ? { kind: "delete", calendar: calendar! } : { kind: "list" })
       if ("calendars" in outcome) return outcome
       if (outcome.refused === "calendar-unsupported") return reply.code(422).send({ error: "Launch criteria a calendar cannot carry", code: outcome.refused, reason: outcome.reason })
-      if (outcome.refused === "calendar-coordinator-profile") return reply.code(422).send({ error: "The conversation does not run the coordinator's agent and model", code: outcome.refused })
       return reply.code(400).send({ error: "Invalid Mission calendar configuration", code: outcome.refused })
     } catch (error) {
       if (error instanceof MissionCalendarMissing) return reply.code(404).send({ error: "Mission calendar not found", code: "calendar-missing" })

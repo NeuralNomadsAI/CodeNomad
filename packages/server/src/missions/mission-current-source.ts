@@ -7,16 +7,6 @@ export const missionCurrentSourceSchema = z.object({
   configurationGeneration: z.number().int().positive().safe().optional(), timeGeneration: z.number().int().positive().safe().optional(),
 }).strict()
 export type MissionCurrentSource = z.infer<typeof missionCurrentSourceSchema>
-const currentIdentity = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
-  ownerRevision: z.number().int().nonnegative().safe(),
-  projectCanonical: z.string().min(1), location: z.object({ directory: z.string().min(1), workspaceID: z.string().optional() }).strict(),
-  scheduleID: z.string().min(3).max(100), passageID: z.string().min(3).max(100).nullable(), source: missionCurrentSourceSchema.optional(),
-}).strict()
-const consistent = (value: { source?: MissionCurrentSource; projectID: string; scheduleID: string; passageID: string | null }) => value.source
-  ? value.source.projectID === value.projectID && value.source.scheduleID === value.scheduleID && value.source.passageID === value.passageID : value.passageID === null
-export const missionCurrentIdentitySchema = currentIdentity.refine(consistent)
-export const missionCurrentPublicIdentitySchema = currentIdentity.omit({ projectCanonical: true, location: true }).refine(consistent)
-export type MissionCurrentIdentity = z.infer<typeof missionCurrentIdentitySchema>
 const id = { type: "string", minLength: 3, maxLength: 100 } as const
 export const missionCurrentSourceWire = { type: "object", properties: {
   owner: { type: "string", const: "scheduled" }, projectID: { type: "string", minLength: 1, maxLength: 240 },

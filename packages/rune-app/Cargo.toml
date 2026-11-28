@@ -52,6 +52,7 @@ tokio = { version = "1", features = ["io-util"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 codenomad-windows-notifications = { path = "../../crates/codenomad-windows-notifications" }
+codenomad-windows-install = { path = "../../crates/codenomad-windows-install" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rune = { workspace = true, features = ["webgl"] }
@@ -59,3 +60,7 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage", "EventTarget", "PageTransitionEvent", "Request", "RequestInit", "RequestCredentials", "Clipboard", "Document", "Navigator", "HtmlElement", "HtmlTextAreaElement", "CssStyleDeclaration", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "HtmlInputElement", "File", "FileList", "Event", "Node", "Element", "MediaQueryList", "Notification", "NotificationOptions", "NotificationPermission", "VisibilityState"] }
+
+# Evaluated against the host: the resource compiler only exists on Windows.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

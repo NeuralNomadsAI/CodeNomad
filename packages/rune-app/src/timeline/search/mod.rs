@@ -3,6 +3,8 @@ mod preview;
 #[cfg(test)]
 mod tests;
 mod view;
+#[cfg(test)]
+mod visual_tests;
 pub(crate) use view::{HOST, overlay, trigger};
 
 use crate::{

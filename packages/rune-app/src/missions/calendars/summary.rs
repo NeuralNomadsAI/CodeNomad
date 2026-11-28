@@ -128,9 +128,10 @@ pub(crate) fn describe_criteria(policy: &LaunchPolicy, locale: &str) -> Vec<Stri
                 line
             } else {
                 let connector = match structure.connectors[index - 1] {
-                    CriterionConnector::Or => msg("missions.scheduling.connector.or"),
+                    CriterionConnector::Or | CriterionConnector::Else => {
+                        msg("missions.scheduling.connector.or")
+                    }
                     CriterionConnector::If => msg("missions.scheduling.connector.if"),
-                    CriterionConnector::Else => msg("missions.scheduling.connector.else"),
                 };
                 format!("{connector} · {line}")
             }
@@ -147,14 +148,10 @@ fn describe_criterion(item: &LaunchCriterion, msg: impl Fn(&str) -> &'static str
             expression.trim(),
             zone.trim()
         ),
-        LaunchCriterion::ScheduleSuccess { mission_id } => format!(
-            "{} · {mission_id}",
-            msg("missions.scheduling.condition.schedule-success")
-        ),
-        LaunchCriterion::MissionCompleted { mission_id } => format!(
-            "{} · {mission_id}",
-            msg("missions.scheduling.condition.mission-completed")
-        ),
+        LaunchCriterion::ScheduleSuccess { mission_id }
+        | LaunchCriterion::MissionCompleted { mission_id } => {
+            format!("{} · {mission_id}", msg("missions.scheduling.group.event"))
+        }
         LaunchCriterion::BranchCommits { git_ref, .. } => {
             let branch = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
             format!(

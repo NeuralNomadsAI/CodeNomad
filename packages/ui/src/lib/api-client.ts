@@ -86,13 +86,8 @@ import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-l
 import { localHttp } from "./auth-recovery"
 import type { BackendHttp } from "./backend-transport"
 import { backgroundReads, missionReads } from "./background-read-queue"
-import { readMissionTaskPage, readMissionPanelWindow, readMissionCurrentIdentity, type MissionPanelReadScope } from "./mission-task-page-read"
-import type { MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
-import type { MissionPanelPageRequest } from "../../../server/src/missions/mission-panel-wire"
-import type { MissionContentRequest } from "../../../server/src/missions/mission-content-wire"
-import { TASK_WINDOW_CHARACTERS } from "./mission-task-window-budget"
-import { validMissionContentSlice } from "./mission-content-slice"
-import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
+import { readMissionTaskPage, readMissionPanelWindow, type MissionPanelReadScope } from "./mission-task-page-read"
+import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 import { assertRemoteServerCredentials, remoteServerRequest, type RemoteServerConnectInput } from "./remote-server-request"
@@ -109,29 +104,11 @@ function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
 }
 
-// The panel's journal reads, the schedule list and a schedule's current passage. The reads
-// of one schedule (document, capability, saved request) stay on the shared budget, so
-// the ones a click waits for never queue behind a list read.
+// The Missions panel's reads.
 function missionRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>): Promise<T> {
   return missionReads.run(signal ?? new AbortController().signal, read, "visible")
 }
 
-
-function currentPassageTransport(ctx: BackendHttp, instanceId: string, source: MissionCurrentSource, scope: MissionPanelReadScope, body?: MissionContentRequest) {
-  source = structuredClone(source)
-  body = body && structuredClone(body)
-  const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
-  const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
-  return { ...scope, projectID: source.projectID, passage: source, signal, deadline, runTransfer: <T>(read: () => Promise<T>) => missionRead(signal, read),
-    exchange: (selector: string) => {
-      assertTaskReadLive(signal, deadline)
-      if (!scope.current()) throw new DOMException("Obsolete passage read", "AbortError")
-      const payload = JSON.stringify({ source, selector: JSON.parse(selector), ...(body ? { body } : {}) })
-      if (new TextEncoder().encode(payload).length > 16384) throw new MissionTaskPageReadError("invalid")
-      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(source.scheduleID)}/current/${encodeURIComponent(source.passageID)}/page`
-      return ctx.fetch(ctx.url(path), { method: "POST", body: payload, signal, credentials: "include", headers: { "Content-Type": "application/json" } })
-    } }
-}
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -912,32 +889,6 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
       return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
     },
-    fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string; kind?: "schedule" } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
-      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return missionRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
-    },
-    fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
-      const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/capabilities?${query}`, { signal }))
-    },
-    fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
-    },
-    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`, { signal }))
-    },
-    saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      const { missionID, ...body } = input
-      const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
-      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body), signal })
-    },
-    controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
-      requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
-        method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(30_000) })
-    },
     /** The directory's programmed Missions. With `calendar`, saves it (`configuration`), pauses, resumes or deletes it first. */
     missionCalendars(instanceId: string, input: { directory?: string; calendar?: string; action?: "pause" | "resume" | "delete"; configuration?: unknown; paused?: boolean } = {},
       signal?: AbortSignal): Promise<{ calendars: import("../../../server/src/opencode/mission-calendars").MissionCalendarView[] }> {
@@ -950,53 +901,11 @@ export function createServerApi(ctx: BackendHttp) {
       return input.action === "delete" ? request(target + query, { method: "DELETE", signal: live })
         : request(`${target}/${input.action}${query}`, { method: "POST", signal: live })
     },
-    missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false, signal?: AbortSignal): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
-      const url = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
-      const live = signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)
-      return apply ? request(url, { method: "POST", body: JSON.stringify(input), signal: live })
-        : secondaryRead(live, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal: live }))
-    },
     /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
     fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
       return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}/admission`)
     },
-    fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
-      const deadline = performance.now() + TASK_READ_TIMEOUT_MS
-      const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
-      return missionRead(live, async () => {
-        assertTaskReadLive(live, deadline)
-        const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current?owner=scheduled`
-        return readMissionCurrentIdentity(await ctx.fetch(ctx.url(path), { signal: live, credentials: "include" }), live)
-      })
-    },
-    fetchMissionCurrentPanel(instanceId: string, source: MissionCurrentSource, selector: Exclude<MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
-      return readMissionPanelWindow(selector, currentPassageTransport(ctx, instanceId, source, scope))
-    },
-    fetchMissionCurrentTasks(instanceId: string, source: MissionCurrentSource, task: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest, scope: MissionPanelReadScope) {
-      return readMissionTaskPage(source.missionID, task, currentPassageTransport(ctx, instanceId, source, scope))
-    },
-    async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal, deadline = performance.now() + TASK_READ_TIMEOUT_MS) {
-      source = structuredClone(source)
-      body = structuredClone(body)
-      const answer = await readMissionPanelWindow({ source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },
-        currentPassageTransport(ctx, instanceId, source, { signal, deadline, current: () => !signal.aborted }, body))
-      if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
-      const value = answer.values[0] as import("../../../server/src/missions/mission-content-wire").MissionContentResponse
-      if (!value || !value.available || value.projectID !== source.projectID || !("missionID" in value) || value.missionID !== source.missionID) throw new MissionTaskPageReadError("invalid")
-      if ("content" in value) {
-        if (!Number.isSafeInteger(value.content.characters) || value.content.characters > TASK_WINDOW_CHARACTERS) throw new MissionTaskPageReadError("too-large")
-        const { missionID: _mission, digest, offset, ...selector } = body
-        validMissionContentSlice(selector, { offset, digest }, value.content)
-      }
-      assertTaskReadLive(signal, deadline)
-      return value
-    },
-    fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
-      const { scheduleID, passageID, ...query } = input
-      const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
-    },
-    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; coordinatorGoal?: boolean; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
+    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; coordinatorGoal?: boolean; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string; coordinatorSessionId?: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
       const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions`
       return missionMutationRequest(ctx.url(path), "POST", input, ctx.fetch)
     },

@@ -43,14 +43,16 @@ fn a_v1_help_is_recognised_without_a_version_number() {
 
 #[test]
 fn only_releases_below_the_minimum_are_refused() {
-    for below in ["2.3.1", "1.9.99", "2.2.10", "2.3.1+build.7", "0.0.0-beta-12"] {
+    for below in ["2.4.1", "2.3.2", "1.9.99", "2.2.10", "2.4.1+build.7", "0.0.0-beta-12"] {
         assert!(below_minimum(below), "{below}");
     }
-    for admitted in ["2.3.2", "2.3.10", "3.0.0", "2.4.0+local", "dev", "2.3.1-rc.1", "2.3"] {
+    for admitted in ["2.4.2", "2.4.10", "3.0.0", "2.5.0+local", "dev", "2.4.1-rc.1", "2.4"] {
         assert!(!below_minimum(admitted), "{admitted}");
     }
-    let refusal = Refusal::Unsupported { actual: "2.3.1".into(), reason: "native_contract" };
-    assert!(refusal.to_string().starts_with("opencode_update_required: OpenCode 2.3.1; requires the background"));
+    let refusal = Refusal::Unsupported { actual: "2.4.1".into(), reason: "native_contract" };
+    let text = refusal.to_string();
+    assert!(text.starts_with("opencode_update_required: OpenCode 2.4.1; requires the background"), "{text}");
+    assert!(text.ends_with("Mission Automations and the browser permission check of 2.4.2"), "{text}");
 }
 
 fn contract_document() -> Value {
@@ -156,7 +158,7 @@ async fn fake_daemon(password: &'static str, pid: u64) -> (String, Arc<std::sync
             let (status, body) = if !head.contains(&auth) {
                 ("401 Unauthorized", String::new())
             } else if head.starts_with("get /api/info ") {
-                ("200 OK", json!({"version": "2.3.2", "pid": pid, "urls": []}).to_string())
+                ("200 OK", json!({"version": "2.4.2", "pid": pid, "urls": []}).to_string())
             } else {
                 ("404 Not Found", String::new())
             };
@@ -223,7 +225,7 @@ async fn discovery_authenticates_a_running_daemon_and_starts_a_missing_one() {
 
     fs::write(dir.join("status.txt"), format!("{url}\n")).unwrap();
     let found = lifecycle.discover(soon()).await.unwrap().unwrap();
-    assert_eq!((found.url.as_str(), found.version.as_str(), found.pid), (&*format!("{url}/"), "2.3.2", 4242));
+    assert_eq!((found.url.as_str(), found.version.as_str(), found.pid), (&*format!("{url}/"), "2.4.2", 4242));
 
     // Stopped, no registration and no configured port: absence, then one start.
     fs::write(dir.join("status.txt"), "stopped\n").unwrap();

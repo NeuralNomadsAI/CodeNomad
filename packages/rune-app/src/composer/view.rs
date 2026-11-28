@@ -1,10 +1,30 @@
 use super::{can_send, picker::Item, send};
 use crate::{Phase, State, platform, screen, strings::t};
-use rune::{El, Key, KeyEvent, Tx, col, text};
+use rune::{El, Key, KeyEvent, Tx, col};
 use rune_theme_codenomad::{
-    Space, attachment, kit,
+    Space, attachment, catalogue, form_controls,
+    git_panel::{self, ButtonLook},
+    kit,
     layout::{self, Layout},
+    settings as theme_settings, shell,
+    timeline::{icons as timeline_icons, search as timeline_search},
+    workspace_tree::{self, icons as tree_icons},
 };
+use std::rc::Rc;
+
+type Action = Rc<dyn Fn(&mut State, &mut Tx)>;
+
+fn enter_activate(action: Action) -> impl Fn(&mut State, &KeyEvent, &mut Tx) -> bool + 'static {
+    move |s, event, tx| {
+        if event.key != Key::Enter || event.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            action(s, tx);
+        }
+        true
+    }
+}
 
 pub fn view(
     s: &State,
@@ -18,6 +38,7 @@ pub fn view(
     let editor = editor(s, bounds, caret_pins);
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
+        .key("composer-footer")
         .children(worktree)
         .children(
             crate::git::placement_hold(s)
@@ -33,7 +54,7 @@ pub fn view(
         )
         .children(
             (s.can_older || retry || s.history_error && s.phase != Phase::Failed).then(|| {
-                rune_theme_codenomad::shell::older_button(
+                shell::older_button(
                     t(if s.paging {
                         "rune.loading"
                     } else if s.history_error {
@@ -54,57 +75,54 @@ pub fn view(
                     ),
                 )
             }),
-        )
-        .children((!s.messages.is_empty()).then(|| {
-            crate::components::button_tx(
-                "oldest",
-                t("messageSection.scroll.toFirstAriaLabel"),
-                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
-                screen::action_tx(&scope, crate::chat::reader::oldest),
-            )
-        }))
-        .child(crate::components::button_tx(
-            "latest",
-            t("rune.latest"),
-            false,
-            screen::action_tx(&scope, crate::latest),
-        ))
-        .child(more)
-        .child(
-            if s.composer.shell_mode {
-                layout::shell_send_button_tx(
-                    t("promptInput.overlay.send"),
-                    t("promptInput.send.ariaLabel"),
-                    !can_send(s),
-                    screen::action_tx(&scope, super::actions::send_button),
-                )
-            } else {
-                layout::button_tx(
-                    t("promptInput.overlay.send"),
-                    !can_send(s),
-                    screen::action_tx(&scope, super::actions::send_button),
-                )
-            }
-            .key("send")
-            .help(crate::settings::with_shortcut_label(
-                s,
-                t(
-                    if !s.composer.shell_mode
-                        && s.phase.running()
-                        && crate::settings::queues_follow_ups(s)
-                    {
-                        "promptInput.send.queueAriaLabel"
-                    } else {
-                        "promptInput.send.ariaLabel"
-                    },
-                ),
-                super::shortcuts::Action::Send.id(),
-            )),
         );
+    if !s.composer.shell_mode && s.composer.picker.command_unavailable(&s.draft.text) {
+        let refresh: Action = Rc::new(screen::action_tx(&scope, |s, _| {
+            s.composer.picker.refresh_commands(&s.reads, &s.wake);
+        }));
+        let click = refresh.clone();
+        actions = actions.child(
+            git_panel::button(
+                t("rune.refresh"),
+                ButtonLook::WithIcon(&git_panel::REFRESH_CW),
+                false,
+                move |s, tx| click(s, tx),
+            )
+            .key("refresh-command-catalogue")
+            .help(t("rune.refresh"))
+            .on_key(enter_activate(refresh)),
+        );
+    }
+    if s.composer.attachments_missing {
+        actions = actions.child(
+            layout::button_tx(
+                t("rune.attachments_keep_text"),
+                false,
+                screen::action_tx(&scope, |s, tx| {
+                    s.composer.attachments_missing = false;
+                    s.composer
+                        .draft
+                        .attachments
+                        .retain(|part| matches!(part, super::draft::Attachment::Pasted { .. }));
+                    crate::workspace::draft_changed(s, tx);
+                }),
+            )
+            .key("keep-draft-text")
+            .description_static(t("rune.attachments_missing")),
+        );
+    }
+    actions = actions.child(shell::spacer());
+    if s.composer.device.busy() {
+        actions = actions.child(
+            attachment::status_badge(t("promptInput.attachFiles.reading"))
+                .key("composer-reading-files"),
+        );
+    }
+    actions = actions.child(more);
     if stop {
         actions = actions.child(
             layout::button(
-                t("promptInput.stopSession.ariaLabel"),
+                t("rune.stop"),
                 s.agent.as_ref().is_some_and(|a| a.stopping),
                 screen::action(&scope, |s| {
                     if let Some(agent) = &mut s.agent {
@@ -112,9 +130,48 @@ pub fn view(
                     }
                 }),
             )
-            .key("composer-stop"),
+            .key("composer-stop")
+            .description_static(t("promptInput.stopSession.ariaLabel"))
+            .help(t("promptInput.stopSession.title")),
         );
     }
+    let send_aria = t(
+        if !s.composer.shell_mode && s.phase.running() && crate::settings::queues_follow_ups(s) {
+            "promptInput.send.queueAriaLabel"
+        } else {
+            "promptInput.send.ariaLabel"
+        },
+    );
+    let send_disabled = !can_send(s);
+    let send_button = if s.composer.shell_mode {
+        layout::shell_send_button_tx(
+            t("promptInput.overlay.send"),
+            t("promptInput.send.ariaLabel"),
+            send_disabled,
+            screen::action_tx(&scope, super::actions::send_button),
+        )
+    } else {
+        let send_action: Action = Rc::new(screen::action_tx(&scope, super::actions::send_button));
+        let click = send_action.clone();
+        let button = theme_settings::primary_action_tx(
+            t("promptInput.overlay.send"),
+            send_disabled,
+            move |s, tx| click(s, tx),
+        )
+        .description_static(send_aria);
+        if send_disabled {
+            button
+        } else {
+            button.on_key(enter_activate(send_action))
+        }
+    }
+    .key("send")
+    .help(crate::settings::with_shortcut_label(
+        s,
+        send_aria,
+        super::shortcuts::Action::Send.id(),
+    ));
+    actions = actions.child(send_button);
     let mut body = col()
         .key("session-composer")
         .role("group")
@@ -122,8 +179,7 @@ pub fn view(
         .full_width()
         .pad(Space::Md)
         .separate(Space::Sm)
-        .children(crate::shell::status_permissions::confirmation(s))
-        .child(col().content_direction().child(editor));
+        .children(crate::shell::status_permissions::confirmation(s));
     let pasted = std::cell::OnceCell::new();
     let mut attachments = s
         .composer
@@ -145,102 +201,126 @@ pub fn view(
         })
         .peekable();
     if attachments.peek().is_some() {
+        let locale = crate::strings::locale();
         let mut chips = layout::action_row().key("composer-attachments");
         for (index, item) in attachments {
             use super::draft::Attachment;
-            use rune_theme_codenomad::workspace_tree::icons;
-            let (label, glyph) = match item {
+            let (label, glyph, kind_description) = match item {
                 Attachment::Pasted { id, .. } => (
                     format!("{} #{id}", t("messagePart.pastedText.summary")),
-                    Some(&icons::FILE_TEXT),
+                    Some(&tree_icons::FILE_TEXT),
+                    None,
                 ),
-                Attachment::Agent(name) => (format!("@{name}"), None),
-                Attachment::Skill { name, .. } => (name.clone(), None),
+                Attachment::Agent(name) => (format!("@{name}"), Some(&timeline_icons::BOT), None),
+                Attachment::Skill { name, .. } => {
+                    (name.clone(), None, Some(t("promptInput.skills.title")))
+                }
                 Attachment::Project {
-                    name, directory, ..
-                } => (
-                    name.clone(),
-                    Some(if *directory {
-                        &icons::FOLDER
+                    name,
+                    path,
+                    directory,
+                    ..
+                } => {
+                    let detail = catalogue::format(
+                        locale,
+                        "promptInput.attachFiles.projectDetail",
+                        &[("path", path.as_str())],
+                    );
+                    let label = if path.ends_with(name.as_str()) {
+                        detail
                     } else {
-                        &icons::FILE
-                    }),
+                        format!("{detail} ({name})")
+                    };
+                    (
+                        label,
+                        Some(workspace_tree::entry_icon(name, directory.then_some(false))),
+                        None,
+                    )
+                }
+                Attachment::Path(path) => (
+                    catalogue::format(
+                        locale,
+                        "promptInput.attachFiles.projectDetail",
+                        &[("path", path.as_str())],
+                    ),
+                    Some(workspace_tree::entry_icon(path, None)),
+                    None,
                 ),
-                Attachment::Path(path) => (path.clone(), Some(&icons::FILE_TEXT)),
-                Attachment::Device { name, token, .. } => {
-                    (token.as_ref().unwrap_or(name).clone(), Some(&icons::FILE))
+                Attachment::Device {
+                    name,
+                    mime,
+                    bytes,
+                    token,
+                } => {
+                    let byte_count = bytes.len().to_string();
+                    let detail = catalogue::format(
+                        locale,
+                        "promptInput.attachFiles.deviceDetail",
+                        &[("name", name.as_str()), ("bytes", byte_count.as_str())],
+                    );
+                    let label = match token {
+                        Some(token) if token != name => format!("{detail} ({token})"),
+                        _ => detail,
+                    };
+                    (
+                        label,
+                        Some(if mime.starts_with("image/") {
+                            &tree_icons::IMAGE
+                        } else {
+                            workspace_tree::entry_icon(name, None)
+                        }),
+                        None,
+                    )
                 }
             };
             let captured = item.clone();
-            let remove = layout::button_tx(
-                t("sessionView.attachments.removeAriaLabel"),
-                false,
-                screen::action_tx(&scope, move |s, tx| {
-                    if s.composer.draft.attachments.get(index) == Some(&captured) {
-                        s.composer.draft.remove(&mut s.draft, index);
-                        changed(s, tx);
-                        tx.focus("composer", false);
-                    }
-                }),
-            )
-            .key(format!("remove-{index}"));
-            chips = chips.child(
-                attachment::chip(&label, glyph, Some(remove)).key(format!("attachment-{index}")),
-            );
+            let remove_label = t("sessionView.attachments.removeAriaLabel");
+            let remove_action: Action = Rc::new(screen::action_tx(&scope, move |s, tx| {
+                if s.composer.draft.attachments.get(index) == Some(&captured) {
+                    s.composer.draft.remove(&mut s.draft, index);
+                    changed(s, tx);
+                    tx.focus("composer", false);
+                }
+            }));
+            let remove_click = remove_action.clone();
+            let remove = timeline_search::close(remove_label, move |s, tx| remove_click(s, tx))
+                .key(format!("remove-{index}"))
+                .help(remove_label)
+                .on_key(enter_activate(remove_action));
+            let mut chip =
+                attachment::chip(&label, glyph, Some(remove)).key(format!("attachment-{index}"));
+            if let Some(description) = kind_description {
+                chip = chip.description_static(description);
+            }
+            chips = chips.child(chip);
         }
         body = body.child(chips);
     }
-    if !s.composer.shell_mode && s.composer.picker.command_unavailable(&s.draft.text) {
-        actions = actions.child(
-            layout::button(
-                t("rune.refresh"),
-                false,
-                screen::action(&scope, |s| {
-                    s.composer.picker.refresh_commands(&s.reads, &s.wake);
-                }),
-            )
-            .key("refresh-command-catalogue"),
-        );
-    }
-    if s.composer.attachments_missing {
-        actions = actions.child(
-            layout::button_tx(
-                t("rune.attachments_keep_text"),
-                false,
-                screen::action_tx(&scope, |s, tx| {
-                    s.composer.attachments_missing = false;
-                    s.composer
-                        .draft
-                        .attachments
-                        .retain(|part| matches!(part, super::draft::Attachment::Pasted { .. }));
-                    crate::workspace::draft_changed(s, tx);
-                }),
-            )
-            .key("keep-draft-text")
-            .description_static(t("rune.attachments_missing")),
-        );
-    }
-    body.child(actions)
+    body.child(col().content_direction().child(editor))
+        .child(actions)
         .children(
             s.composer
                 .device
                 .notice
                 .as_ref()
-                .map(|notice| text(notice).role("alert")),
+                .map(|notice| form_controls::field_error("composer-device-notice", notice)),
         )
+        .children(s.composer.attachments_missing.then(|| {
+            form_controls::field_error(
+                "composer-attachments-missing",
+                t("rune.attachments_missing"),
+            )
+        }))
+        .children(s.composer.send_error.then(|| {
+            form_controls::field_error("composer-send-error", t("promptInput.send.errorTitle"))
+        }))
         .children(
-            s.composer
-                .attachments_missing
-                .then(|| text(t("rune.attachments_missing")).role("alert")),
-        )
-        .children(
-            s.composer
-                .send_error
-                .then(|| text(t("promptInput.send.errorTitle")).role("alert")),
-        )
-        .children(
-            (s.composer.unconfirmed_id().is_some() || super::actions::command_held(s))
-                .then(|| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
+            (s.composer.unconfirmed_id().is_some() || super::actions::command_held(s)).then(|| {
+                form_controls::field_error(
+                    "composer-unconfirmed-notice",
+                    t("missionsPanel.action.requestUpdateUncertain"),
+                )
+            }),
         )
 }
 

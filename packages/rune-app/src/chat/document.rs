@@ -7,7 +7,7 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, catalogue,
     layout::{self, Layout},
-    markdown,
+    markdown, transcript,
 };
 use std::borrow::Cow;
 
@@ -362,20 +362,20 @@ fn prose_for(
                         }),
                     )
                     .key(format!("{group}-code-{index}-copy"));
-                    let wrap = layout::button(
+                    let wrap = transcript::wrap_button(
                         t(if frame.wrapped {
                             "markdown.codeBlock.wrap.disable"
                         } else {
                             "markdown.codeBlock.wrap.enable"
                         }),
+                        frame.wrapped,
                         false,
                         screen::action(&scope, {
                             let group = group.clone();
                             move |s| Display::toggle_code(s, &group, index)
                         }),
                     )
-                    .key(format!("{group}-code-{index}-wrap"))
-                    .checked(frame.wrapped);
+                    .key(format!("{group}-code-{index}-wrap"));
                     if diagram {
                         let search_hit = search_terms.as_ref().is_some_and(|(terms, ranked)| {
                             rune_theme_codenomad::timeline::search::Query {
@@ -414,14 +414,7 @@ fn prose_for(
                             copy,
                         );
                     }
-                    let mut header = layout::action_row();
-                    if let Some(language) = frame.language {
-                        header = header.child(text(language));
-                    }
-                    col()
-                        .full_width()
-                        .child(header.child(wrap).child(copy))
-                        .child(card)
+                    transcript::code_block_frame(frame.language, vec![wrap, copy], card)
                 },
                 move |card, frame| {
                     let copy = markdown::copy_button(
@@ -435,14 +428,7 @@ fn prose_for(
                         }),
                     )
                     .key(format!("{diff_group}-diff-{}-copy", frame.index));
-                    col()
-                        .full_width()
-                        .child(
-                            layout::action_row()
-                                .child(text(t("toolCall.diff.label")))
-                                .child(copy),
-                        )
-                        .child(card)
+                    transcript::code_block_frame(Some(t("toolCall.diff.label")), vec![copy], card)
                 },
                 &fallback_fn,
                 &image_search_fn,

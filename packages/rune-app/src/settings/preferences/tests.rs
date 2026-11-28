@@ -16,6 +16,7 @@ mod notifications;
 mod opencode;
 mod providers;
 mod shortcuts;
+mod speech;
 mod tab_shortcuts;
 mod transcript;
 use codenomad_client::bounded;

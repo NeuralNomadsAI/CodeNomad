@@ -122,7 +122,7 @@ fn a_changed_order_parks_retry_at_the_first_window() {
         Read::Refresh,
         page("project", "first", 0, 2, vec![summary("a", "Alpha")])
     ));
-    let (cancel, _) = bounded(1);
+    let (cancel, _) = CancelToken::new();
     panel.lanes[kind as usize].active = Some((1, cancel));
     panel
         .out
@@ -142,11 +142,11 @@ fn a_changed_order_parks_retry_at_the_first_window() {
 fn hide_cancels_reads_and_rejects_stale_completions() {
     let mut panel = panel();
     panel.visible = true;
-    let (cancel, cancelled) = bounded(1);
+    let (cancel, cancelled) = CancelToken::new();
     panel.lanes[Kind::Summaries as usize].active = Some((3, cancel));
     panel.show(false);
-    assert!(cancelled.is_closed());
-    let (cancel, _) = bounded(1);
+    assert!(cancelled.is_cancelled());
+    let (cancel, _) = CancelToken::new();
     panel.lanes[Kind::Summaries as usize].active = Some((4, cancel));
     panel
         .out
@@ -254,7 +254,7 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
 
     // Refresh stays enabled even while a summaries read is in flight so coalesced refresh
     // can queue a trailing read and refresh detail/activity/calendars immediately.
-    let (cancel, _cancelled) = bounded(1);
+    let (cancel, _cancelled) = CancelToken::new();
     rt.state.0.lanes[Kind::Summaries as usize].active = Some((1, cancel));
     rt.frame(0.04);
     assert!(rt.state.0.busy(Kind::Summaries));

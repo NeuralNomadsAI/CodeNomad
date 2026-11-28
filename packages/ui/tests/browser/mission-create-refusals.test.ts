@@ -44,7 +44,6 @@ async function setup(page: Page, answer: (route: Route, attempt: number, body: R
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
-    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (request.method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     if (request.method() === "POST" && path.endsWith("/missions")) {
       const body = request.postDataJSON(); attempts.push(body)
@@ -108,7 +107,6 @@ test("daily refusals and failures keep the draft and Create available, and save 
   const refusals = [
     { status: 400, json: { error: "Invalid Mission calendar request", code: "calendar-input-invalid" }, message: /could not be saved/ },
     { status: 422, json: { error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: "event" }, message: /cannot be scheduled/ },
-    { status: 422, json: { error: "The conversation does not run the coordinator's agent and model", code: "calendar-coordinator-profile" }, message: /does not use the coordinator's agent, model and thinking/ },
     { status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" }, message: /could not be saved/ },
   ]
   try {

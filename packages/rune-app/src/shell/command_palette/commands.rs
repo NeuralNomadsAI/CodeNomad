@@ -3,8 +3,8 @@ use crate::{
     platform::workspace_open::{Editor, WorkspaceTarget},
     settings,
     shell::{
-        launcher_replaces_project, notifications, shortcuts, sidebar, tab_rename, temporary,
-        workspace_open,
+        directory_browser, launcher_replaces_project, new_instance_launcher, notifications,
+        shortcuts, sidebar, tab_rename, temporary, workspace_open,
     },
     strings::{locale, t},
     workspace,
@@ -121,6 +121,15 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             !workspace::can_new(s),
         ));
         items.push(static_item(
+            "recent-tabs",
+            t("newInstanceLauncher.recentTitle"),
+            None,
+            t("commands.newInstance.keywords"),
+            Category::Instance,
+            None,
+            false,
+        ));
+        items.push(static_item(
             "new-temporary-instance",
             t("commands.newTemporaryInstance.label"),
             None,
@@ -225,8 +234,7 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             });
         }
     }
-    if crate::platform::folder_picker_available()
-        && launcher_replaces_project(s)
+    if launcher_replaces_project(s)
         && s.screen
             .launcher()
             .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
@@ -239,6 +247,20 @@ pub(super) fn collect(s: &State) -> Vec<CommandItem> {
             Category::Instance,
             Some("browse-folder"),
             !workspace_ready || launcher_pending,
+        ));
+    }
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
+    {
+        items.push(static_item(
+            "browse-directories",
+            t("directoryBrowser.goTo"),
+            None,
+            t("commands.newInstance.keywords"),
+            Category::Instance,
+            None,
+            !directory_browser::can_open(s),
         ));
     }
 
@@ -463,13 +485,20 @@ pub(super) fn execute(s: &mut State, id: &str, tx: &mut Tx) {
         "open-workspace-editor-vscodium" => {
             workspace_open::open(s, WorkspaceTarget::Editor(Editor::VsCodium));
         }
+        "recent-tabs" => {
+            new_instance_launcher::open(s, tx);
+        }
         "browse-folder" => {
-            if crate::platform::folder_picker_available()
-                && workspace::input_ready(s)
-                && s.screen.launcher().is_some_and(|l| !l.pending)
-            {
-                crate::platform::browse(s, tx);
+            if workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending) {
+                if crate::platform::folder_picker_available() {
+                    crate::platform::browse(s, tx);
+                } else {
+                    directory_browser::open(s, None, tx);
+                }
             }
+        }
+        "browse-directories" => {
+            directory_browser::open(s, None, tx);
         }
         "new-session" => launcher::create_blank(s),
         "close-session" => {

@@ -6,7 +6,7 @@ use codenomad_client::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space,
+    Space, TextRole,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -267,6 +267,7 @@ impl State {
         if unavailable {
             card = card.child(
                 text(t("settings.loginStart.unavailable"))
+                    .text_role(TextRole::Small)
                     .wrap()
                     .role("status")
                     .key("opencode-login-start-unavailable"),
@@ -274,10 +275,7 @@ impl State {
         }
         if let Some(failure) = self.failure {
             let mut row = layout::action_row().child(
-                text(t(failure.key()))
-                    .wrap()
-                    .role("alert")
-                    .key("opencode-login-start-error"),
+                chrome::palette::save_error(t(failure.key())).key("opencode-login-start-error"),
             );
             if failure == Failure::Read {
                 let retry_shared = shared.clone();

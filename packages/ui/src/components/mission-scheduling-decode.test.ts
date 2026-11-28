@@ -8,11 +8,9 @@ import { missionCardConnectors, missionScheduleShortcuts, missionSchedulingPolic
 const decode = (policy: MissionLaunchPolicy) => decodeMissionSchedulingPolicy(policy, "/project", "UTC")
 const legacy = (timing: MissionLegacyLaunchPolicy["timing"], condition: MissionLegacyLaunchPolicy["condition"] = null,
   ends: Partial<MissionLegacyLaunchPolicy["ends"]> = {}): MissionLaunchPolicy => missionLaunchPolicySchema.parse({ timing, condition, ends: { at: null, afterMs: null, maxLaunches: null, ...ends } })
-const events = [
-  { kind: "schedule-success", missionID: "msn_source" }, { kind: "mission-completed", missionID: "msn_source" },
-  { kind: "branch-commits", directory: "/project", ref: "refs/heads/dev" },
-  { kind: "conversation-message", conversationID: "ses_followed" }, { kind: "files-changed", paths: ["a.ts", "b.ts"] },
-] as const
+const events = [{ kind: "branch-commits", directory: "/project", ref: "refs/heads/dev" }, { kind: "files-changed", paths: ["a.ts", "b.ts"] }] as const
+const retired = [{ kind: "schedule-success", missionID: "msn_source" }, { kind: "mission-completed", missionID: "msn_source" },
+  { kind: "conversation-message", conversationID: "ses_followed" }] as const
 
 test("repository events retain provider, nested path, event and optional author across edits", () => {
   for (const provider of ["github", "gitlab", "gitea"] as const) for (const event of ["pull-request-created", "pull-request-merged", "issue-created"] as const) {
@@ -26,7 +24,7 @@ test("repository events retain provider, nested path, event and optional author 
   }
 })
 
-test("every shortcut and all five events decode back into their rows and roundtrip the exact policy", () => {
+test("every shortcut and local event decodes back into its row and roundtrips the exact policy", () => {
   for (const kind of missionScheduleShortcuts) {
     const draft = { ...newMissionSchedulingDraft("America/New_York"),
       criteria: [{ ...newMissionCriterion(kind), hours: "4", days: [1, 3, 5], time: "09:15", expression: "*/30 9-17 * * MON-FRI" }] }
@@ -36,10 +34,10 @@ test("every shortcut and all five events decode back into their rows and roundtr
     assert.equal(decoded.criteria[0].kind, kind)
     assert.deepEqual(missionSchedulingPolicy(decoded, "/project"), original)
   }
-  const original = missionLaunchPolicySchema.parse({ when: [...events.slice(0, 2), { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, ...events.slice(2)] })
+  const original = missionLaunchPolicySchema.parse({ when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, ...events] })
   const decoded = decode(original)
-  assert.deepEqual(decoded.criteria.map(row => row.kind), [events[0].kind, events[1].kind, "daily", ...events.slice(2).map(event => event.kind)], "stored order")
-  assert.deepEqual(missionCardConnectors(decoded.criteria), ["or", "else", "if", "or", "or"])
+  assert.deepEqual(decoded.criteria.map(row => row.kind), ["daily", ...events.map(event => event.kind)], "stored order")
+  assert.deepEqual(missionCardConnectors(decoded.criteria), ["if", "or"])
   assert.deepEqual(missionSchedulingPolicy(decoded, "/project"), original)
 })
 
@@ -66,10 +64,9 @@ test("a legacy frequency with a condition reads as schedule cards first, then th
   assert.deepEqual(draft.criteria.map(row => [row.kind, row.time, row.source]), [["daily", "09:15", ""], ["daily", "17:45", ""], ["branch-commits", "09:00", "refs/heads/main"]])
   assert.deepEqual(missionCardConnectors(draft.criteria), ["or", "if"])
   assert.deepEqual(missionSchedulingPolicy(draft, "/project"), stored, "an unchanged reopen keeps the stored legacy bytes and end date")
-  // Moving the event to the top makes it the trigger and the two times its fallback (commits else 09:15 or 17:45).
-  const saved = missionSchedulingPolicy({ ...draft, criteria: [draft.criteria[2], draft.criteria[0], draft.criteria[1]] }, "/project")
-  assert.deepEqual(saved, { when: [{ kind: "branch-commits", directory: "/project", ref: "refs/heads/main" },
-    { kind: "cron", expression: "15 09 * * *", zone: "UTC" }, { kind: "cron", expression: "45 17 * * *", zone: "UTC" }] })
+  const saved = missionSchedulingPolicy({ ...draft, criteria: [draft.criteria[1], draft.criteria[0], draft.criteria[2]] }, "/project")
+  assert.deepEqual(saved, { when: [{ kind: "cron", expression: "45 17 * * *", zone: "UTC" }, { kind: "cron", expression: "15 09 * * *", zone: "UTC" },
+    { kind: "branch-commits", directory: "/project", ref: "refs/heads/main" }] })
   for (const event of events) {
     const alone = decode(legacy({ kind: "immediate" }, structuredClone(event) as MissionLegacyLaunchPolicy["condition"]))
     assert.equal(alone.stored?.reason, undefined, "an event-only legacy policy reopens as one trigger event")
@@ -93,6 +90,11 @@ test("retired options and mixed zones retain the exact stored policy until repla
     assert.equal(draft.stored?.reason, reason, JSON.stringify(original))
     assert.deepEqual(missionSchedulingPolicy(draft), original)
     assert.throws(() => missionSchedulingPolicy({ ...draft, zone: "Europe/Berlin" }), /retained/)
+  }
+  for (const event of retired) {
+    const original = missionLaunchPolicySchema.parse({ when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, event] }), draft = decode(original)
+    assert.equal(draft.stored?.reason, "retired", event.kind)
+    assert.deepEqual(missionSchedulingPolicy(draft), original)
   }
   const foreign = decode(legacy({ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, { kind: "branch-commits", directory: "/foreign", ref: "refs/heads/dev" }))
   assert.equal(foreign.stored?.reason, "source")

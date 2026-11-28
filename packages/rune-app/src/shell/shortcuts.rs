@@ -38,6 +38,8 @@ pub(super) fn modal_open(s: &State) -> bool {
     settings::blocks_shell_shortcuts(s)
         || super::blank_cleanup::is_open(s)
         || super::temporary::is_open(s)
+        || super::directory_browser::is_open(s)
+        || super::new_instance_launcher::is_open(s)
         || super::tab_rename::is_open(s)
         || super::command_palette::is_open(s)
         || notifications::history_open(s)
@@ -57,11 +59,14 @@ fn overlay_open(s: &State) -> bool {
         || s.agent.as_ref().is_some_and(|a| a.picker)
         || crate::git::overlay_open(s)
         || crate::timeline::search::overlay_open(s)
+        || crate::launcher::recent_menu_open(s)
         || (!s.screen.is_launcher() && s.transcript_display.messages.menu_open())
 }
 
 fn any_editor_composing(s: &State) -> bool {
     s.draft.is_composing()
+        || super::directory_browser::is_composing(s)
+        || super::new_instance_launcher::is_composing(s)
         || super::tab_rename::is_composing(s)
         || super::command_palette::is_composing(s)
         || s.files
@@ -133,14 +138,18 @@ pub(super) fn has_active_session(s: &State) -> bool {
 fn home_focus_allows_browse(tx: &Tx) -> bool {
     match tx.focused() {
         None => true,
+        Some(key) if key.ends_with("/input") => false,
         Some("browse" | "open-folder" | "new-temporary-tab" | "refresh-projects") => true,
-        Some(key) => key.starts_with("project-") && !key.starts_with("project-tabs-"),
+        Some(key) => {
+            (key.starts_with("project-") && !key.starts_with("project-tabs-"))
+                || key.starts_with("recent-")
+                || key.starts_with("launcher-")
+        }
     }
 }
 
 fn can_browse_home(s: &State, tx: &Tx) -> bool {
-    crate::platform::folder_picker_available()
-        && launcher_replaces_project(s)
+    launcher_replaces_project(s)
         && !focused_text_field(s, tx)
         && home_focus_allows_browse(tx)
         && s.screen
@@ -299,7 +308,11 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             let ready =
                 workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
             if ready {
-                crate::platform::browse(s, tx);
+                if crate::platform::folder_picker_available() {
+                    crate::platform::browse(s, tx);
+                } else {
+                    super::directory_browser::open(s, None, tx);
+                }
             }
         }
         Action::RenameInstance(tab_key) => {
@@ -338,6 +351,10 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         Action::OpenSponsor => open_help_page(s, tx, HelpPage::Sponsor),
     }
     true
+}
+
+pub(crate) fn open_sponsor_page(s: &mut State, tx: &mut Tx) {
+    open_help_page(s, tx, HelpPage::Sponsor);
 }
 
 fn open_help_page(s: &mut State, tx: &mut Tx, page: HelpPage) {

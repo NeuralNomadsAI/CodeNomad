@@ -21,6 +21,9 @@ export interface NativeMissionSession extends MissionExecution {
 export interface MissionSessionAdapter {
   get(input: { sessionID: string }): Promise<NativeMissionSession>
   remove?(input: { sessionID: string }): Promise<void>
+  /** Put a conversation on an agent, or on a model with its variant. */
+  switchAgent?(input: { sessionID: string; agent: NonNullable<MissionExecution["agent"]> }): Promise<unknown>
+  switchModel?(input: { sessionID: string; model: NonNullable<MissionExecution["model"]> }): Promise<unknown>
   list?(input: { parentID: string; limit: number }): Promise<{ data: readonly { id: string }[]; cursor?: { next?: string | null } }>
   create(input: {
     id: string
@@ -135,7 +138,6 @@ export type MissionNativeReportAuthorization = (request: MissionNativeReportRequ
 }>
 
 export interface MissionInspection {
-  schedule?: import("./mission-schedule-view").MissionScheduleRead
   selection?: MissionCreationSelection
   mission: Omit<MissionMap, "creationDefaults"> | null
   actor: MissionActor | null
@@ -202,8 +204,8 @@ export interface MissionInputTransport {
   projectControl?(sessionID: string, command: import("./project-control-tool").ProjectToolCommand): Promise<unknown>
   verifyProjectControl?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
   requestProjectUpdate?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
-  /** Schedules, and under `program` the programmed Missions that replace them. */
-  schedule?(sessionID: string, input: import("./schedule-tool").ScheduleToolInput | { program: import("./program-tool").MissionProgramInput }): Promise<unknown>
+  /** The programmed Missions of the caller's directory. */
+  schedule?(sessionID: string, input: { program: import("./program-tool").MissionProgramInput }): Promise<unknown>
   readConfigurations?(sessionID: string): Promise<unknown>
   resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>
   lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;

@@ -1,8 +1,8 @@
 use super::{Preferences, catalog, record, reserved};
 use crate::strings::t;
-use rune::{El, Key, TextEdit, col, text};
+use rune::{El, Key, TextEdit, col, el, text};
 use rune_theme_codenomad::{
-    Space, field_kit,
+    Space, TextRole, field_kit,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -75,48 +75,46 @@ pub(in crate::settings) fn view<S: 'static>(
     let mut view = col()
         .full_width()
         .separate(Space::Sm)
-        .child(
-            layout::action_row()
-                .child(
-                    layout::hinted_field(filter, t("hotkeys.filter"))
-                        .label(t("hotkeys.filter"))
-                        .input_mode(rune::InputMode::Search)
-                        .on_edit(filter_edit)
-                        .build(&field_kit(layout::dark()))
-                        .on_input_change(move |s: &mut S, _| {
-                            if let Some((recording, capture)) = access(s) {
-                                *recording = false;
-                                capture.refused = false;
-                            }
-                        })
-                        .key("hotkey-filter"),
-                )
-                .child(layout::button(
-                    t("hotkeys.resetAll"),
-                    locked,
-                    move |s: &mut S| {
-                        if let Some((recording, capture)) = access(s) {
-                            *recording = false;
-                            capture.refused = false;
-                            reset.borrow_mut().reset_shortcuts();
-                        }
-                    },
-                )),
-        )
+        .child(chrome::input_action_row(
+            layout::hinted_field(filter, t("hotkeys.filter"))
+                .label(t("hotkeys.filter"))
+                .input_mode(rune::InputMode::Search)
+                .on_edit(filter_edit)
+                .build(&field_kit(layout::dark()))
+                .on_input_change(move |s: &mut S, _| {
+                    if let Some((recording, capture)) = access(s) {
+                        *recording = false;
+                        capture.refused = false;
+                    }
+                })
+                .key("hotkey-filter"),
+            layout::button(t("hotkeys.resetAll"), locked, move |s: &mut S| {
+                if let Some((recording, capture)) = access(s) {
+                    *recording = false;
+                    capture.refused = false;
+                    reset.borrow_mut().reset_shortcuts();
+                }
+            })
+            .key("hotkey-reset-all"),
+        ))
         .children(
             prefs
                 .shortcut_failed(None)
-                .then(|| text(t("hotkeys.saveFailed")).role("alert")),
+                .then(|| chrome::palette::save_error(t("hotkeys.saveFailed"))),
         )
         .children(prefs.shortcuts_failed().then(|| {
-            layout::button(
+            layout::action_row().child(layout::button(
                 t("sessionList.loadError.retry"),
                 locked,
                 move |_: &mut S| retry.borrow_mut().retry_shortcuts(),
-            )
+            ))
         }));
     if rows.is_empty() {
-        view = view.child(text(t("hotkeys.noResults")));
+        view = view.child(
+            text(t("hotkeys.noResults"))
+                .text_role(TextRole::Small)
+                .role("status"),
+        );
     }
     view.children(rows.into_iter().map(|row| {
         let failed = prefs.shortcut_failed(Some(row.id));
@@ -222,47 +220,52 @@ fn row_view<S: 'static>(
         .iter()
         .map(|(key, names)| conflict(key, names))
         .collect();
+    let binding_badge = if row.binding.is_empty() {
+        text(t("hotkeys.empty")).text_role(TextRole::Small)
+    } else {
+        el().inset_surface().pad(Space::Xs).child(
+            text(&row.binding)
+                .text_role(TextRole::Mono)
+                .literal_direction(),
+        )
+    };
     let mut group = col()
         .full_width()
+        .separate(Space::Xs)
         .role("group")
         .label(&row.label)
         .key(format!("shortcut-{id}"))
-        .child(text(&row.label).wrap())
+        .child(text(&row.label).text_role(TextRole::Button).wrap())
         .child(
-            layout::action_row()
-                .child(text(if row.binding.is_empty() {
-                    t("hotkeys.empty")
-                } else {
-                    &row.binding
-                }))
-                .children(
-                    row.active
-                        .then(|| {
-                            [
-                                edit,
-                                layout::button(
-                                    t("hotkeys.clear"),
-                                    disabled || row.binding.is_empty(),
-                                    mutate(json!([])),
-                                ),
-                                layout::button(
-                                    t("hotkeys.reset"),
-                                    disabled || !row.overridden,
-                                    mutate(Value::Null),
-                                ),
-                            ]
-                        })
-                        .into_iter()
-                        .flatten(),
-                ),
+            layout::action_row().child(binding_badge).children(
+                row.active
+                    .then(|| {
+                        [
+                            edit,
+                            layout::button(
+                                t("hotkeys.clear"),
+                                disabled || row.binding.is_empty(),
+                                mutate(json!([])),
+                            ),
+                            layout::button(
+                                t("hotkeys.reset"),
+                                disabled || !row.overridden,
+                                mutate(Value::Null),
+                            ),
+                        ]
+                    })
+                    .into_iter()
+                    .flatten(),
+            ),
         )
-        .children(
-            warnings
-                .iter()
-                .map(|message| text(message).role("status").wrap()),
-        )
-        .children((editing && refused).then(|| text(t("hotkeys.reserved")).role("alert").wrap()))
-        .children(failed.then(|| text(t("hotkeys.saveFailed")).role("alert").wrap()));
+        .children(warnings.iter().map(|message| {
+            text(message)
+                .text_role(TextRole::Small)
+                .role("status")
+                .wrap()
+        }))
+        .children((editing && refused).then(|| chrome::palette::save_error(t("hotkeys.reserved"))))
+        .children(failed.then(|| chrome::palette::save_error(t("hotkeys.saveFailed"))));
     if !warnings.is_empty() {
         group = group.description(warnings.join(" · "));
     }
@@ -282,4 +285,75 @@ fn conflict(key: &str, names: &str) -> String {
     t("hotkeys.conflict")
         .replace("{shortcut}", key)
         .replace("{actions}", names)
+}
+
+#[cfg(test)]
+#[test]
+fn shortcuts_toolbar_expands_filter_beside_reset_in_both_themes() {
+    struct Harness {
+        dark: bool,
+        shared: Rc<RefCell<Preferences>>,
+        filter: TextEdit,
+        recording: bool,
+        capture: Capture,
+    }
+    for dark in [false, true] {
+        let shared = Rc::new(RefCell::new(Preferences::default()));
+        {
+            let mut prefs = shared.borrow_mut();
+            prefs.fixture();
+            prefs.fixture_locale("en");
+        }
+        let mut rt = rune::Runtime::new(
+            Harness {
+                dark,
+                shared,
+                filter: TextEdit::default(),
+                recording: false,
+                capture: Capture::default(),
+            },
+            |s, cx| {
+                rune_theme_codenomad::settings::render(cx, s.dark, None, |_| {
+                    crate::strings::with_locale("en", || {
+                        view(
+                            &s.shared,
+                            &s.filter,
+                            |s: &mut Harness| &mut s.filter,
+                            s.recording,
+                            &s.capture,
+                            |s: &mut Harness| Some((&mut s.recording, &mut s.capture)),
+                        )
+                    })
+                })
+            },
+            (720.0, 640.0),
+            rune::Env::new(dark, 1.0),
+        );
+        rt.frame(0.02);
+        let filter_rect = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some("hotkey-filter"))
+            .expect("hotkey filter present")
+            .rect;
+        let reset_rect = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some("hotkey-reset-all"))
+            .expect("reset all button present")
+            .rect;
+        assert!(
+            filter_rect[2] > 300.0,
+            "dark={dark}: expected filter to expand across toolbar, got width={}",
+            filter_rect[2]
+        );
+        assert!(
+            filter_rect[0] + filter_rect[2] <= reset_rect[0] + 1.0,
+            "dark={dark}: expected filter ({filter_rect:?}) left of reset ({reset_rect:?})"
+        );
+        assert!(
+            (filter_rect[1] - reset_rect[1]).abs() < 12.0,
+            "dark={dark}: expected filter and reset on one toolbar row"
+        );
+    }
 }
