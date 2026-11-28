@@ -705,6 +705,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-windows-install"
+version = "0.1.0"
+dependencies = [
+ "windows",
+ "windows-registry",
+]
+
+[[package]]
 name = "codenomad-windows-notifications"
 version = "0.1.0"
 dependencies = [

@@ -98,7 +98,7 @@ jobs:
       - name: Check Rust formatting, lints and style policy
         if: ${{ !cancelled() && steps.setup_env.outcome == 'success' && steps.cargo_cache.outcome != 'failure' }}
         run: |
-          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -- --check
+          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -p codenomad-windows-install -- --check
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
           cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
           cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
