@@ -322,11 +322,39 @@ fn the_setup_only_takes_a_folder_that_is_absent_empty_or_its_own_install() {
     assert!(made.success());
     let same_profile = users.join(profile.file_name().unwrap());
     assert!(
-        target(&same_profile).is_err(),
+        target(&same_profile).is_err_and(|why| why.contains("your own folders")),
         "the profile through a junction"
     );
     assert_eq!(target(&users.join("no such user")), Ok(()), "beside it");
     std::fs::remove_dir(&users).unwrap();
     register_in(&s.product, &s.root(), &s.links()).unwrap();
     assert_eq!(target(&s.root()), Ok(()), "the registered install");
+}
+
+#[test]
+fn a_copy_started_through_a_junction_is_seen_running() {
+    let s = Scratch::new();
+    let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+    std::fs::copy(system.join("ping.exe"), s.root().join(EXE)).unwrap();
+    let junction = s.dir.join("via");
+    let made = std::process::Command::new("cmd.exe")
+        .args(["/d", "/c", "mklink", "/J"])
+        .args([&junction, &s.root()])
+        .stdout(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let mut copy = std::process::Command::new(s.root().join(EXE))
+        .args(["-n", "60", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .unwrap();
+
+    let seen = running_under(&junction);
+    copy.kill().ok();
+    copy.wait().ok();
+    std::fs::remove_dir(&junction).unwrap();
+    assert_eq!(seen, [copy.id()]);
 }

@@ -76,6 +76,16 @@ fn real(path: &Path) -> std::path::PathBuf {
         }
     }
 }
+/// [`real`] as other Windows calls spell paths: without the `\\?\` prefix canonicalising adds.
+pub(crate) fn real_plain(path: &Path) -> String {
+    let real = real(path).to_string_lossy().into_owned();
+    match real.strip_prefix(r"\\?\") {
+        Some(rest) => rest
+            .strip_prefix(r"UNC\")
+            .map_or_else(|| rest.to_owned(), |share| format!(r"\\{share}")),
+        None => real,
+    }
+}
 /// Whether `path` is `base` or lies inside it, compared without regard to case.
 fn inside(path: &Path, base: &Path) -> bool {
     let lower = |p: &Path| {

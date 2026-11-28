@@ -53,9 +53,13 @@ impl Running {
 
 /// Every other process whose program lives under `root`, each held open.
 fn under(root: &Path) -> Vec<Running> {
+    // As the disk names it, like the program paths Windows reports: a short name or a junction
+    // in `root` would match no running copy.
     let prefix = format!(
         "{}\\",
-        root.to_string_lossy().trim_end_matches('\\').to_lowercase()
+        crate::root::real_plain(root)
+            .trim_end_matches('\\')
+            .to_lowercase()
     );
     // SAFETY: GetCurrentProcessId has no preconditions.
     let me = unsafe { GetCurrentProcessId() };

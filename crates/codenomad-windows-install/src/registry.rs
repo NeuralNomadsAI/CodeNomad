@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use windows::UI::Notifications::ToastNotificationManager;
+use windows::Win32::System::Com::CoIncrementMTAUsage;
 use windows::core::HSTRING;
 use windows_registry::CURRENT_USER;
 
@@ -84,7 +85,7 @@ pub fn remove_identities(p: &Product) -> Vec<String> {
         };
         for name in names.filter(ours).collect::<Vec<_>>() {
             if parent == IDENTITIES {
-                let _com = crate::shortcut::com();
+                keep_windows_runtime();
                 let id = HSTRING::from(&name);
                 _ = ToastNotificationManager::History().and_then(|h| h.ClearWithId(&id));
             }
@@ -95,4 +96,14 @@ pub fn remove_identities(p: &Product) -> Vec<String> {
         }
     }
     done
+}
+
+/// Keeps COM up for the rest of the process before the first Windows Runtime call. The `windows`
+/// crate caches each activation factory for the process's life; a factory obtained while one
+/// thread's stay was all that kept COM up would outlive it (`shortcut::Com` leaves when dropped)
+/// and the next call would use it after COM unloaded. The usage is never given back.
+fn keep_windows_runtime() {
+    static KEPT: std::sync::Once = std::sync::Once::new();
+    // SAFETY: no preconditions; the cookie is deliberately never released.
+    KEPT.call_once(|| _ = unsafe { CoIncrementMTAUsage() });
 }
