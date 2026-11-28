@@ -5,7 +5,7 @@ use super::{
 };
 use codenomad_client::settings::memory::{Kind, valid_title};
 use rune::edit::TextEdit;
-use rune_theme_codenomad::{Space, field_kit};
+use rune_theme_codenomad::{Space, TextRole, field_kit};
 
 #[derive(Default)]
 pub(in crate::settings) struct Editor {
@@ -203,12 +203,12 @@ impl Editor {
         let form = col()
             .full_width()
             .separate(Space::Sm)
-            .children(
-                edit.entry
-                    .flagged
-                    .then(|| text(t("settings.memory.excluded")).role("status")),
-            )
-            .child(text(title))
+            .children(edit.entry.flagged.then(|| {
+                text(t("settings.memory.excluded"))
+                    .text_role(TextRole::Small)
+                    .role("status")
+            }))
+            .child(text(title).text_role(TextRole::Label))
             .child(
                 layout::field(&self.title)
                     .label(title)
@@ -219,7 +219,10 @@ impl Editor {
                     .key("memory-title"),
             )
             .child(count(&self.title.text, 60))
-            .children((!title_valid).then(|| text(t("settings.memory.titleInvalid")).role("alert")))
+            .children(
+                (!title_valid)
+                    .then(|| chrome::palette::save_error(t("settings.memory.titleInvalid"))),
+            )
             .child(chrome::segments(
                 t("settings.memory.entryType"),
                 &values,
@@ -227,7 +230,7 @@ impl Editor {
                 disabled,
                 move |s, index| access(s).kind = KINDS.get(index).copied(),
             ))
-            .child(text(body))
+            .child(text(body).text_role(TextRole::Label))
             .child(
                 layout::textarea(&self.text)
                     .rows(8)
@@ -238,11 +241,14 @@ impl Editor {
                     .key("memory-text"),
             )
             .child(count(&self.text.text, 2000))
-            .children((!text_valid).then(|| text(t("settings.memory.textInvalid")).role("alert")))
-            .children(error.map(|error| text(t(error)).wrap().role("alert")))
+            .children(
+                (!text_valid)
+                    .then(|| chrome::palette::save_error(t("settings.memory.textInvalid"))),
+            )
+            .children(error.map(|error| chrome::palette::save_error(t(error))))
             .child(
                 layout::action_row()
-                    .child(layout::button(
+                    .child(chrome::primary_action(
                         t("settings.memory.save"),
                         disabled || !title_valid || !text_valid || !self.dirty(edit),
                         move |s: &mut S| {
@@ -312,4 +318,5 @@ fn count(value: &str, limit: usize) -> El {
             .replace("{count}", &value.chars().count().to_string())
             .replace("{limit}", &limit.to_string()),
     )
+    .text_role(TextRole::Small)
 }

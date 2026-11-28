@@ -67,22 +67,29 @@ pub(in crate::settings) fn view<S: 'static>(
                 .key("integrations-refresh"),
             )
             .children(header_status.map(|(label, alert)| {
-                text(label)
-                    .wrap()
-                    .role(if alert { "alert" } else { "status" })
+                if alert {
+                    chrome::palette::save_error(&label)
+                } else {
+                    text(label).text_role(TextRole::Small).wrap().role("status")
+                }
             })),
     ));
 
     if let Some(notice) = &panel.notice {
         body = body.child(
-            text(&notice.text)
-                .wrap()
-                .role(if notice.error { "alert" } else { "status" })
-                .key("integrations-notice"),
+            if notice.error {
+                chrome::palette::save_error(&notice.text)
+            } else {
+                text(&notice.text)
+                    .text_role(TextRole::Small)
+                    .wrap()
+                    .role("status")
+            }
+            .key("integrations-notice"),
         );
     }
     if panel.docs_link.failed() {
-        body = body.child(text(t("rune.connect_error")).wrap().role("alert"));
+        body = body.child(chrome::palette::save_error(t("rune.connect_error")));
     }
 
     if let LoadState::Ready(snapshot) = &panel.load
@@ -117,8 +124,11 @@ pub(in crate::settings) fn view<S: 'static>(
         );
         if installable.is_empty() {
             if snapshot.catalog_state != CatalogState::Unavailable {
-                catalog_col =
-                    catalog_col.child(text(t("integrations.catalog.allInstalled")).role("status"));
+                catalog_col = catalog_col.child(
+                    text(t("integrations.catalog.allInstalled"))
+                        .text_role(TextRole::Small)
+                        .role("status"),
+                );
             }
         } else {
             for entry in installable {
@@ -185,7 +195,12 @@ fn recognized_card<S: 'static>(
         Some(RowAction::Detach) => {
             let target_id = id.clone();
             layout::action_row()
-                .child(text(&line.text).wrap().role("status"))
+                .child(
+                    text(&line.text)
+                        .text_role(TextRole::Small)
+                        .wrap()
+                        .role("status"),
+                )
                 .child(
                     layout::button(
                         t("integrations.detachConversation"),
@@ -199,14 +214,16 @@ fn recognized_card<S: 'static>(
                     .key(format!("integration-detach-{id}")),
                 )
         }
+        None if line.warning => chrome::palette::save_error(&line.text),
         None => text(&line.text)
+            .text_role(TextRole::Small)
             .wrap()
-            .role(if line.warning { "alert" } else { "status" }),
+            .role("status"),
     };
     card = card.child(line_el);
     let connection = connection_text(entry);
     if connection != line.text {
-        card = card.child(text(connection).wrap());
+        card = card.child(text(connection).text_role(TextRole::Small).wrap());
     }
 
     if let Some(part_version) = entry
@@ -220,6 +237,7 @@ fn recognized_card<S: 'static>(
                 "integrations.partVersion",
                 &[("app", &entry.app.name), ("version", part_version)],
             ))
+            .text_role(TextRole::Small)
             .wrap(),
         );
     }
@@ -320,7 +338,7 @@ fn installable_card<S: 'static>(
             .full_width()
             .separate(Space::Sm)
             .child(header)
-            .child(text(family_label(entry.family)))
+            .child(text(family_label(entry.family)).text_role(TextRole::Small))
             .child(scope_control)
             .child(
                 layout::action_row().child(

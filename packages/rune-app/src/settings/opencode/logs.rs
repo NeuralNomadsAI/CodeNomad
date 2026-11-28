@@ -173,15 +173,14 @@ impl State {
             if self.loading {
                 body = body.child(
                     text(t("instanceInfo.loading"))
+                        .text_role(TextRole::Small)
                         .role("status")
                         .key("opencode-logs-loading"),
                 );
             }
             if self.error {
                 body = body.child(
-                    text(t("settings.opencode.logs.failed"))
-                        .wrap()
-                        .role("alert")
+                    chrome::palette::save_error(t("settings.opencode.logs.failed"))
                         .key("opencode-logs-error"),
                 );
             }

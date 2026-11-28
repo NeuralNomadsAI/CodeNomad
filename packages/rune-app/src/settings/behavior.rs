@@ -3,7 +3,7 @@ use super::{
     preferences::behavior::{GeneralToggle, PERMISSION_MODES},
 };
 use crate::strings::{locale, t};
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{Space, layout::Layout, settings as chrome};
 use std::{cell::RefCell, rc::Rc};
 
@@ -143,16 +143,16 @@ impl General {
                 .children(BEFORE_PERMISSIONS.into_iter().map(&toggle_row))
                 .child(chrome::setting_row_with_info(title, Some(info), trigger))
                 .children(prefs.new_conversation_permissions_failed().then(|| {
-                    text(t("settings.behavior.newConversationPermissions.saveFailed"))
-                        .role("alert")
-                        .wrap()
+                    chrome::palette::save_error(t(
+                        "settings.behavior.newConversationPermissions.saveFailed",
+                    ))
                 }))
                 .child(toggle_row(GeneralToggle::FollowUpBehavior))
                 .children(native.then(|| toggle_row(GeneralToggle::KeepComputerAwake)))
                 .children(
                     self.help_open
                         .failed()
-                        .then(|| text(t("commands.openHelp.failed")).role("alert").wrap()),
+                        .then(|| chrome::palette::save_error(t("commands.openHelp.failed"))),
                 ),
         )
     }
