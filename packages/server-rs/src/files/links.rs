@@ -112,11 +112,32 @@ fn not_file() -> Error {
 }
 
 /// File bytes through links; `None` when the path is missing or unreadable.
+/// Stats first so directories, special files, and oversized files are rejected
+/// before opening or allocating the bounded buffer.
 pub fn read(base: &Path, relative: &str, max: usize) -> Result<Option<Vec<u8>>, Error> {
     guard(base, relative)?;
-    let Ok(file) = std::fs::File::open(target(base, relative)) else { return Ok(None) };
-    if !file.metadata().is_ok_and(|m| m.is_file()) {
+    let path = target(base, relative);
+    let Ok(meta) = std::fs::metadata(&path) else { return Ok(None) };
+    if !meta.is_file() {
         return Err(not_file());
+    }
+    if meta.len() > max as u64 {
+        return Err(large());
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    let Ok(file) = opts.open(&path) else { return Ok(None) };
+    let Ok(file_meta) = file.metadata() else { return Ok(None) };
+    if !file_meta.is_file() {
+        return Err(not_file());
+    }
+    if file_meta.len() > max as u64 {
+        return Err(large());
     }
     let mut bytes = Vec::new();
     if file.take(max as u64 + 1).read_to_end(&mut bytes).is_err() {
@@ -133,6 +154,11 @@ pub fn read_lenient(base: &Path, relative: &str, max: usize) -> Result<Option<Ve
         Err(e) if e.1.0["error"] == large().1.0["error"] => Err(e),
         Err(_) => Ok(None),
     }
+}
+
+/// Non-blocking wrapper around `read_lenient` for the single-threaded Tokio runtime.
+pub async fn read_lenient_async(base: PathBuf, relative: String, max: usize) -> Result<Option<Vec<u8>>, Error> {
+    tokio::task::spawn_blocking(move || read_lenient(&base, &relative, max)).await.map_err(|_| unavailable())?
 }
 
 #[cfg(test)]
