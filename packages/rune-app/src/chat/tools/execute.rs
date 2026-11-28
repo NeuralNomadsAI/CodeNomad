@@ -9,10 +9,7 @@ use crate::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
-    layout::{self, Layout},
-    markdown,
-    timeline::search::Query,
+    Space, catalogue, layout::Layout, markdown, timeline::search::Query, transcript,
 };
 use serde_json::Value;
 
@@ -136,30 +133,33 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
             manual
         };
         let name: String = name.chars().take(250).collect();
-        let mut row = col().key(call.clone()).role("listitem").child(
-            layout::action_row()
-                .child(if input.is_object() {
-                    let toggle = call.clone();
-                    layout::button(
-                        &name,
-                        false,
-                        screen::action(&s.input_scope, move |s| {
-                            if search_match {
-                                super::Display::set_execute_search_expanded(
-                                    s, search_id, &toggle, !expanded,
-                                );
-                            } else {
-                                super::Display::toggle(s, &toggle);
-                            }
-                        }),
-                    )
-                    .key(format!("toggle-{call}"))
-                    .expanded(expanded)
-                } else {
-                    text(name)
-                })
-                .child(text(t(status)).text_role(TextRole::Label)),
-        );
+        let status_kind = match status {
+            "toolCall.status.completed" => transcript::ToolStatus::Completed,
+            "toolCall.status.running" => transcript::ToolStatus::Running,
+            "toolCall.status.error" => transcript::ToolStatus::Error,
+            _ => transcript::ToolStatus::Unknown,
+        };
+        let toggle = call.clone();
+        let mut row =
+            col()
+                .key(call.clone())
+                .role("listitem")
+                .child(transcript::nested_tool_header(
+                    input.is_object().then(|| format!("toggle-{call}")),
+                    &name,
+                    expanded,
+                    status_kind,
+                    t(status),
+                    screen::action(&s.input_scope, move |s| {
+                        if search_match {
+                            super::Display::set_execute_search_expanded(
+                                s, search_id, &toggle, !expanded,
+                            );
+                        } else {
+                            super::Display::toggle(s, &toggle);
+                        }
+                    }),
+                ));
         if expanded && input.is_object() {
             row = row.child(if let Some(input) = rendered_input {
                 markdown::tool_pane(

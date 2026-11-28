@@ -8,10 +8,7 @@ use crate::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, catalogue,
-    layout::{self, Layout},
-    markdown,
-    timeline::search::Query,
+    Space, catalogue, layout::Layout, markdown, timeline::search::Query, transcript,
 };
 
 #[cfg(test)]
@@ -247,25 +244,25 @@ pub(super) fn view_chunk<'a>(
     let toggle = group.keys.to_vec();
     let expanded = group.expanded;
     let search_id = group.search_id;
-    let header = layout::action_row()
-        .child(
-            layout::button(
-                base,
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    if let Some(id) = search_id {
-                        Display::set_group_search_collapsed(s, id, &toggle, expanded);
-                    } else {
-                        Display::set_group_expanded(s, &toggle, !expanded);
-                    }
-                }),
-            )
-            .key(format!("toggle-{}", group.key))
-            .expanded(expanded),
-        )
-        .child(text(title))
-        .child(text(steps))
-        .children(duration.map(text));
+    let mut meta = vec![steps];
+    if let Some(duration) = duration {
+        meta.push(duration);
+    }
+    let header = transcript::group_header(
+        format!("toggle-{}", group.key),
+        base,
+        Some(text(title)),
+        meta,
+        expanded,
+        false,
+        screen::action(&s.input_scope, move |s| {
+            if let Some(id) = search_id {
+                Display::set_group_search_collapsed(s, id, &toggle, expanded);
+            } else {
+                Display::set_group_expanded(s, &toggle, !expanded);
+            }
+        }),
+    );
     let mut container = col().full_width().separate(Space::Sm).child(header);
     if expanded {
         let mut is_first_visible = true;
@@ -390,28 +387,22 @@ fn reasoning_card(
             end.is_some() || (!message_completed && s.phase == crate::Phase::Streaming)
         });
     let meta = super::tools::duration::view(s, fragment, timing, title_el);
-    let header = layout::action_row()
-        .child(
-            layout::button(
-                t("messageBlock.reasoning.thinkingLabel"),
-                !has_body,
-                screen::action(&s.input_scope, move |s| {
-                    if has_body {
-                        toggle(s);
-                    }
-                }),
-            )
-            .key(toggle_key)
-            .expanded(open),
-        )
-        .child(meta);
-    let card = col()
-        .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
-        .inset_surface()
-        .child(header)
-        .children(open.then(|| {
+    let header = transcript::group_header(
+        toggle_key,
+        t("messageBlock.reasoning.thinkingLabel"),
+        Some(meta),
+        Vec::new(),
+        open,
+        !has_body,
+        screen::action(&s.input_scope, move |s| {
+            if has_body {
+                toggle(s);
+            }
+        }),
+    );
+    let card = transcript::tool_card(
+        header,
+        open.then(|| {
             body(
                 s,
                 message,
@@ -421,7 +412,9 @@ fn reasoning_card(
                 (retained, total),
                 query,
             )
-        }));
+        }),
+        None,
+    );
     match card_key {
         Some(key) => card.key(key),
         None => card,

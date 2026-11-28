@@ -55,20 +55,6 @@ pub fn view(
                 )
             }),
         )
-        .children((!s.messages.is_empty()).then(|| {
-            crate::components::button_tx(
-                "oldest",
-                t("messageSection.scroll.toFirstAriaLabel"),
-                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
-                screen::action_tx(&scope, crate::chat::reader::oldest),
-            )
-        }))
-        .child(crate::components::button_tx(
-            "latest",
-            t("rune.latest"),
-            false,
-            screen::action_tx(&scope, crate::latest),
-        ))
         .child(more)
         .child(
             layout::button_tx(

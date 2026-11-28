@@ -9,7 +9,7 @@ use std::rc::{Rc, Weak};
 mod menu;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
-pub(super) use menu::{header, overlays, restore};
+pub(super) use menu::{actions, overlays, restore};
 
 #[derive(Default)]
 pub(crate) struct Actions {

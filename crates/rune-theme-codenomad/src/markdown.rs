@@ -27,7 +27,7 @@ pub fn prose<S: 'static>(
     let kit = &*kit(dark);
     let t = tokens(dark);
     let style = MarkdownStyle::from_kit(kit)
-        .code_block(t.color("surface-inset"), t.color("border-base"))
+        .code_block(t.color("surface-inset"), rune::Color::TRANSPARENT)
         .code_block_radius(0.0)
         .code_block_text(t.color("text-primary"))
         .plain_code_text(t.color("text-primary"))
@@ -538,11 +538,16 @@ pub fn language_for_path(path: &str) -> &str {
 
 pub fn copy_button<S: 'static>(label: &str, copy: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
     let kit = &*kit(dark());
+    let action = std::rc::Rc::new(copy);
+    let press = action.clone();
     rune_kit::IconButton::new(kit.glyph.copy)
+        .variant(rune_kit::IconButtonVariant::GhostMuted)
+        .control_size(rune_kit::ControlSize::Small)
         .label(label)
         .help(label)
-        .on_press_tx(copy)
+        .on_press_tx(move |s, tx| press(s, tx))
         .build(kit)
+        .on_key(crate::layout::enter_action(action))
 }
 
 pub fn hold_frame(key: String, stamp: impl std::hash::Hash, build: impl FnOnce() -> El) -> El {

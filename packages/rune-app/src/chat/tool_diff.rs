@@ -10,7 +10,7 @@ use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, catalogue,
     layout::{self, DrawnRect, Layout},
-    markdown,
+    markdown, transcript,
 };
 use std::{
     cell::Cell,
@@ -1049,73 +1049,62 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
     let wrap_card = key.to_owned();
     let wrap_key = format!("{key}-wrap");
     let patch = entry.patch.clone();
-    col()
-        .full_width()
-        .separate(Space::Sm)
-        .child(
-            layout::action_row()
-                .label(t("toolCall.diff.viewMode.ariaLabel"))
-                .children(path.map(|_| text(title)))
-                .child(
-                    markdown::copy_button(
-                        t("toolCall.diff.copyPatch"),
-                        screen::action_tx(&s.input_scope, move |s, tx| {
-                            s.transcript_display.children.cancel_copy();
-                            tx.copy(patch.as_str());
-                        }),
-                    )
-                    .key(format!("{key}-copy-patch")),
-                )
-                .child(
-                    layout::button(
-                        t(if split {
-                            "toolCall.diff.switchToUnified"
-                        } else {
-                            "toolCall.diff.switchToSplit"
-                        }),
-                        false,
-                        screen::action(&s.input_scope, move |s| {
-                            let mode = if split {
-                                DiffMode::Unified
-                            } else {
-                                DiffMode::Split
-                            };
-                            s.tool_diff_preferences.mode = mode;
-                            if s.tool_diff_preferences.compact {
-                                s.transcript_display.set_compact_split(
-                                    s.tool_diff_preferences.layout_epoch,
-                                    &mode_key,
-                                    !split,
-                                );
-                            }
-                            Preferences::sync(s);
-                            s.revision += 1;
-                        }),
-                    )
-                    .key(format!("{key}-mode"))
-                    .checked(split),
-                )
-                .child(
-                    layout::button(
-                        t(if wrapped || split {
-                            "toolCall.diff.disableWordWrap"
-                        } else {
-                            "toolCall.diff.enableWordWrap"
-                        }),
-                        split,
-                        screen::action(&s.input_scope, move |s| {
-                            Display::toggle(s, &wrap_key);
-                            s.transcript_display
-                                .diffs
-                                .edit(&wrap_card)
-                                .set_wrap(!wrapped);
-                        }),
-                    )
-                    .key(format!("{key}-wrap"))
-                    .checked(wrapped || split),
-                ),
-        )
-        .child(markdown::diff_pane(
+    let copy_patch = markdown::copy_button(
+        t("toolCall.diff.copyPatch"),
+        screen::action_tx(&s.input_scope, move |s, tx| {
+            s.transcript_display.children.cancel_copy();
+            tx.copy(patch.as_str());
+        }),
+    )
+    .key(format!("{key}-copy-patch"));
+    let mode_btn = transcript::diff_mode_button(
+        t(if split {
+            "toolCall.diff.switchToUnified"
+        } else {
+            "toolCall.diff.switchToSplit"
+        }),
+        split,
+        screen::action(&s.input_scope, move |s| {
+            let mode = if split {
+                DiffMode::Unified
+            } else {
+                DiffMode::Split
+            };
+            s.tool_diff_preferences.mode = mode;
+            if s.tool_diff_preferences.compact {
+                s.transcript_display.set_compact_split(
+                    s.tool_diff_preferences.layout_epoch,
+                    &mode_key,
+                    !split,
+                );
+            }
+            Preferences::sync(s);
+            s.revision += 1;
+        }),
+    )
+    .key(format!("{key}-mode"));
+    let wrap_btn = transcript::wrap_button(
+        t(if wrapped || split {
+            "toolCall.diff.disableWordWrap"
+        } else {
+            "toolCall.diff.enableWordWrap"
+        }),
+        wrapped || split,
+        split,
+        screen::action(&s.input_scope, move |s| {
+            Display::toggle(s, &wrap_key);
+            s.transcript_display
+                .diffs
+                .edit(&wrap_card)
+                .set_wrap(!wrapped);
+        }),
+    )
+    .key(format!("{key}-wrap"));
+    transcript::diff_frame(
+        t("toolCall.diff.viewMode.ariaLabel"),
+        path.map(|_| title.as_str()),
+        vec![copy_patch, mode_btn, wrap_btn],
+        markdown::diff_pane(
             diff::view(
                 s,
                 format!("{key}-diff"),
@@ -1124,7 +1113,8 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                 None,
             ),
             entry.lines,
-        ))
+        ),
+    )
 }
 
 #[cfg(test)]
