@@ -687,6 +687,7 @@ dependencies = [
  "base64 0.22.1",
  "codenomad-client",
  "codenomad-host-process",
+ "codenomad-windows-install",
  "codenomad-windows-notifications",
  "icu_collator",
  "icu_locale_core",
@@ -702,6 +703,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "winresource",
 ]
 
 [[package]]
