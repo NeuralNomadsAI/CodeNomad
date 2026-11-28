@@ -2,9 +2,9 @@ use super::{document::Format, presentation::Kind};
 use crate::{
     State, components::button_tx, screen, strings::t, window_control::scoped_close_button,
 };
-use rune::{El, text};
+use rune::El;
 use rune_theme_codenomad::{
-    Space, document_reader as theme,
+    Space, document_reader as theme, git_panel,
     layout::{self, Layout},
 };
 
@@ -178,13 +178,13 @@ fn reader_content(s: &State) -> El {
     let kind = ui.document_kind();
     if let Some(kind) = kind {
         content_view = match kind {
-            Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
+            Kind::Binary => git_panel::note(t("filesPanel.binary"), "status"),
             Kind::Image => match ui.presentation.image.as_ref() {
                 Some(image) if image.error().is_some() => {
-                    text(t("filesPanel.binary")).pad(Space::Md)
+                    git_panel::note(t("filesPanel.binary"), "status")
                 }
-                Some(image) => theme::image(image, &target.path),
-                None => text(t("instanceInfo.loading")).pad(Space::Md),
+                Some(image) if image.is_ready() => theme::image(image, &target.path),
+                _ => git_panel::note(t("instanceInfo.loading"), "status"),
             },
             Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
@@ -266,17 +266,20 @@ fn reader_content(s: &State) -> El {
                             let input_scope = s.input_scope.clone();
                             let revision = ui.document.revision();
                             let pictures = ui.pictures.shown.clone();
-                            rune::col().pad(Space::Lg).child(theme::markdown(
-                                dark,
-                                text,
-                                t("markdown.mermaid.diagram"),
-                                document_link(s),
-                                move |index, _| !unwrapped.contains(&index),
-                                move |code| {
-                                    code_controls(dark, &input_scope, scope, revision, code)
-                                },
-                                move |source| pictures.get(source).cloned(),
-                            ))
+                            rune::col()
+                                .full_width()
+                                .pad(Space::Lg)
+                                .child(theme::markdown(
+                                    dark,
+                                    text,
+                                    t("markdown.mermaid.diagram"),
+                                    document_link(s),
+                                    move |index, _| !unwrapped.contains(&index),
+                                    move |code| {
+                                        code_controls(dark, &input_scope, scope, revision, code)
+                                    },
+                                    move |source| pictures.get(source).cloned(),
+                                ))
                         },
                     )
                     .key("file-rendered-scroll")
@@ -333,18 +336,19 @@ fn reader_content(s: &State) -> El {
             }
         }),
     ));
-    let status = if ui.document.dirty() {
-        Some(t("settings.configFiles.state.unsaved"))
-    } else {
-        (!matches!(kind, Some(Kind::Text(_))) || !ui.document.editable())
-            .then(|| t("filesPanel.readOnly"))
+    let read_only = !matches!(kind, Some(Kind::Text(_))) || !ui.document.editable();
+    let status = match (ui.document.dirty(), read_only) {
+        (true, true) => Some(format!(
+            "{} · {}",
+            t("settings.configFiles.state.unsaved"),
+            t("filesPanel.readOnly")
+        )),
+        (true, false) => Some(t("settings.configFiles.state.unsaved").into()),
+        (false, true) => Some(t("filesPanel.readOnly").into()),
+        (false, false) => None,
     };
     let error = if ui.document.project_error() {
-        Some(format!(
-            "{} — {}",
-            t("directoryBrowser.load.errorFallback"),
-            t("instanceShell.rightPanel.actions.refresh")
-        ))
+        Some(t("directoryBrowser.load.errorFallback").into())
     } else {
         match ui.document.error() {
             Some(conflict @ super::document::store::Error::Conflict(_)) => {
@@ -364,21 +368,29 @@ fn reader_content(s: &State) -> El {
         .child(theme::header(
             &target.path,
             &target.directory,
-            status,
+            status.as_deref(),
             actions,
         ))
-        .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
-        .children(ui.document.not_retained().then(|| {
-            text(t("filesPanel.draftLimit"))
-                .role("alert")
-                .pad(Space::Md)
+        .children(error.map(|message| {
+            rune::col()
+                .full_width()
+                .child(git_panel::note(message, "alert"))
+                .child(layout::action_row().pad(Space::Md).child(reader_action(
+                    s,
+                    "file-error-refresh",
+                    t("instanceShell.rightPanel.actions.refresh"),
+                    ui.reader.busy() || ui.document.pending(),
+                    |ui, _| ui.refresh_document(ui.document.scope()),
+                )))
         }))
         .children(
-            (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
-                text(t("instanceInfo.loading"))
-                    .role("status")
-                    .pad(Space::Md)
-            }),
+            ui.document
+                .not_retained()
+                .then(|| git_panel::note(t("filesPanel.draftLimit"), "alert")),
+        )
+        .children(
+            (ui.reader.busy() && ui.reader.preview().is_none())
+                .then(|| git_panel::note(t("instanceInfo.loading"), "status")),
         )
         .child(content_view.remaining())
         .children(editor::decision(s, ui))
