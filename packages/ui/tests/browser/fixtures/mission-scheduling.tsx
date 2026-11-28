@@ -17,8 +17,7 @@ function Fixture() {
   const [draft, change] = createSignal(query.get("zone") === "system" ? newMissionSchedulingDraft() : newMissionSchedulingDraft("UTC"))
   const [policy, setPolicy] = createSignal<MissionLaunchPolicy>()
   const [started, setStarted] = createSignal(false)
-  const [sources, setSources] = createSignal({ "branch-commits": [{ id: "refs/heads/dev", label: "dev" }],
-    "conversation-message": [{ id: "ses_followed", label: "Followed conversation" }] })
+  const [sources, setSources] = createSignal({ "branch-commits": [{ id: "refs/heads/dev", label: "dev" }] })
   ;(window as any).schedulingFixture = { change: (patch: object) => change(value => ({ ...value, ...patch })),
     draft, policy, started: setStarted, sources: setSources,
     row: (kind: MissionCriterionKind, patch: object = {}) => ({ ...newMissionCriterion(kind), ...patch }),

@@ -87,7 +87,7 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
     await label(page, "Criterion 1 type").selectOption("daily")
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 9)
+    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 8)
     assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
     assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
     assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
@@ -232,18 +232,15 @@ test("the monthly skip is explained on demand and a calendar without a future sl
   } finally { await page.close() }
 })
 
-test("each event row reads its own sources; an unavailable source keeps the draft and invalidates the policy", async () => {
+test("a local branch row reads its sources; an unavailable source keeps the draft and invalidates the policy", async () => {
   const { page, errors } = await setup()
   try {
-    const sources = [["branch-commits", "refs/heads/dev"], ["conversation-message", "ses_followed"]]
-    await rows(page, sources.map(([kind]) => [kind]))
+    await rows(page, [["branch-commits"]])
     assert.equal(await policy(page), undefined)
-    for (const [index, [, source]] of sources.entries()) await selectMissionSource(page, index + 1, source)
-    const saved = missionLaunchPolicySchema.parse(await policy(page))
-    assert.ok("when" in saved)
-    assert.deepEqual(saved.when.map(item => item.kind), sources.map(([kind]) => kind))
+    await selectMissionSource(page, 1, "refs/heads/dev")
+    assert.deepEqual(missionLaunchPolicySchema.parse(await policy(page)), { when: [{ kind: "branch-commits", directory: "/fixture", ref: "refs/heads/dev" }] })
     await page.evaluate(() => (window as any).schedulingFixture.sources({}))
-    assert.equal(await label(page, "Criterion 2 source").getAttribute("data-source-id"), "ses_followed")
+    assert.equal(await label(page, "Criterion 1 source").getAttribute("data-source-id"), "refs/heads/dev")
     assert.match(await label(page, "Criterion 1 source").innerText(), /Unavailable source/)
     assert.equal(await policy(page), undefined)
     assert.deepEqual(errors, [])

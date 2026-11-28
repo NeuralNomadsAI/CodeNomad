@@ -9,7 +9,7 @@ import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
 import { isMissionPickerSource, isRepositoryCriterion, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionPickerSource,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
-export type SelectedSource = MissionPickerSource | "coordinator-session"
+export type SelectedSource = MissionPickerSource | "coordinator-session" | "conversation-message"
 export type MissionSourcePage = { next(): string | undefined; loading(): boolean; failed(): boolean; lookupFailed?(): boolean
   more(): void; retry(): void; search?(query: string): void }
 /** Lists come from the owning authorized project. Absence is an unavailable read. */

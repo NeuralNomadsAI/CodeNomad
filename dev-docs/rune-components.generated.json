@@ -20696,8 +20696,8 @@
     "packages/ui/src/components/mission-editor-body.ts": "687a47201bc58a656df60fd88f09d8374f3b59dbcd4fe7edeb5a7d56997d3e18",
     "packages/ui/src/components/mission-editor-repository.ts": "6038d2cb07d13af9e796ec3de1733df30be56ec77a8f4ada9b98b29b709f9938",
     "packages/ui/src/components/mission-editor-schedule.ts": "9f721fd7400ad28ba7b1de303ef9145ba0139e1e6da2ae6cb296b2f89fb3d164",
-    "packages/ui/src/components/mission-editor-sources.ts": "f232f35979b3aa4a9e62d50fb6362064524c7732e3774b52c3c52b532ab01a8f",
-    "packages/ui/src/components/mission-editor.tsx": "067de18918c6b654891c7c51577cbe4d3ce84f87b7659987e3f22aa916fb1f6e",
+    "packages/ui/src/components/mission-editor-sources.ts": "3a53bcfa7db6ef696c6e9d4f8241f4984b61e9802d89ec6a035f58c257eb6864",
+    "packages/ui/src/components/mission-editor.tsx": "14a7d95a2d91b419631336431c7cc085c5a2044f84c804f115d08f9f51e5055e",
     "packages/ui/src/components/mission-execution-model.ts": "26e033bb23cae669e09d905da42abef5372c54a3fba2af1c4d12d341101905bc",
     "packages/ui/src/components/mission-execution.test.ts": "60f4fed38cc17b789dbb1963d7fd8508ffa5a3327b7be94a120d87f058d1da55",
     "packages/ui/src/components/mission-execution.tsx": "f3503266750eb404366bde87c779c57811f8fb25ddfc7a880d511c5ba14e77b1",
@@ -20743,12 +20743,12 @@
     "packages/ui/src/components/mission-recovery-button.tsx": "91f6642b8318d5244283039bcc4db55cd9bd1c01829fb220be6d29019229c351",
     "packages/ui/src/components/mission-report-prose.tsx": "fda058a7d274e217bd806ccbad1544a8b24260b51c70c9d4e986ae7d0be4e1a1",
     "packages/ui/src/components/mission-repository-fields.tsx": "210c70d58b5ed09ef69399d2d1ae29c2eb28fc30f04af4d7b0141315941d86e6",
-    "packages/ui/src/components/mission-scheduling-data.test.ts": "ca8d26a1a308edef59e604d846e8b4bbb67aac8d01444cf75f21dcfe509d0a60",
-    "packages/ui/src/components/mission-scheduling-data.ts": "243f5756c83946f988a8a26516f0c3e36e2a7b59d41c6aa75a550d154239320d",
-    "packages/ui/src/components/mission-scheduling-decode.test.ts": "3cf4662f95afd33b9deb17e8e84ab9be241b89855fef61cdf6eb6f4808281610",
-    "packages/ui/src/components/mission-scheduling-decode.ts": "f99d89f782a9dc4b65ba56bcd42931111e0449ef6efbe48339cec12c63a29281",
+    "packages/ui/src/components/mission-scheduling-data.test.ts": "029e32feb459b1f4328b0c0d3858f9a156a9756421fa17209d62e32a53db960f",
+    "packages/ui/src/components/mission-scheduling-data.ts": "ed71dda17b9916cca8b06c8e2b31794c447e12125e63a6ac27af9fdeca54f3bd",
+    "packages/ui/src/components/mission-scheduling-decode.test.ts": "a081216d851a3baef9f948c97be880c72343cd945818a7177a67514be830a879",
+    "packages/ui/src/components/mission-scheduling-decode.ts": "c92cbb60f5738fd631b6a8fffef79566138789a6105663b8653e874eb162e3a4",
     "packages/ui/src/components/mission-scheduling-locales.test.ts": "9b17deffc2ed042e46bb8b35051001865700759120ac7b958b95d50f4cbd89f5",
-    "packages/ui/src/components/mission-scheduling-sources.tsx": "2a12e15ed59b26b917a3cdb87c2e1e44c17dae67a51d00182fa7e3663bee9b20",
+    "packages/ui/src/components/mission-scheduling-sources.tsx": "868884016829a2962cb11e2b88439a92dd600240963dcceb1f02e8b7301f8a35",
     "packages/ui/src/components/mission-scheduling-summary.test.ts": "0e3df08f214b09845d7f3893e0fa4dfb50b604f42c1b6c56bc9fe5c5ff5ffb90",
     "packages/ui/src/components/mission-scheduling-summary.ts": "cd744137532deeb4708f8865cdf7ceff53796218315e01b2cea5d7577e5bc429",
     "packages/ui/src/components/mission-scheduling.tsx": "d68665ffb80e1280150089ff1a163b1ea25eb9956dc5792f0db1db9b04c9447c",
@@ -22427,7 +22427,7 @@
     "packages/ui/tests/browser/fixtures/mission-report-delivery.tsx": "60984ffc983d8373ad7331e56244a07bedd1b5bba14adf0964c49bdc64724e89",
     "packages/ui/tests/browser/fixtures/mission-result-reader.tsx": "50dbc5bb462c1192447dfaa90e1fe2ceb7bd316874524f27162b0e87dc9e3d4d",
     "packages/ui/tests/browser/fixtures/mission-row-refetch.tsx": "b4c722dd6cbfc73243eed6de1f85ab44af561469baf6d7d9d22361011e5c5adf",
-    "packages/ui/tests/browser/fixtures/mission-scheduling.tsx": "bf5146f45ed03567aeb63700074c4f5f383b5d66e6063d8e039074c20374768e",
+    "packages/ui/tests/browser/fixtures/mission-scheduling.tsx": "155d4e309ea83705d4b55b30ed8958206824b24ef746c9605349b46658853cee",
     "packages/ui/tests/browser/fixtures/mission-session.tsx": "46956e4530e7fedfb6cfc38d362679035b5f1c216c8fe8c0b176e7470a8d79a4",
     "packages/ui/tests/browser/fixtures/mission-task-reader.tsx": "ef70e9a35a7f2856e8f230869b0296d84b7280128cf2f4c304f5905ca67eb01c",
     "packages/ui/tests/browser/fixtures/mission-visibility.tsx": "263ce07eae494945c8af7ccb2bd78a3e46e3364f617e3358fb87900fd99df7ae",
@@ -22587,8 +22587,8 @@
     "packages/ui/tests/browser/mission-cross-navigation.test.ts": "3775389068907d28497f97dbde61765c66a5986216252bb8d7a3378aa5b02478",
     "packages/ui/tests/browser/mission-defaults-models.test.ts": "81bc9844390f8accb341b0273c51bfc1cf5664b2a4aeb74fe7b70438588d7961",
     "packages/ui/tests/browser/mission-editor-lifetime.test.ts": "ef4a879ca2837989f123a97303f5f03780c53bc07ed0daf61f1cd17debf453b8",
-    "packages/ui/tests/browser/mission-editor-profiles.test.ts": "ee3a43c1fa0aa93f51df8125b82a9252f655c4559a0073f150d1667e88459cd0",
-    "packages/ui/tests/browser/mission-editor-scheduling.test.ts": "7515b6f79432c5c5992b3caa9770de2621c90aa848c33c64a7adc411d0d7b920",
+    "packages/ui/tests/browser/mission-editor-profiles.test.ts": "6675f458769a170ee32081532490de94b359caaa590acd8c5dfd6c0c93e506f9",
+    "packages/ui/tests/browser/mission-editor-scheduling.test.ts": "bca593f37cbfebdea9d5cdd75ecc5642d365cbe68771c06daa327b170898972d",
     "packages/ui/tests/browser/mission-failure-diagnostics.ts": "90d1f4f28fe93ecc57e06ebbc2a5ecf699150088c9c04314543227d54fef7c3d",
     "packages/ui/tests/browser/mission-lifecycle-navigation.test.ts": "8edf78448a8b86c7c03ab1e084a6beae1df239d619271484b651fbb3f91799cd",
     "packages/ui/tests/browser/mission-lifecycle-revision.test.ts": "4b00964de5308f3b5129deb5e30c9b7e7870c6a199165f61d83eb7d689f6fb22",
@@ -22613,7 +22613,7 @@
     "packages/ui/tests/browser/mission-request-admission.test.ts": "faf9e1a93519805dd5b336184176728aff0d051904203f0e0fce21b156e2dadc",
     "packages/ui/tests/browser/mission-result-reader.test.ts": "992848f0da96f5ac4356f0e688e95354095eb3de60a5e812648f9f26475374cf",
     "packages/ui/tests/browser/mission-row-refetch.test.ts": "91081aba9f1602d82f221bc8f8651370e112c3946f7d9365e451515ebaac935a",
-    "packages/ui/tests/browser/mission-scheduling.test.ts": "2976d36f300620da28ff61c4910fa3ee67dc02ae8d152c787653a4916c631244",
+    "packages/ui/tests/browser/mission-scheduling.test.ts": "9655fbd0c26204e53edafc2b46595ff552d285a9c6abf2b4931ae7f637106f7b",
     "packages/ui/tests/browser/mission-settings-brief.test.ts": "9aa4faa05827772b74d33f16aed9c35c1911abd2c5c8aa8a83967c349592c084",
     "packages/ui/tests/browser/mission-status-marks.test.ts": "3615a1a225a14928f4c9391b922f449a77f871f4b379287053fa21ba7528d146",
     "packages/ui/tests/browser/mission-summaries.test.ts": "8062f7467884346988fdcc2f0a56efcb4264ba332d65416af109df3f0f1570c4",
@@ -23816,7 +23816,7 @@
     {
       "source": "packages/ui/src/components/mission-editor.tsx",
       "sheet": "target/rune-inventory/components__mission-editor.json",
-      "sheetSha256": "bc2d051c5da062ae2f82fa4d10a40280f4fd74a2638033f7a9b0290709a0b558",
+      "sheetSha256": "5672a88702981a4cf24fdfa6d29ca9dbc481f8f39804892bdf8e8352b2c8bafb",
       "components": [
         {
           "id": "packages/ui/src/components/mission-editor.tsx#MissionEditor",
@@ -23881,7 +23881,7 @@
     {
       "source": "packages/ui/src/components/mission-model-library.tsx",
       "sheet": "target/rune-inventory/components__mission-model-library.json",
-      "sheetSha256": "15d3bd27bbfd650997ddca9b952f59c3e2cb9eed8e164b79993015b0560fa407",
+      "sheetSha256": "cf25285b400261f82a5df278be07e49347c0b42599f15f72054724916719c258",
       "components": [
         {
           "id": "packages/ui/src/components/mission-model-library.tsx#MissionModelLibrary",
@@ -24015,7 +24015,7 @@
     {
       "source": "packages/ui/src/components/mission-profile-controls.tsx",
       "sheet": "target/rune-inventory/components__mission-profile-controls.json",
-      "sheetSha256": "a25032afd0caff606016c659770bb3f295de8fd230aafe2412138e27b350a378",
+      "sheetSha256": "97bacd834dbde35b4fa40e64a621eeb3408c60fbbc108253c100f80f6d001333",
       "components": [
         {
           "id": "packages/ui/src/components/mission-profile-controls.tsx#MissionProfileControls",
@@ -24028,7 +24028,7 @@
     {
       "source": "packages/ui/src/components/mission-profile-summary.tsx",
       "sheet": "target/rune-inventory/components__mission-profile-summary.json",
-      "sheetSha256": "afc92370960fa8f29594a8c6728f640a974ea9491a793b002b3b26ef9fede9ad",
+      "sheetSha256": "e548931593fb73875c58e29c6ed683259559662517db5e3d0b07bbc01fd86dcb",
       "components": [
         {
           "id": "packages/ui/src/components/mission-profile-summary.tsx#MissionProfileSummary",
@@ -24054,7 +24054,7 @@
     {
       "source": "packages/ui/src/components/mission-reader-body.tsx",
       "sheet": "target/rune-inventory/components__mission-reader-body.json",
-      "sheetSha256": "e16cfd21f9bf199c81e47a0a133ae14d15997bb95b5a8107efa456c2255b7e7c",
+      "sheetSha256": "3311172ab026287d18f1e8a8986d18c0f352d768aa3f7a5556e6c61e6abddaf8",
       "components": [
         {
           "id": "packages/ui/src/components/mission-reader-body.tsx#MissionBodyPending",
@@ -24142,7 +24142,7 @@
     {
       "source": "packages/ui/src/components/mission-scheduling-sources.tsx",
       "sheet": "target/rune-inventory/components__mission-scheduling-sources.json",
-      "sheetSha256": "b7bcacf83da1821865776ed55ee1d0558a888bd2a47716f6e99e27882cc338a4",
+      "sheetSha256": "aebad3c49391d0f7bd40d4c8be4607bbdc737ef93a684adf015d10c01c4e1fd4",
       "components": [
         {
           "id": "packages/ui/src/components/mission-scheduling-sources.tsx#MissionSchedulingCriterion",
@@ -24155,7 +24155,7 @@
     {
       "source": "packages/ui/src/components/mission-scheduling.tsx",
       "sheet": "target/rune-inventory/components__mission-scheduling.json",
-      "sheetSha256": "a68269715dc7f543be7300ff1f7fc1e2d42afe5c369f0802c6257bde08008a90",
+      "sheetSha256": "7dc100c6e8f048046fd72718e062cdf55fa81ee19b7dc7fbb9cc702bc1716104",
       "components": [
         {
           "id": "packages/ui/src/components/mission-scheduling.tsx#MissionScheduling",
@@ -24181,7 +24181,7 @@
     {
       "source": "packages/ui/src/components/mission-source-select.tsx",
       "sheet": "target/rune-inventory/components__mission-source-select.json",
-      "sheetSha256": "a82ea68c0c9f94aebf0a8e1fa4f93e9350955d5ef7c773e4abfc302112d7ddc7",
+      "sheetSha256": "603582ca558ae5821f1aaca284789cdcc65099225d5129e8b21fd6b1149291a7",
       "components": [
         {
           "id": "packages/ui/src/components/mission-source-select.tsx#MissionSourceSelect",
@@ -24209,7 +24209,7 @@
     {
       "source": "packages/ui/src/components/mission-subagent-depth.tsx",
       "sheet": "target/rune-inventory/components__mission-subagent-depth.json",
-      "sheetSha256": "384a052a3547fb86f2c36659e57159bc1c420739ecc1025f2a3238931162843a",
+      "sheetSha256": "1b4b8cb54625c1f1e341e31ae506292a499e391a3fd94c3117bc3d8cfccb2406",
       "components": [
         {
           "id": "packages/ui/src/components/mission-subagent-depth.tsx#MissionSubagentDepth",
@@ -24235,7 +24235,7 @@
     {
       "source": "packages/ui/src/components/mission-task-mode-controls.tsx",
       "sheet": "target/rune-inventory/components__mission-task-mode-controls.json",
-      "sheetSha256": "c7e67fe83ecfa04dfba91dc3ec7894e72aa5269ee8314e97f7625a1ad89ae69a",
+      "sheetSha256": "9863b8013489e88d2380ae99f9e6e73265f80532402499bc852e6dcec31194dc",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-mode-controls.tsx#MissionTaskModeControls",
@@ -25514,7 +25514,7 @@
     {
       "source": "packages/ui/src/components/settings/settings-info-tip.tsx",
       "sheet": "target/rune-inventory/components__settings__settings-info-tip.json",
-      "sheetSha256": "0e66bfaac38ed8d3fbc388b7e4100bca35c70d613fe5673ec129fbefa0e2260e",
+      "sheetSha256": "6edb2f4d56877dba2e9befe8bbf6ce4c8d08cd8f3e1f94d34be96b53a61fa067",
       "components": [
         {
           "id": "packages/ui/src/components/settings/settings-info-tip.tsx#SettingsInfoTip",
@@ -26120,7 +26120,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "931c8628e5fcc9ce6dab31c9506fc9c314b9b869cc532a5c3c091f4042954d6d",
+      "sheetSha256": "e946e98665142198a0b5dce21b5fc2131ad80177c1e7ec8b97b8fb80649d61cd",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26133,7 +26133,7 @@
     {
       "source": "packages/ui/src/lib/theme.tsx",
       "sheet": "target/rune-inventory/lib__theme.json",
-      "sheetSha256": "6a05bd5a841b03699edb26a3f0f9d27f63d2fe257cc3addf83e37798be1cc91f",
+      "sheetSha256": "5f16d64def0d076a285894f8b5e8a18ebb0b1ce378ed5fa4b8618b0553caab56",
       "components": [
         {
           "id": "packages/ui/src/lib/theme.tsx#ThemeProvider",
@@ -26185,7 +26185,7 @@
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "17849e04cb7503607815b76faa6a31bfbbe024f13be23dfaf91c6519dece4d58",
+      "sheetSha256": "1171b0f7823b369bc245f33b061936365cc9f17f63885dda13cfc71549b0a0b5",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
