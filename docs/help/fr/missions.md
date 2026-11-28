@@ -104,7 +104,7 @@ Les événements en tête peuvent lancer un passage à chaque nouvelle occurrenc
 
 ### Compteurs et historique {#scheduling-limits}
 
-**Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** .
+**Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** . La conversation doit utiliser l’agent, le modèle et la réflexion du coordinateur : sinon l’enregistrement est refusé, et un lancement qui les trouve changés utilise une autre session.
 
 Vous pouvez demander à un agent de préparer la programmation dans sa conversation racine actuelle. Les passages attendent que la conversation soit au repos.
 

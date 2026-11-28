@@ -4,6 +4,7 @@ import { z } from "zod"
 import { isSessionNotFoundError } from "@opencode/client"
 import { missionCalendarAutomations, type MissionCalendarUnsupported } from "../../missions/calendar-automation"
 import { missionCalendarIDSchema } from "../../missions/calendar-run"
+import { matchesExecution } from "../../missions/execution"
 import { missionConfigurationSchema } from "../../missions/launch-policy"
 import type { LegacySchedule } from "../../missions/legacy-schedules"
 import type { MissionRead } from "../../missions/model"
@@ -23,7 +24,7 @@ const body = z.object({ configuration: missionCalendarConfigurationSchema, direc
 export type MissionCalendarOperation = { kind: "list" } | { kind: "pause" | "resume" | "delete"; calendar: string }
   | { kind: "save"; calendar: string; configuration: z.infer<typeof missionCalendarConfigurationSchema>; paused?: boolean }
 export type MissionCalendarOutcome = { calendars: MissionCalendarView[] } | { refused: "calendar-input-invalid" }
-  | { refused: "calendar-unsupported"; reason: MissionCalendarUnsupported }
+  | { refused: "calendar-unsupported"; reason: MissionCalendarUnsupported } | { refused: "calendar-coordinator-profile" }
 
 // Per service connection, the directories where no schedule of the recurring engine is left.
 const takenOver = new WeakMap<object, Set<string>>()
@@ -31,7 +32,8 @@ const takenOver = new WeakMap<object, Set<string>>()
 /** One operation on the programmed Missions ("calendars") of a directory, for the panel's routes and
  * the agents' tool alike: list them, or first save, pause, resume or delete one. Saving creates the
  * programming its caller names, or replaces it, and prepares the Mission its first launch starts.
- * The schedules the recurring engine left in the directory are taken over first.
+ * The schedules the recurring engine left in the directory are taken over first, and a paused
+ * programmed Mission whose Mission is gone has one prepared again.
  * Throws `MissionCalendarMissing` and `MissionMapMutationError`. */
 export async function runMissionCalendarOperation(deps: MissionCalendarDeps, target: { workspaceID: string; directory?: string; signal: AbortSignal
   wait<T>(operation: Promise<T>): Promise<T> }, operation: MissionCalendarOperation): Promise<MissionCalendarOutcome> {
@@ -45,13 +47,18 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
         request: JSON.parse(JSON.stringify({ requestId: `calendar_${request}_${randomUUID().slice(0, 8)}`, objective: config.objective, title: config.title, notes: config.notes,
           template: config.template, profiles: config.profiles, taskMode: config.taskMode, coordinatorGoal: config.coordinatorGoal, coordinatorSessionId,
           directory: owned.location.directory })) })).execute()).mission.id
-    const save = async (id: string, configuration: Configuration, paused?: boolean): Promise<Exclude<MissionCalendarOutcome, { calendars: unknown }> | undefined> => {
+    /** `restoring` prepares the Mission a programming lost: what a person could not have saved is accepted as it stands. */
+    const save = async (id: string, configuration: Configuration, paused?: boolean, restoring = false): Promise<Exclude<MissionCalendarOutcome, { calendars: unknown }> | undefined> => {
       const scope = deps.settings?.getProfileScope(), distro = deps.workspaceManager.getServiceWslDistro(workspaceID)
       const parsed = missionConfigurationSchema.safeParse({ ...configuration, profileID: scope?.key ?? null,
         executionHost: distro ? `wsl:${distro}` : "local", roots: [{ mode: "directory-only", directory: owned.location.directory }] })
       if (!parsed.success) return { refused: "calendar-input-invalid" }
       const config = parsed.data, unsupported = missionCalendarAutomations(config, id)
       if (!Array.isArray(unsupported)) return { refused: "calendar-unsupported", reason: unsupported.unsupported }
+      // A launch in a conversation needs it to run the coordinator's agent and model: one that differs is said now, not at the launch.
+      const named = restoring || !config.coordinatorSessionID ? undefined
+        : await wait(owned.client.session.get({ sessionID: config.coordinatorSessionID }, { signal }).catch(() => undefined))
+      if (named && !matchesExecution(config.profiles?.coordinator, named)) return { refused: "calendar-coordinator-profile" }
       // Its caller names the programming, so saving it twice is saving the same one.
       const existing = (await wait(calendars.list())).find(item => item.id === id)
       // Until its first launch the programmed Mission is an ordinary prepared one: it has its line and can be played by hand.
@@ -61,7 +68,9 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
       if (!current || pristine) {
         // An edit before the first launch prepares the Mission again, in the same conversation.
         if (pristine) await wait(rpc.delete({ missionID: current.id, expectedRevision: current.revision, requestID: `calendar_edit_${randomUUID().slice(0, 8)}`, deleteManagedSessions: false }, call))
-        prepared = await prepare(config, id, config.coordinatorSessionID ?? (pristine ? current.coordinatorSessionId : undefined))
+        const session = config.coordinatorSessionID ?? (pristine ? current.coordinatorSessionId : undefined)
+        // A lost Mission is prepared in another conversation when the one it names cannot coordinate.
+        prepared = await prepare(config, id, session).catch(error => { if (!restoring || !session) throw error; return prepare(config, id) })
       }
       await owned.refresh()
       // After its first launch an edited programming keeps naming the Mission of its current launch.
@@ -98,6 +107,13 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
       if (legacy && !legacy.length) directories.add(directoryKey)
       await owned.refresh()
     }
+    // A programmed Mission is listed as its Mission. A paused one has no run under way that could be replacing it.
+    for (const calendar of await wait(calendars.list())) {
+      if (!calendar.paused || calendar.missionID && (await wait(rpc.mission({ missionID: calendar.missionID }, call)) as MissionRead).mission) continue
+      const { when: _when, ...stored } = calendar.mission
+      const configuration = missionCalendarConfigurationSchema.safeParse({ ...stored, watchedConversationIDs: [], launch: calendar.launch }).data
+      if (configuration) await save(calendar.id, configuration, true, true).catch(() => undefined)
+    }
     if (operation.kind === "save") {
       const refused = await save(operation.calendar, operation.configuration, operation.paused)
       if (refused) return refused
@@ -120,6 +136,7 @@ export function registerMissionCalendars(app: FastifyInstance, deps: MissionCale
         : method === "POST" ? { kind: selected.data.action!, calendar: calendar! } : method === "DELETE" ? { kind: "delete", calendar: calendar! } : { kind: "list" })
       if ("calendars" in outcome) return outcome
       if (outcome.refused === "calendar-unsupported") return reply.code(422).send({ error: "Launch criteria a calendar cannot carry", code: outcome.refused, reason: outcome.reason })
+      if (outcome.refused === "calendar-coordinator-profile") return reply.code(422).send({ error: "The conversation does not run the coordinator's agent and model", code: outcome.refused })
       return reply.code(400).send({ error: "Invalid Mission calendar configuration", code: outcome.refused })
     } catch (error) {
       if (error instanceof MissionCalendarMissing) return reply.code(404).send({ error: "Mission calendar not found", code: "calendar-missing" })

@@ -204,3 +204,43 @@ test("a schedule whose launch criteria do not carry over becomes an ordinary pre
     assert.ok(titles.some(([title, state]) => title === "Old msn_other" && state === "prepared"), JSON.stringify(titles))
   } finally { await f.close() }
 })
+
+const conversation = (id: string, variant?: string) => ({ id, projectID, location: { directory }, agent: profile.agent, model: { ...profile.model, ...(variant ? { variant } : {}) } })
+
+test("a conversation that does not run the coordinator's agent and model is refused when the programming is saved", async () => {
+  const f = await fixture()
+  try {
+    f.sessions.set("ses_named", conversation("ses_named", "high"))
+    const named = { configuration: { ...configuration(), coordinatorSessionID: "ses_named" } }
+    const refused = await f.call("PUT", "/cal_named", named)
+    assert.deepEqual([refused.status, refused.body.code], [422, "calendar-coordinator-profile"])
+    assert.deepEqual([f.automations.length, (await f.missions()).length], [0, 0], "nothing is saved")
+    assert.equal((await f.agent({ action: "save", id: "cal_named", ...named })).refused, "calendar-coordinator-profile")
+    f.sessions.set("ses_named", conversation("ses_named"))
+    const saved = await f.call("PUT", "/cal_named", named)
+    assert.equal(saved.status, 200, JSON.stringify(saved.body))
+    assert.equal((await f.mission(saved.body.calendars[0].missionID)).coordinatorSessionId, "ses_named")
+  } finally { await f.close() }
+})
+
+test("a paused programmed Mission whose Mission is gone has one prepared again; a running one is left to its launch", async () => {
+  const f = await fixture()
+  try {
+    f.sessions.set("ses_named", conversation("ses_named"))
+    await f.call("PUT", "/cal_lost", { configuration: { ...configuration("Lost"), coordinatorSessionID: "ses_named" }, paused: true })
+    const { calendars } = (await f.call("PUT", "/cal_running", { configuration: configuration("Running") })).body
+    const gone = Object.fromEntries(calendars.map((item: any) => [item.id, item.missionID]))
+    for (const missionID of Object.values(gone) as string[])
+      await f.rpc.delete({ missionID, expectedRevision: (await f.mission(missionID)).revision, requestID: `gone_${missionID}`, deleteManagedSessions: false })
+    // The conversation it names has changed model since: its Mission is prepared in another one.
+    f.sessions.set("ses_named", conversation("ses_named", "high"))
+    const read = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item]))
+    const restored = await f.mission(read.cal_lost.missionID)
+    assert.notEqual(read.cal_lost.missionID, gone.cal_lost)
+    assert.deepEqual([restored.runState, read.cal_lost.mission.objective, restored.coordinatorSessionId === "ses_named", read.cal_lost.paused, read.cal_lost.mission.coordinatorSessionID],
+      ["prepared", "Lost", false, true, "ses_named"])
+    assert.equal(read.cal_running.missionID, gone.cal_running, "a run may be replacing it")
+    const again = Object.fromEntries((await f.call("GET")).body.calendars.map((item: any) => [item.id, item.missionID]))
+    assert.equal(again.cal_lost, read.cal_lost.missionID, "prepared once")
+  } finally { await f.close() }
+})
