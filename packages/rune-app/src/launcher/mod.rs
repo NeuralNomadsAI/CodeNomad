@@ -214,6 +214,10 @@ impl Launcher {
     pub fn has_owned_server(&self) -> bool {
         self.host.is_some()
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn booting(&self) -> bool {
+        self.boot.is_some()
+    }
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn set_fixture_host(&mut self, host: crate::platform::LocalHost) {
         self.host = Some(host);
@@ -728,7 +732,17 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         return relayed;
     };
     let mut changed = relayed | browser_changed | checked.changed;
-    changed |= connection::poll_boot(l);
+    let boot_changed = connection::poll_boot(l);
+    changed |= boot_changed;
+    if boot_changed {
+        crate::workspace::connected(s);
+    }
+    let Some(l) = s.screen.launcher_mut() else {
+        if changed {
+            tx.instant();
+        }
+        return changed;
+    };
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
             tx.instant();
@@ -1276,6 +1290,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if key == "rune.create_error" {
                     l.creation_uncertain = true;
                 }
+                if key == "rune.list_error" && l.connection.is_some() {
+                    l.projects_stale = true;
+                }
                 l.error = Some(key);
                 if matches!(key, "rune.restore_error" | "rune.open_error") {
                     use crate::shell::notifications::{Category, emit_outcome};
@@ -1370,6 +1387,7 @@ fn apply_connected(
     }
     let has_project = l.project.is_some();
     let job_pending = l.pending;
+    l.openings.retry_cleanup(l.connection.as_ref());
     crate::workspace::connected(s);
     if reauthenticated {
         crate::workspace::renew_connection(s);

@@ -31,6 +31,79 @@ pub(crate) fn percent_encode_header(value: &str) -> String {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+const PROMPT_UPLOAD_CHUNK: usize = 64 * 1024;
+
+#[cfg(not(target_arch = "wasm32"))]
+struct UploadChunks {
+    body: Vec<u8>,
+    offset: usize,
+    progress: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl futures_lite::Stream for UploadChunks {
+    type Item = std::result::Result<Vec<u8>, std::io::Error>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        if self.offset >= self.body.len() {
+            return std::task::Poll::Ready(None);
+        }
+        self.progress.notify_one();
+        if self.offset == 0 && self.body.len() <= PROMPT_UPLOAD_CHUNK {
+            let chunk = std::mem::take(&mut self.body);
+            return std::task::Poll::Ready(Some(Ok(chunk)));
+        }
+        let start = self.offset;
+        let end = (start + PROMPT_UPLOAD_CHUNK).min(self.body.len());
+        self.offset = end;
+        std::task::Poll::Ready(Some(Ok(self.body[start..end].to_vec())))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn send_prompt_with_idle_timeout(
+    request: reqwest::RequestBuilder,
+    idle_timeout: std::time::Duration,
+    progress: std::sync::Arc<tokio::sync::Notify>,
+) -> std::result::Result<reqwest::Response, crate::prompt::PromptError> {
+    enum Step {
+        Done(std::result::Result<reqwest::Response, reqwest::Error>),
+        Progress,
+        Idle,
+    }
+    let mut send = Box::pin(request.send());
+    let mut sleep = Box::pin(tokio::time::sleep(idle_timeout));
+    loop {
+        match futures_lite::future::or(
+            async { Step::Done(send.as_mut().await) },
+            futures_lite::future::or(
+                async {
+                    progress.notified().await;
+                    Step::Progress
+                },
+                async {
+                    sleep.as_mut().await;
+                    Step::Idle
+                },
+            ),
+        )
+        .await
+        {
+            Step::Done(result) => return result.map_err(|error| send_transport_error(&error)),
+            Step::Progress => {
+                sleep
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + idle_timeout);
+            }
+            Step::Idle => return Err(crate::prompt::PromptError::Unconfirmed),
+        }
+    }
+}
+
 pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::PromptError {
     #[cfg(not(target_arch = "wasm32"))]
     if error.is_connect() || error.is_builder() {
@@ -41,6 +114,22 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
         return crate::prompt::PromptError::Rejected;
     }
     crate::prompt::PromptError::Unconfirmed
+}
+
+async fn read_error_body(response: reqwest::Response) -> Result<Value> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::timeout(
+            crate::http::REQUEST_TIMEOUT,
+            crate::prompt_receipt::read_with_idle_timeout(response, None),
+        )
+        .await
+        .map_err(|_| crate::prompt::PromptError::Unconfirmed)?
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::prompt_receipt::read(response).await
+    }
 }
 
 pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
@@ -61,14 +150,14 @@ pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::p
     }
     match status {
         reqwest::StatusCode::NOT_IMPLEMENTED => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && body["error"].as_str() == Some("Route not implemented in this prototype")
             {
                 return crate::prompt::PromptError::Rejected;
             }
         }
         reqwest::StatusCode::BAD_GATEWAY => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && matches!(
                     body["error"].as_str(),
                     Some(
@@ -83,7 +172,7 @@ pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::p
             }
         }
         reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-            if let Ok(body) = crate::prompt_receipt::read(response).await
+            if let Ok(body) = read_error_body(response).await
                 && matches!(
                     body["error"].as_str(),
                     Some(
@@ -311,28 +400,57 @@ impl Backend {
         if self.client.server_identity_mismatch() {
             return Err(crate::prompt::PromptError::Rejected.into());
         }
-        let mut request = self
-            .client
-            .post(format!(
-                "{}workspaces/{}/instance/api/session/{}/prompt",
-                self.base, self.workspace, self.session
-            ))
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body);
-        if let Some(directory) = &self.session_directory {
-            request = request.query(&[("directory", directory.as_str())]).header(
-                "x-codenomad-session-directory",
-                percent_encode_header(directory),
-            );
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| send_transport_error(&error))?;
+        let url = format!(
+            "{}workspaces/{}/instance/api/session/{}/prompt",
+            self.base, self.workspace, self.session
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let (response, idle_timeout) = {
+            let idle_timeout = self.client.prompt_idle_timeout();
+            let progress = std::sync::Arc::new(tokio::sync::Notify::new());
+            let length = body.len();
+            let mut request = self
+                .client
+                .post_prompt(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(reqwest::header::CONTENT_LENGTH, length)
+                .body(reqwest::Body::wrap_stream(UploadChunks {
+                    body,
+                    offset: 0,
+                    progress: progress.clone(),
+                }));
+            if let Some(directory) = &self.session_directory {
+                request = request.query(&[("directory", directory.as_str())]).header(
+                    "x-codenomad-session-directory",
+                    percent_encode_header(directory),
+                );
+            }
+            let response = send_prompt_with_idle_timeout(request, idle_timeout, progress).await?;
+            (response, Some(idle_timeout))
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (response, idle_timeout) = {
+            let mut request = self
+                .client
+                .post_prompt(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body);
+            if let Some(directory) = &self.session_directory {
+                request = request.query(&[("directory", directory.as_str())]).header(
+                    "x-codenomad-session-directory",
+                    percent_encode_header(directory),
+                );
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| send_transport_error(&error))?;
+            (response, None)
+        };
         if !response.status().is_success() {
             return Err(classify_http_error(response).await.into());
         }
-        let response = crate::prompt_receipt::read(response)
+        let response = crate::prompt_receipt::read_with_idle_timeout(response, idle_timeout)
             .await
             .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
         let native = response.get("data").unwrap_or(&response);
