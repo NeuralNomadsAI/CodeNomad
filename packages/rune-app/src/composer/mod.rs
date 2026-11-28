@@ -1,5 +1,8 @@
 //! Session composer view and input ownership.
 mod actions;
+mod auto_session;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod auto_session_tests;
 #[cfg(test)]
 mod chrome_tests;
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,4 +30,7 @@ pub(crate) use actions::command_held;
 pub(crate) use actions::{
     Owner, UnconfirmedPrompt, acknowledge, can_send, confirm_unconfirmed_id, reconcile, send,
     settle_pending,
+};
+pub(crate) use auto_session::{
+    AutoSession, cancel as cancel_auto_session, poll as poll_auto_session,
 };

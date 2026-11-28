@@ -681,14 +681,20 @@ pub fn capture(s: &mut State) {
         return;
     };
     let active = ui.active;
+    let no_session_capture = s.no_session_composer_active() && s.composer.no_session_bound;
     let before = ui.entries.get(active).and_then(|item| match &item.saved {
-        Tab::Workspace(w) => w.active_session_id.as_ref().map(|id| {
-            (
+        Tab::Workspace(w) => {
+            let key = match w.active_session_id.as_deref() {
+                Some(id) => Some(id),
+                None if no_session_capture => Some(NO_SESSION_DRAFT_ID),
+                None => None,
+            }?;
+            Some((
                 super::ProjectScope::from_workspace(w),
-                id.clone(),
-                item.clear_authority.get(id).cloned(),
-            )
-        }),
+                key.to_owned(),
+                item.clear_authority.get(key).cloned(),
+            ))
+        }
         Tab::Blank => None,
     });
     let captured = ui
@@ -709,6 +715,62 @@ pub fn capture(s: &mut State) {
     ui.stage_with_stashed(s.temporary.stashed_for_snapshot());
     s.workspace = Some(ui);
     crate::shell::blank_cleanup::abort_if_protected(s);
+}
+
+/// Hydrates the active project's `__no_session_draft__` into the composer when viewing a project
+/// without a selected session.
+pub(crate) fn sync_no_session_draft(s: &mut State) -> bool {
+    if !s.no_session_composer_active()
+        || s.composer.no_session_bound
+        || s.pending_auto_session.is_some()
+    {
+        return false;
+    }
+    let Some(mut ui) = s.workspace.take() else {
+        s.composer.no_session_bound = true;
+        return false;
+    };
+    let active = ui.active;
+    let is_no_session_tab = ui.entries.get(active).is_some_and(
+        |item| matches!(&item.saved, Tab::Workspace(w) if w.active_session_id.is_none()),
+    );
+    if !is_no_session_tab {
+        s.workspace = Some(ui);
+        return false;
+    }
+    let mut loaded = false;
+    if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
+        let _ = deliver_draft(&mut ui, NO_SESSION_DRAFT_ID);
+        let item = &ui.entries[active];
+        if let Tab::Workspace(saved) = &item.saved {
+            let live = item.live_drafts.get(NO_SESSION_DRAFT_ID);
+            if let Some((draft, missing)) = live.and_then(|d| d.parts.as_ref()) {
+                s.composer.draft = draft.clone();
+                s.composer.attachments_missing = *missing;
+                loaded |= !s.composer.draft.attachments.is_empty() || *missing;
+            } else if let Some(parts) = saved.attachment_parts.get(NO_SESSION_DRAFT_ID) {
+                (s.composer.draft, s.composer.attachments_missing) = parts.restore();
+                loaded |=
+                    !s.composer.draft.attachments.is_empty() || s.composer.attachments_missing;
+            } else if saved.attachment_drafts.contains(NO_SESSION_DRAFT_ID) {
+                s.composer.attachments_missing = true;
+                loaded = true;
+            }
+            let text = live
+                .and_then(|d| d.text.as_ref())
+                .or_else(|| saved.drafts.get(NO_SESSION_DRAFT_ID))
+                .cloned()
+                .unwrap_or_default();
+            if !text.is_empty() {
+                s.draft = rune::edit::TextEdit::new(text);
+                crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
+                loaded = true;
+            }
+        }
+    }
+    s.composer.no_session_bound = true;
+    s.workspace = Some(ui);
+    loaded
 }
 
 pub fn unconfirmed_drafts_full(s: &State) -> bool {
@@ -743,10 +805,17 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     let (edit, draft, missing) = crate::composer::recall::fresh(s);
     let text = &edit.text;
     let mut changed = false;
+    let no_session_capture = s.no_session_composer_active() && s.composer.no_session_bound;
     if let Tab::Workspace(saved) = &mut item.saved
-        && let Some(key) = saved.active_session_id.as_deref()
-        && item.binding.as_ref().is_some_and(|b| b.session == key)
+        && let Some(key) = match saved.active_session_id.as_deref() {
+            Some(key) if item.binding.as_ref().is_some_and(|b| b.session == key) => {
+                Some(key.to_owned())
+            }
+            None if no_session_capture => Some(NO_SESSION_DRAFT_ID.to_owned()),
+            _ => None,
+        }
     {
+        let key = key.as_str();
         let too_long = oversized(text);
         let has_device_parts = draft.inline_usage().0 != 0;
         let unconfirmed = s.composer.clone_unconfirmed();
@@ -822,6 +891,9 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     changed
 }
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
+    if s.no_session_composer_active() {
+        s.composer.no_session_bound = true;
+    }
     s.composer.mark_edited();
     capture(s);
 }

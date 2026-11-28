@@ -103,6 +103,25 @@ impl State {
     pub fn current_scope(&self, scope: &Rc<()>) -> bool {
         Rc::ptr_eq(&self.input_scope, scope)
     }
+    pub(crate) fn no_session_composer_active(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if crate::platform::pairing::required(self) {
+            return false;
+        }
+        matches!(
+            &self.screen,
+            Screen::Launcher(l) if l.project.is_some() && !l.authentication_required
+        ) && crate::workspace::active_session(self).is_none()
+            && self.commands.is_none()
+            && !crate::git::has_preview(self)
+            && !crate::workspace::mission_has_reader(self)
+    }
+    pub(crate) fn composer_active(&self) -> bool {
+        !self.screen.is_launcher() || self.no_session_composer_active()
+    }
+    pub(crate) fn composer_editing_locked(&self) -> bool {
+        self.composer.editing_locked() || self.pending_auto_session.is_some()
+    }
     pub fn show_launcher(&mut self) {
         self.screen.show_launcher();
         self.tool_diff_preferences.reset_history_size();
@@ -144,7 +163,7 @@ impl State {
                 }
             }
             Editor::Model => self.agent.as_mut().map(|a| &mut a.search),
-            Editor::Composer => (!self.screen.is_launcher() && !self.composer.editing_locked())
+            Editor::Composer => (self.composer_active() && !self.composer_editing_locked())
                 .then_some(&mut self.draft),
             Editor::Reason(id) => self.agent.as_mut().and_then(|a| a.reasons.get_mut(&id)),
             Editor::Form(id) => self

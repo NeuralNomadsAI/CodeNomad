@@ -160,9 +160,7 @@ fn body(
     let body = match &s.screen {
         Screen::Launcher(_) if crate::git::has_preview(s) => crate::git::reader(s),
         Screen::Launcher(_) if workspace::mission_has_reader(s) => workspace::mission_reader(s),
-        Screen::Launcher(_) => {
-            rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
-        }
+        Screen::Launcher(_) => crate::chat::view::no_session_view(s, cx),
         Screen::Chat { .. } => conversation(s, cx),
     };
     panels::view(s, touch_controls(s, cx), has_project, body)

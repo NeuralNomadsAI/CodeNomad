@@ -15,7 +15,7 @@ const KEY: &str = "composer-more";
 // tracks these missing semantics in https://github.com/anomalyco/rune/issues/1677.
 
 fn state(s: &mut State) -> Option<&mut action_menu::State<State>> {
-    (!s.screen.is_launcher()).then_some(&mut s.composer.menu)
+    s.composer_active().then_some(&mut s.composer.menu)
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -23,14 +23,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
 }
 
 fn can_queue(s: &State) -> bool {
-    !s.composer.shell_mode
+    !s.screen.is_launcher()
+        && !s.composer.shell_mode
         && s.phase.running()
         && s.composer.picker.selected_command(&s.draft.text).is_none()
         && can_send(s)
 }
 
 pub(crate) fn can_clear(s: &State) -> bool {
-    !s.draft.text.is_empty() && !s.composer.editing_locked() && !s.composer.device.busy()
+    !s.draft.text.is_empty() && !s.composer_editing_locked() && !s.composer.device.busy()
 }
 
 pub(crate) fn clear(s: &mut State, tx: &mut Tx) {
@@ -102,11 +103,13 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
     attach.icon = Some(Rc::new(move || workspace_tree::action_glyph(attach_glyph)));
     attach.disabled = !device::available(s) || device_busy;
     attach.description = Some(
-        t(if s.composer.picker.attachments_supported() {
-            "promptInput.attachFiles.help"
-        } else {
-            "rune.attachments_unavailable"
-        })
+        t(
+            if s.composer.picker.attachments_supported() || s.no_session_composer_active() {
+                "promptInput.attachFiles.help"
+            } else {
+                "rune.attachments_unavailable"
+            },
+        )
         .into(),
     );
     // Browser file selection must run in the original input gesture.

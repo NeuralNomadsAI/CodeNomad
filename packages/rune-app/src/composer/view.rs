@@ -331,7 +331,7 @@ fn editor(
 ) -> El {
     #[cfg(target_arch = "wasm32")]
     super::web_bang::install();
-    let locked = s.composer.editing_locked();
+    let locked = s.composer_editing_locked();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
@@ -382,7 +382,7 @@ fn editor(
         .on_input_paste(move |s: &mut State, content, tx| {
             #[cfg(target_arch = "wasm32")]
             super::web_bang::clear();
-            if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
+            if !s.current_scope(&paste_scope) || s.composer_editing_locked() {
                 return true;
             }
             #[cfg(target_arch = "wasm32")]
@@ -499,7 +499,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
 pub(super) fn enter_shell_from_edit(s: &mut State, tx: &mut Tx, web_bang: bool) -> bool {
     if web_bang
         && !s.composer.shell_mode
-        && !s.composer.editing_locked()
+        && !s.composer_editing_locked()
         && !s.composer.device.busy()
         && !s.draft.is_composing()
         && s.composer.draft_was_empty.get()
@@ -595,7 +595,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if !s.composer.shell_mode
-        && !s.composer.editing_locked()
+        && !s.composer_editing_locked()
         && !s.composer.device.busy()
         && s.draft.text.is_empty()
         && s.draft.range() == (0, 0)
@@ -647,7 +647,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.composer.shell_mode {
         if Action::ExitShell.matches(s, event, tx) {
-            if !tx.key_repeat() && !s.composer.editing_locked() {
+            if !tx.key_repeat() && !s.composer_editing_locked() {
                 s.composer.exit_shell_mode();
                 s.composer.picker.reset();
             }
@@ -682,7 +682,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         true
     } else if s.composer.shell_mode {
         if Action::Newline.matches(s, event, tx) {
-            if !s.composer.editing_locked() {
+            if !s.composer_editing_locked() {
                 s.draft.insert("\n");
                 changed(s, tx);
             }
@@ -703,7 +703,7 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         true
     } else if Action::Newline.matches(s, event, tx) {
-        if !s.composer.editing_locked() {
+        if !s.composer_editing_locked() {
             s.draft.insert("\n");
             changed(s, tx);
         }

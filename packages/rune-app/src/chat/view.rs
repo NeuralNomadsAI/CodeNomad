@@ -1,6 +1,98 @@
-use crate::{State, agent_view, chat, composer, git, shell, transcript};
+use crate::{Phase, State, agent_view, chat, composer, git, shell, strings::t, transcript};
 use rune::{Cx, El};
-use rune_theme_codenomad::layout;
+use rune_theme_codenomad::{
+    empty_state::{self, EmptyStateCopy},
+    interruption, layout,
+};
+
+const NARROW_EMPTY_WIDTH: f32 = 768.0;
+
+fn branded_empty_state(s: &State, cx: &Cx<State>, no_session: bool) -> El {
+    let width = cx
+        .layout_size("session-stack")
+        .map(|size| size[0])
+        .filter(|w| w.is_finite() && *w > 0.0)
+        .unwrap_or_else(|| s.shell.width());
+    let narrow = width > 0.0 && width < NARROW_EMPTY_WIDTH;
+    empty_state::branded(
+        EmptyStateCopy {
+            logo_alt: t("messageSection.empty.logoAlt"),
+            brand_title: t("messageSection.empty.brandTitle"),
+            title: t("messageSection.empty.title"),
+            description: t(if no_session {
+                "instanceShell.empty.description"
+            } else {
+                "messageSection.empty.description"
+            }),
+            tip_command_palette: t("messageSection.empty.tips.commandPalette"),
+            tip_ask_about_codebase: t("messageSection.empty.tips.askAboutCodebase"),
+            tip_attach_files_prefix: t("messageSection.empty.tips.attachFilesPrefix"),
+        },
+        narrow,
+    )
+}
+
+fn session_is_empty(s: &State) -> bool {
+    let failed = s.phase == Phase::Failed || {
+        #[cfg(target_arch = "wasm32")]
+        {
+            matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
+    };
+    s.phase != Phase::Loading
+        && !s.paging
+        && !s.history_error
+        && !failed
+        && !s.can_older
+        && !s.history_detached
+        && s.reader.as_ref().is_none_or(|reader| !reader.can_retry())
+        && s.transcript_display
+            .messages
+            .visible(&s.messages)
+            .is_empty()
+        && s.transcript_display.queue.items().is_empty()
+}
+
+pub(crate) fn no_session_view(s: &State, cx: &mut Cx<State>) -> El {
+    let visible_viewport = cx
+        .layout_size("session-shell")
+        .or_else(|| cx.layout_size("session-stack"))
+        .map(|size| size[1]);
+    let reference_height =
+        crate::platform::reference_viewport_height(visible_viewport, s.draft.focused);
+    let layout = interruption::session_layout(
+        cx,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        None,
+        reference_height,
+    );
+    let (more, menu) = composer::menu::view(s);
+    let mut overlays = Vec::new();
+    overlays.extend(menu);
+    let scroll_stack = layout.scrolls_stack();
+    let (caret_pins, caret_probe) =
+        chat::ToolDiffPreferences::composer_caret_plan(s, cx, scroll_stack);
+    let body = interruption::session_surface(layout)
+        .children(caret_probe)
+        .child(
+            interruption::scroll_region()
+                .key("no-session-empty-viewport")
+                .role("region")
+                .label(t("settings.voice.conversation.title"))
+                .child(branded_empty_state(s, cx, true)),
+        )
+        .child(composer::view::view(s, layout, caret_pins, None, more));
+    layout::with_overlays(body, overlays)
+}
 
 pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
@@ -104,6 +196,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             .children(controls)
             .children(restore)
             .child(shell::reader(s, || {
+                let empty = session_is_empty(s);
                 let history = super::tools::duration::observe_clip(
                     s,
                     rune_theme_codenomad::interruption::history(layout)
@@ -111,7 +204,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         .label(crate::strings::t("settings.voice.conversation.title"))
                         .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
                         .children(super::receipts::session(s))
-                        .child(transcript::rows(s)),
+                        .child(transcript::rows(s))
+                        .children(empty.then(|| branded_empty_state(s, cx, false))),
                 );
                 crate::timeline::view(
                     s,

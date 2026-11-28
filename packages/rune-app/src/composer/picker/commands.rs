@@ -12,6 +12,7 @@ pub(super) struct Commands {
     pub(super) items: Vec<Item>,
     pub(super) read: Option<Read>,
     pub(super) dirty: bool,
+    loaded: bool,
     failed: bool,
     pub(super) intent: Option<String>,
 }
@@ -32,6 +33,7 @@ impl Commands {
         if std::mem::take(&mut self.dirty) {
             self.refresh(backend, reads, wake);
         } else {
+            self.loaded = true;
             self.failed = reply.error;
             if !reply.error {
                 self.items = reply.items;
@@ -76,6 +78,10 @@ impl Picker {
             .iter()
             .any(|command| command.label() == name)
             .then_some((name, args))
+    }
+
+    pub fn commands_settled(&self) -> bool {
+        self.commands.loaded && !self.commands.loading()
     }
 
     pub fn command_pending(&self, text: &str) -> bool {

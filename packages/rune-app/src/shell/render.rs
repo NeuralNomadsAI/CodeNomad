@@ -17,7 +17,7 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if shell::launcher_replaces_project(s) {
             crate::launcher_view::overlays(s, &mut layer);
         }
-        if !s.screen.is_launcher() {
+        if s.composer_active() {
             composer::view::overlays(s, &mut layer);
         }
         layer.extend(crate::workspace::mission_confirmation(s));

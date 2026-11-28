@@ -86,6 +86,7 @@ struct State {
     messages: Vec<history::Row>,
     draft: TextEdit,
     composer: Box<composer::Owner>,
+    pending_auto_session: Option<Box<composer::AutoSession>>,
     prompt_history: Box<composer::recall::History>,
     command_receipts: Box<composer::command_receipts::CommandReceipts>,
     incoming: Option<Receiver<Event>>,
@@ -175,6 +176,7 @@ fn init() -> State {
         messages: vec![],
         draft: TextEdit::new(""),
         composer: Default::default(),
+        pending_auto_session: None,
         prompt_history: Default::default(),
         command_receipts: Default::default(),
         incoming: None,
@@ -348,7 +350,9 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= platform::pairing::poll(s, tx);
     }
     changed |= launcher::poll(s, tx);
+    changed |= workspace::sync_no_session_draft(s);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::poll_auto_session(s, tx);
     changed |= composer::recall::poll(s);
     changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);

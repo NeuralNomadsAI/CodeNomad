@@ -27,6 +27,7 @@ pub struct Owner {
     restored_shell: Option<RestoredShell>,
     pub restored: bool,
     pub attachments_missing: bool,
+    pub(crate) no_session_bound: bool,
     pub(crate) recall: Option<super::recall::Recall>,
 }
 impl Default for Owner {
@@ -47,6 +48,7 @@ impl Default for Owner {
             restored_shell: None,
             restored: false,
             attachments_missing: false,
+            no_session_bound: false,
             recall: None,
         }
     }
@@ -424,6 +426,12 @@ pub fn can_send(s: &State) -> bool {
     if crate::platform::pairing::required(s) {
         return false;
     }
+    if s.pending_auto_session.is_some() {
+        return false;
+    }
+    if s.no_session_composer_active() {
+        return super::auto_session::can_send_no_session(s);
+    }
     let payload_ready = if s.composer.shell_mode {
         s.composer.draft.can_send_shell(&s.draft)
     } else {
@@ -482,6 +490,10 @@ pub(crate) fn send_button(s: &mut State, tx: &mut Tx) {
 }
 
 pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
+    if s.no_session_composer_active() {
+        super::auto_session::start(s, tx, alternate);
+        return;
+    }
     if !can_send(s) {
         if if s.composer.shell_mode {
             s.composer.draft.can_send_shell(&s.draft)

@@ -35,7 +35,7 @@ pub(crate) use drafts::{
     bound_with_adopt, capture, check_restored_draft_sessions, confirm_unconfirmed, draft_changed,
     has_unconfirmed, note_restored_draft_sessions_present, note_session_deleted, note_unconfirmed,
     recover_missing_session_draft, resume_restored_draft_checks, session_deleted_hook,
-    unconfirmed_drafts_full, window_inline_usage_without_history,
+    sync_no_session_draft, unconfirmed_drafts_full, window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,

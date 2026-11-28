@@ -53,9 +53,16 @@ impl Device {
 }
 
 pub fn available(s: &State) -> bool {
+    if s.composer.recall.is_some() || s.composer_editing_locked() {
+        return false;
+    }
+    if s.no_session_composer_active() {
+        return s
+            .screen
+            .launcher()
+            .is_some_and(|l| l.connection.is_some() && !l.pending);
+    }
     !s.screen.is_launcher()
-        && s.composer.recall.is_none()
-        && !s.composer.editing_locked()
         && s.composer.picker.attachments_supported()
         && matches!(
             s.phase,

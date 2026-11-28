@@ -47,9 +47,9 @@ pub(crate) use state::{
     restore_stashed, resume, resume_restored_draft_checks, retry, schedule_blank_cleanup,
     schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
     session_cleanup_protected, session_deleted_hook, stash_for_discard,
-    stashed_has_in_memory_state, status, strip, tab_folder, tab_rename_seed, temporary_tab_info,
-    toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
-    window_inline_usage_without_history, workspace_recent_folders,
+    stashed_has_in_memory_state, status, strip, sync_no_session_draft, tab_folder, tab_rename_seed,
+    temporary_tab_info, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
+    unselect_session, window_inline_usage_without_history, workspace_recent_folders,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,

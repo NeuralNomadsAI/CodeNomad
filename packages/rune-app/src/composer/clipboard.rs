@@ -31,9 +31,7 @@ pub fn physical(s: &mut State, event: &PhysicalInput, tx: &mut Tx) -> bool {
 }
 
 pub fn request(s: &mut State, tx: &mut Tx) {
-    if s.screen.is_launcher()
-        || s.composer.editing_locked()
-        || s.composer.device.clipboard.is_some()
+    if !s.composer_active() || s.composer_editing_locked() || s.composer.device.clipboard.is_some()
     {
         return;
     }

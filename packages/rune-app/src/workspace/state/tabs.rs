@@ -6,6 +6,7 @@ use crate::platform;
 
 pub(super) fn stash(s: &mut State) {
     // History browsing is temporary; inactive tabs retain only their fresh draft.
+    crate::composer::cancel_auto_session(s);
     crate::composer::recall::restore(s);
     s.composer.on_tab_stash();
     capture_files_mode(s);
