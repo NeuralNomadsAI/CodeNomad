@@ -427,6 +427,7 @@ pub fn with_overlays(base: El, layers: Vec<El>) -> El {
 /// surface that still reaches the screen's edges. A desktop window has no insets.
 pub fn safe_area<S>(cx: &rune::Cx<S>, body: El) -> El {
     let [top, right, bottom, left] = cx.safe_area();
+    let bottom = bottom.max(cx.keyboard_inset());
     rune::col()
         .key("safe-area")
         .w_full()
@@ -602,7 +603,7 @@ mod tests {
         };
         settle(&mut rt);
         assert_eq!(rt.state.body, window, "no insets: the whole window");
-        // A keyboard opening or a rotation changes them while the application runs.
+        // A rotation changes them while the application runs.
         rt.set_safe_area([10.0, 4.0, 30.0, 6.0]);
         settle(&mut rt);
         assert_eq!(
@@ -614,12 +615,20 @@ mod tests {
             rt.state.surface, window,
             "the surface still reaches the edges"
         );
-        rt.set_safe_area([0.0; 4]);
+        // The keyboard covers the navigation bar: the taller of the two is kept clear, not both.
+        rt.set_keyboard_inset(150.0);
         settle(&mut rt);
         assert_eq!(
-            rt.state.body, window,
-            "the keyboard closed: the whole window again"
+            rt.state.body,
+            [6.0, 10.0, 190.0, 240.0],
+            "above the keyboard"
         );
+        rt.set_keyboard_inset(0.0);
+        settle(&mut rt);
+        assert_eq!(rt.state.body[3], 360.0, "the keyboard closed");
+        rt.set_safe_area([0.0; 4]);
+        settle(&mut rt);
+        assert_eq!(rt.state.body, window, "the whole window again");
     }
     #[test]
     fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
