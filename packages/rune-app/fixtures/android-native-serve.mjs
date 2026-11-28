@@ -36,6 +36,9 @@ const env={...await privateEnvironment(profile),CNRS_SERVER_PASSWORD:password,CN
 const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),values.port,'synthetic-only'],
   {cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
 const stopped=new Promise(resolve=>server.once('close',resolve))
+// However this process ends, an interrupt or a fault included, the server goes with it.
+process.once('exit',()=>{if(server.exitCode===null)server.kill()})
+for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>process.exit(1))
 let log='';for(const pipe of [server.stdout,server.stderr])pipe.on('data',bytes=>log=(log+bytes).slice(-65536))
 try{
   let origin

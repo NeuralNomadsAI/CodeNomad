@@ -409,8 +409,10 @@ pub fn scene_is(name: &str) -> bool {
             == Some(name)
     }
 }
+/// A folder picker answers with a folder of this machine. A browser has none, and on Android
+/// the folders are the server's.
 pub fn folder_picker_available() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    cfg!(not(any(target_arch = "wasm32", target_os = "android")))
 }
 pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     let scope = s.input_scope.clone();

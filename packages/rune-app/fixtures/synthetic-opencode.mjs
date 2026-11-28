@@ -26,7 +26,13 @@ export async function syntheticOpenCode({project,password,requests}) {
     const event={id:randomUUID(),type,created:Date.now(),location:{directory:project},data:{sessionID,...data}}
     for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
   }
-  const server=createServer(async(req,res)=>{
+  // A request this endpoint fails on answers 500: an unhandled rejection would end the process
+  // and leave the server it serves without its OpenCode.
+  const server=createServer((req,res)=>void answer(req,res).catch(()=>{
+    if(!res.headersSent)res.writeHead(500)
+    res.end()
+  }))
+  async function answer(req,res){
     const url=new URL(req.url,'http://127.0.0.1')
     const note=status=>void appendFile(requests,`${status} ${req.method} ${url.pathname}\n`).catch(()=>{})
     if(req.headers.authorization!==authorization){note(401);res.writeHead(401);res.end();return}
@@ -84,7 +90,7 @@ export async function syntheticOpenCode({project,password,requests}) {
       }
     }
     json({_tag:'RpcError',type:'rpc.method_not_found',message:'Synthetic endpoint: unsupported'},404)
-  })
+  }
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
   return {
     origin:`http://127.0.0.1:${server.address().port}/`,
