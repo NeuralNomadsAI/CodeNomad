@@ -17,8 +17,8 @@ La carte **Version d’OpenCode** affiche **Service en cours** séparément quan
 
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
-| Minimum | OpenCode **2.4.0** | Requis pour cette version de CodeNomad. Les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
-| Recommandée | OpenCode **2.4.1** | Pour CodeNomad **1.2.0**. |
+| Minimum | OpenCode **2.4.2** | Requis pour cette version de CodeNomad. Les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
+| Recommandée | OpenCode **2.4.2** | Pour CodeNomad **1.2.0**. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
 ## Hôte, WSL et portée du service partagé {#execution-host}

@@ -110,13 +110,24 @@ function respond(res, body) {
   const run = /RUN (\[.*\])/s.exec(instruction)
   if (run) {
     if (steps) return say(res, "Started.")
-    return call(res, JSON.parse(run[1]).map(entry => {
-      if (entry.tool !== "generate_image") return entry
-      const offered = body.tools.map(tool => tool.function?.name)
-      imageTool = offered.find(name => name === "generate_image" || name === "experimental_image_generate")
-      assert(imageTool, "Design offers a native image tool")
-      return { ...entry, tool: imageTool }
-    }))
+    const planned = JSON.parse(run[1])
+    const imageSpecs = planned.filter(entry => entry.tool === "generate_image")
+    const otherCalls = planned.filter(entry => entry.tool !== "generate_image")
+    if (!imageSpecs.length) return call(res, otherCalls)
+    const offered = body.tools.map(tool => tool.function?.name)
+    const direct = offered.find(name => name === "generate_image" || name === "experimental_image_generate")
+    if (direct) {
+      imageTool = direct
+      return call(res, planned.map(entry => entry.tool === "generate_image" ? { ...entry, tool: direct } : entry))
+    }
+    assert(offered.includes("execute"), "Design offers execute for Code Mode image generation")
+    const instructions = messages.filter(m => m.role === "system" || m.role === "developer").map(m => text(m.content)).join("\n")
+    assert(instructions.includes("generate_image"), "Design Code Mode catalog lists generate_image")
+    imageTool = "generate_image"
+    const code = imageSpecs.length === 1
+      ? `return await tools.generate_image(${JSON.stringify(imageSpecs[0].args)})`
+      : `return await Promise.all([${imageSpecs.map(entry => `tools.generate_image(${JSON.stringify(entry.args)})`).join(", ")}])`
+    return call(res, [...otherCalls, { tool: "execute", args: { code } }])
   }
   // Reads name the absolute file, as the notice does; answers cite it as relative Markdown.
   const markdown = file => `![${path.posix.basename(relative(file))}](${relative(file)})`
@@ -309,7 +320,8 @@ try {
   assert.equal(entries.filter(entry => entry.kind === "image").length, 3)
   const reference = await rpc("imageReference", { sessionID, target: unread.target })
   assert.deepEqual(reference, { status: "path", path: ".codenomad/design/icon/icon-mono-a.png" })
-  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part => part.type === "tool" && part.name === imageTool))
+  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part =>
+    part.type === "tool" && (part.name === imageTool || (part.name === "execute" && part.state?.metadata?.toolCalls?.some(c => c.tool === imageTool)))))
 
   if (companionUI) await companionUI.testDesignCompanionUI({ cli, client, url, password, root, location, sessionID, designZip, until, idle })
   else {
