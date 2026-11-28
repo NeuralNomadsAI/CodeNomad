@@ -44,7 +44,7 @@ const BACKEND_ACTION_UNAVAILABLE = "This action is unavailable here: it needs th
 /** An empty result is not proof that nothing runs: only canonical assignments are recognized. */
 export const NO_TASK_CONVERSATION = "No conversation carrying this task's canonical assignment was found among the coordinator's direct children; a conversation launched with another prompt is not visible here."
 import { runMissionExclusive } from "./exclusive"
-import { matchesExecution, sameExecution } from "./execution"
+import { matchesExecution, sameExecution, type MissionExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
 import { missionRecoveryControlError } from "./recovery-error"
@@ -606,10 +606,19 @@ export class MissionControl {
     return { ...input, profiles: saved.profiles, taskMode: saved.taskMode, creationDefaults: saved }
   }
 
-  private coordinatorProfileMismatch(input: { creationDefaults?: MissionCreationMetadata }): MissionControlError {
-    return new MissionControlError(input.creationDefaults?.origins.coordinator === "preference"
-      ? "Coordinator differs from the profile selected by Missions preferences. Pass profiles.coordinator (for example {}) to override that preference."
-      : "Coordinator does not have the requested native profile", "invalid-execution")
+  /** A conversation chosen to coordinate takes the coordinator's agent and model. One that cannot be changed keeps its own
+   * and coordinates all the same: a chosen conversation is never refused for what it runs. */
+  private async adoptCoordinatorProfile(session: NativeMissionSession, selected: MissionExecution | undefined): Promise<NativeMissionSession> {
+    const sessions = this.options.sessions
+    try {
+      if (selected?.agent && selected.agent !== session.agent) await sessions.switchAgent?.({ sessionID: session.id, agent: selected.agent })
+      if (selected?.model && !matchesExecution({ model: selected.model }, session)) await sessions.switchModel?.({ sessionID: session.id, model: selected.model })
+    } catch { /* It coordinates as it is. */ }
+    return this.ownedRootSession(session.id)
+  }
+
+  private coordinatorProfileMismatch(): MissionControlError {
+    return new MissionControlError("Coordinator does not have the requested native profile", "invalid-execution")
   }
 
   private sameCreationChoices(saved: Pick<MissionMap, "profiles" | "taskMode" | "creationDefaults">, input: MissionStartInput,
@@ -678,8 +687,6 @@ export class MissionControl {
       && mission.actors.some(actor => actor.sessionId === suppliedCoordinator.id)))) {
       throw new MissionControlError("Coordinator session already belongs to an active mission", "already-member")
     }
-    if (suppliedCoordinator && !matchesExecution(input.profiles?.coordinator, suppliedCoordinator))
-      throw this.coordinatorProfileMismatch(input)
     if (suppliedCoordinator && input.expectedCoordinatorLocation && !sameLocation(suppliedCoordinator.location, input.expectedCoordinatorLocation))
       throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
 
@@ -719,9 +726,9 @@ export class MissionControl {
       }
     }
 
-    if (!matchesExecution(input.profiles?.coordinator, coordinator)) {
-      throw this.coordinatorProfileMismatch(input)
-    }
+    if (suppliedCoordinator) {
+      if (!matchesExecution(input.profiles?.coordinator, coordinator)) coordinator = await this.adoptCoordinatorProfile(coordinator, input.profiles?.coordinator)
+    } else if (!matchesExecution(input.profiles?.coordinator, coordinator)) throw this.coordinatorProfileMismatch()
     const createdAt = this.timestamp(snapshot)
     this.assertActive()
     await this.journal.append({
@@ -1248,7 +1255,7 @@ export class MissionControl {
       catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
-      if (!matchesExecution(input.start.profiles?.coordinator, fresh)) throw this.coordinatorProfileMismatch(resolved)
+      if (!matchesExecution(input.start.profiles?.coordinator, fresh)) await this.adoptCoordinatorProfile(fresh, input.start.profiles?.coordinator)
       const event: MissionEvent = {
         version: MISSION_SCHEMA_VERSION,
         id: this.eventID(missionID, "created"),
