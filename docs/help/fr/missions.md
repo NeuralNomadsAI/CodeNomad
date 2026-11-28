@@ -86,7 +86,7 @@ Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours
 
 **Une fois, maintenant** prend son instant au démarrage, pas à l’ouverture du formulaire. Il offre une seule occasion, qu’une condition peut consommer sans lancement. Choisissez une récurrence pour des occasions ultérieures. La programmation fonctionne tant que son service OpenCode et son hôte d’exécution sont disponibles.
 
-Le démarrage ou la reprise prépare automatiquement la programmation dans la configuration OpenCode du projet. Un OFF explicite est conservé : **Ouvrir les réglages de programmation**, lorsque proposé, ouvre le fichier responsable ; le **i** révèle sa provenance ou les détails d’environnement.
+Le démarrage ou la reprise prépare automatiquement la programmation dans la configuration OpenCode du projet.
 
 ### Événements et combinaisons {#scheduling-conditions}
 
@@ -107,8 +107,6 @@ Les événements en tête peuvent lancer un passage à chaque nouvelle occurrenc
 **Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** . À chaque lancement, la conversation passe sur l’agent, le modèle et la réflexion du coordinateur.
 
 Vous pouvez demander à un agent de préparer la programmation dans sa conversation racine actuelle. Les passages attendent que la conversation soit au repos.
-
-Sélectionnez un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées**. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
 
 Une politique enregistrée que l’éditeur ne sait pas représenter reste sous **Politique de lancement enregistrée** jusqu’à son remplacement explicite. Vérifiez les éventuelles limites de fin ou de nombre de passages avant de modifier.
 
@@ -139,7 +137,7 @@ Le drapeau indique l’état de la Mission ; son chevron porte l’attention de 
 | Vert | Une Mission, tâche ou exécution programmée réussie attend votre consultation dans cette fenêtre. |
 | Sablier d’accent | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
 | Icône d’accent seule | Mission préparée ou tâche qui n’a pas commencé. |
-| Neutre | Fin consultée, programmation arrêtée ou **État non confirmé** ; lisez le texte d’état. |
+| Neutre | Fin consultée ou programmation arrêtée ; lisez le texte d’état. |
 
 Sélectionnez une Mission ou tâche verte, cliquez ou balayez les icônes vertes des tâches, ou choisissez **Marquer comme lu** dans le menu du chevron. Pour **Passage réussi à consulter**, sélectionnez explicitement la ligne récurrente dans la fenêtre active ou utilisez **Marquer comme lu**. L’icône revient à l’attente si la programmation reste active, sinon au neutre. Les nouveaux résultats reçus sur une ligne déjà sélectionnée restent à consulter.
 
@@ -173,7 +171,7 @@ Une Mission ponctuelle en cours continue d’attribuer ses tâches et de transme
 
 La **Pause** ponctuelle laisse les étapes en cours finir sans en démarrer de nouvelles. **Interrompre maintenant** demande une interruption immédiate. **Arrêter** est définitif et demande confirmation. La pause d’un programme natif ferme les lancements futurs et demande l’interruption du passage en cours. Des effets d’outils peuvent continuer après interruption ; vérifiez les résultats partiels.
 
-Conservez la requête d’origine d’une action non confirmée : tant que la vue d’un programme natif ou l’éditeur est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et ne relance de lui-même qu’une préparation partielle exactement enregistrée. Utilisez **Vérifier l’état** pour les commandes de Mission ponctuelle, et **Actualiser la carte de mission** pour une création ponctuelle ordinaire lorsqu’ils sont proposés ; ne créez pas de remplacement pour contourner l’incertitude. Un programme natif propose **Vérifier l’état** dans son menu **Plus d'actions**.
+Conservez la requête d’origine d’une action non confirmée : tant que la vue d’un programme natif ou l’éditeur est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et ne relance de lui-même qu’une préparation partielle exactement enregistrée. Utilisez **Vérifier l’état** pour les commandes de Mission ponctuelle, et **Actualiser la carte de mission** pour une création ponctuelle ordinaire lorsqu’ils sont proposés ; ne créez pas de remplacement pour contourner l’incertitude.
 
 Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mission interrompue**. Les tâches admissibles proposent la récupération d’un rapport manquant.
 

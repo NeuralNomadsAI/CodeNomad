@@ -484,25 +484,6 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
   } finally { release?.(); await f.close() }
 })
 
-test("a schedule-only background read leaves the refresh icon still and enabled", async () => {
-  const f = await open()
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  try {
-    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
-    const scheduleRead = f.page.waitForRequest(request => request.url().includes("/missions/scheduled?"))
-    await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await scheduleRead
-    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    const refresh = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]')
-    assert.equal(await refresh.locator(".animate-spin").count(), 0)
-    assert.equal(await refresh.isEnabled(), true)
-    release()
-    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-  } finally { release?.(); await f.close() }
-})
-
 test("a native refresh straddling header and task revisions keeps the selected display through its coalesced retry", async () => {
   const f = await open(), id = "msn_inventory_59"
   let release!: () => void, entered!: () => void, headers = 0, skew = true

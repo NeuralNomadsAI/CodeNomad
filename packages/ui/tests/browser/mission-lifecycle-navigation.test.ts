@@ -156,9 +156,6 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
       await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
         if (route.request().method() === "GET") {
           reads++
-          const path = new URL(route.request().url()).pathname
-          if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
-          if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
           return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: reads, discardedEvents: 0 } })
         }
         calls.push(route.request().postDataJSON() as Input); submitted(); await held; current = { ...current, revision: 2 }
@@ -169,14 +166,11 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
       // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
       await open(page); await pause(page).click(); await sent; await remount(page)
       assert.equal(await inFlight(page), true, "the remounted toolbar observes the in-flight exact intent")
-      // Selection schedules its own debounced list/point read. Complete that read
-      // before measuring what the old control reply does to the selected view.
-      const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
-      await select(page, "two"); assert.equal(await (await selectionRead).finished(), null); await tick(page)
+      await select(page, "two"); await tick(page)
       const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
       release(); assert.equal(await (await response).finished(), null); await tick(page)
       assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
-      assert.equal(reads, before, "the old response adds no Mission GET, including schedule reads")
+      assert.equal(reads, before, "the old response adds no Mission GET")
       await select(page, "one"); await settle(page)
       const unresolved = outcome === "unknown" || outcome === "foreign-ack"
       assert.equal(await retryCount(page), unresolved ? 1 : 0)

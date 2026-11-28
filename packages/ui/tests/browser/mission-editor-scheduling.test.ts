@@ -13,7 +13,6 @@ import { NativeMissionDocumentStore } from "../../../server/src/missions/mission
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
 import type { MissionDocument } from "../../../server/src/missions/mission-document"
 import type { MissionJsonValue, MissionMap } from "../../../server/src/missions/model"
-import { missionDocumentChanges } from "../../../server/src/missions/mission-document-state"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import type {} from "./fixtures/mission-editor-scheduling"
 
@@ -39,10 +38,10 @@ async function createDocument() {
 }
 async function setup(page: Page, available = true, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
-  const errors: string[] = [], posts: Array<Record<string, any>> = [], reads: URL[] = []
+  const errors: string[] = [], posts: Array<Record<string, any>> = [], deletions: Array<Record<string, any>> = [], reads: URL[] = []
   let doc = await createDocument(), lose = false, proof = true, contentProof = true, original: Record<string, any> | undefined
   let journal: MissionMap = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/fixture",
-    title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", status: "active", runState: "prepared",
+    title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", status: "active", runState: "running",
     coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false,
     frontier: [], claims: [], actors: [], tasks: Array.from({ length: taskCount }, (_, index) => ({
       id: `tsk_${index}`, key: `work-${index}`, title: `Work ${index}`, brief: `Brief ${index}`, role: "specialist", status: "ready",
@@ -68,6 +67,7 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
         notes: { before: journal.notes, after: body.notes }, addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [], createdAt: Date.now() }] }
       return lose ? route.abort("connectionreset") : route.fulfill({ json: { mission: journal } })
     }
+    if (request.method() === "DELETE") { deletions.push({ path: pathname, posted: posts.length, ...request.postDataJSON() }); return route.fulfill({ json: {} }) }
     if (request.method() !== "GET") {
       const body = request.postDataJSON(); posts.push(body); original = body
       // A programmed Mission is saved under the identity the form names; its answer is the list.
@@ -111,7 +111,7 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
   }
   await page.goto(url)
   await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme)
-  return { errors, posts, reads, get doc() { return doc }, set doc(value: MissionDocument) { doc = value },
+  return { errors, posts, deletions, reads, set prepared(value: boolean) { journal = { ...journal, runState: value ? "prepared" : "running" } }, get doc() { return doc }, set doc(value: MissionDocument) { doc = value },
     set lose(value: boolean) { lose = value }, set proof(value: boolean) { proof = value },
     set contentProof(value: boolean) { contentProof = value } }
 }
@@ -310,55 +310,6 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
   } finally { await page.close() }
 })
 
-test("an explicitly selected existing root survives remount, refresh and save alongside GitHub filters", async () => {
-  const page = await browser.newPage({ viewport: { width: 620, height: 1100 } }), f = await setup(page), reads: URL[] = []
-  const root = { id: "ses_existing", title: "Existing work", projectID: "project", location: { directory: "/fixture" } }
-  await page.route("**/workspaces/fixture/instance/api/session**", route => {
-    const request = new URL(route.request().url()); reads.push(request)
-    return route.fulfill({ json: request.pathname.endsWith("/ses_existing") ? { data: root } : { data: [
-      { ...root, id: "ses_child", title: "Child", parentID: "ses_parent" },
-      { ...root, id: "ses_foreign", title: "Foreign", location: { directory: "/other" } }, root,
-    ], cursor: {} } })
-  })
-  try {
-    await page.evaluate(() => window.schedulingEditor.create())
-    await form(page).getByLabel(objective, { exact: true }).fill("Handle GitHub changes here")
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("repository-activity")
-    await form(page).getByLabel("Criterion 1 event", { exact: true }).selectOption("pull-request-created")
-    await form(page).getByLabel("Author (optional)", { exact: true }).fill("@alice")
-    await form(page).getByLabel("Coordinator session", { exact: true }).selectOption("existing")
-    const picker = form(page).getByRole("button", { name: "Existing conversation", exact: true })
-    await picker.click()
-    await page.getByRole("option", { name: "Existing work", exact: true }).waitFor()
-    assert.equal(await page.getByRole("option", { name: "Child", exact: true }).count(), 0)
-    assert.equal(await page.getByRole("option", { name: "Foreign", exact: true }).count(), 0)
-    await page.getByRole("option", { name: "Existing work", exact: true }).click()
-    await ready(page)
-    assert.ok(reads.some(request => request.searchParams.get("parentID") === "null"), "root-only native discovery")
-    await page.evaluate(() => window.schedulingEditor.mount(false))
-    await form(page).waitFor({ state: "detached" })
-    await page.evaluate(() => window.schedulingEditor.mount(true))
-    await ready(page)
-    assert.equal(await picker.getAttribute("data-source-id"), root.id)
-    assert.equal(await form(page).getByLabel("Author (optional)", { exact: true }).inputValue(), "@alice")
-    await page.evaluate(() => window.schedulingEditor.activate(false))
-    await page.evaluate(() => window.schedulingEditor.activate(true))
-    await ready(page)
-    assert.equal(await picker.getAttribute("data-source-id"), root.id)
-    await form(page).getByRole("button", { name: "Create", exact: true }).click()
-    await form(page).waitFor({ state: "detached" })
-    assert.equal(f.posts.length, 1)
-    assert.equal(f.posts[0].configuration.coordinatorSessionID, root.id)
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "repository-activity", provider: "github", host: "github.com",
-      event: "pull-request-created", repository: "acme/repo", author: "alice" }] })
-    await page.evaluate(() => window.schedulingEditor.edit())
-    await ready(page)
-    assert.equal(await picker.getAttribute("data-source-id"), root.id)
-    assert.equal(await form(page).getByLabel("Author (optional)", { exact: true }).inputValue(), "alice")
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
 test("conversation continuation and search failures retry their exact read inside the owning popup", async () => {
   const page = await browser.newPage(), f = await setup(page), reads: URL[] = []
   let pageFailed = true, searchFailed = true
@@ -530,68 +481,6 @@ for (const [locale, width] of [["en", 620], ["fr", 320], ["he", 320]] as const) 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await capture(page, `source-selected-${locale}-${width}.png`)
     assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-test("a stored off-page conversation resolves directly, rejects foreign metadata and retries only in its own picker", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  f.doc = { ...f.doc, configuration: { ...f.doc.configuration,
-    launch: { when: [{ kind: "conversation-message", conversationID: "ses_far" }] } } }
-  let pointReads = 0, foreign = true
-  await page.route("**/workspaces/fixture/instance/api/session**", route => {
-    const path = new URL(route.request().url()).pathname
-    if (path.endsWith("/ses_far")) {
-      pointReads++
-      return route.fulfill({ json: { data: { id: "ses_far", title: foreign ? "Foreign secret title" : "Saved conversation",
-        projectID: foreign ? "other-project" : "project", location: { directory: "/fixture" } } } })
-    }
-    return route.fulfill({ json: { data: [{ id: "ses_first", title: "First conversation" }], cursor: { next: "later" } } })
-  })
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit())
-    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
-    await source.filter({ hasText: "Unavailable source" }).waitFor()
-    assert.equal(await form(page).getByText("Foreign secret title", { exact: true }).count(), 0)
-    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
-    foreign = false
-    await source.click()
-    await page.locator(".mission-source-popover").getByRole("button", { name: "Try again", exact: true }).click()
-    await source.filter({ hasText: "Saved conversation" }).waitFor()
-    await ready(page)
-    assert.equal(pointReads, 2, "resolve the selected ID rather than traversing every source page")
-    await page.keyboard.press("Escape")
-    await source.click()
-    await page.getByRole("listbox").getByRole("option", { name: "Saved conversation", exact: true }).waitFor()
-    await page.keyboard.press("Escape")
-    await form(page).getByLabel("Notes", { exact: true }).fill("Keep the exact stored event")
-    await form(page).getByRole("button", { name: "Save", exact: true }).click()
-    await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, f.doc.configuration.launch)
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-test("a saved Mission source outside the first page resolves through its workspace-bound point read", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  f.doc = { ...f.doc, configuration: { ...f.doc.configuration,
-    launch: { when: [{ kind: "mission-completed", missionID: "msn_far" }] } } }
-  let points = 0, pages = 0
-  await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
-    pages++
-    return route.fulfill({ json: { version: 1, projectID: "project", schedules: [], next: "still_unread" } })
-  })
-  await page.route("**/api/workspaces/fixture/missions/msn_far/schedule*", route => {
-    points++
-    const result = missionScheduleView(f.doc)
-    return route.fulfill({ json: { ...result, document: { ...result.document, id: "msn_far", kind: "one-time",
-      configuration: { ...result.document!.configuration, title: "Saved Mission source" } } } })
-  })
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    assert.match(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).innerText(), /Saved Mission source/)
-    assert.equal(points, 1); assert.equal(pages, 1, "editing does not traverse unrelated source pages")
-    assert.equal(await form(page).getByRole("alert").count(), 0)
-    assert.deepEqual(f.posts, []); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
@@ -848,69 +737,6 @@ test("source descendants follow mounted option identities across range, filter, 
   } finally { await page.close() }
 })
 
-test("editing instructions exposes retained context IDs for correction and preserves them on save", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  f.doc = { ...f.doc, configuration: { ...f.doc.configuration, watchedConversationIDs: ["ses_recorded"] } }
-  await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    assert.equal(await form(page).getByRole("button", { name: "Followed conversation 1", exact: true }).getAttribute("data-source-id"), "ses_recorded")
-    assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
-    await form(page).getByLabel("Notes", { exact: true }).fill("Keep stored sources intact")
-    await form(page).getByRole("button", { name: "Save", exact: true }).click()
-    await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.watchedConversationIDs, ["ses_recorded"])
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-test("shared Edit loads all preparation fields and preserves the exact stored criterion and the card order across remount", async () => {
-  const page = await browser.newPage(), f = await setup(page), stored = structuredClone(f.doc.configuration.launch)
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
-    assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
-    await addCriterion(page)
-    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("files-changed")
-    await form(page).getByLabel("Criterion 2 file paths", { exact: true }).fill("src/a.ts")
-    await form(page).getByRole("button", { name: "Move criterion 2", exact: true }).focus(); await page.keyboard.press("Alt+ArrowUp")
-    await page.evaluate(() => window.schedulingEditor.mount(false))
-    await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
-    assert.equal(await form(page).getByLabel("Criterion 1 file paths", { exact: true }).inputValue(), "src/a.ts")
-    assert.equal(await form(page).getByLabel("Criterion 2 type", { exact: true }).inputValue(), "cron")
-    assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), false)
-    await form(page).getByLabel("Notes", { exact: true }).fill("Future instructions only")
-    await form(page).getByLabel("Title", { exact: true }).fill("Updated title")
-    await capture(page, "editor-edit-en-dark.png")
-    await form(page).getByRole("button", { name: "Save", exact: true }).click()
-    await form(page).waitFor({ state: "detached" })
-    assert.equal(f.posts.length, 1); assert.equal(f.posts[0].action, "configure")
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "files-changed", paths: ["src/a.ts"] }, ...(stored as { when: unknown[] }).when] })
-    assert.equal(f.posts[0].configuration.notes, "Future instructions only")
-    assert.deepEqual(f.posts[0].configuration.profiles, profiles); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-test("revision conflict keeps the old draft for explicit comparison and never resends it", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    await form(page).getByLabel(objective, { exact: true }).fill("My unsent draft")
-    f.doc = { ...f.doc, revision: 1, configuration: { ...f.doc.configuration, objective: "New authoritative instructions" } }
-    await form(page).getByRole("button", { name: "Save", exact: true }).click()
-    await form(page).getByRole("button", { name: "Reload current configuration", exact: true }).waitFor()
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "My unsent draft")
-    assert.equal(await form(page).getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
-    assert.equal(f.posts.length, 0)
-    await form(page).getByRole("button", { name: "Reload current configuration", exact: true }).click(); await ready(page)
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "New authoritative instructions")
-    await form(page).locator("summary").filter({ hasText: /^Previous draft for comparison$/ }).click()
-    assert.match(await form(page).getByLabel("Previous draft for comparison", { exact: true }).inputValue(), /My unsent draft/)
-    await capture(page, "editor-conflict-en-dark.png")
-    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
 test("a programmed Mission whose answer was lost is saved again under the same identity", async () => {
   const page = await browser.newPage(), f = await setup(page), saved: string[] = []
   page.on("request", request => { if (request.method() === "PUT") saved.push(new URL(request.url()).pathname) })
@@ -928,74 +754,6 @@ test("a programmed Mission whose answer was lost is saved again under the same i
     assert.equal(saved.length, 2)
     assert.match(saved[0], /\/missions\/calendars\/cal_[a-f0-9]{32}$/)
     assert.equal(saved[1], saved[0])
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-for (const kind of ["edit"] as const) test(`${kind} lost ACK keeps its immutable identity across close/remount; automatic reread reads only its exact receipt`, async () => {
-  const page = await browser.newPage()
-  await page.clock.install({ time: Date.now() })
-  const f = await setup(page)
-  try {
-    await page.evaluate(kind => window.schedulingEditor[kind](), kind)
-    await ready(page); f.lose = true; f.proof = false
-    const receiptRequest = (url: string) => {
-      const link = new URL(url)
-      return link.searchParams.has("requestID") || link.pathname.includes("/requests/")
-    }
-    const initialRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
-    await form(page).locator('button[type="submit"]').click()
-    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
-    await initialRead
-    assert.equal(await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
-    assert.equal(await form(page).locator(".window-footer").getByRole("button", { name: "Refresh", exact: true }).count(), 0)
-    const held = await page.evaluate(() => window.schedulingEditor.held())
-    assert.equal(JSON.parse(held!.payload).requestID, f.posts[0].requestID)
-    await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.evaluate(kind => window.schedulingEditor[kind](), kind)
-    await page.evaluate(() => window.schedulingEditor.mount(false))
-    const remountRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
-    await page.evaluate(() => window.schedulingEditor.mount(true))
-    await remountRead
-    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), true)
-    await form(page).evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
-    assert.equal(f.posts.length, 1)
-    const pendingTick = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
-    await page.clock.fastForward(5_000)
-    await pendingTick
-    assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held)
-    f.proof = true
-    await page.clock.fastForward(5_000)
-    await form(page).waitFor({ state: "detached" })
-    assert.equal(f.posts.length, 1)
-    const receiptReads = f.reads.filter(read => read.searchParams.has("requestID") || read.pathname.includes("/requests/"))
-    assert.ok(receiptReads.length >= 3)
-    for (const read of receiptReads) {
-      const actual = read.searchParams.get("requestID") ?? read.pathname.split("/").at(-1)
-      assert.equal(actual, f.posts[0].requestID)
-    }
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-test("H9 locks structural fields during a passage, with reasons, while keeping its instructions and notes editable", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  try {
-    missionDocumentChanges.play(f.doc, "play_fixture", Date.now(), [])
-    f.doc.synchronization = null
-    missionDocumentChanges.reserve(f.doc, { kind: "manual", requestID: "manual_fixture" }, Date.now(), [])
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    await form(page).getByRole("status").filter({ hasText: /passage is in progress/ }).first().waitFor()
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), true)
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), false)
-    assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), true)
-    await form(page).getByLabel("Notes", { exact: true }).fill("Editable guidance")
-    await capture(page, "editor-h9-en-dark.png")
-    await form(page).getByRole("button", { name: "Save", exact: true }).click()
-    await form(page).waitFor({ state: "detached" })
-    assert.equal(f.posts[0].configuration.notes, "Editable guidance")
-    assert.equal(f.doc.pending!.configuration.notes, "Stored notes", "the admitted/prepared passage keeps its frozen instructions")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -1047,6 +805,34 @@ for (const taskCount of [0, 75]) test(`a journal edit with ${taskCount} tasks an
   } finally { await page.close() }
 })
 
+test("a Mission never started is edited whole: saving removes it, then creates its replacement in the same conversation", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    f.prepared = true
+    await page.evaluate(() => window.schedulingEditor.journal()); await ready(page)
+    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "Stored instructions")
+    assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), false)
+    assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), false)
+    await form(page).getByLabel("Title", { exact: true }).fill("Edited before its start")
+    await form(page).getByLabel(objective, { exact: true }).fill("Edited instructions")
+    const path = "**/api/workspaces/fixture/missions/msn_fixture"
+    await page.route(path, route => route.request().method() === "DELETE" ? route.fulfill({ status: 409, json: { code: "revision-conflict" } }) : route.fallback())
+    await form(page).getByRole("button", { name: "Save", exact: true }).click()
+    await form(page).getByRole("alert").waitFor()
+    assert.equal(f.posts.length, 0, "a Mission that cannot be removed keeps its form and is not replaced")
+    await page.unroute(path)
+    await form(page).getByRole("button", { name: "Save", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.equal(f.posts.length, 1)
+    assert.deepEqual([f.posts[0].title, f.posts[0].objective, f.posts[0].notes, f.posts[0].coordinatorSessionId],
+      ["Edited before its start", "Edited instructions", "Stored notes", "ses_coordinator"])
+    assert.equal(f.deletions.length, 1); assert.equal(f.deletions[0].posted, 0, "the replaced Mission leaves its conversation before its replacement is created")
+    assert.equal(f.deletions[0].path, "/api/workspaces/fixture/missions/msn_fixture")
+    assert.equal(f.deletions[0].expectedRevision, 1); assert.equal(f.deletions[0].deleteManagedSessions, false)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 test("journal conflict reload prefills from descriptor-pinned content when the display map has no text", async () => {
   const page = await browser.newPage(), f = await setup(page)
   await page.route("**/api/workspaces/fixture/missions/msn_fixture", route => route.request().method() === "PATCH"
@@ -1065,26 +851,6 @@ test("journal conflict reload prefills from descriptor-pinned content when the d
   } finally { await page.close() }
 })
 
-test("an ever-created task locks the template after retirement; incomplete native observation locks structural editing", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  try {
-    f.doc.everCreatedTask = true
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), true)
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), false)
-    assert.match(await form(page).innerText(), /including after tasks finish or are retired/)
-    await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
-    f.doc.firstPlayedAt = Date.now(); f.doc.state = "running"
-    f.doc.calendars.push({ role: "principal", slot: 0, timeGeneration: 1, sessionID: "ses_cn_schedule_fixture",
-      scheduleID: "sch_fixture", highWater: 0, pendingWake: null, wakePreparing: null })
-    await page.evaluate(() => window.schedulingEditor.edit())
-    await form(page).getByRole("status").filter({ hasText: /Reconcile the original request/ }).first().waitFor()
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), true)
-    assert.equal(await form(page).getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
-    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
 test("missing capability keeps criterion-free creation available and disables adding criteria", async () => {
   const page = await browser.newPage(), f = await setup(page, false)
   try {
@@ -1098,12 +864,11 @@ test("missing capability keeps criterion-free creation available and disables ad
   } finally { await page.close() }
 })
 
-for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible cron and a calendar with no eligible slot, including after first Play`, async () => {
+test("create rejects impossible cron and a calendar with no eligible slot", async () => {
   const page = await browser.newPage(), f = await setup(page)
   try {
-    if (kind === "edit") { f.doc.firstPlayedAt = Date.now(); f.doc.state = "running" }
-    await page.evaluate(kind => window.schedulingEditor[kind](), kind)
-    if (kind === "create") await form(page).getByLabel(objective, { exact: true }).fill("Valid instructions")
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Valid instructions")
     await ready(page)
     await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("cron")
     await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 0 31 2 *")
@@ -1151,50 +916,6 @@ test("the real editor selects all five explicit project sources in their own pic
     await page.waitForTimeout(150)
     assert.equal(schedulePages, 4); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
-})
-
-test("late initial Edit reads cannot overwrite a newer Create draft after unmount", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  let release!: () => void, started!: () => void
-  const pending = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
-  await page.route("**/api/workspaces/fixture/missions/msn_fixture/schedule*", async route => {
-    started(); await pending
-    try { await route.fulfill({ json: missionScheduleView(f.doc) }) } catch { /* disposed reader */ }
-  })
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await reached
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), true)
-    await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.evaluate(() => window.schedulingEditor.create())
-    await form(page).getByLabel(objective, { exact: true }).fill("New unsent draft")
-    release(); await ready(page)
-    assert.equal(await form(page).getByLabel(objective, { exact: true }).inputValue(), "New unsent draft")
-    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-  } finally { release(); await page.close() }
-})
-
-test("remounting during the first document read still decodes the stored policy; unsupported roots stay read-only", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  let release!: () => void, started!: () => void
-  const pending = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
-  await page.route("**/api/workspaces/fixture/missions/msn_fixture/schedule*", async route => {
-    started(); await pending
-    try { await route.fulfill({ json: missionScheduleView(f.doc) }) } catch { /* cancelled initial read */ }
-  })
-  try {
-    await page.evaluate(() => window.schedulingEditor.edit()); await reached
-    await page.evaluate(() => window.schedulingEditor.mount(false))
-    await page.evaluate(() => window.schedulingEditor.mount(true))
-    release(); await ready(page)
-    assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
-    assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
-    await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
-    f.doc.configuration.roots.push({ mode: "directory-only", directory: "/another-root" })
-    await page.evaluate(() => window.schedulingEditor.edit())
-    await form(page).getByRole("status").filter({ hasText: /stored execution roots differ/ }).first().waitFor()
-    assert.equal(await form(page).getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
-    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-  } finally { release(); await page.close() }
 })
 
 for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale} with native controls, scheduling and role labels`, async () => {
@@ -1302,20 +1023,6 @@ test("repository detection failures retry on demand; Git stays usable without a 
   } finally { await page.close() }
 })
 
-test("stored GitHub criteria keep their exact targets and source keys inside the repository activity card", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  try {
-    const when = [{ kind: "github-notification" as const }, { kind: "github-security-alert" as const, repository: "older/repo" },
-      { kind: "github-pull-request" as const, repository: "older/repo", author: "alice" }, { kind: "github-issue" as const, repository: "older/repo" }]
-    f.doc.configuration.launch = { when }
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    for (let index = 1; index <= when.length; index++)
-      assert.equal(await form(page).getByLabel(`Criterion ${index} type`, { exact: true }).inputValue(), "repository-activity")
-    await form(page).getByRole("button", { name: "Save", exact: true }).click(); await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when }); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
 test("launch criteria journey: an event, a schedule, else, if, or, the approved chain and a drag", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1400 } }), f = await setup(page)
   await branches(page)
@@ -1391,31 +1098,6 @@ test("two schedules, then two events: both times launch only if one of the event
     await form(page).getByLabel("Criterion 4 file paths", { exact: true }).fill("package.json")
     assert.deepEqual(await form(page).locator(".mission-criterion-connector").allInnerTexts(), ["or", "if", "or"])
     await ready(page); await page.mouse.move(0, 0); await capture(page, "06b-schedules-if-events.png")
-    assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
-})
-
-for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condition reopens as schedule cards, then the event as a condition (${locale})`, async () => {
-  const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1300 } }), f = await setup(page, true, locale)
-  await branches(page)
-  try {
-    f.doc = { ...f.doc, configuration: { ...f.doc.configuration, launch: { timing: { kind: "multi", calendars: [
-      { expression: "0 9 * * *", zone: "Europe/Paris" }, { expression: "0 18 * * *", zone: "Europe/Paris" }] },
-      condition: { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: null } } } }
-    const stored = structuredClone(f.doc.configuration.launch)
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    const section = form(page).locator(".mission-scheduling")
-    assert.equal(await section.getByRole("group", { name: /^(Criterion \d+|Critère \d+)$/ }).first().isVisible(), true, "the reopened criteria are shown")
-    const label = (en: string, fr: string) => form(page).getByLabel(locale === "fr" ? fr : en, { exact: true })
-    assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
-    assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")
-    assert.equal(await label("Criterion 3 source", "Source du critère 3").getAttribute("data-source-id"), "refs/heads/main")
-    assert.deepEqual(await form(page).locator(".mission-criterion-connector").allInnerTexts(), locale === "fr" ? ["ou", "si"] : ["or", "if"],
-      "the schedules come first and the condition after them")
-    await capture(page, locale === "fr" ? "09-legacy-reopened-fr.png" : "08-legacy-reopened-en.png")
-    await form(page).locator('button[type="submit"]').click()
-    await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, stored, "an unchanged reopen saves the stored legacy policy unchanged")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

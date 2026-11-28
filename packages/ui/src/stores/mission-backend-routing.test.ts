@@ -46,11 +46,8 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
   return sources[specifier] ? { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources[specifier])}` } : next(specifier, context)
 } })
 after(() => { hooks.deregister(); delete (globalThis as any).__missionRouting })
-const { createRoot } = await import("solid-js")
 await import("./missions")
 const { missionContent } = await import("./mission-content")
-const { useMissionSchedules } = await import("./mission-schedules")
-const { useMissionCurrentPassage } = await import("./mission-recurrence")
 const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 const setup = (id: string) => {
   const attachment = new AbortController()
@@ -58,7 +55,6 @@ const setup = (id: string) => {
   fixture.instances.set(id, { folder: "/repo", client: {}, metadata: { project: { id: "project" } } })
   return attachment
 }
-const props = (id: string) => ({ instanceId: () => id, projectID: () => "project", directory: () => "/repo", active: () => true, refresh: () => 0, selected: () => undefined })
 
 test("every Mission store adapter selects the owning backend and sends only the raw workspace id", async () => {
   fixture.calls = []
@@ -68,61 +64,20 @@ test("every Mission store adapter selects the owning backend and sends only the 
     await panel.read(id, { source: "summaries" }, scope)
     await panel.tasks(id, "mission", { offset: 0 }, scope)
     const ref: MissionBodyRef = { instanceId: id, projectID: "project", missionID: "mission", selector: { kind: "mission", field: "objective" } }
-    const ordinary = missionContent.use(ref, "connection"), current = missionContent.use({ ...ref, passage: { owner: "scheduled" } as any }, "connection")
-    let dispose!: () => void
-    createRoot(cleanup => {
-      dispose = cleanup
-      useMissionSchedules({ ...props(id), selected: () => "selected" })
-      useMissionCurrentPassage({ ...props(id), scheduleID: () => "schedule" })
-    })
+    const ordinary = missionContent.use(ref, "connection")
     await flush()
-    const passage = fixture.inventories.at(-1)
-    await passage.read(id, { source: "mission", missionID: "execution", header: true }, scope)
-    await passage.tasks(id, "execution", { offset: 0 }, scope)
-    ordinary.release(); current.release(); dispose()
+    ordinary.release()
   }
   for (const backend of ["local", "east", "west"]) {
     const calls = fixture.calls.filter(call => call.backend === backend)
-    assert.deepEqual(new Set(calls.map(call => call.method)), new Set([
-      "fetchMissionPanel", "fetchMissionTasks", "fetchMissionContent", "fetchMissionCurrentBody",
-      "fetchMissionSchedules", "fetchMissionSchedule", "fetchMissionCurrentPassage",
-      "fetchMissionCurrentPanel", "fetchMissionCurrentTasks",
-    ]))
+    assert.deepEqual(new Set(calls.map(call => call.method)), new Set(["fetchMissionPanel", "fetchMissionTasks", "fetchMissionContent"]))
     for (const call of calls) assert.equal(call.args[0], "workspace", `${backend}/${call.method}`)
   }
 })
 
-test("an unknown owner fails closed without dispatching to another backend", async () => {
+test("an unknown owner fails closed without dispatching to another backend", () => {
   setup("missing~workspace")
   const before = fixture.calls.length
   assert.throws(() => fixture.inventories[0].read("missing~workspace", { source: "summaries" }, { current: () => true }), /Backend unavailable/)
-  let dispose!: () => void
-  const stores = createRoot(cleanup => {
-    dispose = cleanup
-    return [useMissionSchedules(props("missing~workspace")), useMissionCurrentPassage({ ...props("missing~workspace"), scheduleID: () => "schedule" })]
-  })
-  await flush()
-  assert.ok(stores.every(store => store.error()))
   assert.equal(fixture.calls.length, before)
-  dispose()
-})
-
-test("revocation after a list await fences detail follow-up, publication and busy cleanup", async () => {
-  const id = "east~revoked", attachment = setup(id)
-  let resolve!: (value: any) => void
-  const previous = fixture.read
-  fixture.read = async () => new Promise(done => { resolve = done })
-  let dispose!: () => void
-  const store = createRoot(cleanup => {
-    dispose = cleanup
-    return useMissionSchedules({ ...props(id), selected: () => "selected" })
-  })
-  const before = fixture.calls.length
-  attachment.abort()
-  resolve({ version: 1, projectID: "project", schedules: [{ id: "late" }] })
-  await flush()
-  assert.equal(store.loading(), false)
-  assert.deepEqual(store.rows(), [])
-  assert.equal(fixture.calls.length, before, "a revoked list cannot dispatch its selected point read")
-  dispose(); fixture.read = previous
 })

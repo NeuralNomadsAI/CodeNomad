@@ -1,5 +1,5 @@
 import { Show, createMemo } from "solid-js"
-import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
@@ -7,7 +7,6 @@ import { SettingsInfoTip } from "./settings/settings-info-tip"
  * `actionsOnly` (a selected Mission's activity windows, under its row) shows the row,
  * with its info, only while it offers Load more or Retry: never a lone info icon. */
 export function MissionPanelPaging(props: { instanceId: string; lane: string; search?: boolean; actionsOnly?: boolean }) {
-  const missionStore = useMissionPanelStore()
   const { t } = useI18n(), state = () => missionStore.progress(props.instanceId, props.lane)
   const unknown = () => props.lane.startsWith("activity:") && missionStore.observations(props.instanceId, props.lane.slice(9)).some(page => page.coverage !== "observed" || page.requests.state !== "observed")
   // Once a lane needs a continuation/info row, retain its slot through subsequent
