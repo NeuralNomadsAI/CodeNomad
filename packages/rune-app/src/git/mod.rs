@@ -691,3 +691,5 @@ impl Ui {
 mod settle;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod visual_parity_tests;
