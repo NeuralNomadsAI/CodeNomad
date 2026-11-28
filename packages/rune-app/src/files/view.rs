@@ -89,11 +89,7 @@ fn reader_action(
     disabled: bool,
     run: fn(&mut super::Ui, &mut rune::Tx),
 ) -> El {
-    let control = button_tx(key, label, disabled, document_action_tx(s, run));
-    if disabled {
-        return control;
-    }
-    activate_enter(control, document_action_tx(s, run))
+    git_panel::toolbar_button(label, disabled, document_action_tx(s, run)).key(key)
 }
 fn activate_enter(control: El, enter: impl Fn(&mut State, &mut rune::Tx) + 'static) -> El {
     control.on_key(move |s: &mut State, key, tx| {

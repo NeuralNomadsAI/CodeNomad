@@ -127,6 +127,12 @@ pub fn save<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
+    let t = tokens(dark);
+    let mut k = kit(dark).clone();
+    k.c.bg_button_neutral = t.color("surface-canvas");
+    k.c.hover = t.color("surface-hover");
+    k.c.pressed = t.color("surface-hover");
+    k.c.text_base = t.color("icon-button-color");
     let button = IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
         .control_size(ControlSize::Small)
@@ -139,7 +145,7 @@ pub fn save<S: 'static>(
     } else {
         button.shortcut(shortcut)
     };
-    button.build(&kit(dark))
+    button.build(&k)
 }
 
 pub fn confirmation<S: 'static>(

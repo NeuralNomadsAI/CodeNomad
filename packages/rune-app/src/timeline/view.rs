@@ -8,9 +8,7 @@ use crate::{
 };
 use rune::El;
 use rune_theme_codenomad::{
-    Space,
-    layout::{self, Layout},
-    settings,
+    layout,
     timeline::{self, icons},
     transcript,
 };
@@ -469,13 +467,10 @@ pub(crate) fn view(
     }
     area = area.children(threshold_probe);
     let notice = match notice_key(s) {
-        Some("timeline-destination-filtered") => Some(
-            settings::palette::save_error(crate::strings::t("history.destinationFiltered"))
-                .full_width()
-                .inset_surface()
-                .pad(Space::Xs)
-                .key("timeline-destination-filtered"),
-        ),
+        Some("timeline-destination-filtered") => Some(timeline::filtered_notice(
+            "timeline-destination-filtered",
+            crate::strings::t("history.destinationFiltered"),
+        )),
         Some(key) => {
             let (label, action) = if key == "timeline-jump-retry" {
                 (
@@ -488,18 +483,12 @@ pub(crate) fn view(
                     retry_outline as fn(&mut State, &mut rune::Tx),
                 )
             };
-            Some(
-                layout::action_row()
-                    .key(key)
-                    .role("status")
-                    .inset_surface()
-                    .child(settings::stats::caption(crate::strings::t(label)).remaining())
-                    .child(layout::button_tx(
-                        crate::strings::t("messageSection.search.retry"),
-                        false,
-                        screen::action_tx(&s.input_scope, action),
-                    )),
-            )
+            Some(timeline::status_notice(
+                key,
+                crate::strings::t(label),
+                crate::strings::t("messageSection.search.retry"),
+                screen::action_tx(&s.input_scope, action),
+            ))
         }
         None => None,
     };

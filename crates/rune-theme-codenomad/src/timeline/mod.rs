@@ -12,6 +12,79 @@ pub use rune::ScrollPos as ScrollPosition;
 pub use rune::{GesturePhase, ScrollSource, WheelEvent};
 pub use wheel::RailWheelOverride;
 
+/// Compact left-aligned bordered status box matching Solid `.history-navigation-status`
+/// (12 px text + compact bordered tertiary retry button adjacent to the message).
+pub fn status_notice<S: 'static>(
+    key: &'static str,
+    message: &str,
+    retry_label: &str,
+    on_retry: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    use crate::{Space, TextRole, layout::Layout};
+    let t = tokens(layout::dark());
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    rune::row()
+        .w_full()
+        .items_center()
+        .px(t.space(Space::Sm).px())
+        .pt(t.space(Space::Xxs).px())
+        .child(
+            rune::row()
+                .key(key)
+                .role("status")
+                .items_center()
+                .flex_wrap()
+                .shrink()
+                .min_w(0.0)
+                .gap(t.space(Space::Sm).px())
+                .px(t.space(Space::Sm).px())
+                .py(t.space(Space::Xxs).px())
+                .fill(t.color("surface-secondary"))
+                .border(border, t.color("border-base"))
+                .border_layout()
+                .child(
+                    rune::text(message)
+                        .text_role(TextRole::Label)
+                        .color(t.color("text-primary"))
+                        .shrink()
+                        .min_w(0.0)
+                        .wrap(),
+                )
+                .child(crate::git_panel::tertiary_button(
+                    retry_label,
+                    false,
+                    on_retry,
+                )),
+        )
+}
+
+/// Compact left-aligned bordered alert matching the timeline status surface role.
+pub fn filtered_notice(key: &'static str, message: &str) -> El {
+    use crate::{Space, TextRole, layout::Layout};
+    let t = tokens(layout::dark());
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    rune::row()
+        .w_full()
+        .items_center()
+        .px(t.space(Space::Sm).px())
+        .pt(t.space(Space::Xxs).px())
+        .child(
+            rune::text(message)
+                .key(key)
+                .role("alert")
+                .text_role(TextRole::Label)
+                .color(t.color("status-error"))
+                .fill(t.color("surface-secondary"))
+                .px(t.space(Space::Sm).px())
+                .py(t.space(Space::Xxs).px())
+                .border(border, t.color("border-base"))
+                .border_layout()
+                .shrink()
+                .min_w(0.0)
+                .wrap(),
+        )
+}
+
 pub fn navigation_status(label: &'static str) -> El {
     use crate::{Space, TextRole, layout::Layout};
     let dark = layout::dark();

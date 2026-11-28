@@ -8,7 +8,7 @@ use crate::{
 use rune::{El, Tx, text};
 use rune_theme_codenomad::{
     action_menu::{self, Item, Menu},
-    catalogue, document_reader, git_panel, layout, markdown,
+    catalogue, document_reader, git_panel, layout, transcript,
 };
 use std::rc::Rc;
 
@@ -163,7 +163,7 @@ pub(in crate::chat) fn actions(s: &State, message: &Message) -> Vec<El> {
     let mut buttons = Vec::new();
     if !message.body.trim().is_empty() {
         buttons.push(
-            markdown::copy_button(t("messageItem.actions.copy"), copy(s, id))
+            transcript::copy_action(t("messageItem.actions.copy"), copy(s, id))
                 .key(format!("copy-message-{id}")),
         );
     }

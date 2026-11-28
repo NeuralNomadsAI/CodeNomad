@@ -109,6 +109,84 @@ pub fn toolbar_icon_button<S: 'static>(
     }
 }
 
+fn build_bordered_text_button<S: 'static>(
+    label: impl Into<String>,
+    disabled: bool,
+    font: rune::TextStyle,
+    fill: rune::Color,
+    height: f32,
+    padding_x: f32,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let dark = dark();
+    let t = crate::tokens(dark);
+    let mut k = kit(dark).clone();
+    k.ty.ui_medium = font;
+    k.c.bg_button_neutral = fill;
+    k.c.text_base = t.color("text-secondary");
+    k.c.hover = t.color("surface-hover");
+    k.c.pressed = t.color("surface-hover");
+    if let Some(buttons) = &mut k.metrics.button {
+        buttons.small.height = height;
+        buttons.small.padding_x = padding_x;
+    }
+    let action = std::rc::Rc::new(press);
+    let on_press = action.clone();
+    let button = Button::new(label)
+        .variant(ButtonVariant::Neutral)
+        .control_size(ControlSize::Small)
+        .disabled(disabled)
+        .on_press_tx(move |s, tx| on_press(s, tx))
+        .build(&k);
+    if disabled {
+        button
+    } else {
+        button.on_key(layout::enter_action(action))
+    }
+}
+
+/// Compact bordered toolbar button matching Solid `.file-viewer-toolbar-button`
+/// (11 px regular, muted `--text-secondary`, `--surface-canvas`, 1 px `--border-base`).
+pub fn toolbar_button<S: 'static>(
+    label: impl Into<String>,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = crate::tokens(dark());
+    let size = t.number("font-size-xs").px();
+    let font = rune::TextStyle::new(size, t.number("font-weight-regular").px())
+        .lh(size * t.number("line-height-normal").px());
+    build_bordered_text_button(
+        label,
+        disabled,
+        font,
+        t.color("surface-canvas"),
+        t.length(crate::Length::IconButton).px(),
+        t.space(Space::Sm).px(),
+        press,
+    )
+}
+
+/// Compact bordered tertiary button matching Solid `.button-tertiary` in status bars
+/// (12 px regular, muted `--text-secondary`, transparent fill, 1 px `--border-base`).
+pub fn tertiary_button<S: 'static>(
+    label: impl Into<String>,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = crate::tokens(dark());
+    let height = t.length(crate::Length::ControlSmall).px() - t.space(Space::Xs).px();
+    build_bordered_text_button(
+        label,
+        disabled,
+        t.text(crate::TextRole::Label),
+        rune::Color::TRANSPARENT,
+        height,
+        t.space(Space::Sm).px(),
+        press,
+    )
+}
+
 pub fn overflow_trigger(label: &str) -> El {
     IconButton::new(&super::MORE_HORIZONTAL)
         .label(label)

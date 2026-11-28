@@ -101,6 +101,29 @@ fn chevron(expanded: bool) -> El {
     arrow
 }
 
+/// Borderless message header copy action matching Solid `.message-action-button`.
+pub fn copy_action<S: 'static>(label: &str, press: impl Fn(&mut S, &mut Tx) + 'static) -> El {
+    let dark = dark();
+    let t = tokens(dark);
+    let mut k = kit(dark).clone();
+    k.elevation.button_neutral = Vec::new();
+    k.c.icon_muted = t
+        .color("icon-button-color")
+        .alpha(t.number("icon-button-idle-opacity").px());
+    k.c.icon_base = t.color("icon-button-hover-color");
+    k.c.hover = rune::Color::TRANSPARENT;
+    let action = Rc::new(press);
+    let on_press = action.clone();
+    IconButton::new(k.glyph.copy)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .label(label)
+        .help(label)
+        .on_press_tx(move |s, tx| on_press(s, tx))
+        .build(&k)
+        .on_key(layout::enter_action(action))
+}
+
 pub fn icon_action<S: 'static>(
     glyph: &'static Icon,
     label: &str,
