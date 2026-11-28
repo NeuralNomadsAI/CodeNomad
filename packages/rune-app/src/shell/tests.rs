@@ -549,3 +549,134 @@ fn notification_bubbles_keep_their_path_across_composer_overlays() {
     assert_eq!(path(&rt, "notification-bubbles"), before);
     assert_eq!(path(&rt, "notification-dismiss-0"), before_dismiss);
 }
+
+#[test]
+fn topbar_shows_three_icon_actions_on_desktop_and_touch_and_gates_remote_by_capability() {
+    fn french(s: &State, cx: &mut Cx<State>) -> El {
+        strings::with_locale("fr", || crate::view(s, cx))
+    }
+    let locales: [(&str, fn(&State, &mut Cx<State>) -> El); 3] =
+        [("en", english), ("fr", french), ("he", hebrew)];
+    for dark in [false, true] {
+        for touch in [false, true] {
+            for (locale, render_fn) in locales {
+                let mut state = init();
+                fixture(&mut state);
+                state.shell.touch_override = touch;
+                let project = state.screen.launcher().unwrap().project.clone().unwrap();
+                state.workspace = Some(crate::workspace::Ui::new());
+                crate::workspace::opened(&mut state, &project);
+                let size = if touch {
+                    (390.0, 844.0)
+                } else {
+                    (1400.0, 900.0)
+                };
+                let mut rt = Runtime::new(state, render_fn, size, Env::new(dark, 1.0));
+                settle(&mut rt);
+
+                let elements = rt.elements();
+                let find_el = |key: &str| {
+                    elements
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some(key))
+                        .unwrap_or_else(|| {
+                            panic!("missing {key} (dark={dark}, touch={touch}, locale={locale})")
+                        })
+                };
+                let new_btn = find_el("project-tabs-new");
+                let settings = find_el("open-preferences");
+                let bell = find_el("notification-history-toggle");
+                let remote = find_el("open-remote-control");
+                let expected_side = if touch { 44.0 } else { new_btn.rect[2] };
+                assert!(expected_side > 0.0 && new_btn.rect[2] == new_btn.rect[3]);
+                for el in [settings, bell, remote] {
+                    assert_eq!(el.rect[2], expected_side);
+                    assert_eq!(el.rect[3], expected_side);
+                    assert!(el.rect[0] >= 0.0 && el.rect[0] + el.rect[2] <= size.0);
+                }
+                let expected_settings =
+                    strings::with_locale(locale, || strings::t("settings.title"));
+                let expected_settings_help =
+                    strings::with_locale(locale, || strings::t("settings.open.title"));
+                let expected_bell =
+                    strings::with_locale(locale, || strings::t("toastHistory.title"));
+                let expected_remote =
+                    strings::with_locale(locale, || strings::t("instanceTabs.remote.ariaLabel"));
+                let expected_remote_help =
+                    strings::with_locale(locale, || strings::t("instanceTabs.remote.title"));
+                assert_eq!(settings.label.as_deref(), Some(expected_settings));
+                assert_eq!(settings.help.as_deref(), Some(expected_settings_help));
+                assert_eq!(bell.label.as_deref(), Some(expected_bell));
+                assert_eq!(remote.label.as_deref(), Some(expected_remote));
+                assert_eq!(remote.help.as_deref(), Some(expected_remote_help));
+                assert!(
+                    !elements
+                        .iter()
+                        .any(|e| e.text.as_deref() == Some(expected_settings)),
+                    "topbar Settings must be an icon button without text label ({locale})"
+                );
+                let rtl = rune_theme_codenomad::catalogue::direction(locale) == "rtl";
+                if rtl {
+                    assert!(settings.rect[0] > bell.rect[0] && bell.rect[0] > remote.rect[0]);
+                } else {
+                    assert!(settings.rect[0] < bell.rect[0] && bell.rect[0] < remote.rect[0]);
+                }
+
+                // Clicking the bell toggles notification history and active expanded state.
+                click(&mut rt, "notification-history-toggle");
+                assert!(crate::shell::notifications::history_open(&rt.state));
+                click(&mut rt, "notification-history-close");
+                assert!(!crate::shell::notifications::history_open(&rt.state));
+            }
+        }
+    }
+
+    // Attested backend capabilities gate the Remote Control icon like Solid hostSupports().
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let attest_with = |caps_json: &'static str| -> crate::backend::Backend {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let body = format!(
+                        r#"{{"serverId":"srv-topbar","apiContract":1,"capabilities":{caps_json}}}"#
+                    );
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(reply.as_bytes());
+                }
+            });
+            let backend =
+                crate::backend::Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let ok = crate::platform::block_on(backend.attest_server()).is_ok();
+            let _ = handle.join();
+            assert!(ok);
+            backend
+        };
+
+        for (caps, expected_visible) in [(r#"[]"#, false), (r#"["remote-control"]"#, true)] {
+            let backend = attest_with(caps);
+            let mut state = init();
+            fixture(&mut state);
+            state.screen.launcher_mut().unwrap().connection = Some(backend);
+            let project = state.screen.launcher().unwrap().project.clone().unwrap();
+            state.workspace = Some(crate::workspace::Ui::new());
+            crate::workspace::opened(&mut state, &project);
+            let mut rt = Runtime::new(state, english, (1200.0, 800.0), Env::new(false, 1.0));
+            settle(&mut rt);
+            assert!(rt.find("open-preferences").is_some());
+            assert!(rt.find("notification-history-toggle").is_some());
+            assert_eq!(rt.find("open-remote-control").is_some(), expected_visible);
+        }
+    }
+}

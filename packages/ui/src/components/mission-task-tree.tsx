@@ -7,7 +7,8 @@ import { useI18n } from "../lib/i18n"
 import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
 import { sessions } from "../stores/session-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
-import { useMissionPanelStore, useMissionViewScope } from "./mission-panel-scope"
+import { useMissionViewScope } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { markMissionTasksSeen, missionTaskUnseen } from "../stores/mission-task-seen"
 import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
 import { missionVirtualViewport } from "./mission-virtual-viewport"
@@ -77,7 +78,7 @@ export function MissionTaskTree(props: {
   questions?: readonly MissionQuestion[]
   onAnswer?: (sessionId: string, request?: MissionQuestion["request"]) => void
 }) {
-  const missionStore = useMissionPanelStore(), viewScope = useMissionViewScope()
+  const viewScope = useMissionViewScope()
   const { t } = useI18n()
   const [list, setList] = createSignal<HTMLUListElement>()
   const [virtualizer, setVirtualizer] = createSignal<VirtualizerHandle>()

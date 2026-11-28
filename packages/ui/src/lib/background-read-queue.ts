@@ -49,8 +49,7 @@ export const previewReads = new BackgroundReadQueue(1)
 // own lane keeps them from delaying recovery, catalogue and Git reads.
 export const receiptReads = new BackgroundReadQueue(1)
 
-// The visible Missions panel, its schedule list and current-passage reads keep their own
-// lane, so slow outline or inventory scans in backgroundReads cannot starve them. Two
-// slots: a list refresh or a schedule read still in flight leaves room for the Mission
-// just selected. The reads of one schedule that a click waits for use the shared budget.
+// The visible Missions panel keeps its own lane, so slow outline or inventory scans in
+// backgroundReads cannot starve it. Two slots: a list refresh still in flight leaves room
+// for the Mission just selected.
 export const missionReads = new BackgroundReadQueue(2)

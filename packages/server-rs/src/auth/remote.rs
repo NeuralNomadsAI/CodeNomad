@@ -37,6 +37,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET POST",r"^/api/workspaces/[^/]+/missions/(?:scheduled|msn_[a-z0-9]+/schedule)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/scheduled/(?:capabilities|requests/[a-zA-Z0-9_-]+)$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/msn_[a-z0-9]+/schedule-settings$"),
+    ("GET",r"^/api/workspaces/[^/]+/missions/calendars$"),
     ("POST",r"^/api/workspaces/[^/]+/missions(?:/panel-page|/msn_[a-z0-9]+/control)?$"),
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
@@ -78,6 +79,10 @@ pub(crate) struct BrowserDevice(pub uuid::Uuid);
 // Browser-only workspace routes omitted from TS `SERVER_DEVICE_ROUTES`.
 static BROWSER_ONLY_SESSION_CLEANUP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/session-cleanup/[^/]+$").unwrap());
+static BROWSER_ONLY_MISSION_CALENDAR_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/missions/calendars/[^/]+$").unwrap());
+static BROWSER_ONLY_MISSION_CALENDAR_ACTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/missions/calendars/[^/]+/(?:pause|resume)$").unwrap());
 
 /// Per-device preview logout epoch captured at remote middleware admission time so a concurrent
 /// `POST /api/auth/logout` between admission and preview creation still fences publication.
@@ -283,6 +288,9 @@ async fn admit_inner(
     let server_memory = server && !channel.ingress && memory_route;
     let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
     let browser_only_cleanup = !server && method == Method::POST && BROWSER_ONLY_SESSION_CLEANUP.is_match(&path);
+    let browser_only_calendars = !server
+        && ((matches!(method, Method::PUT | Method::DELETE) && BROWSER_ONLY_MISSION_CALENDAR_ITEM.is_match(&path))
+            || (method == Method::POST && BROWSER_ONLY_MISSION_CALENDAR_ACTION.is_match(&path)));
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
@@ -350,6 +358,7 @@ async fn admit_inner(
         && !memory_ui
         && !server_memory
         && !browser_only_cleanup
+        && !browser_only_calendars
         && !remote_logout
         && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
@@ -407,7 +416,7 @@ async fn admit_inner(
         return cors(r, supplied);
     };
     let paired_server = app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_server_device(id));
-    if (browser_only_cleanup || remote_logout) && paired_server {
+    if (browser_only_cleanup || browser_only_calendars || remote_logout) && paired_server {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
     {

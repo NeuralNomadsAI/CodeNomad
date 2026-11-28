@@ -204,10 +204,10 @@ async fn send_json(base: &str, method: Method, uri: &str, body: Option<Value>) -
 #[tokio::test]
 async fn service_route_starts_restarts_reloads_validates_and_coalesces() {
     let dir = scratch("service-route");
-    let first = spawn_daemon("2.4.0", 101, true).await;
-    let second = spawn_daemon("2.4.0", 202, true).await;
-    let no_reload = spawn_daemon("2.4.0", 303, false).await;
-    let cli = write_fake_cli(&dir, "opencode-svc", "2.4.0");
+    let first = spawn_daemon("2.5.0", 101, true).await;
+    let second = spawn_daemon("2.5.0", 202, true).await;
+    let no_reload = spawn_daemon("2.5.0", 303, false).await;
+    let cli = write_fake_cli(&dir, "opencode-svc", "2.5.0");
     fs::write(dir.join("config").join("service.json"), r#"{"password":"secret"}"#).unwrap();
     fs::write(dir.join("password.txt"), "secret\n").unwrap();
     fs::write(dir.join("status.txt"), "stopped\n").unwrap();
@@ -233,7 +233,7 @@ async fn service_route_starts_restarts_reloads_validates_and_coalesces() {
     assert_eq!(body["serviceState"], "ready");
     assert_eq!(body["canRestart"], true);
     assert_eq!(body["canReload"], true);
-    assert_eq!(body["daemonVersion"], "2.4.0");
+    assert_eq!(body["daemonVersion"], "2.5.0");
     assert_eq!(app.native.endpoint().unwrap().pid, 101);
 
     // Explicit reload calls POST /api/location/reload without stopping the daemon.
@@ -262,8 +262,8 @@ async fn service_route_starts_restarts_reloads_validates_and_coalesces() {
     assert_eq!(status, Status::BAD_GATEWAY);
     assert_eq!(body, json!({"error": "service_activation_failed"}));
 
-    // Downgrade refusal: CLI 2.3.2 cannot restart a running 2.4.0 daemon.
-    let older_cli = write_fake_cli(&dir, "opencode-old", "2.3.2");
+    // Downgrade refusal: CLI 2.4.2 cannot restart a running 2.5.0 daemon.
+    let older_cli = write_fake_cli(&dir, "opencode-old", "2.4.2");
     let (status, _) =
         send_json(&base, Method::PATCH, "/api/storage/config/server", Some(json!({"opencodeBinary": older_cli}))).await;
     assert_eq!(status, Status::OK);
@@ -283,10 +283,10 @@ async fn service_route_starts_restarts_reloads_validates_and_coalesces() {
 async fn server_config_patch_hot_adopts_opencode_binary_without_restarting_daemon() {
     let dir_a = scratch("hot-adopt-a");
     let dir_b = scratch("hot-adopt-b");
-    let daemon_a = spawn_daemon("2.4.0", 11, true).await;
-    let daemon_b = spawn_daemon("2.4.0", 22, true).await;
-    let cli_a = write_fake_cli(&dir_a, "opencode-a", "2.4.0");
-    let cli_b = write_fake_cli(&dir_b, "opencode-b", "2.4.0");
+    let daemon_a = spawn_daemon("2.5.0", 11, true).await;
+    let daemon_b = spawn_daemon("2.5.0", 22, true).await;
+    let cli_a = write_fake_cli(&dir_a, "opencode-a", "2.5.0");
+    let cli_b = write_fake_cli(&dir_b, "opencode-b", "2.5.0");
     for (dir, daemon) in [(&dir_a, &daemon_a), (&dir_b, &daemon_b)] {
         fs::write(dir.join("password.txt"), "secret\n").unwrap();
         fs::write(dir.join("status.txt"), format!("{}\n", daemon.url)).unwrap();
@@ -317,7 +317,7 @@ async fn server_config_patch_hot_adopts_opencode_binary_without_restarting_daemo
 #[tokio::test]
 async fn meta_exposes_latest_stable_server_version_on_stable_feed() {
     let dir = scratch("meta-stable");
-    let cli = write_fake_cli(&dir, "opencode-meta", "2.4.0");
+    let cli = write_fake_cli(&dir, "opencode-meta", "2.5.0");
     let config_path = dir.join("config.yaml");
     fs::write(&config_path, "server:\n  updateFeed: stable\n").unwrap();
     let settings = settings::Settings::new(settings::document::Location::resolve(config_path.to_str().unwrap()));
@@ -572,7 +572,7 @@ async fn service_route_coalesces_identical_actions_and_rejects_conflicting_concu
                 let (status, body) = if !head.contains(&auth.to_ascii_lowercase()) {
                     ("401 Unauthorized", String::new())
                 } else if head.starts_with("get /api/info ") {
-                    ("200 OK", json!({"version": "2.4.0", "pid": 555, "urls": []}).to_string())
+                    ("200 OK", json!({"version": "2.5.0", "pid": 555, "urls": []}).to_string())
                 } else if head.starts_with("get /openapi.json ") {
                     ("200 OK", openapi)
                 } else if head.starts_with("post /api/location/reload ") {
@@ -597,7 +597,7 @@ async fn service_route_coalesces_identical_actions_and_rejects_conflicting_concu
         }
     });
 
-    let cli = write_fake_cli(&dir, "opencode-coal", "2.4.0");
+    let cli = write_fake_cli(&dir, "opencode-coal", "2.5.0");
     fs::write(dir.join("password.txt"), "secret\n").unwrap();
     fs::write(dir.join("status.txt"), format!("{url}\n")).unwrap();
     fs::write(dir.join("start.txt"), format!("{url}\n")).unwrap();
@@ -679,7 +679,7 @@ async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_hon
             let reply = if !head.contains(&auth.to_ascii_lowercase()) {
                 "HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned()
             } else if head.starts_with("get /api/info ") {
-                let body = json!({"version": "2.4.0", "pid": 888, "urls": []}).to_string();
+                let body = json!({"version": "2.5.0", "pid": 888, "urls": []}).to_string();
                 format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                     body.len()
@@ -699,8 +699,8 @@ async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_hon
         }
     });
 
-    let pinned_cli = write_fake_cli(&dir, "opencode-pinned", "2.4.0");
-    let other_cli = write_fake_cli(&dir, "opencode-other", "2.3.2");
+    let pinned_cli = write_fake_cli(&dir, "opencode-pinned", "2.5.0");
+    let other_cli = write_fake_cli(&dir, "opencode-other", "2.4.2");
     fs::write(dir.join("password.txt"), "secret\n").unwrap();
     fs::write(dir.join("status.txt"), format!("{redirect_url}\n")).unwrap();
     let (app, router) = test_app(&dir, &pinned_cli);
@@ -758,7 +758,7 @@ async fn service_and_update_enforce_fastify_1mib_limit_reject_3xx_reload_and_hon
     let (status, body) = send_json(&base, Method::GET, "/api/opencode/update", None).await;
     assert_eq!(status, Status::OK);
     assert_eq!(body["binaryPath"], pinned_cli);
-    assert_eq!(body["currentVersion"], "2.4.0");
+    assert_eq!(body["currentVersion"], "2.5.0");
 
     server.abort();
     daemon.abort();

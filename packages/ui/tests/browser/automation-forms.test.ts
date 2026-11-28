@@ -187,7 +187,6 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") {
-        if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
         if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
         return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
       }
@@ -254,7 +253,6 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(async route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") {
-        if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
         if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
         if (!holdMap) return route.fulfill(map())
         // Cleanup unavailability belongs to the cleanup lane. Damaging summaries

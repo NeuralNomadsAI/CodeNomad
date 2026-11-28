@@ -67,6 +67,7 @@ pub(super) async fn dispatch_marked(
         sessions::note_inbox_value(
             &b.workspace,
             &b.session,
+            b.session_directory.as_deref(),
             &state.inbox,
             Some(state.history_revision.as_ref()),
             Some(state.upstream.as_ref()),
@@ -128,8 +129,7 @@ pub(super) async fn dispatch_marked(
         return Ok(());
     }
     if value["type"] == "instance.event"
-        && !(value["event"]["type"] == "session.moved"
-            && value["event"]["data"]["sessionID"] == b.session)
+        && !super::session_moved_away(b, &value["event"])
         && let Some(id) = crate::settings::provider_change(&value)
         && id == b.workspace
     {

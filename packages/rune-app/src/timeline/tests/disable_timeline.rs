@@ -773,6 +773,7 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
         continued: false,
         omitted_before: false,
         tool: None,
+        pending: false,
     };
     rt.update(|s, _| {
         owner(s).jump.retry = Some(retry_marker());

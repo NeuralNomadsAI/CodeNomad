@@ -188,19 +188,48 @@ fn right_panel_selection_is_specific_to_each_project_occurrence() {
     s.workspace = Some(ui);
     let mut rt = runtime(s);
     rt.update(|s, tx| {
-        set_files_tab(s, true);
-        assert!(files_tab(s));
-        select(s, "tab-1", tx);
-        assert!(!files_tab(s));
-        select(s, "tab-0", tx);
         assert!(files_tab(s));
         set_files_tab(s, false);
+        assert!(!files_tab(s));
+        select(s, "tab-1", tx);
+        assert!(files_tab(s));
+        select(s, "tab-0", tx);
+        assert!(!files_tab(s));
         let saved = s.workspace.as_ref().unwrap().snapshot();
         assert!(
             matches!(&saved.tabs[0], Tab::Workspace(w) if w.view.files_mode == Some("workspace"))
         );
-        assert!(matches!(&saved.tabs[1], Tab::Workspace(w) if w.view.files_mode.is_none()));
+        assert!(
+            matches!(&saved.tabs[1], Tab::Workspace(w) if w.view.files_mode == Some("workspace"))
+        );
     });
+}
+
+#[test]
+fn opened_project_defaults_to_files_and_unsupported_missions_falls_back_to_files() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let project = s.screen.launcher().unwrap().project.clone().unwrap();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    s.workspace = Some(ui);
+    opened(&mut s, &project);
+
+    assert_eq!(right_panel_tab(&s), crate::workspace::RightPanelTab::Files);
+    assert!(files_tab(&s));
+    let saved = s.workspace.as_ref().unwrap().snapshot();
+    assert!(matches!(
+        &saved.tabs[0],
+        Tab::Workspace(w) if w.view.files_mode == Some("workspace")
+    ));
+
+    set_right_panel_tab(&mut s, crate::workspace::RightPanelTab::Missions);
+    assert!(!mission_supported(&s));
+    assert_eq!(right_panel_tab(&s), crate::workspace::RightPanelTab::Files);
+
+    set_right_panel_tab(&mut s, crate::workspace::RightPanelTab::Status);
+    assert_eq!(right_panel_tab(&s), crate::workspace::RightPanelTab::Status);
+    assert!(!files_tab(&s));
 }
 
 #[test]

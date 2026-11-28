@@ -214,6 +214,85 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
 }
 
 #[test]
+fn right_panel_defaults_to_files_workspace_and_honors_explicit_tabs() {
+    assert_eq!(RightPanelTab::default(), RightPanelTab::Files);
+    assert_eq!(
+        ViewState::default(),
+        ViewState {
+            right_panel: RightPanelTab::Files,
+            files_mode: Some("workspace"),
+            selected_mission: None,
+        }
+    );
+
+    // Default ViewState omits viewState on disk and decodes back to Files/workspace.
+    let default_tab = workspace();
+    let encoded = value(&snapshot(default_tab.clone()));
+    assert!(encoded["session"]["tabs"][0].get("viewState").is_none());
+    assert_eq!(from_value(&encoded).unwrap(), snapshot(default_tab.clone()));
+
+    // Empty object and version-1 object without rightPanelTab both decode to Files/workspace.
+    for view_json in [json!({}), json!({"version": 1})] {
+        let mut raw = encoded.clone();
+        raw["session"]["tabs"][0]["viewState"] = view_json;
+        assert_eq!(from_value(&raw).unwrap(), snapshot(default_tab.clone()));
+    }
+
+    // Explicit "status", "files", and "missions" are honored and round-trip cleanly.
+    let mut status_tab = workspace();
+    status_tab.view = ViewState {
+        right_panel: RightPanelTab::Status,
+        files_mode: Some("workspace"),
+        selected_mission: None,
+    };
+    let status_json = value(&snapshot(status_tab.clone()));
+    assert_eq!(
+        status_json["session"]["tabs"][0]["viewState"],
+        json!({"version": 1, "rightPanelTab": "status", "filesMode": "workspace"})
+    );
+    assert_eq!(from_value(&status_json).unwrap(), snapshot(status_tab));
+
+    let mut files_tab = workspace();
+    files_tab.view = ViewState {
+        right_panel: RightPanelTab::Files,
+        files_mode: Some("changes"),
+        selected_mission: None,
+    };
+    let files_json = value(&snapshot(files_tab.clone()));
+    assert_eq!(
+        files_json["session"]["tabs"][0]["viewState"],
+        json!({"version": 1, "rightPanelTab": "files", "filesMode": "changes"})
+    );
+    assert_eq!(from_value(&files_json).unwrap(), snapshot(files_tab));
+
+    let mut files_null_mode = encoded.clone();
+    files_null_mode["session"]["tabs"][0]["viewState"] =
+        json!({"version": 1, "rightPanelTab": "files", "filesMode": null});
+    assert_eq!(
+        from_value(&files_null_mode).unwrap(),
+        snapshot(default_tab.clone())
+    );
+
+    let mut missions_tab = workspace();
+    missions_tab.view = ViewState {
+        right_panel: RightPanelTab::Missions,
+        files_mode: Some("history"),
+        selected_mission: Some("mission-alpha".into()),
+    };
+    let missions_json = value(&snapshot(missions_tab.clone()));
+    assert_eq!(
+        missions_json["session"]["tabs"][0]["viewState"],
+        json!({
+            "version": 1,
+            "rightPanelTab": "missions",
+            "filesMode": "history",
+            "missions": {"selected": "mission-alpha"}
+        })
+    );
+    assert_eq!(from_value(&missions_json).unwrap(), snapshot(missions_tab));
+}
+
+#[test]
 fn rejects_malformed_future_and_unsupported_state() {
     assert_eq!(decode(b"{"), Err(Error::Malformed));
     let base = value(&snapshot(workspace()));

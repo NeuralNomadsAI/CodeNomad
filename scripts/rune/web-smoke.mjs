@@ -490,7 +490,7 @@ try {
             if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
             await drawer.waitFor()
             const sourceHeight = palette.metrics[colorScheme].tabActive.height
-            const rightTablist = drawer.getByRole('tablist', {name:right, exact:true})
+            const rightTablist = drawer.getByRole('tablist', {name:messages['instanceShell.rightPanel.tabs.ariaLabel'], exact:true})
             await rightTablist.waitFor()
             const tabHeights = []
             for (const key of ['status', 'files']) {
@@ -509,14 +509,14 @@ try {
             await projectTablist.getByRole('tab', {name:values.project, exact:true, selected:true}).waitFor()
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
-              messages['toastHistory.title'],
+              messages['toastHistory.title'], messages['instanceTabs.remote.ariaLabel'],
             ])
             const permission = page.getByRole('button', {
               name: messages['settings.notifications.requestPermission.action'], exact: true,
             })
             assert.equal(await permission.count(), 0, 'Notification permission belongs in Preferences, not the tab bar')
             await press(messages['settings.title'])
-            await press(messages['settings.nav.notifications'], 'radio')
+            await press(messages['settings.nav.notifications'], 'listitem')
             await permission.waitFor({state:'attached'})
             assert.equal(await permission.count(), 1)
             await press(messages['settings.close'])

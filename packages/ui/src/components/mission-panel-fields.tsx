@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { BoundedText } from "./hidden-text"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { useI18n } from "../lib/i18n"
 import { MissionPanelPaging } from "./mission-panel-paging"
 import { createMissionDisclosure } from "./mission-disclosure"
@@ -12,7 +12,6 @@ function Value(props: { value: unknown }) {
 }
 
 function Field(props: { instanceId: string; missionId: string; field: string }) {
-  const missionStore = useMissionPanelStore()
   const { t } = useI18n(), [raw, setRaw] = createSignal(false), [page, setPage] = createSignal(0)
   const lane = () => `text:${props.missionId}:${props.field}`, state = () => missionStore.progress(props.instanceId, lane())
   const read = async (at: number, retry = false) => {
@@ -42,7 +41,6 @@ function Field(props: { instanceId: string; missionId: string; field: string }) 
 /** Exact persisted fields, including wide extension/document metadata, are explicitly
  * readable without widening the selected header or implying an unscanned absence. */
 export function MissionPanelFields(props: { instanceId: string; mission: MissionPanelMap }) {
-  const missionStore = useMissionPanelStore()
   const { t } = useI18n()
   const [open, setOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:fields")
   const fields = createMemo(() => new Map([...Object.entries(props.mission.panelCollections ?? {}).filter(([key]) => key !== "tasks").map(([field, descriptor]) => [field, descriptor.total] as const),

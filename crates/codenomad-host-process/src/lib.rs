@@ -6,10 +6,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(unix)]
-use std::process::{Child, Stdio};
+use std::process::Stdio;
 use std::{
     io,
-    process::{Command, ExitStatus},
+    process::{Child, Command, ExitStatus},
 };
 #[cfg(windows)]
 mod date;
@@ -63,6 +63,30 @@ pub fn local_clock_seconds(seconds: i64) -> Option<(i32, i32, i32, i32, i32, i32
         local.tm_min,
         local.tm_sec.clamp(0, 59),
     ))
+}
+
+/// Start a short-lived service starter outside backend containment (no Job Object / new session).
+pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW; no backend job assignment
+        command.spawn()
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: `setsid` is async-signal-safe and detaches the child into its own session.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        command.spawn()
+    }
 }
 
 pub struct OwnedProcess {

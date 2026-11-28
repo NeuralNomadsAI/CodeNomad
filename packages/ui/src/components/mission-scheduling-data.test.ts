@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionLaunchPolicySchema } from "../../../server/src/missions/launch-policy"
-import { missionCardConnectors, missionEventKinds, missionScheduleShortcuts, newMissionCriterion, newMissionSchedulingDraft, missionSchedulingPolicy,
+import { missionCardConnectors, missionEventKinds, missionScheduleShortcuts, newMissionCriterion, newMissionSchedulingDraft, missionSchedulingPolicy, orderMissionCriteria,
   MissionSchedulingError, type MissionCriterionDraft } from "./mission-scheduling-data"
 
 const row = (kind: MissionCriterionDraft["kind"], patch: Partial<MissionCriterionDraft> = {}) => ({ ...newMissionCriterion(kind), ...patch })
@@ -22,43 +22,39 @@ test("no criteria is a one-time Mission; every shortcut writes its cron", () => 
   assert.equal((missionSchedulingPolicy(draft([row("hours", { hours: "1" })])) as { when: { expression: string }[] }).when[0].expression, "0 * * * *")
 })
 
-test("the first criterion is once-now and remains composable in either event order", () => {
+test("the first criterion is once-now and stays above an event, which conditions it", () => {
   const initial = newMissionSchedulingDraft("UTC")
   assert.deepEqual(initial.criteria.map(row => row.kind), ["now"])
   const second = newMissionCriterion("daily", initial.criteria)
   const added = { ...initial, criteria: [...initial.criteria, second] }
   assert.deepEqual(missionSchedulingPolicy(added), { when: [{ kind: "now" }, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }] })
   const event = row("files-changed", { files: "a.ts" })
-  for (const [rows, connector] of [[ [initial.criteria[0], event], "if" ], [ [event, initial.criteria[0]], "else" ]] as const) {
-    assert.deepEqual(missionCardConnectors(rows), [connector])
-    assert.deepEqual(missionLaunchPolicySchema.parse(missionSchedulingPolicy(draft([...rows]))), missionSchedulingPolicy(draft([...rows])))
-  }
+  const rows = orderMissionCriteria([event, initial.criteria[0]])
+  assert.deepEqual(rows, [initial.criteria[0], event])
+  assert.deepEqual(missionCardConnectors(rows), ["if"])
+  assert.deepEqual(missionLaunchPolicySchema.parse(missionSchedulingPolicy(draft(rows))), missionSchedulingPolicy(draft(rows)))
   assert.throws(() => missionSchedulingPolicy(draft([row("now"), row("now")])), field("duplicate"))
 })
 
-test("the stored list keeps the card order; the connectors between cards come from the shared parser", () => {
+test("schedules stay above events; the connectors between cards come from the shared parser", () => {
   const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, commits = { kind: "branch-commits", directory: "/project", ref: "refs/heads/main" }
   const commitsRow = () => row("branch-commits", { source: "refs/heads/main" })
-  assert.deepEqual(missionSchedulingPolicy(draft([commitsRow(), row("daily")]), "/project"), { when: [commits, daily] })
-  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily")]), ["else"], "commits, else 09:00")
+  assert.deepEqual(orderMissionCriteria([commitsRow(), row("daily"), row("files-changed"), row("cron")]).map(item => item.kind), ["daily", "cron", "branch-commits", "files-changed"])
   assert.deepEqual(missionSchedulingPolicy(draft([row("daily"), commitsRow()]), "/project"), { when: [daily, commits] })
   assert.deepEqual(missionCardConnectors([row("daily"), commitsRow()]), ["if"], "09:00 if commits")
   assert.deepEqual(missionCardConnectors([commitsRow(), row("files-changed", { files: "a.ts" })]), ["or"], "commits or files")
-  assert.deepEqual(missionCardConnectors([row("hours"), row("daily"), row("files-changed"), row("mission-completed")]), ["or", "if", "or"])
-  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily"), row("files-changed"), row("cron")]), ["else", "if", "else"])
+  assert.deepEqual(missionCardConnectors([row("hours"), row("daily"), row("files-changed"), commitsRow()]), ["or", "if", "or"])
   assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("daily", { time: "09:00" })])), field("duplicate"))
-  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), row("daily"), row("files-changed", { files: "a.ts" })])),
+  assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("files-changed", { files: "a.ts" }), row("files-changed", { files: "a.ts" })])),
     field("duplicate"), "one event appears once")
   const eight = Array.from({ length: 8 }, (_, hour) => row("daily", { time: `0${hour}:00` }))
-  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), ...eight])), field("count"))
+  assert.throws(() => missionSchedulingPolicy(draft([...eight, row("daily", { time: "08:00" })])), field("count"))
   assert.doesNotThrow(() => missionSchedulingPolicy(draft([...eight, row("files-changed", { files: "a.ts" })])),
     "events after schedules are conditions and need no check of their own")
 })
 
 test("all events map to the native source contract and reject unsafe sources with their row index", () => {
-  const sources = { "schedule-success": "msn_source", "mission-completed": "msn_source", "branch-commits": "refs/heads/dev",
-    "remote-branch-commits": "dev",
-    "conversation-message": "ses_source", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
+  const sources = { "branch-commits": "refs/heads/dev", "remote-branch-commits": "dev", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
     "github-pull-request": "acme/repo", "github-issue": "acme/repo", "repository-activity": "" }
   for (const kind of missionEventKinds) {
     const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts",

@@ -10,13 +10,6 @@ export const authorityRootSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("git"), directory: z.string().min(1).max(4096), family: id, checkout: id }).strict(),
   z.object({ mode: z.literal("directory-only"), directory: z.string().min(1).max(4096) }).strict(),
 ])
-const authorityBindingSchema = z.object({
-  authorityID: id, keyID: id, profileID: id, executionHost: id,
-  namespace: z.string().uuid(), projectID: id, projectCanonical: z.string().min(1).max(4096),
-  roots: z.array(authorityRootSchema).min(1).max(32), missionID: id, coordinatorSessionID: id,
-}).strict()
-export type AuthorityRoot = z.infer<typeof authorityRootSchema>
-export type AuthorityBinding = z.infer<typeof authorityBindingSchema>
 
 export class MissionAuthorityError extends Error {
   constructor(readonly code: "invalid-intent" | "untrusted-signer" | "binding-mismatch" | "policy-unqualified"

@@ -10,7 +10,7 @@ export type LegacySchedule = {
   configuration: Record<string, unknown>
   /** It ran, and no failed passage held it. */
   running: boolean
-  /** One of its passages is under way: it is taken over once that passage ended. */
+  /** One of its passages was under way when the schedule was last written. */
   busy: boolean
   /** The native Automations and technical conversations that woke it. */
   automations: string[]; carriers: string[]

@@ -26,6 +26,7 @@ pub mod shell;
 pub mod tabs;
 pub mod timeline;
 mod tokens;
+pub mod transcript;
 pub mod usage;
 pub mod window_control;
 pub mod workspace_tree;

@@ -26,34 +26,82 @@ const TOUCH_BAR_TARGET: f32 = 44.0;
 pub enum BarAction {
     Settings,
     Conversation,
+    Remote,
 }
 
 impl BarAction {
+    fn icon(self) -> &'static Icon {
+        use crate::shell::icons;
+        match self {
+            Self::Settings => &icons::SETTINGS,
+            Self::Conversation => &icons::CONVERSATION,
+            Self::Remote => &icons::REMOTE,
+        }
+    }
+
     pub fn button<S: 'static>(
         self,
         touch: bool,
         label: &'static str,
         invoke: impl Fn(&mut S) + 'static,
     ) -> El {
-        if !touch {
-            return layout::button(label, false, invoke);
-        }
-        use crate::shell::icons;
-        let icon = match self {
-            Self::Settings => &icons::SETTINGS,
-            Self::Conversation => &icons::CONVERSATION,
+        let help = if matches!(self, Self::Settings) {
+            let locale = catalogue::render_locale(|| "en");
+            if catalogue::message(locale, "settings.title") == Some(label) {
+                catalogue::message(locale, "settings.open.title").unwrap_or(label)
+            } else {
+                label
+            }
+        } else {
+            label
         };
-        touch_bar_button(icon, label, label, move |s, _| invoke(s))
+        bar_action_button(self.icon(), label, help, touch, false, move |s, _| {
+            invoke(s)
+        })
+    }
+
+    pub fn button_tx<S: 'static>(
+        self,
+        touch: bool,
+        label: &str,
+        help: &str,
+        active: bool,
+        invoke: impl Fn(&mut S, &mut Tx) + 'static,
+    ) -> El {
+        bar_action_button(self.icon(), label, help, touch, active, invoke)
     }
 }
 
-pub(crate) fn touch_bar_button<S: 'static>(
+pub(crate) fn bar_action_button<S: 'static>(
     icon: &'static Icon,
     label: &str,
     help: &str,
+    touch: bool,
+    active: bool,
     invoke: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
-    bar_button(icon, label, help, TOUCH_BAR_TARGET, invoke)
+    let side = if touch {
+        TOUCH_BAR_TARGET
+    } else {
+        tokens(layout::dark()).length(Length::TouchCompact).px()
+    };
+    bar_button_state(icon, label, help, side, active, invoke)
+}
+
+pub(crate) fn bar_action_button_compact<S: 'static>(
+    icon: &'static Icon,
+    label: &str,
+    help: &str,
+    touch: bool,
+    active: bool,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let side = if touch {
+        TOUCH_BAR_TARGET
+    } else {
+        tokens(layout::dark()).length(Length::Control).px()
+    };
+    bar_button_state(icon, label, help, side, active, invoke)
 }
 
 fn bar_button<S: 'static>(
@@ -63,7 +111,29 @@ fn bar_button<S: 'static>(
     side: f32,
     invoke: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
+    bar_button_state(icon, label, help, side, false, invoke)
+}
+
+fn bar_button_state<S: 'static>(
+    icon: &'static Icon,
+    label: &str,
+    help: &str,
+    side: f32,
+    active: bool,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
     let t = tokens(layout::dark());
+    let (fill, hover) = if active {
+        let tint = t
+            .color("accent-primary")
+            .mix(t.color("text-on-accent"), 0.2)
+            .mix(t.color("surface-base"), 0.1);
+        (tint.alpha(0.44), tint.alpha(0.56))
+    } else {
+        (t.color("new-tab-bg"), t.color("new-tab-hover-bg"))
+    };
+    let invoke = Rc::new(invoke);
+    let press = invoke.clone();
     rune::row()
         .role("button")
         .focusable(true)
@@ -71,14 +141,15 @@ fn bar_button<S: 'static>(
         .help(help)
         .size(side, side)
         .center()
-        .fill(t.color("new-tab-bg"))
-        .hover(t.color("new-tab-hover-bg"))
+        .fill(fill)
+        .hover(hover)
         .focus_ring(
             t.metric("windowIconFocus", "outlineWidth").px(),
             t.metric("button", "borderTopWidth").px(),
             t.color("accent-primary"),
         )
-        .on_press_tx(invoke)
+        .on_press_tx(move |s, tx| press(s, tx))
+        .on_key(layout::enter_action(invoke))
         .child(
             rune::icon(icon, t.length(Length::Icon).px())
                 .color(t.color("new-tab-text"))
@@ -478,6 +549,28 @@ pub fn strip_with_help<S: 'static>(
             tx.scroll_into_view_in("project-tabs-scroll", key);
             true
         });
+    let actions: Vec<El> = actions.into_iter().collect();
+    let actions_row = if actions.is_empty() {
+        rune::row().key("project-tabs-actions").items_center()
+    } else {
+        rune::row()
+            .key("project-tabs-actions")
+            .items_center()
+            .gap(t.space(crate::Space::Sm).px())
+            .child(
+                rune::el()
+                    .w(t.metric("tabActive", "borderTopWidth").px())
+                    .h(height)
+                    .fill(t.color("border-base"))
+                    .a11y_hidden(),
+            )
+            .child(
+                rune::row()
+                    .items_center()
+                    .gap(t.space(crate::Space::Xs).px())
+                    .children(actions),
+            )
+    };
     rune::row()
         .key("project-tabs")
         .w_full()
@@ -496,13 +589,7 @@ pub fn strip_with_help<S: 'static>(
         )
         .child(new)
         .child(rune::spacer())
-        .child(
-            rune::row()
-                .key("project-tabs-actions")
-                .items_center()
-                .gap(t.space(crate::Space::Xs).px())
-                .children(actions),
-        )
+        .child(actions_row)
         .locale_direction(locale)
 }
 
@@ -896,6 +983,131 @@ mod tests {
         let expected_desc = catalogue::message("fr", "instanceTab.temporary.ariaLabel").unwrap();
         assert_eq!(tab_node["d"], expected_desc);
     }
+    #[test]
+    fn desktop_and_touch_bar_actions_render_uniform_square_icon_buttons() {
+        fn render_bar<const TOUCH: bool>(s: &App, cx: &mut Cx<App>) -> El {
+            catalogue::with_locale(s.locale, || {
+                layout::render(cx, |_| {
+                    let settings_label = catalogue::message(s.locale, "settings.title").unwrap();
+                    let bell_label = catalogue::message(s.locale, "toastHistory.title").unwrap();
+                    let remote_label =
+                        catalogue::message(s.locale, "instanceTabs.remote.ariaLabel").unwrap();
+                    let remote_help =
+                        catalogue::message(s.locale, "instanceTabs.remote.title").unwrap();
+                    let settings = BarAction::Settings
+                        .button(TOUCH, settings_label, |s: &mut App| {
+                            s.closed.push("settings".into());
+                        })
+                        .key("open-preferences");
+                    let bell = crate::shell::notices::bell(
+                        bell_label,
+                        None,
+                        s.closed.iter().any(|k| k == "bell"),
+                        TOUCH,
+                        false,
+                        |s: &mut App, _| s.closed.push("bell".into()),
+                    );
+                    let remote = BarAction::Remote
+                        .button_tx(TOUCH, remote_label, remote_help, false, |s: &mut App, _| {
+                            s.closed.push("remote".into())
+                        })
+                        .key("open-remote-control");
+                    strip_view(s, TOUCH, [settings, bell, remote])
+                })
+            })
+        }
+        for dark in [false, true] {
+            for touch in [false, true] {
+                for locale in ["en", "fr", "he"] {
+                    let expected_side = if touch {
+                        TOUCH_BAR_TARGET
+                    } else {
+                        tokens(dark).length(Length::TouchCompact).px()
+                    };
+                    let view_fn: fn(&App, &mut Cx<App>) -> El = if touch {
+                        render_bar::<true>
+                    } else {
+                        render_bar::<false>
+                    };
+                    let mut rt = rune::Runtime::new(
+                        App {
+                            active: "a".into(),
+                            closed: vec![],
+                            new: 0,
+                            locale,
+                        },
+                        view_fn,
+                        (if touch { 390.0 } else { 900.0 }, 120.0),
+                        rune::Env::new(dark, 1.0),
+                    );
+                    rt.frame(0.0);
+                    let elements = rt.elements();
+                    let find_el = |key: &str| {
+                        elements
+                            .iter()
+                            .find(|e| e.key.as_deref() == Some(key))
+                            .unwrap_or_else(|| panic!("missing {key}"))
+                    };
+                    let settings = find_el("open-preferences");
+                    let bell = find_el(crate::shell::notices::ANCHOR);
+                    let remote = find_el("open-remote-control");
+                    assert_eq!(settings.rect[2], expected_side);
+                    assert_eq!(settings.rect[3], expected_side);
+                    assert_eq!(bell.rect[2], expected_side);
+                    assert_eq!(bell.rect[3], expected_side);
+                    assert_eq!(remote.rect[2], expected_side);
+                    assert_eq!(remote.rect[3], expected_side);
+                    assert_eq!(
+                        settings.label.as_deref(),
+                        catalogue::message(locale, "settings.title")
+                    );
+                    assert_eq!(
+                        settings.help.as_deref(),
+                        catalogue::message(locale, "settings.open.title")
+                    );
+                    assert_eq!(
+                        bell.label.as_deref(),
+                        catalogue::message(locale, "toastHistory.title")
+                    );
+                    assert_eq!(
+                        remote.label.as_deref(),
+                        catalogue::message(locale, "instanceTabs.remote.ariaLabel")
+                    );
+                    assert_eq!(
+                        remote.help.as_deref(),
+                        catalogue::message(locale, "instanceTabs.remote.title")
+                    );
+                    // Desktop Settings renders an icon, never a visible text button label.
+                    assert!(
+                        !elements.iter().any(|e| {
+                            e.text.as_deref() == catalogue::message(locale, "settings.title")
+                        }),
+                        "Settings topbar button must be an icon button in {locale}"
+                    );
+                    let rtl = catalogue::direction(locale) == "rtl";
+                    if rtl {
+                        assert!(settings.rect[0] > bell.rect[0] && bell.rect[0] > remote.rect[0]);
+                    } else {
+                        assert!(settings.rect[0] < bell.rect[0] && bell.rect[0] < remote.rect[0]);
+                    }
+                    // Pointer click and Enter activation both work on all 3 icon buttons.
+                    let settings_pt = rt.find("open-preferences").unwrap();
+                    tap(&mut rt, settings_pt);
+                    let bell_pt = rt.find(crate::shell::notices::ANCHOR).unwrap();
+                    tap(&mut rt, bell_pt);
+                    rt.update(|_, tx| tx.focus("open-remote-control", true));
+                    rt.frame(1.0 / 60.0);
+                    rt.key(rune::KeyEvent {
+                        key: rune::Key::Enter,
+                        mods: rune::Mods::default(),
+                    });
+                    rt.frame(1.0 / 60.0);
+                    assert_eq!(rt.state.closed, ["settings", "bell", "remote"]);
+                }
+            }
+        }
+    }
+
     #[test]
     fn direction_and_words_follow_the_catalogue() {
         for locale in ["en", "he"] {

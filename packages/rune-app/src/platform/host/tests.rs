@@ -44,7 +44,7 @@ fn local_readiness_refuses_foreign_and_credential_endpoints() {
 
 #[test]
 fn native_capability_denial_correlates_without_reflecting_params() {
-    let line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"owned-request","method":"opencode.service.start","params":{"password":"SECRET"},"deadline":9999999999999}"#;
+    let line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"owned-request","method":"developer.status","params":{"password":"SECRET"},"deadline":9999999999999}"#;
     let protocol::Line::Native {
         response, expires, ..
     } = protocol::classify(line)
@@ -64,6 +64,236 @@ fn native_capability_denial_correlates_without_reflecting_params() {
     assert_eq!(value["id"], "owned-request");
     assert_eq!(value["ok"], false);
     assert_eq!(value["error"]["code"], "native_error");
+}
+
+#[test]
+fn opencode_service_start_contract_routes_fences_and_executes_bounded() {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let future_deadline = now_ms + 30_000;
+    let valid_line = format!(
+        r#"CODENOMAD_NATIVE_REQUEST:{{"v":1,"id":"start-1","method":"opencode.service.start","params":{{"file":"x","args":[],"env":{{}},"cwd":".","windowsVerbatimArguments":false}},"deadline":{future_deadline}}}"#
+    );
+    assert!(matches!(
+        protocol::classify(&valid_line),
+        protocol::Line::NativeServiceStart { ref id, deadline, .. }
+            if id == "start-1" && deadline == future_deadline
+    ));
+
+    // Expired opencode.service.start is refused directly without spawning.
+    let expired_line = r#"CODENOMAD_NATIVE_REQUEST:{"v":1,"id":"start-exp","method":"opencode.service.start","params":{"file":"x","args":[],"env":{},"cwd":".","windowsVerbatimArguments":false},"deadline":1}"#;
+    let protocol::Line::Native { response, .. } = protocol::classify(expired_line) else {
+        panic!("Expected immediate expiry refusal");
+    };
+    let expired_val: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(expired_val["ok"], false);
+    assert_eq!(
+        expired_val["error"]["message"],
+        "Native request expired before execution"
+    );
+
+    // Queued ok:true reply that expires before stdin write becomes ok:false expired error.
+    let ok_reply = protocol::native_ok(
+        "start-queued",
+        serde_json::json!({"stdout":"ok","stderr":""}),
+    );
+    let fenced = protocol::fenced_response(ok_reply, Instant::now(), 1);
+    let fenced_val: serde_json::Value = serde_json::from_str(
+        fenced
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fenced_val["id"], "start-queued");
+    assert_eq!(fenced_val["ok"], false);
+    assert_eq!(
+        fenced_val["error"]["message"],
+        "Native request expired before execution"
+    );
+    assert!(fenced_val.get("result").is_none());
+
+    // Unknown params fields and pre-cancelled requests are refused cleanly.
+    assert_eq!(
+        service_start::run(
+            serde_json::json!({
+                "file": "x",
+                "args": [],
+                "env": {},
+                "cwd": ".",
+                "windowsVerbatimArguments": false,
+                "unexpected": "SECRET"
+            }),
+            future_deadline,
+            || false,
+        ),
+        Err(service_start::Error::Failed)
+    );
+    assert_eq!(
+        service_start::run(
+            serde_json::json!({
+                "file": "x",
+                "args": [],
+                "env": {},
+                "cwd": ".",
+                "windowsVerbatimArguments": false
+            }),
+            future_deadline,
+            || true,
+        ),
+        Err(service_start::Error::Cancelled)
+    );
+
+    // Bounded execution: stdout/stderr capture, non-zero exit redaction, output cap, and timeout.
+    let temp = fresh_root("service-start");
+    fs::create_dir_all(&temp).unwrap();
+    let base_env: serde_json::Map<String, serde_json::Value> = std::env::vars()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
+    #[cfg(windows)]
+    {
+        let ok_cmd = temp.join("ok wrapper.cmd");
+        fs::write(&ok_cmd, "@echo off\r\necho %~1\r\necho notice 1>&2\r\n").unwrap();
+        let params = serde_json::json!({
+            "file": "cmd.exe",
+            "args": ["/d", "/s", "/c", format!("\"\"{}\" \"a b\"\"", ok_cmd.display())],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": true,
+        });
+        let result = service_start::run(params, future_deadline, || false).unwrap();
+        assert_eq!(result["stdout"], "a b\r\n");
+        assert!(result["stderr"].as_str().unwrap().contains("notice"));
+
+        let fail_cmd = temp.join("fail.cmd");
+        fs::write(&fail_cmd, "@echo off\r\necho SECRET 1>&2\r\nexit /b 1\r\n").unwrap();
+        let fail_params = serde_json::json!({
+            "file": "cmd.exe",
+            "args": ["/d", "/c", fail_cmd],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        assert_eq!(
+            service_start::run(fail_params, future_deadline, || false),
+            Err(service_start::Error::Failed)
+        );
+    }
+    #[cfg(unix)]
+    {
+        let ok_params = serde_json::json!({
+            "file": "/bin/sh",
+            "args": ["-c", "printf 'started'; printf 'notice' >&2"],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        let result = service_start::run(ok_params, future_deadline, || false).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({"stdout": "started", "stderr": "notice"})
+        );
+
+        let fail_params = serde_json::json!({
+            "file": "/bin/sh",
+            "args": ["-c", "printf 'SECRET' >&2; exit 1"],
+            "env": base_env,
+            "cwd": temp,
+            "windowsVerbatimArguments": false,
+        });
+        assert_eq!(
+            service_start::run(fail_params, future_deadline, || false),
+            Err(service_start::Error::Failed)
+        );
+    }
+
+    // Async dispatch_service_start delivers ok:true over Control::Native and fences stale generation.
+    let active = Arc::new(AtomicUsize::new(0));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(AtomicU64::new(1));
+    let (tx, rx) = mpsc::sync_channel::<Control>(4);
+    #[cfg(windows)]
+    let dispatch_params = serde_json::json!({
+        "file": "cmd.exe",
+        "args": ["/d", "/c", "echo ok"],
+        "env": base_env,
+        "cwd": temp,
+        "windowsVerbatimArguments": false,
+    });
+    #[cfg(unix)]
+    let dispatch_params = serde_json::json!({
+        "file": "/bin/sh",
+        "args": ["-c", "printf ok"],
+        "env": base_env,
+        "cwd": temp,
+        "windowsVerbatimArguments": false,
+    });
+    dispatch_service_start(
+        "async-start".into(),
+        dispatch_params,
+        Instant::now() + Duration::from_secs(10),
+        future_deadline,
+        &active,
+        &shutdown,
+        &authority,
+        1,
+        &tx,
+    );
+    let Control::Native { response, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("Expected Control::Native reply");
+    };
+    let dispatched: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(dispatched["id"], "async-start");
+    assert_eq!(dispatched["ok"], true);
+    assert!(
+        dispatched["result"]["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("ok")
+    );
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+
+    // Concurrency cap returns an immediate failure without spawning.
+    active.store(MAX_CONCURRENT_SERVICE_STARTS, Ordering::SeqCst);
+    dispatch_service_start(
+        "capped-start".into(),
+        serde_json::json!({}),
+        Instant::now() + Duration::from_secs(10),
+        future_deadline,
+        &active,
+        &shutdown,
+        &authority,
+        1,
+        &tx,
+    );
+    let Control::Native { response, .. } = rx.recv_timeout(Duration::from_secs(1)).unwrap() else {
+        panic!("Expected capped error reply");
+    };
+    let capped: serde_json::Value = serde_json::from_str(
+        response
+            .trim()
+            .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(capped["id"], "capped-start");
+    assert_eq!(capped["ok"], false);
+    assert_eq!(capped["error"]["message"], "OpenCode service start failed");
+    let _ = fs::remove_dir_all(&temp);
 }
 
 #[test]
@@ -343,4 +573,308 @@ fn real_serve_bootstrap_stop_and_new_generation() {
     let _backend = second.connect().unwrap();
     let report = second.stop().unwrap();
     assert!(!report.forced && report.native_cleanup_confirmed);
+}
+
+#[test]
+fn desktop_launch_builds_standard_and_named_profiles_and_sanitizes_env() {
+    // Verify SHA-256 scope suffixes against shared Electron/Tauri data-profile vectors.
+    assert_eq!(
+        config::scope_suffix("dev", "/home/dev/.config/codenomad/config.yaml"),
+        "6698b32b9d7b4a38"
+    );
+    assert_eq!(
+        config::scope_suffix("dev", r"c:\users\dev\.config\codenomad\config.yaml"),
+        "adceedb0dd29790c"
+    );
+    assert_eq!(
+        config::scope_suffix("stable", "/work/other/config.yaml"),
+        "218200c29d8465d1"
+    );
+
+    let root = fresh_root("desktop-config");
+    let install_dir = root.join("install");
+    let home = root.join("home");
+    let local_data = root.join("local-data");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&local_data).unwrap();
+    let sibling = install_dir.join(config::SERVER_BINARY_NAME);
+    fs::write(&sibling, b"server").unwrap();
+
+    let mut inherited = std::collections::BTreeMap::<std::ffi::OsString, std::ffi::OsString>::new();
+    inherited.insert("HOME".into(), home.clone().into_os_string());
+    inherited.insert("USERPROFILE".into(), home.clone().into_os_string());
+    inherited.insert("LOCALAPPDATA".into(), local_data.clone().into_os_string());
+    inherited.insert("XDG_DATA_HOME".into(), local_data.clone().into_os_string());
+    inherited.insert("MY_DESKTOP_VAR".into(), "keep-me".into());
+    inherited.insert("RUNE_BACKEND".into(), "http://127.0.0.1:9999/".into());
+    inherited.insert("RUNE_NO_AUTOLAUNCH".into(), "1".into());
+    inherited.insert("CNRS_FIXTURE_URL".into(), "http://127.0.0.1:1/".into());
+    inherited.insert("CODENOMAD_SERVER_PASSWORD".into(), "leaked".into());
+    inherited.insert("CODENOMAD_SKIP_AUTH".into(), "1".into());
+    inherited.insert("CLI_LAUNCH".into(), "1".into());
+    inherited.insert("ELECTRON_RUN_AS_NODE".into(), "1".into());
+
+    // 1. Standard default desktop launch (no CODENOMAD_PROFILE).
+    let cfg = LaunchConfig::desktop_with_env(sibling.clone(), &install_dir, &inherited).unwrap();
+    assert_eq!(cfg.profile, "stable");
+    assert_eq!(cfg.working_directory, home);
+    assert_eq!(
+        cfg.config_file,
+        home.join(".config").join("codenomad").join("config.yaml")
+    );
+    assert!(!cfg.ephemeral_ports);
+    let default_state = cfg.state_directory().expect("desktop state directory");
+    assert_eq!(default_state.file_name().unwrap(), "default");
+    assert!(
+        default_state.parent().unwrap().is_dir(),
+        "state parent must exist for storage::native::Files::open"
+    );
+
+    let command = cfg.command("desktop-cookie").unwrap();
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--auth-cookie-name",
+            "desktop-cookie",
+            "--generate-token",
+            "--unrestricted-root",
+            "--https",
+            "true",
+            "--http",
+            "true",
+        ]
+    );
+    let env: std::collections::BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect();
+    assert_eq!(env["CODENOMAD_NATIVE_PARENT"].as_deref(), Some("1"));
+    assert_eq!(env["CODENOMAD_PROFILE"].as_deref(), Some("stable"));
+    assert_eq!(env["CODENOMAD_UPDATE_CHANNEL"].as_deref(), Some("stable"));
+    assert_eq!(
+        env["CODENOMAD_PROFILE_CONFIG_IDENTITY"].as_deref(),
+        Some(cfg.config_identity.as_str())
+    );
+    assert_eq!(
+        env["CLI_CONFIG"].as_deref(),
+        Some(cfg.config_file.to_string_lossy().as_ref())
+    );
+    assert_eq!(env["MY_DESKTOP_VAR"].as_deref(), Some("keep-me"));
+    for stripped in [
+        "RUNE_BACKEND",
+        "RUNE_NO_AUTOLAUNCH",
+        "CNRS_FIXTURE_URL",
+        "CODENOMAD_SERVER_PASSWORD",
+        "CODENOMAD_SKIP_AUTH",
+        "CLI_LAUNCH",
+        "ELECTRON_RUN_AS_NODE",
+    ] {
+        assert!(!env.contains_key(stripped), "must strip {stripped}");
+    }
+
+    // 2. Named profile (`CODENOMAD_PROFILE= Work `) scopes Rune UI state independently.
+    let mut named_env = inherited.clone();
+    named_env.insert("CODENOMAD_PROFILE".into(), " Work ".into());
+    let named = LaunchConfig::desktop_with_env(sibling.clone(), &install_dir, &named_env).unwrap();
+    assert_eq!(named.profile, "work");
+    let named_state = named.state_directory().unwrap();
+    assert_ne!(named_state, default_state);
+    assert!(
+        named_state
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("work-")
+    );
+
+    // 3. Explicit `CODENOMAD_PROFILE=default` resolves to `stable` and default state dir.
+    let mut explicit_default = inherited.clone();
+    explicit_default.insert("CODENOMAD_PROFILE".into(), "default".into());
+    let def =
+        LaunchConfig::desktop_with_env(sibling.clone(), &install_dir, &explicit_default).unwrap();
+    assert_eq!(def.profile, "stable");
+    assert_eq!(def.state_directory().unwrap(), default_state);
+
+    // 4. Custom CLI_CONFIG normalizes legacy .json to config.yaml and scopes state dir.
+    let mut custom_cfg = inherited.clone();
+    custom_cfg.insert("CLI_CONFIG".into(), "~/custom/config.json".into());
+    let custom =
+        LaunchConfig::desktop_with_env(sibling.clone(), &install_dir, &custom_cfg).unwrap();
+    assert_eq!(custom.config_file, home.join("custom").join("config.yaml"));
+    assert_ne!(custom.state_directory().unwrap(), default_state);
+    assert!(
+        custom
+            .state_directory()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("stable-")
+    );
+
+    // 5. Invalid CODENOMAD_PROFILE fails closed instead of falling back to default.
+    let mut invalid_env = inherited;
+    invalid_env.insert("CODENOMAD_PROFILE".into(), "../escape".into());
+    assert!(LaunchConfig::desktop_with_env(sibling, &install_dir, &invalid_env).is_err());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn desktop_launch_isolated_install_dir_round_trip() {
+    let root = fresh_root("desktop-install-roundtrip");
+    let install_dir = root.join("app");
+    let home = root.join("home");
+    let local_data = root.join("local");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&local_data).unwrap();
+
+    let fake_rune = install_dir.join(if cfg!(windows) {
+        "codenomad-rune.exe"
+    } else {
+        "codenomad-rune"
+    });
+    fs::write(&fake_rune, b"rune").unwrap();
+    let sibling = install_dir.join(config::SERVER_BINARY_NAME);
+
+    let mut env = std::collections::BTreeMap::<std::ffi::OsString, std::ffi::OsString>::new();
+    for (k, v) in std::env::vars_os() {
+        let upper = k.to_string_lossy().to_ascii_uppercase();
+        if matches!(
+            upper.as_str(),
+            "PATH" | "PATHEXT" | "SYSTEMROOT" | "WINDIR" | "COMSPEC" | "SYSTEMDRIVE"
+        ) {
+            env.insert(k, v);
+        }
+    }
+    env.insert("HOME".into(), home.clone().into_os_string());
+    env.insert("USERPROFILE".into(), home.clone().into_os_string());
+    env.insert("APPDATA".into(), root.join("roaming").into_os_string());
+    env.insert("LOCALAPPDATA".into(), local_data.clone().into_os_string());
+    env.insert("XDG_DATA_HOME".into(), local_data.clone().into_os_string());
+    env.insert(
+        "XDG_CONFIG_HOME".into(),
+        home.join(".config").into_os_string(),
+    );
+    env.insert("TEMP".into(), root.join("tmp").into_os_string());
+    env.insert("TMP".into(), root.join("tmp").into_os_string());
+    fs::create_dir_all(root.join("tmp")).unwrap();
+    fs::create_dir_all(root.join("roaming")).unwrap();
+
+    if let Some(real_server) = std::env::var_os("CODENOMAD_HOST_TEST_SERVER").map(PathBuf::from) {
+        // Real sibling codenomad-rs in an isolated install folder (never touches real OS profile).
+        fs::copy(&real_server, &sibling).unwrap();
+        let cfg_dir = home.join(".config").join("codenomad");
+        fs::create_dir_all(&cfg_dir).unwrap();
+        let blocked_cli = root.join("disabled-opencode-cli");
+        fs::write(
+            cfg_dir.join("config.yaml"),
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"server": {"opencodeBinary": blocked_cli}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        env.insert("CODENOMAD_REMOTE_CONTROL".into(), "disabled".into());
+
+        let discovered = discover_sibling_server(&fake_rune).expect("discover sibling server");
+        assert_eq!(discovered, sibling);
+        let mut config = LaunchConfig::desktop_with_env(discovered, &install_dir, &env).unwrap();
+        config.ephemeral_ports = true;
+        let state_dir = config.state_directory().unwrap();
+        let mut child = Controller::default().launch(config).unwrap();
+        let backend = child.connect().unwrap();
+        assert_eq!(
+            crate::platform::block_on(async {
+                backend
+                    .client
+                    .get(format!("{}api/meta", backend.base))
+                    .send()
+                    .await
+            })
+            .unwrap()
+            .status(),
+            200
+        );
+        let report = child.stop().unwrap();
+        assert!(!report.forced && report.native_cleanup_confirmed && report.exit_code == Some(0));
+        assert!(state_dir.parent().unwrap().is_dir());
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server_thread = thread::spawn(move || {
+                use std::io::{Read, Write};
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    let body = r#"{"authenticated":true,"username":"opencode"}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: desktop=ok; HttpOnly\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            });
+            fs::write(
+                &sibling,
+                format!(
+                    "#!/bin/sh\n\
+                     [ \"$CODENOMAD_NATIVE_PARENT\" = \"1\" ] || exit 11\n\
+                     printf 'CODENOMAD_BOOTSTRAP_TOKEN:desktop-bootstrap-tok\\n'\n\
+                     printf 'Local Connection URL : http://127.0.0.1:{port}\\n'\n\
+                     while IFS= read -r line; do\n\
+                       if [ \"$line\" = \"codenomad:shutdown\" ]; then\n\
+                         printf 'CODENOMAD_SHUTDOWN_COMPLETE:true\\n'\n\
+                         exit 0\n\
+                       fi\n\
+                     done\n\
+                     exit 1\n"
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&sibling, fs::Permissions::from_mode(0o755)).unwrap();
+
+            let discovered = discover_sibling_server(&fake_rune).expect("discover sibling server");
+            assert_eq!(discovered, sibling);
+            let config = LaunchConfig::desktop_with_env(discovered, &install_dir, &env).unwrap();
+            let mut child = Controller::default().launch(config).unwrap();
+            let backend = child.connect().unwrap();
+            assert_eq!(backend.base, format!("http://127.0.0.1:{port}/"));
+            let report = child.stop().unwrap();
+            assert!(
+                !report.forced && report.native_cleanup_confirmed && report.exit_code == Some(0)
+            );
+            server_thread.join().unwrap();
+        }
+        #[cfg(windows)]
+        {
+            fs::write(&sibling, b"stub-server").unwrap();
+            let discovered = discover_sibling_server(&fake_rune).expect("discover sibling server");
+            assert_eq!(discovered, sibling);
+            let config = LaunchConfig::desktop_with_env(discovered, &install_dir, &env).unwrap();
+            let state_dir = config.state_directory().expect("desktop state directory");
+            assert!(state_dir.starts_with(local_data.join("CodeNomad").join("rune")));
+            assert!(state_dir.parent().unwrap().is_dir());
+            assert!(config.command("desktop-cookie").is_ok());
+        }
+    }
+
+    let _ = fs::remove_dir_all(&root);
 }

@@ -581,6 +581,7 @@ async fn receive_chunk(
                     super::sessions::note_inbox_frame(
                         &b.workspace,
                         &b.session,
+                        b.session_directory.as_deref(),
                         &state.inbox,
                         Some(state.history_revision.as_ref()),
                         Some(state.upstream.as_ref()),

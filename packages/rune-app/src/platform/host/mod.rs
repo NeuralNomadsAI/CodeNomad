@@ -2,20 +2,23 @@
 mod config;
 mod persistent;
 mod protocol;
+mod service_start;
 use codenomad_client::backend::Backend;
 use codenomad_host_process::OwnedProcess;
 pub use config::LaunchConfig;
-pub(crate) use config::profile_name;
+pub(crate) use config::{discover_sibling_server, profile_name};
 use std::{
     io::{self, BufReader, Write},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+const MAX_CONCURRENT_SERVICE_STARTS: usize = 4;
 
 #[derive(Clone, Default)]
 pub struct Controller {
@@ -123,6 +126,8 @@ impl ChildHost {
         let reader_authority = authority.clone();
         let reader_renewal = pending_renewal.clone();
         let reader_closed = stdout_closed.clone();
+        let reader_shutdown = shutdown.clone();
+        let active_service_starts = Arc::new(AtomicUsize::new(0));
         let replies = writer.clone();
         let stdout_thread = thread::spawn(move || {
             let result = protocol::pump(BufReader::new(stdout), |line| {
@@ -160,6 +165,24 @@ impl ChildHost {
                             expires,
                             deadline,
                         });
+                    }
+                    protocol::Line::NativeServiceStart {
+                        id,
+                        params,
+                        expires,
+                        deadline,
+                    } => {
+                        dispatch_service_start(
+                            id,
+                            params,
+                            expires,
+                            deadline,
+                            &active_service_starts,
+                            &reader_shutdown,
+                            &reader_authority,
+                            generation,
+                            &replies,
+                        );
                     }
                     protocol::Line::Diagnostic => {}
                 }
@@ -495,6 +518,87 @@ fn request_managed_session(
     };
     pending_renewal.lock().unwrap().take();
     outcome
+}
+
+struct ServiceStartPermit(Arc<AtomicUsize>);
+
+impl ServiceStartPermit {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
+        let mut current = active.load(Ordering::SeqCst);
+        loop {
+            if current >= MAX_CONCURRENT_SERVICE_STARTS {
+                return None;
+            }
+            match active.compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return Some(Self(active.clone())),
+                Err(next) => current = next,
+            }
+        }
+    }
+}
+
+impl Drop for ServiceStartPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_service_start(
+    id: String,
+    params: serde_json::Value,
+    expires: Instant,
+    deadline: u64,
+    active: &Arc<AtomicUsize>,
+    shutdown: &Arc<AtomicBool>,
+    authority: &Arc<AtomicU64>,
+    generation: u64,
+    replies: &mpsc::SyncSender<Control>,
+) {
+    let Some(permit) = ServiceStartPermit::try_acquire(active) else {
+        let _ = replies.try_send(Control::Native {
+            response: protocol::native_error(&id, "OpenCode service start failed"),
+            expires,
+            deadline,
+        });
+        return;
+    };
+    let shutdown = shutdown.clone();
+    let authority = authority.clone();
+    let worker_replies = replies.clone();
+    let worker_id = id.clone();
+    let spawn = thread::Builder::new()
+        .name("codenomad-service-start".into())
+        .spawn(move || {
+            let _permit = permit;
+            let response = match service_start::run(params, deadline, || {
+                shutdown.load(Ordering::SeqCst) || authority.load(Ordering::SeqCst) != generation
+            }) {
+                Ok(result) => protocol::native_ok(&worker_id, result),
+                Err(service_start::Error::Expired) => {
+                    protocol::native_error(&worker_id, "Native request expired before execution")
+                }
+                Err(service_start::Error::Failed) => {
+                    protocol::native_error(&worker_id, "OpenCode service start failed")
+                }
+                Err(service_start::Error::Cancelled) => return,
+            };
+            if !shutdown.load(Ordering::SeqCst) && authority.load(Ordering::SeqCst) == generation {
+                let _ = worker_replies.try_send(Control::Native {
+                    response,
+                    expires,
+                    deadline,
+                });
+            }
+        });
+    if spawn.is_err() {
+        let _ = replies.try_send(Control::Native {
+            response: protocol::native_error(&id, "OpenCode service start failed"),
+            expires,
+            deadline,
+        });
+    }
 }
 
 #[cfg(test)]

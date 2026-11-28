@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 use super::web;
 #[cfg(not(target_arch = "wasm32"))]
-use super::{Preferences, memory, notification_settings, providers, view};
+use super::{Preferences, memory, notification_settings, providers, responsive::Section, view};
 use crate::State;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::strings;
@@ -33,7 +33,7 @@ pub(crate) fn direct_entry(s: &State, touch: bool, skip_tab: bool) -> El {
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
     s.shell.leave_project();
-    open_window(s, false);
+    open_window(s, None);
 }
 
 pub(crate) fn open_preferences(s: &mut State) {
@@ -45,28 +45,34 @@ pub(crate) fn open_preferences(s: &mut State) {
 
 pub(crate) fn open_providers(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
-    open_window(s, true);
+    open_window(s, Some(Section::Providers));
     #[cfg(target_arch = "wasm32")]
     web::open_providers(s);
 }
 
+#[allow(dead_code)] // Consumed by shell/workspace status strip in the companion shell branch.
+pub(crate) fn open_remote(s: &mut State) {
+    #[cfg(not(target_arch = "wasm32"))]
+    open_window(s, Some(Section::Remote));
+    #[cfg(target_arch = "wasm32")]
+    web::open_remote(s);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-fn open_window(s: &mut State, providers: bool) {
+fn open_window(s: &mut State, target_section: Option<Section>) {
     let host = &s.settings;
-    if providers {
-        let target = providers::Target::capture(s);
-        let opener = super::missions::opener_directory(s);
-        let mut prefs = host.shared.borrow_mut();
-        prefs.missions.capture_opener(opener, target.as_ref());
-        prefs.provider_target = target;
-        prefs.open_providers = true;
-    }
     if let Some((window, token, request)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        if providers {
+        if let Some(section) = target_section {
+            let target = providers::Target::capture(s);
+            let opener = super::missions::opener_directory(s);
+            let mut prefs = host.shared.borrow_mut();
+            prefs.missions.capture_opener(opener, target.as_ref());
+            prefs.provider_target = target;
+            prefs.open_section = Some(section);
             window.focus();
-            if let Some(wake) = &host.shared.borrow().window_wake {
+            if let Some(wake) = &prefs.window_wake {
                 wake();
             }
         } else {
@@ -93,7 +99,7 @@ fn open_window(s: &mut State, providers: bool) {
         let mut prefs = host.shared.borrow_mut();
         prefs.missions.capture_opener(opener, target.as_ref());
         prefs.provider_target = target;
-        prefs.open_providers = providers;
+        prefs.open_section = target_section;
         prefs
             .memory
             .bind_seen(crate::workspace::native_window_store(s));

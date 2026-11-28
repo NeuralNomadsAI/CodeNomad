@@ -87,7 +87,6 @@ async function harness(
   const servicePathCalls: string[] = []
   let invalidations = 0
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async () => { throw { type: "rpc.method_not_found" } } }),
     permission: { get: async ({ sessionID, requestID }: { sessionID: string; requestID: string }) => ({ id: requestID, sessionID, action: "read", resources: [] }) },
     project: {
       list: async () => [

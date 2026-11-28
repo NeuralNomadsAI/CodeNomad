@@ -31,6 +31,7 @@ pub(crate) use hub::Hub;
 pub(crate) use notifications::session_attention;
 #[cfg(test)]
 use routing::dispatch;
+pub(crate) use sessions::session_moved_away;
 pub use staleness::probe_stale;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]

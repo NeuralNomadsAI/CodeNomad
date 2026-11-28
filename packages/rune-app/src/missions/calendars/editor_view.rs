@@ -220,9 +220,10 @@ fn criterion_card<S: 'static>(
     let title_line = match connector {
         Some(conn) => {
             let conn_label = t(match conn {
-                CriterionConnector::Or => "missions.scheduling.connector.or",
+                CriterionConnector::Or | CriterionConnector::Else => {
+                    "missions.scheduling.connector.or"
+                }
                 CriterionConnector::If => "missions.scheduling.connector.if",
-                CriterionConnector::Else => "missions.scheduling.connector.else",
             });
             format!("{conn_label} · {heading}")
         }

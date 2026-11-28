@@ -89,23 +89,30 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         .label(title)
         .child(context)
         .child(tools);
-    let mode_lanes: &[Lane] = match ui.mode {
-        Mode::Workspace => &[Lane::Worktrees],
-        Mode::Changes => &[Lane::Worktrees, Lane::Changes, Lane::Preferences],
-        Mode::History => &[Lane::Worktrees, Lane::History, Lane::Details],
+    let mode_lanes: &[Lane] = if ui.repository() == Repository::Uninitialized {
+        &[Lane::Worktrees]
+    } else {
+        match ui.mode {
+            Mode::Workspace => &[Lane::Worktrees],
+            Mode::Changes => &[Lane::Worktrees, Lane::Changes, Lane::Preferences],
+            Mode::History => &[Lane::Worktrees, Lane::History, Lane::Details],
+        }
     };
     for lane in mode_lanes {
         if let Some(error) = &ui.requests.slot(*lane).error {
-            panel = panel.child(theme::note(error.localized(), "alert"));
+            panel = panel.child(
+                theme::note(error.localized(), "alert")
+                    .key(format!("git-error-{}", lane_key(*lane))),
+            );
         }
     }
     if ui.mode != Mode::Workspace
         && let Some((ok, message)) = &ui.mutation_message
     {
-        panel = panel.child(theme::note(
-            message.localized(),
-            if *ok { "status" } else { "alert" },
-        ));
+        panel = panel.child(
+            theme::note(message.localized(), if *ok { "status" } else { "alert" })
+                .key("git-mutation-message"),
+        );
     }
     let body = if ui.mode == Mode::Workspace {
         workspace
@@ -127,11 +134,14 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         }
         col()
             .full_width()
-            .child(theme::note(t("filesPanel.gitInit.notRepository"), "status"))
+            .key("git-init-empty")
+            .child(
+                theme::note(t("filesPanel.gitInit.notRepository"), "status").key("git-init-note"),
+            )
             .child(layout::action_row().pad(Space::Md).child(init))
     } else if ui.inventory.is_none() || ui.repository() == Repository::NoGit {
         if ui.loading() {
-            theme::note(t("instanceInfo.loading"), "status")
+            theme::note(t("instanceInfo.loading"), "status").key("git-loading")
         } else {
             el()
         }
@@ -144,6 +154,18 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         }
     };
     theme::dock(theme::with_overlays(panel.child(body), overlay), width)
+}
+
+fn lane_key(lane: Lane) -> &'static str {
+    match lane {
+        Lane::Worktrees => "worktrees",
+        Lane::Changes => "changes",
+        Lane::Preferences => "preferences",
+        Lane::History => "history",
+        Lane::Details => "details",
+        Lane::Preview => "preview",
+        Lane::InitSessions => "init-sessions",
+    }
 }
 
 fn branch(ui: &Ui) -> String {

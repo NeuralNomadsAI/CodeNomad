@@ -155,7 +155,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       }
       await manager.desktopPluginsReady({ connection, location: { directory: location.directory }, signal, deadlineAt, assertCurrent: current })
       const latest = await revalidate()
-      await assertOrdinaryMissionScheduleSession(client, latest, { signal, current })
+      assertOrdinaryMissionScheduleSession(latest)
       await revalidate()
       current()
       const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "pruneBatch", input,

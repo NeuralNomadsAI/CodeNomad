@@ -145,6 +145,7 @@ pub(super) fn seek_message(s: &mut State, message: &str, tx: &mut Tx) {
             continued: false,
             omitted_before: false,
             tool: None,
+            pending: false,
         },
         tx,
     );

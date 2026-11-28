@@ -1,6 +1,7 @@
 //! Geometry shared by the application bar and conversation panels.
 pub mod blank_cleanup;
 pub mod command_palette;
+mod header_tabs;
 pub mod icons;
 pub mod notices;
 pub mod tab_rename;
@@ -9,6 +10,9 @@ use crate::{
     Length, Space, TextRole, kit,
     layout::{self, Layout, enter_action},
     tokens,
+};
+pub use header_tabs::{
+    ContextMeterDensity, connection_indicator, context_meter, panel_tabs, right_panel_header,
 };
 use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
 use rune_kit::{
@@ -200,38 +204,6 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
         .on_key(enter_action(activate))
 }
 
-pub fn panel_tabs<S: 'static>(
-    title: &str,
-    labels: &[&str],
-    chosen: usize,
-    activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
-) -> El {
-    let dark = layout::dark();
-    // Solid's project and right-panel strips share the same tab height.
-    let height = tokens(dark).metric("tabActive", "height").px();
-    row().role("tablist").label(title).focus_group().children(
-        labels.iter().copied().enumerate().map(|(index, label)| {
-            let activate = activate.clone();
-            let action = Rc::new(move |s: &mut S, tx: &mut Tx| activate(s, index, tx));
-            let press = action.clone();
-            Button::new(label)
-                .variant(if index == chosen {
-                    ButtonVariant::Ghost
-                } else {
-                    ButtonVariant::GhostMuted
-                })
-                .control_size(ControlSize::Small)
-                .on_press_tx(move |s, tx| press(s, tx))
-                .build(&kit(dark))
-                .h(height)
-                .key(format!("right-panel-tab-{index}"))
-                .role("tab")
-                .focus_selected(index == chosen)
-                .on_key(enter_action(action))
-        }),
-    )
-}
-
 pub fn open_titlebar_menu<S: 'static>(
     tx: &mut Tx,
     anchor: &str,
@@ -325,6 +297,8 @@ pub fn header(left: bool, right: bool, touch: bool, actions: impl IntoIterator<I
         .border_sides([0.0, 0.0, border, 0.0], t.color("tab-border"))
         .child(
             row()
+                .w_full()
+                .min_w(0.0)
                 .h(line)
                 .pl(inset(left))
                 .pr(inset(right))

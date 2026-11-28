@@ -226,6 +226,14 @@ pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut T
 }
 
 pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
+    entry_with(s, touch, skip_tab, false)
+}
+
+pub(crate) fn direct_entry(s: &State, touch: bool, skip_tab: bool) -> El {
+    entry_with(s, touch, skip_tab, true)
+}
+
+fn entry_with(s: &State, touch: bool, skip_tab: bool, compact: bool) -> El {
     let inbox = &s.notifications.in_app;
     let unread = inbox.unread();
     let count = (unread > 0).then(|| {
@@ -238,23 +246,35 @@ pub(crate) fn entry(s: &State, touch: bool, skip_tab: bool) -> El {
             t("toastHistory.unread").replace("{count}", &unread.to_string()),
         )
     });
-    theme::bell(
-        t("toastHistory.title"),
-        count,
-        inbox.opened,
-        touch,
-        skip_tab,
-        |s: &mut State, tx| {
-            crate::shell::Panels::dismiss_outside(s, tx);
-            if s.notifications.in_app.opened {
-                close(s, tx);
-            } else {
-                s.notifications.in_app.pause_bubbles(tx.clock());
-                tx.focus_when_shown("notification-history-close", tx.focus_visible());
-                tx.instant();
-            }
-        },
-    )
+    let on_press = |s: &mut State, tx: &mut Tx| {
+        crate::shell::Panels::dismiss_outside(s, tx);
+        if s.notifications.in_app.opened {
+            close(s, tx);
+        } else {
+            s.notifications.in_app.pause_bubbles(tx.clock());
+            tx.focus_when_shown("notification-history-close", tx.focus_visible());
+            tx.instant();
+        }
+    };
+    if compact {
+        theme::compact_bell(
+            t("toastHistory.title"),
+            count,
+            inbox.opened,
+            touch,
+            skip_tab,
+            on_press,
+        )
+    } else {
+        theme::bell(
+            t("toastHistory.title"),
+            count,
+            inbox.opened,
+            touch,
+            skip_tab,
+            on_press,
+        )
+    }
 }
 
 pub(crate) fn open_history(s: &mut State, tx: &mut Tx) {

@@ -16,6 +16,12 @@ impl Labels {
         self.loaded.get(id)
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_set(&mut self, id: &str, title: &str, slug: &str) {
+        self.loaded
+            .insert(id.to_owned(), Some((title.to_owned(), slug.to_owned())));
+    }
+
     pub(super) fn update(&mut self, ids: Vec<String>) {
         let wanted: HashSet<_> = ids.iter().map(String::as_str).collect();
         self.active
