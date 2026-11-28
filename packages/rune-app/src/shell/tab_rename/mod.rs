@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 const INPUT_KEY: &str = "tab-rename-input";
 const FOCUS: &str = "tab-rename-input/value/input";
+const INPUT_AUTOFILL: rune::Autofill = rune::Autofill::Off;
 const CLOSE_KEY: &str = "tab-rename-close";
 const CANCEL_KEY: &str = "tab-rename-cancel";
 
@@ -241,6 +242,7 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
     let render_locale = locale();
     let input = layout::hinted_field(&rename.input, t("projectRenameDialog.input.placeholder"))
         .label(t("projectRenameDialog.input.label"))
+        .autofill(INPUT_AUTOFILL)
         .on_edit({
             let scope = scope.clone();
             move |s: &mut State| {
