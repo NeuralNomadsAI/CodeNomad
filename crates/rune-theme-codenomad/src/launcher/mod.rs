@@ -72,18 +72,15 @@ pub fn shell(
         .key("launcher-home-shell")
         .full_width()
         .max_w(SHELL_MAX_WIDTH)
-        .full_height()
-        .min_h(0.0)
         .separate(Space::Md)
         .children(actions)
         .child(hero)
-        .child(main.remaining())
+        .child(main.grow(1.0))
         .children(status)
         .children(footer);
     let container = row()
         .full_width()
-        .full_height()
-        .min_h(0.0)
+        .grow(1.0)
         .justify_center()
         .px(pad_x)
         .py(pad_y)
@@ -233,7 +230,6 @@ pub fn columns(stacked: bool, left: El, right: El) -> El {
         col()
             .key("launcher-home-columns-stacked")
             .full_width()
-            .min_h(0.0)
             .separate(Space::Md)
             .child(left)
             .child(right.remaining().min_h(STACKED_RECENT_MIN_HEIGHT))
@@ -243,22 +239,8 @@ pub fn columns(stacked: bool, left: El, right: El) -> El {
             .full_width()
             .min_h(PANEL_MIN_HEIGHT)
             .separate(Space::Md)
-            .child(
-                col()
-                    .grow(1.0)
-                    .shrink()
-                    .min_w(0.0)
-                    .full_height()
-                    .child(left.full_height()),
-            )
-            .child(
-                col()
-                    .grow(1.0)
-                    .shrink()
-                    .min_w(0.0)
-                    .full_height()
-                    .child(right.full_height()),
-            )
+            .child(col().grow(1.0).shrink().min_w(0.0).child(left.remaining()))
+            .child(col().grow(1.0).shrink().min_w(0.0).child(right.remaining()))
     }
 }
 
@@ -545,7 +527,7 @@ pub fn recent_row<S: 'static>(
             .font(mono_small)
             .color(t.color("text-muted"))
             .literal_direction()
-            .elide_head()
+            .truncate_head()
             .grow(1.0)
             .shrink()
             .min_w(0.0),

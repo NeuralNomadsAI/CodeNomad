@@ -1653,9 +1653,9 @@ fn apply_connected(
     l.connection = Some(b);
     l.server_id = Some(server_id);
     if l.version_meta.is_none()
-        && l.meta_flight.is_none()
         && let Some(backend) = l.connection.clone()
     {
+        l.meta_flight = None;
         let generation = l.connection_generation;
         let wake = l.wake.clone();
         let (out, rx) = bounded(1);

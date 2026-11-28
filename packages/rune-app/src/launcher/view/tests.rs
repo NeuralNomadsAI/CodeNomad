@@ -876,6 +876,7 @@ fn home_view_fidelity_hero_card_headers_recents_alignment_and_version_pill() {
                 "launcher-link-discord",
             ];
             let links: Vec<_> = link_keys.iter().map(|k| find_el(k)).collect();
+            assert_eq!(links.len(), 4);
             let h0 = links[0].rect[3];
             assert!(h0 >= 24.0, "hero link button height too small: {h0}");
             for link in &links {
@@ -916,17 +917,52 @@ fn home_view_fidelity_hero_card_headers_recents_alignment_and_version_pill() {
                 );
             }
 
-            // A5 & A11: recent row line 2 shows localized source prefix and aligns under name.
+            // A5 & A11: recent row line 2 shows localized source prefix, truncates long paths
+            // without overflowing into the relative time, and aligns under name.
             let name = find_el("project-p-alpha-name");
             let meta = find_el("project-p-alpha-meta");
-            let _path = find_el("project-p-alpha-path");
+            let path = find_el("project-p-alpha-path");
+            assert!(path.truncate, "recent path must enable head truncation");
             let expected_prefix = format!("{} ·", t("folderSelection.browseMenu.thisComputer"));
+            let meta_prefix = format!("{}/", meta.path);
             assert!(
-                elements
-                    .iter()
-                    .any(|n| n.text.as_deref() == Some(expected_prefix.as_str())),
-                "recent row must show localized source prefix {expected_prefix:?}"
+                elements.iter().any(|n| {
+                    n.path.starts_with(&meta_prefix)
+                        && n.text.as_deref() == Some(expected_prefix.as_str())
+                }),
+                "recent row alpha must show localized source prefix {expected_prefix:?} inside its meta row"
             );
+            let long_path = "D:\\cn-cargo\\android-native\\serve-profiles\\da8d385e-05cc-4e54-b2b5-b49adda07351\\projects\\synthetic";
+            let long_key = recent::recent_row_key(long_path);
+            let long_meta = find_el(&format!("{long_key}-meta"));
+            let long_path_el = find_el(&format!("{long_key}-path"));
+            assert!(
+                long_path_el.truncate,
+                "long synthetic path must truncate instead of overflowing"
+            );
+            assert!(
+                long_path_el.rect[0] >= long_meta.rect[0] - 0.5
+                    && long_path_el.rect[0] + long_path_el.rect[2]
+                        <= long_meta.rect[0] + long_meta.rect[2] + 0.5,
+                "long path must stay inside its meta row bounds: path={:?} meta={:?}",
+                long_path_el.rect,
+                long_meta.rect
+            );
+            let long_meta_prefix = format!("{}/", long_meta.path);
+            for sibling in elements
+                .iter()
+                .filter(|n| n.path.starts_with(&long_meta_prefix) && n.path != long_path_el.path)
+            {
+                let overlap_x = long_path_el.rect[0].max(sibling.rect[0])
+                    < (long_path_el.rect[0] + long_path_el.rect[2])
+                        .min(sibling.rect[0] + sibling.rect[2])
+                        - 0.5;
+                assert!(
+                    !overlap_x,
+                    "long path must not overlap sibling {:?}: path={:?} sibling={:?}",
+                    sibling.text, long_path_el.rect, sibling.rect
+                );
+            }
             if rtl {
                 let name_end = name.rect[0] + name.rect[2];
                 let meta_end = meta.rect[0] + meta.rect[2];
@@ -1079,7 +1115,25 @@ fn home_view_loads_meta_temporary_button_and_scrolls_20_recents_within_viewport(
         rt.state
     };
 
-    // A6 + A7 + A12 across stacked (610x1016) and desktop (1120x800).
+    struct ServerGuard {
+        stop: Arc<AtomicBool>,
+        addr: std::net::SocketAddr,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+    impl Drop for ServerGuard {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            let _ = std::net::TcpStream::connect(self.addr);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+    let _guard = ServerGuard {
+        stop,
+        addr,
+        handle: Some(server),
+    };
     crate::strings::with_locale("en", || {
         for (w, h) in [(610.0, 1016.0), (1120.0, 800.0)] {
             let mut rt = Runtime::new(build_state(), crate::view, (w, h), Env::new(false, 1.0));
@@ -1155,9 +1209,35 @@ fn home_view_loads_meta_temporary_button_and_scrolls_20_recents_within_viewport(
                 "version pill must stay pinned while recent list scrolls at {w}x{h}: before={pill_y_before} after={pill_y_after}"
             );
         }
-    });
 
-    stop.store(true, Ordering::SeqCst);
-    let _ = std::net::TcpStream::connect(addr);
-    let _ = server.join();
+        // Short stacked viewport: recent card keeps its minimum usable height and version pill stays below it without overlap.
+        let mut short_rt = Runtime::new(
+            build_state(),
+            crate::view,
+            (610.0, 480.0),
+            Env::new(false, 1.0),
+        );
+        short_rt.frame(0.0);
+        short_rt.frame(0.02);
+        let short_els = short_rt.elements();
+        let short_card = short_els
+            .iter()
+            .find(|n| n.key.as_deref() == Some("launcher-recent-card"))
+            .expect("recent card at 610x480");
+        let short_pill = short_els
+            .iter()
+            .find(|n| n.key.as_deref() == Some("launcher-version-pill"))
+            .expect("version pill at 610x480");
+        assert!(
+            short_card.rect[3] >= 160.0 - 1.0,
+            "recent card must keep minimum height on short viewports: {:?}",
+            short_card.rect
+        );
+        assert!(
+            short_pill.rect[1] >= short_card.rect[1] + short_card.rect[3] - 1.0,
+            "version pill must not overlap recent card on short viewports: card={:?} pill={:?}",
+            short_card.rect,
+            short_pill.rect
+        );
+    });
 }
