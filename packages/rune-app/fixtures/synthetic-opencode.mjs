@@ -67,7 +67,8 @@ export async function syntheticOpenCode({project,password,requests}) {
         res.write(`data: ${JSON.stringify({id:'connected',type:'server.connected',created:Date.now(),data:{}})}\n\n`)
         streams.add(res);req.on('close',()=>streams.delete(res));return
       }
-      if(url.pathname==='/api/location')return json({data:{directory:project}})
+      // project lets the server prove the opened folder is this native project's checkout and read its Git.
+      if(url.pathname==='/api/location')return json({data:{directory:project},directory,project:{id:'synthetic_project',canonical:project,directory}})
       if(url.pathname==='/api/debug/location')return json([{directory:project}])
       // The server reads the project's Git itself once the native worktree list names it.
       if(url.pathname==='/api/worktree'&&req.method==='GET')return json([{directory:project}])
