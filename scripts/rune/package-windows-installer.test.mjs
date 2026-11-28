@@ -21,7 +21,7 @@ const SCRIPT_PATH = fileURLToPath(new URL("./package-windows-installer.mjs", imp
  * Synthesizes a minimal valid PE32+ executable with one `.rdata` section containing
  * an IMAGE_IMPORT_DESCRIPTOR table for `dllNames`.
  */
-function buildSyntheticPe(dllNames) {
+function buildSyntheticPe(dllNames, { delayDllNames = [] } = {}) {
   const peOffset = 0x80
   const optSize = 0xf0 // standard PE32+ optional header (112 + 16*8)
   const secOffset = peOffset + 24 + optSize
@@ -29,9 +29,13 @@ function buildSyntheticPe(dllNames) {
   const sectionRva = 0x1000
 
   const descSize = (dllNames.length + 1) * 20
+  const delayDescOffset = descSize
+  const delayDescSize = delayDllNames.length > 0 ? (delayDllNames.length + 1) * 32 : 0
   const names = dllNames.map((n) => Buffer.from(`${n}\0`, "ascii"))
-  const stringsStart = descSize
-  const totalRdata = Math.max(0x200, stringsStart + names.reduce((sum, b) => sum + b.length, 0))
+  const delayNames = delayDllNames.map((n) => Buffer.from(`${n}\0`, "ascii"))
+  const stringsStart = delayDescOffset + delayDescSize
+  const namesTotal = [...names, ...delayNames].reduce((sum, b) => sum + b.length, 0)
+  const totalRdata = Math.max(0x200, stringsStart + namesTotal)
   const buf = Buffer.alloc(rawPtr + totalRdata)
 
   // DOS header
@@ -52,6 +56,10 @@ function buildSyntheticPe(dllNames) {
     buf.writeUInt32LE(sectionRva, opt + 112 + 8) // Import Table RVA
     buf.writeUInt32LE(descSize, opt + 112 + 12) // Import Table Size
   }
+  if (delayDllNames.length > 0) {
+    buf.writeUInt32LE(sectionRva + delayDescOffset, opt + 112 + 13 * 8) // Delay Import RVA
+    buf.writeUInt32LE(delayDescSize, opt + 112 + 13 * 8 + 4) // Delay Import Size
+  }
 
   // Section header `.rdata`
   buf.write(".rdata\0\0", secOffset, "ascii")
@@ -60,7 +68,7 @@ function buildSyntheticPe(dllNames) {
   buf.writeUInt32LE(totalRdata, secOffset + 16) // SizeOfRawData
   buf.writeUInt32LE(rawPtr, secOffset + 20) // PointerToRawData
 
-  // Import descriptors + DLL name strings
+  // Standard + delay-load import descriptors + DLL name strings
   let strCursor = stringsStart
   for (let i = 0; i < dllNames.length; i++) {
     const desc = rawPtr + i * 20
@@ -68,6 +76,14 @@ function buildSyntheticPe(dllNames) {
     buf.writeUInt32LE(sectionRva + 4, desc + 16) // non-zero FirstThunk
     names[i].copy(buf, rawPtr + strCursor)
     strCursor += names[i].length
+  }
+  for (let i = 0; i < delayDllNames.length; i++) {
+    const desc = rawPtr + delayDescOffset + i * 32
+    buf.writeUInt32LE(1, desc) // RVA-based delay descriptor
+    buf.writeUInt32LE(sectionRva + strCursor, desc + 4) // szName RVA
+    buf.writeUInt32LE(sectionRva + 8, desc + 12) // non-zero IAT RVA
+    delayNames[i].copy(buf, rawPtr + strCursor)
+    strCursor += delayNames[i].length
   }
   return buf
 }
@@ -96,6 +112,8 @@ async function createFakeSource(root, { includePublic = true, includeProvider = 
     await writeFile(path.join(publicDir, "index.html"), "<!doctype html><title>CodeNomad</title>\n")
     await writeFile(path.join(publicDir, "boot.js"), "console.log('boot')\n")
     await writeFile(path.join(publicDir, "app_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
+    await writeFile(path.join(publicDir, "app.d.ts"), "export default function init(): Promise<void>;\n")
+    await writeFile(path.join(publicDir, "bundle-manifest.json"), JSON.stringify({ testSupport: false }) + "\n")
     await writeFile(path.join(publicDir, "snippets", "glue.js"), "export {}\n")
   }
   return fromDir
@@ -120,6 +138,13 @@ test("PE import inspector accepts +crt-static binaries and rejects dynamic/debug
       )
     }
 
+    const delayBadPath = path.join(root, "delay-bad.exe")
+    await writeFile(
+      delayBadPath,
+      buildSyntheticPe(["KERNEL32.dll"], { delayDllNames: ["VCRUNTIME140.dll"] }),
+    )
+    await assert.rejects(() => assertStaticCrtPe(delayBadPath), /VCRUNTIME140\.dll/)
+
     const notPe = path.join(root, "not-pe.exe")
     await writeFile(notPe, "not a pe binary")
     await assert.rejects(() => assertStaticCrtPe(notPe), /MZ header/)
@@ -135,13 +160,17 @@ test("stages deterministic payload.zip with root layout, POSIX paths and reprodu
     const outA = path.join(root, "out-a", "payload.zip")
     const outB = path.join(root, "out-b", "payload.zip")
 
-    const resA = await packageWindowsInstaller({ fromDir, out: outA })
-    const resB = await packageWindowsInstaller({ fromDir, out: outB })
+    const resA = await packageWindowsInstaller({ fromDir, out: outA, sourceDateEpoch: 1764000000 })
+    const resB = await packageWindowsInstaller({ fromDir, out: outB, sourceDateEpoch: 1764000000 })
+    const outC = path.join(root, "out-c", "payload.zip")
+    await packageWindowsInstaller({ fromDir, out: outC, sourceDateEpoch: 1764086400 })
     const bytesA = await readFile(outA)
     const bytesB = await readFile(outB)
-    assert.equal(bytesA.equals(bytesB), true, "identical inputs must produce byte-for-byte reproducible payload.zip")
+    const bytesC = await readFile(outC)
+    assert.equal(bytesA.equals(bytesB), true, "identical inputs and epoch must produce reproducible payload.zip")
+    assert.equal(bytesA.equals(bytesC), false, "different release epochs must update ZIP mtimes for ETag freshness")
     assert.equal(resA.payloadBytes, bytesA.length)
-    assert.equal(resB.publicFilesCount, 4)
+    assert.equal(resB.publicFilesCount, 5) // app.d.ts is omitted automatically
 
     const entries = listZipEntries(bytesA)
     assert.deepEqual(
@@ -156,6 +185,7 @@ test("stages deterministic payload.zip with root layout, POSIX paths and reprodu
         "plugins/session-pruning/plugin.mjs",
         "public/app_bg.wasm",
         "public/boot.js",
+        "public/bundle-manifest.json",
         "public/index.html",
         "public/snippets/glue.js",
       ],
@@ -236,6 +266,17 @@ test("rejects missing required binaries, missing plugins, forbidden junk/PDB fil
     await assert.rejects(
       () => packageWindowsInstaller({ fromDir: halfRune, out: path.join(root, "e.zip") }),
       /Incomplete Rune web bundle/,
+    )
+
+    // Test-support Rune web bundle rejected
+    const testSupportWeb = await createFakeSource(path.join(root, "case-test-support"))
+    await writeFile(
+      path.join(testSupportWeb, "public", "bundle-manifest.json"),
+      JSON.stringify({ testSupport: true }),
+    )
+    await assert.rejects(
+      () => packageWindowsInstaller({ fromDir: testSupportWeb, out: path.join(root, "ts.zip") }),
+      /test-support/,
     )
 
     // Dynamic CRT executable rejected by default

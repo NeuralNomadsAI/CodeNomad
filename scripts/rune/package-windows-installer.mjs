@@ -126,18 +126,23 @@ export function inspectPeImports(buf) {
   const delayDir = readDir(13)
   if (delayDir) {
     const base = rvaToOffset(delayDir.rva)
-    if (base >= 0) {
-      for (let i = 0; i < 4096; i++) {
-        const desc = base + i * 32
-        if (desc + 32 > buf.length) break
-        const attrs = buf.readUInt32LE(desc)
-        const nameRva = buf.readUInt32LE(desc + 4)
-        const iatRva = buf.readUInt32LE(desc + 12)
-        if (attrs === 0 && nameRva === 0 && iatRva === 0) break
-        if ((attrs & 1) === 0 || nameRva === 0) continue
-        const name = readCString(buf, rvaToOffset(nameRva))
-        if (name) imports.add(name)
+    if (base < 0) throw new Error("PE delay-load import directory RVA is unmapped")
+    for (let i = 0; i < 4096; i++) {
+      const desc = base + i * 32
+      if (desc + 32 > buf.length) throw new Error("Truncated PE delay-load import directory")
+      const attrs = buf.readUInt32LE(desc)
+      const nameRva = buf.readUInt32LE(desc + 4)
+      const iatRva = buf.readUInt32LE(desc + 12)
+      if (attrs === 0 && nameRva === 0 && iatRva === 0) break
+      if (nameRva === 0) continue
+      if ((attrs & 1) === 0) {
+        throw new Error("Unsupported legacy VA-based PE delay-load import descriptor")
       }
+      const name = readCString(buf, rvaToOffset(nameRva))
+      if (!name) {
+        throw new Error(`Unreadable PE delay-load import DLL name at RVA 0x${nameRva.toString(16)}`)
+      }
+      imports.add(name)
     }
   }
   return [...imports].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
@@ -192,6 +197,8 @@ async function copyPublicTree(sourceDir, destDir, rel = "") {
     const childRel = rel ? `${rel}/${entry.name}` : entry.name
     const srcPath = path.join(current, entry.name)
     if (entry.isSymbolicLink()) throw new Error(`Symlink not allowed in public/: public/${childRel}`)
+    // wasm-bindgen emits .d.ts beside app.js; omit declarations without failing real Rune bundles.
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".d.ts")) continue
     if (isForbiddenEntryName(entry.name)) {
       throw new Error(`Forbidden debug/cache file in public/: public/${childRel}`)
     }
@@ -368,6 +375,14 @@ export async function stageInstallerPayload(options) {
       await assertRegularNonEmptyFile(path.join(publicDir, "boot.js"), "public/boot.js")
       await assertRegularNonEmptyFile(path.join(publicDir, "app_bg.wasm"), "public/app_bg.wasm")
     }
+    const manifestPath = path.join(publicDir, "bundle-manifest.json")
+    const hasManifest = await lstat(manifestPath).then((s) => s.isFile(), () => false)
+    if (hasManifest) {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"))
+      if (manifest && manifest.testSupport === true) {
+        throw new Error("Refusing to package a test-support Rune web bundle in public/")
+      }
+    }
     publicFilesCount = await copyPublicTree(publicDir, path.join(stageDir, "public"))
   }
 
@@ -385,14 +400,34 @@ function validateZipEntryName(name) {
   }
 }
 
+export function encodeDosDateTime(epochSeconds) {
+  if (epochSeconds === undefined || epochSeconds === null || epochSeconds === "") {
+    return { dosTime: DOS_TIME_EPOCH, dosDate: DOS_DATE_EPOCH }
+  }
+  const secs = Number(epochSeconds)
+  if (!Number.isFinite(secs) || !Number.isInteger(secs) || secs < 315532800) {
+    throw new Error(`Invalid sourceDateEpoch (expected integer Unix seconds >= 1980-01-01): ${epochSeconds}`)
+  }
+  const d = new Date(secs * 1000)
+  const year = d.getUTCFullYear()
+  if (year < 1980 || year > 2107) {
+    throw new Error(`sourceDateEpoch year out of DOS range (1980..2107): ${year}`)
+  }
+  const dosDate = ((year - 1980) << 9) | ((d.getUTCMonth() + 1) << 5) | d.getUTCDate()
+  const dosTime = (d.getUTCHours() << 11) | (d.getUTCMinutes() << 5) | Math.floor(d.getUTCSeconds() / 2)
+  return { dosTime, dosDate }
+}
+
 /**
  * Builds a deterministic, streaming-safe ZIP buffer (exact sizes + CRC32 in every local header,
- * fixed 1980-01-01 DOS timestamps, sorted POSIX paths) compatible with Windows `tar.exe -xf -`.
+ * UTC DOS timestamp from sourceDateEpoch or 1980-01-01, sorted POSIX paths) compatible with
+ * Windows `tar.exe -xf -`.
  */
-export async function createDeterministicZip(stageDir) {
+export async function createDeterministicZip(stageDir, { sourceDateEpoch } = {}) {
   const files = (await collectFilesSorted(stageDir)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   if (files.length === 0) throw new Error("Cannot create payload.zip from an empty staging directory")
   if (files.length >= 0xffff) throw new Error("ZIP64 entry count not supported")
+  const { dosTime, dosDate } = encodeDosDateTime(sourceDateEpoch)
 
   const localChunks = []
   const centralChunks = []
@@ -418,8 +453,8 @@ export async function createDeterministicZip(stageDir) {
     local.writeUInt16LE(20, 4) // version needed: 2.0
     local.writeUInt16LE(ZIP_UTF8_FLAG, 6)
     local.writeUInt16LE(method, 8)
-    local.writeUInt16LE(DOS_TIME_EPOCH, 10)
-    local.writeUInt16LE(DOS_DATE_EPOCH, 12)
+    local.writeUInt16LE(dosTime, 10)
+    local.writeUInt16LE(dosDate, 12)
     local.writeUInt32LE(checksum, 14)
     local.writeUInt32LE(body.length, 18)
     local.writeUInt32LE(raw.length, 22)
@@ -432,8 +467,8 @@ export async function createDeterministicZip(stageDir) {
     central.writeUInt16LE(20, 6) // version needed: 2.0
     central.writeUInt16LE(ZIP_UTF8_FLAG, 8)
     central.writeUInt16LE(method, 10)
-    central.writeUInt16LE(DOS_TIME_EPOCH, 12)
-    central.writeUInt16LE(DOS_DATE_EPOCH, 14)
+    central.writeUInt16LE(dosTime, 12)
+    central.writeUInt16LE(dosDate, 14)
     central.writeUInt32LE(checksum, 16)
     central.writeUInt32LE(body.length, 20)
     central.writeUInt32LE(raw.length, 24)
@@ -556,31 +591,74 @@ async function resolveInputs(opts) {
   return { runeExe, serverExe, pluginsDir, publicDir }
 }
 
+function ensureStaticCrtFlags(env) {
+  const globalFlags = env.RUSTFLAGS ?? ""
+  if (/\bcrt-static\b/.test(globalFlags)) return
+  for (const key of [
+    "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS",
+    "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS",
+  ]) {
+    const existing = env[key] ?? ""
+    if (!/\bcrt-static\b/.test(existing)) {
+      env[key] = existing ? `${existing} -C target-feature=+crt-static` : "-C target-feature=+crt-static"
+    }
+  }
+}
+
 function buildSetupBinary({ payloadZip, version, setupOut, skipPeCheck, offline }) {
   if (process.platform !== "win32") {
     throw new Error("--build-setup must run on a Windows host (winresource embeds the setup manifest)")
   }
   const env = { ...process.env, CODENOMAD_RUNE_SETUP_PAYLOAD: payloadZip }
+  if (!skipPeCheck) ensureStaticCrtFlags(env)
   if (version !== undefined) {
     const trimmed = version.trim()
     if (!trimmed) throw new Error("--version must not be empty")
     env.CODENOMAD_RUNE_VERSION = trimmed
   }
-  const cargoArgs = ["build", "--release", "--locked", ...(offline ? ["--offline"] : []), "-p", "codenomad-rune-setup"]
+  const cargoArgs = [
+    "build",
+    "--release",
+    "--locked",
+    ...(offline ? ["--offline"] : []),
+    "--message-format=json-render-diagnostics",
+    "-p",
+    "codenomad-rune-setup",
+  ]
   const res = spawnSync("cargo", cargoArgs, {
     cwd: REPO_ROOT,
     env,
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
     windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
   })
   if (res.error) throw res.error
   if (res.status !== 0) {
     throw new Error(`cargo ${cargoArgs.join(" ")} exited with status ${res.status}`)
   }
-  const targetDir = env.CARGO_TARGET_DIR
-    ? path.resolve(env.CARGO_TARGET_DIR)
-    : path.join(REPO_ROOT, "target")
-  const builtExe = path.join(targetDir, "release", "codenomad-rune-setup.exe")
+  let builtExe = null
+  for (const line of (res.stdout ?? "").split(/\r?\n/)) {
+    if (!line.startsWith("{")) continue
+    let msg
+    try {
+      msg = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (
+      msg.reason === "compiler-artifact" &&
+      msg.target?.name === "codenomad-rune-setup" &&
+      Array.isArray(msg.target?.kind) &&
+      msg.target.kind.includes("bin") &&
+      typeof msg.executable === "string"
+    ) {
+      builtExe = msg.executable
+    }
+  }
+  if (!builtExe) {
+    throw new Error("Cargo build succeeded without reporting a codenomad-rune-setup executable artifact")
+  }
   return { builtExe, setupOut: setupOut ? path.resolve(setupOut) : null, skipPeCheck }
 }
 
@@ -588,6 +666,9 @@ export async function packageWindowsInstaller(opts) {
   const inputs = await resolveInputs(opts)
   if (opts.stageOnly) {
     if (!opts.stageDir) throw new Error("--stage-only requires --stage-dir <path>")
+    if (opts.buildSetup || opts.out || opts.setupOut) {
+      throw new Error("--stage-only cannot be combined with --out, --build-setup or --setup-out")
+    }
     return await stageInstallerPayload({
       ...inputs,
       stageDir: path.resolve(opts.stageDir),
@@ -597,10 +678,21 @@ export async function packageWindowsInstaller(opts) {
   }
 
   const outZip = path.resolve(opts.out ?? path.join(REPO_ROOT, "target/rune-windows-installer/payload.zip"))
+  for (const [label, src] of [
+    ["--rune-exe", inputs.runeExe],
+    ["--server-exe", inputs.serverExe],
+    ["--plugins-dir", inputs.pluginsDir],
+    ...(inputs.publicDir ? [["--public-dir", inputs.publicDir]] : []),
+  ]) {
+    if (src && pathsOverlap(outZip, src)) {
+      throw new Error(`Output archive (${outZip}) must not overlap ${label} (${src})`)
+    }
+  }
   const ownedTemp = !opts.stageDir
   const stageDir = ownedTemp
     ? await mkdtemp(path.join(os.tmpdir(), "codenomad-rune-stage-"))
     : path.resolve(opts.stageDir)
+  const sourceDateEpoch = opts.sourceDateEpoch ?? process.env.SOURCE_DATE_EPOCH
 
   try {
     const staged = await stageInstallerPayload({
@@ -609,7 +701,7 @@ export async function packageWindowsInstaller(opts) {
       cleanStage: ownedTemp ? true : Boolean(opts.cleanStage),
       skipPeCheck: Boolean(opts.skipPeCheck),
     })
-    const zipBuffer = await createDeterministicZip(stageDir)
+    const zipBuffer = await createDeterministicZip(stageDir, { sourceDateEpoch })
     await atomicWriteFile(outZip, zipBuffer)
 
     let setupExe = null
@@ -656,6 +748,7 @@ Outputs & actions:
   --build-setup          Build codenomad-rune-setup.exe embedding payload.zip via Cargo
   --setup-out <path>     Copy the built codenomad-rune-setup.exe to this path
   --version <semver>     Version passed to CODENOMAD_RUNE_VERSION when building setup
+  --source-date-epoch N  UTC Unix seconds for ZIP entry mtimes (defaults to SOURCE_DATE_EPOCH or 1980-01-01)
   --offline              Pass --offline to Cargo when --build-setup is set
   --skip-pe-check        Skip the PE +crt-static import table check
   -h, --help             Show this help
@@ -677,6 +770,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       "build-setup": { type: "boolean", default: false },
       "setup-out": { type: "string" },
       version: { type: "string" },
+      "source-date-epoch": { type: "string" },
       offline: { type: "boolean", default: false },
       "skip-pe-check": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -700,6 +794,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     buildSetup: values["build-setup"],
     setupOut: values["setup-out"],
     version: values.version,
+    sourceDateEpoch: values["source-date-epoch"],
     offline: values.offline,
     skipPeCheck: values["skip-pe-check"],
   })
