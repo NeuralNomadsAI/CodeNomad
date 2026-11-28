@@ -435,23 +435,52 @@ export function Markdown(props: MarkdownProps) {
     })
   })
 
+  const BARE_PATHS_STREAMING_DEBOUNCE_MS = 250
+  let barePathsFetchController: AbortController | undefined
+  let barePathsFetchScope = ""
+  const resetBarePathsFetch = () => {
+    barePathsFetchController?.abort()
+    barePathsFetchController = undefined
+    barePathsFetchScope = ""
+  }
+  onCleanup(resetBarePathsFetch)
+
   createEffect(() => {
     html()
-    // Bare paths convert only in session-bound markdown, and only once the
-    // backend confirms the file exists (see markdown-bare-paths). The
-    // synchronous reads track the same reactive inputs as the decoration
-    // pass, so availability, locale and inventory changes re-run this one.
+    // Bare paths convert only in session-bound markdown once rendered, and only
+    // once the backend confirms the file exists (see markdown-bare-paths). The
+    // synchronous reads track the same reactive inputs as the decoration pass,
+    // so availability, locale and inventory changes re-run this one.
     const instanceId = props.instanceId, sessionId = props.sessionId
-    if (!instanceId || !sessionId) return
+    if (!instanceId || !sessionId || !rendered()) return
     const titles = sessionLinkTitles(instanceId, sessionId, loopbackLinksOpenPreview())
     const base = sessionLinkBase(instanceId, sessionId)
-    if (!base) return
-    const controller = new AbortController()
-    onCleanup(() => controller.abort())
-    Promise.resolve().then(() => {
-      if (!controller.signal.aborted && !disposed && containerRef) {
-        linkBarePaths(containerRef, { instanceId, sessionId, base, titles, signal: controller.signal })
+    if (!base) {
+      resetBarePathsFetch()
+      return
+    }
+    const scope = `${instanceId}\0${sessionId}\0${base.directory}\0${base.base}`
+    if (scope !== barePathsFetchScope || !barePathsFetchController || barePathsFetchController.signal.aborted) {
+      resetBarePathsFetch()
+      barePathsFetchScope = scope
+      barePathsFetchController = new AbortController()
+    }
+    const fetchSignal = barePathsFetchController.signal
+    const passController = new AbortController()
+    const run = () => {
+      if (!passController.signal.aborted && !disposed && containerRef) {
+        linkBarePaths(containerRef, { instanceId, sessionId, base, titles, signal: passController.signal, fetchSignal })
       }
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (props.streaming) {
+      timer = setTimeout(run, BARE_PATHS_STREAMING_DEBOUNCE_MS)
+    } else {
+      Promise.resolve().then(run)
+    }
+    onCleanup(() => {
+      if (timer !== undefined) clearTimeout(timer)
+      passController.abort()
     })
   })
 
