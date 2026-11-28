@@ -640,11 +640,11 @@ fn hidden_panel_preserves_refresh_and_suspend_revalidates_on_return() {
         panel.detail.snapshot = Some(header_with("msn_1", 2, json!({}), vec![]));
         panel.selected = Some("msn_1".into());
         panel.reader.open_overview("msn_1".into());
-        // Schedule a refresh while visible (draining the initial Summaries/Cleanups requests
-        // so cancelled client sockets do not sit in the mock TcpListener backlog), then hide
+        // Schedule a refresh while visible (draining all 3 initial Summaries/Cleanups/Calendars
+        // requests so no cancelled client socket sits in the mock TcpListener backlog), then hide
         // the right panel while the reader stays open.
         panel.show(true);
-        for _ in 0..2 {
+        for _ in 0..3 {
             let req = wait(http.accept()).await;
             let _ = req.try_reply(503, json!({})).await;
         }
@@ -656,12 +656,18 @@ fn hidden_panel_preserves_refresh_and_suspend_revalidates_on_return() {
         // Suspending an inactive tab cancels flights and triggers detail revalidation on next poll.
         panel.suspend();
         assert!(panel.has_reader());
+        http.quiet().await;
         panel.poll();
         let req = wait(http.accept()).await;
         assert!(
             req.header.contains("/missions/panel"),
             "returning from suspended tab must revalidate detail snapshot, got: {}",
             req.header
+        );
+        assert_eq!(
+            req.body,
+            json!({"source": "mission", "missionID": "msn_1", "header": true}),
+            "revalidation must request the open mission header"
         );
     });
 }
