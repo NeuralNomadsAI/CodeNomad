@@ -66,7 +66,9 @@ pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_n
 pub(crate) use delivery::{
     notification_fixture, notification_fixture_for, notification_test_config,
 };
-pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{
+    matches_shortcut, shortcut_label, with_shortcut_label, with_shortcut_label_excluding,
+};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{
@@ -557,6 +559,11 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_settings(s: &State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_settings(settings);
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

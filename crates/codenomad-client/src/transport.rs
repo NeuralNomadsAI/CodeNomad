@@ -108,6 +108,10 @@ pub enum Command {
         name: String,
         text: String,
     },
+    Shell {
+        attempt: String,
+        command: String,
+    },
     Older,
     Page(HistoryEdge, Receiver<()>),
     Anchor(crate::timeline::Jump),
