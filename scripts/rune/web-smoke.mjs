@@ -513,7 +513,7 @@ try {
             await projectTablist.getByRole('tab', {name:values.project, exact:true, selected:true}).waitFor()
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
-              messages['toastHistory.title'],
+              messages['toastHistory.title'], messages['instanceTabs.remote.ariaLabel'],
             ])
             const permission = page.getByRole('button', {
               name: messages['settings.notifications.requestPermission.action'], exact: true,
