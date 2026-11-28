@@ -18,7 +18,6 @@ test("a family move for an expected branch is refused once the target checks out
   const entry = (await fixtureCatalogue(repo)).worktrees.find(worktree => worktree.branch === "issue-12")!
   const session = { id: "session", projectID: "project", location: { directory: repo }, time: { created: 1, updated: 1 } }
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "project", canonical: repo, directory: repo } }) },
     session: { get: async () => structuredClone(session), list: async () => ({ data: [structuredClone(session)], cursor: {} }), active: async () => ({}),
       move: async ({ directory }: any) => { session.location = { directory } } },

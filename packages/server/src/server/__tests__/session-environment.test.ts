@@ -37,8 +37,6 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
       ? { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } : {} }
       : reply.code(control.openapiStatus).send({ error: "PRIVATE MEMORY" })
   })
-  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async (_request, reply) =>
-    reply.code(400).send({ _tag: "RpcError", type: "rpc.method_not_found", message: "Unknown RPC method" }))
   upstream.get("/api/session/:id", async request => {
     const { id } = request.params as { id: string }
     return { data: { id, location: { directory: id === "foreign" ? "/other" : "/repo" } } }
