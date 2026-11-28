@@ -5,12 +5,12 @@ import type { HistoryScope } from "./history-store"
 import type { AssetReadResult, AssetTarget } from "./assets-contract"
 import { assetBytes, cursorSchema, hash, listed, MESSAGE_LIMIT, storedAsset } from "./assets-store"
 import { GALLERY_RESPONSE_LIMIT, type GalleryEntry, type GenerationTarget, type ImageReferenceResult, type ImagesResult } from "./assets-gallery-contract"
-import { after, annotate, coverage, generationState, isImageTool, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
-  sameFile, visible, writes, writesAnyFile, type Coverage, type Part } from "./assets-gallery-proof"
+import { after, annotate, coverage, generationState, imageCalls, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
+  sameFile, visible, writes, writesAnyFile, type Coverage, type ImageCall, type Part } from "./assets-gallery-proof"
 import { messageStorage } from "./message-storage"
 
 // The image gallery (dev-docs/SESSION_PRUNING_RPC.md#image-gallery): image `read` parts and
-// `generate_image` (or `experimental_image_generate`) calls of one session, recomputed from the transcript on every request.
+// `generate_image` calls (Code Mode `execute` or historical direct calls) of one session, recomputed from the transcript on every request.
 const WINDOW_MESSAGES = 32, WINDOW_BYTES = 32 * 1024 * 1024, PAGE_ENTRIES = 64
 
 function owned(db: DatabaseSync, scope: HistoryScope) {
@@ -24,7 +24,9 @@ function owned(db: DatabaseSync, scope: HistoryScope) {
 const throughOf = (db: DatabaseSync, sessionID: string, boundary: string | undefined) => Number(db.prepare(`SELECT coalesce(max(seq),0) AS value
   FROM session_message WHERE session_id=? AND type IN ('assistant','synthetic')${visible(boundary)}`).get(sessionID, ...after(boundary))?.value)
 const operationTime = (part: Part) => Number.isFinite(part.time?.ran) ? part.time.ran as number : Number.isFinite(part.time?.created) ? part.time.created as number : null
-const generationDigest = (part: Part, job: unknown) => hash(`${String(part.id ?? "")}\u0000${typeof job === "string" ? job : ""}`)
+const generationDigest = (call: ImageCall, job: unknown) => hash(call.direct
+  ? `${String(call.part.id ?? "")}\u0000${typeof job === "string" ? job : ""}`
+  : `${String(call.part.id ?? "")}\u0000${call.callIndex}\u0000${typeof job === "string" ? job : ""}`)
 
 /** One page: `windowMessages` only narrows the window for tests that compare page sizes. */
 export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, cursor: string | undefined, prompts: boolean, signal: AbortSignal,
@@ -41,7 +43,9 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
     const rows = db.prepare(`SELECT id,seq,${storage.bytes()} AS bytes FROM ${storage.table} WHERE ${where}
       AND seq<=? AND seq<=? ORDER BY seq DESC LIMIT ?`).all(...params, through, previous?.sequence ?? through, Math.min(windowMessages, WINDOW_MESSAGES))
     const read = db.prepare(`SELECT data FROM ${storage.table} WHERE session_id=? AND id=?`)
-    const preloaded = new Map<string, any>(), window: Array<{ id: string; seq: number; data: any; items: Array<{ part: number; index?: number }> }> = []
+    const preloaded = new Map<string, any>()
+    type WindowItem = { part: number; imageCall?: ImageCall; index?: number }
+    const window: Array<{ id: string; seq: number; data: any; items: WindowItem[] }> = []
     let examined = 0, next: { sequence: number; offset: number } | undefined
     for (const row of rows) {
       signal.throwIfAborted()
@@ -56,14 +60,14 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
       const files = listed(db, data)
       if (!files) return { status: "blocked", reason: "unsupported_storage" }
       preloaded.set(String(row.id), data)
-      const calls: Array<{ part: number; index?: number }> = (Array.isArray(data.content) ? data.content as Part[] : [])
-        .flatMap((part, index) => part?.type === "tool" && isImageTool(part.name) ? [{ part: index }] : [])
-      const items = [...calls, ...files.filter(file => isGalleryFile(data.content[file.part], file.file)).map(file => ({ part: file.part, index: file.index }))]
-        .sort((a, b) => a.part - b.part || (a.index ?? -1) - (b.index ?? -1))
+      const calls: WindowItem[] = (Array.isArray(data.content) ? data.content as Part[] : [])
+        .flatMap((part, index) => imageCalls(part, scope.directory).map(imageCall => ({ part: index, imageCall })))
+      const items: WindowItem[] = [...calls, ...files.filter(file => isGalleryFile(data.content[file.part], file.file)).map<WindowItem>(file => ({ part: file.part, index: file.index }))]
+        .sort((a, b) => a.part - b.part || (a.imageCall?.callIndex ?? -1) - (b.imageCall?.callIndex ?? -1) || (a.index ?? -1) - (b.index ?? -1))
       window.push({ id: String(row.id), seq, data, items })
       await yieldTurn(undefined, { signal })
     }
-    const cov = coverage(db, sessionID, boundary, window[0]?.seq ?? 0, through, preloaded, window.length)
+    const cov = coverage(db, scope.directory, sessionID, boundary, window[0]?.seq ?? 0, through, preloaded, window.length)
     const entries: GalleryEntry[] = []
     let size = 256
     emit: for (const { id, seq, data, items } of window) {
@@ -83,22 +87,24 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
     }
     return { status: "page", entries, cursor: next ? Buffer.from(JSON.stringify({ binding, through, ...next })).toString("base64url") : null }
 
-    function describe(messageID: string, seq: number, part: Part, item: { part: number; index?: number }): GalleryEntry {
+    function describe(messageID: string, seq: number, part: Part, item: WindowItem): GalleryEntry {
       const series = key(messageID), time = operationTime(part)
-      if (item.index === undefined) {
-        const state = generationState(cov, part)
-        return { kind: "generation", target: { messageID, part: item.part, digest: generationDigest(part, part.state?.metadata?.jobID) }, series, time,
-          key: state.job ? key(sessionID, state.job) : key(sessionID, messageID, String(item.part)), tool: state.tool, outcome: state.outcome,
-          ...(prompts && images ? promptFields(part) : {}) }
+      if (item.imageCall) {
+        const call = item.imageCall, state = generationState(cov, call, seq)
+        return { kind: "generation", target: { messageID, part: item.part, ...(call.callIndex !== undefined ? { call: call.callIndex } : {}),
+          digest: generationDigest(call, state.job) }, series, time,
+          key: state.job ? key(sessionID, state.job) : call.callIndex !== undefined ? key(sessionID, messageID, String(item.part), String(call.callIndex))
+            : key(sessionID, messageID, String(item.part)),
+          tool: state.tool, outcome: state.outcome, ...(prompts && images ? promptFields(call, state.notice) : {}) }
       }
-      const file = part.state.content[item.index], resolved = resolveName(scope.directory, file.name)
+      const file = part.state.content[item.index!], resolved = resolveName(scope.directory, file.name)
       const annotation = annotate(cov, scope.directory, sessionID, seq, part, resolved)
       const inside = relativeInside(scope.directory, resolved)
-      const base = { kind: "image" as const, target: { messageID, part: item.part, index: item.index, digest: hash(file.uri) }, series, time,
+      const base = { kind: "image" as const, target: { messageID, part: item.part, index: item.index!, digest: hash(file.uri) }, series, time,
         label: inside ? labelOf(resolved!) : null, mime: String(file.mime) }
       if (annotation.origin === "unverifiable") return { ...base, origin: "unverifiable" }
-      const { call, ...proven } = annotation
-      return { ...base, ...proven, ...(prompts && images ? promptFields(call) : {}) }
+      const { call, notice, ...proven } = annotation
+      return { ...base, ...proven, ...(prompts && images ? promptFields(call, notice) : {}) }
     }
   } finally { db.exec("ROLLBACK") }
 }
@@ -130,7 +136,7 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       if (!isGalleryFile(found.tool, found.file)) return refused("not-gallery")
       if (!present(found.tool, found.file)) return refused("missing")
       seq = found.seq; file = resolveName(scope.directory, found.file.name)
-      const cov = coverage(db, sessionID, boundary, seq, through, new Map([[target.messageID, found.data]]), 1)
+      const cov = coverage(db, scope.directory, sessionID, boundary, seq, through, new Map([[target.messageID, found.data]]), 1)
       const span = interval(found.tool)
       if (annotate(cov, scope.directory, sessionID, seq, found.tool, file).origin !== "proven" || !span) return refused("unverifiable")
       start = span.start
@@ -141,28 +147,34 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       if (!row) return refused("missing")
       if (typeof row.data !== "string") return refused("unverifiable")
       const data = JSON.parse(row.data), part = data.content?.[target.part]
-      if (part?.type !== "tool" || !isImageTool(part.name) || generationDigest(part, part.state?.metadata?.jobID) !== target.digest) return refused("changed")
+      const matched = imageCalls(part, scope.directory).find(entry => target.call === undefined ? entry.direct : entry.callIndex === target.call)
+      if (!matched) return refused("changed")
       seq = Number(row.seq)
-      const cov = coverage(db, sessionID, boundary, seq, through, new Map([[target.messageID, data]]), 1), state = generationState(cov, part)
+      const cov = coverage(db, scope.directory, sessionID, boundary, seq, through, new Map([[target.messageID, data]]), 1), state = generationState(cov, matched, seq)
+      if (generationDigest(matched, state.job) !== target.digest) return refused("changed")
       if (state.outcome !== "completed" || !state.notice?.file) return refused("unverifiable")
       file = state.notice.file; start = state.notice.time
       // Another call to the same file started before our notice, still without its own notice or completion time, may write it later.
-      const floor = cov.floorFor(seq), own = part, written = file
+      const floor = cov.floorFor(seq), own = matched, written = file
       if (floor === Infinity) return refused("unverifiable")
-      pending = later => [...cov.calls.filter(call => call.seq >= floor && call.seq < seq), ...later.calls.filter(call => call.seq >= seq)]
-        .some(call => !(call.seq === seq && call.part.id === own.id) && writes(call.part, written) && !(Number(call.part.time?.ran) >= start)
-          && (!Number.isFinite(call.part.time?.completed)
-            || ![...cov.notices, ...later.notices].some(notice => notice.job === call.part.state?.metadata?.jobID)))
+      const settled = (source: Coverage, entry: { seq: number; call: ImageCall }) => {
+        const job = generationState(source, entry.call, entry.seq).job
+        return typeof job === "string" && [...cov.notices, ...source.notices].some(notice => notice.job === job)
+      }
+      pending = later => [...cov.calls.filter(entry => entry.seq >= floor && entry.seq < seq).map(entry => ({ entry, source: cov })),
+        ...later.calls.filter(entry => entry.seq >= seq).map(entry => ({ entry, source: later }))]
+        .some(({ entry, source }) => !(entry.seq === seq && entry.call.id === own.id) && writes(entry.call, written) && !(Number(entry.call.part.time?.ran) >= start)
+          && (!Number.isFinite(entry.call.part.time?.completed) || !settled(source, entry)))
     }
     const relative = relativeInside(scope.directory, file)
     if (!relative) return refused("outside")
     // No later write: the newest assistant rows down to the item (32 messages, 32 MiB) and the notices of that range.
-    const later = coverage(db, sessionID, boundary, through, through, new Map(), 0)
+    const later = coverage(db, scope.directory, sessionID, boundary, through, through, new Map(), 0)
     // A later call that may write any file leaves the reference unverifiable; one to this file changed it.
-    const sinceStart = (call: { part: Part }) => !(Number(call.part.time?.ran) < start)
+    const sinceStart = (entry: { call: ImageCall }) => !(Number(entry.call.part.time?.ran) < start)
     if (!(later.floor <= seq) || later.capped || later.undecoded.some(row => !(row.time < start)) || pending(later)
-      || later.calls.some(call => call.seq >= seq && writesAnyFile(call.part) && sinceStart(call))) return refused("unverifiable")
-    if (later.calls.some(call => call.seq >= seq && writes(call.part, file!) && sinceStart(call))
+      || later.calls.some(entry => entry.seq >= seq && writesAnyFile(entry.call) && sinceStart(entry))) return refused("unverifiable")
+    if (later.calls.some(entry => entry.seq >= seq && writes(entry.call, file!) && sinceStart(entry))
       || later.notices.some(notice => sameFile(notice.file, file!) && notice.time > start)) return refused("changed")
     return { status: "path", path: process.platform === "win32" ? relative.replaceAll("\\", "/") : relative }
   } finally { db.exec("ROLLBACK") }

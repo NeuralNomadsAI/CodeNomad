@@ -101,7 +101,7 @@ jobs:
         run: |
           npx --workspace @codenomad/ui playwright install --with-deps chromium
           npm install --prefix scripts/perf/tools --ignore-scripts --no-audit --no-fund \
-            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.4.1
+            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.4.2
       - run: node --test scripts/perf/page-probe.test.mjs
       - name: Measure renderer work and latency against the TUI
         run: |

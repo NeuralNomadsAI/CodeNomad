@@ -42,7 +42,7 @@ If an owned worktree or conversation placement cannot be verified, open its phys
 In a launch-error dialog, choose **Open OpenCode Settings** to check the executable and version; for environment overrides, switch to **Advanced → Environment Variables**.
 
 1. Open **Preferences → OpenCode** and check the **OpenCode version** card (installed version and running service status), then the selected executable under **OpenCode Binary**.
-2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.4.0**; recommended/qualified version: **2.4.1**.
+2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.4.2**; recommended/qualified version: **2.4.2**.
 3. If the installed CLI differs from the running service, decide explicitly whether to restart the shared service.
 
 **Restart OpenCode service** is available under **Troubleshooting** and requires confirmation. It interrupts active work in every connected client, but retains session history. Configuration reload is a separate action: it keeps the process but rebuilds loaded Locations and cancels pending questions/permissions. Neither is a harmless refresh.
