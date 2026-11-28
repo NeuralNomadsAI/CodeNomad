@@ -6,7 +6,7 @@ mod account_tests;
 mod background_tests;
 mod defer_media;
 mod dispatch;
-mod guards;
+pub(crate) mod guards;
 #[cfg(test)]
 mod inbox_tests;
 mod mutation;
@@ -869,6 +869,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             return Ok(PreparedRelay::Response(unavailable()));
         }
     }
+    let mut session_cleanup_guard = None;
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
         if (!message_list && record["location"]["directory"] != directory)
@@ -888,6 +889,13 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             };
             if !exact_root {
                 return Ok(PreparedRelay::Response(unavailable()));
+            }
+            if head.method != Method::HEAD {
+                session_cleanup_guard = Some(
+                    app.session_cleanup
+                        .enter_mutation(session)
+                        .ok_or_else(|| error(Status::CONFLICT, "Session cleanup is in progress"))?,
+                );
             }
             tokio::select! {
                 biased;
@@ -1079,6 +1087,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         account_manual,
         account_verified_locs,
         rules_lock,
+        session_cleanup_guard,
     })))
 }
 

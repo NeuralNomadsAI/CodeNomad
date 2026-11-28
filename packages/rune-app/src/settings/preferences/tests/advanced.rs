@@ -21,11 +21,15 @@ fn advanced_persists_only_supported_options_and_one_server_environment_variable(
         assert_eq!(req.first, "PATCH /api/storage/config/ui HTTP/1.1");
         let expected = if cfg!(target_os = "windows") {
             json!({"settings":{
+                "autoCleanupBlankSessions": false,
+                "keepUnseenSubagentIdleStatus": false,
                 "focusExistingWindowOnSecondLaunch": true,
                 "hideDiffWhitespaceChanges": false
             }})
         } else {
             json!({"settings":{
+                "autoCleanupBlankSessions": false,
+                "keepUnseenSubagentIdleStatus": false,
                 "hideDiffWhitespaceChanges": false
             }})
         };

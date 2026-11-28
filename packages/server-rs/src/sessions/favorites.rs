@@ -9,18 +9,41 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::atomic::Ordering::Relaxed, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, atomic::Ordering::Relaxed},
+    time::Duration,
+};
 
 type Entries = BTreeMap<String, Vec<String>>;
 type Store = BTreeMap<String, Entries>;
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FAVORITES: usize = 512;
+static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn id_ok(id: &str) -> bool {
+fn any_session_id_ok(id: &str) -> bool {
     id.starts_with("ses")
-        && !id.starts_with("ses_cn_schedule_")
         && (4..=514).contains(&id.len())
         && id.bytes().all(|v| v.is_ascii_alphanumeric() || matches!(v, b'_' | b'-'))
+}
+fn id_ok(id: &str) -> bool {
+    any_session_id_ok(id) && !id.starts_with("ses_cn_schedule_")
+}
+fn valid_store(state: &Store, check_id: fn(&str) -> bool) -> bool {
+    state.iter().all(|(scope, entries)| {
+        scope.len() == 64
+            && scope.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+            && entries.len() <= MAX_FAVORITES
+            && entries
+                .iter()
+                .all(|(id, ancestors)| check_id(id) && ancestors.len() <= 64 && ancestors.iter().all(|id| check_id(id)))
+    })
+}
+fn store_protects(state: &Store, session_id: &str) -> bool {
+    state.values().any(|entries| {
+        entries.contains_key(session_id)
+            || entries.values().any(|parents| parents.iter().any(|parent| parent == session_id))
+    })
 }
 async fn belonging(app: &App, session: &Value, workspace: &Workspace) -> bool {
     if session["location"].get("workspaceID").is_some() {
@@ -39,17 +62,18 @@ fn key(workspace: &Workspace) -> String {
     format!("{:x}", Sha256::digest(path.as_bytes()))
 }
 fn read(app: &App) -> Result<Store, Status> {
-    let data = storage::read_bounded(&app.data.join("session-favorites.json"), json!({}), MAX_FILE)
-        .map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    let path = app.data.join("session-favorites.json");
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Store::new()),
+        Err(_) => return Err(Status::SERVICE_UNAVAILABLE),
+        Ok(meta) if meta.file_type().is_symlink() && std::fs::metadata(&path).is_err() => {
+            return Err(Status::SERVICE_UNAVAILABLE);
+        }
+        Ok(_) => {}
+    }
+    let data = storage::read_bounded(&path, json!({}), MAX_FILE).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
     let state: Store = serde_json::from_value(data).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
-    if !state.iter().all(|(scope, entries)| {
-        scope.len() == 64
-            && scope.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
-            && entries.len() <= MAX_FAVORITES
-            && entries
-                .iter()
-                .all(|(id, ancestors)| id_ok(id) && ancestors.len() <= 64 && ancestors.iter().all(|id| id_ok(id)))
-    }) {
+    if !valid_store(&state, id_ok) {
         return Err(Status::SERVICE_UNAVAILABLE);
     }
     Ok(state)
@@ -117,6 +141,7 @@ pub async fn list(
                 if absent.is_empty() || app.workspace(&id).is_err() || app.favorite_revision.load(Relaxed) != revision {
                     return;
                 }
+                let _lock = STORE_LOCK.lock().unwrap();
                 if let Ok(mut state) = read(&app)
                     && let Some(rows) = state.get_mut(&key)
                 {
@@ -150,6 +175,7 @@ pub async fn update(
     let key = key(&workspace);
     let operation = async {
         if input.favorite {
+            let mut cleanup_guards = vec![app.session_cleanup.enter_mutation(&target).ok_or(Status::CONFLICT)?];
             let session = crate::opencode::session_record(&app, &target).await.map_err(|(status, _)| status)?;
             if session["id"] != target || !belonging(&app, &session, &workspace).await {
                 return Err(Status::FORBIDDEN);
@@ -160,6 +186,7 @@ pub async fn update(
                 if !id_ok(&current) || current == target || parents.contains(&current) || parents.len() == 64 {
                     return Err(Status::CONFLICT);
                 }
+                cleanup_guards.push(app.session_cleanup.enter_mutation(&current).ok_or(Status::CONFLICT)?);
                 let record = crate::opencode::session_record(&app, &current).await.map_err(|(status, _)| status)?;
                 if record["id"] != current {
                     return Err(Status::CONFLICT);
@@ -176,6 +203,7 @@ pub async fn update(
             {
                 return Err(Status::CONFLICT);
             }
+            let _lock = STORE_LOCK.lock().unwrap();
             let mut store = read(&app)?;
             let entries = store.entry(key.clone()).or_default();
             if entries.len() == MAX_FAVORITES && !entries.contains_key(&target) {
@@ -183,8 +211,11 @@ pub async fn update(
             }
             entries.insert(target, parents);
             save(&app, &store)?;
+            drop(_lock);
+            drop(cleanup_guards);
             Ok(display(&app, &store, &key, false))
         } else {
+            let _lock = STORE_LOCK.lock().unwrap();
             let mut store = read(&app)?;
             if let Some(entries) = store.get_mut(&key)
                 && entries.remove(&target).is_some()
@@ -200,11 +231,59 @@ pub async fn update(
     }
 }
 
+fn state_yaml_stamp(state_path: &std::path::Path) -> Result<String, ()> {
+    let link = match std::fs::symlink_metadata(state_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        Err(_) => return Err(()),
+    };
+    let meta = if link.file_type().is_symlink() { std::fs::metadata(state_path).map_err(|_| ())? } else { link };
+    let identity = crate::files::host_identity(state_path).map_err(|_| ())?;
+    let modified =
+        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    Ok(format!("{identity}:{}:{:?}:{:?}", meta.len(), modified, created))
+}
+
+fn state_yaml_protects(state_path: &std::path::Path, session_id: &str) -> bool {
+    let Ok(before) = state_yaml_stamp(state_path) else {
+        return true;
+    };
+    if before == "missing" {
+        return false;
+    }
+    let Ok(doc) = crate::settings::document::read(state_path) else {
+        return true;
+    };
+    let protected = match doc.get("sessionFavorites") {
+        None => false,
+        Some(raw) => {
+            let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
+                return true;
+            };
+            if !valid_store(&yaml_state, any_session_id_ok) {
+                return true;
+            }
+            store_protects(&yaml_state, session_id)
+        }
+    };
+    if state_yaml_stamp(state_path).ok().as_deref() != Some(before.as_str()) {
+        return true;
+    }
+    protected
+}
+
+pub fn is_protected(app: &App, session_id: &str) -> bool {
+    let Ok(state) = read(app) else { return true };
+    store_protects(&state, session_id) || state_yaml_protects(&app.settings.location.state, session_id)
+}
+
 pub fn deleted(app: &App, event: &Value) {
     if event["type"] != "session.deleted" {
         return;
     }
     let Some(target) = event["data"]["sessionID"].as_str().filter(|s| id_ok(s)) else { return };
+    let _lock = STORE_LOCK.lock().unwrap();
     let Ok(mut state) = read(app) else { return };
     let mut changed = false;
     for entries in state.values_mut() {
@@ -221,6 +300,30 @@ pub fn deleted(app: &App, event: &Value) {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn state_yaml_favorites_protect_targets_ancestors_and_fail_closed_on_corrupt_yaml() {
+        let dir = std::env::temp_dir().join(format!("cn-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state_path = dir.join("state.yaml");
+
+        // Missing file protects nothing.
+        assert!(!state_yaml_protects(&state_path, "ses_root"));
+
+        // Valid state.yaml protects both direct favorite and its ancestor.
+        let scope = "a".repeat(64);
+        std::fs::write(&state_path, format!("sessionFavorites:\n  {scope}:\n    ses_child:\n      - ses_root\n"))
+            .unwrap();
+        assert!(state_yaml_protects(&state_path, "ses_child"));
+        assert!(state_yaml_protects(&state_path, "ses_root"));
+        assert!(!state_yaml_protects(&state_path, "ses_other"));
+
+        // Corrupt state.yaml fails closed (protects everything).
+        std::fs::write(&state_path, "sessionFavorites: [").unwrap();
+        assert!(state_yaml_protects(&state_path, "ses_other"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn belonging_admits_root_and_linked_worktree_and_refuses_foreign_or_workspace_id() {

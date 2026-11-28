@@ -41,6 +41,7 @@ pub(super) struct DispatchContext {
     pub account_manual: Option<crate::provider_usage::selection::ManualGuard>,
     pub account_verified_locs: Vec<super::mutation::VerifiedAccountLocation>,
     pub rules_lock: Option<tokio::sync::OwnedMutexGuard<()>>,
+    pub session_cleanup_guard: Option<crate::sessions::cleanup::MutationGuard>,
 }
 
 pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, Error> {
@@ -71,6 +72,7 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         account_manual,
         account_verified_locs,
         rules_lock,
+        session_cleanup_guard,
     } = ctx;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
@@ -580,8 +582,9 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             }),
             send_input,
         };
-        crate::opencode::proxy_write::forward(permit, rules_lock, guards, dispatch).await
+        crate::opencode::proxy_write::forward(permit, rules_lock, session_cleanup_guard, guards, dispatch).await
     } else {
+        let _cleanup_guard = session_cleanup_guard;
         dispatch(tokio_util::sync::CancellationToken::new(), crate::opencode::proxy_write::DispatchGate::new()).await
     }
 }

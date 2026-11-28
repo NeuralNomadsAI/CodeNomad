@@ -823,6 +823,7 @@ async fn route(
     };
     let session_id: Option<Arc<str>> = session.map(Arc::from);
     crate::sessions::favorites::deleted(app, &event);
+    crate::sessions::cleanup::deleted(app, &event);
     let is_moved = kind == "session.moved"
         && session_id.is_some()
         && event["data"]["location"]["directory"]

@@ -59,6 +59,7 @@ impl DispatchGate {
 pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send + 'static>(
     permit: Entered,
     rules: Option<tokio::sync::OwnedMutexGuard<()>>,
+    cleanup: Option<crate::sessions::cleanup::MutationGuard>,
     mut guards: ObserverGuards,
     request: impl FnOnce(CancellationToken, DispatchGate) -> F + Send + 'static,
 ) -> Result<Response, Error> {
@@ -68,7 +69,7 @@ pub(super) async fn forward<F: Future<Output = Result<Response, Error>> + Send +
     let worker_gate = gate.clone();
     let (head, response) = oneshot::channel();
     tokio::spawn(async move {
-        let (_permit, _rules) = (permit, rules);
+        let (_permit, _rules, _cleanup) = (permit, rules, cleanup);
         let task = async {
             let (parts, body) = match request(detached.clone(), worker_gate).await {
                 Ok(response) => response.into_parts(),
@@ -162,13 +163,16 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_the_observer_keeps_the_deletion_fence_until_native_finishes() {
-        use crate::worktrees::fence;
+        use crate::{sessions::cleanup::Fence, worktrees::fence};
         let dirs = ["/proxy-write-test/detached".to_string()];
+        let cleanup_fence = Fence::default();
+        let cleanup_guard = cleanup_fence.enter_mutation("ses_proxy_write").unwrap();
         let (started, waiting) = oneshot::channel();
         let (finish, held) = oneshot::channel();
         let observer = tokio::spawn(forward(
             fence::enter(&dirs).unwrap(),
             None,
+            Some(cleanup_guard),
             ObserverGuards::principal_only(CancellationToken::new()),
             |_, gate| async move {
                 assert!(gate.try_dispatch());
@@ -184,8 +188,10 @@ mod tests {
         tokio::pin!(deletion);
         assert!(futures_util::poll!(&mut deletion).is_pending());
         assert!(fence::enter(&dirs).is_none());
+        assert!(cleanup_fence.enter_cleanup("ses_proxy_write").is_none());
         finish.send(()).unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
+        assert!(cleanup_fence.enter_cleanup("ses_proxy_write").is_some());
     }
 
     #[tokio::test]
@@ -197,6 +203,7 @@ mod tests {
         let (eof, drained) = oneshot::channel();
         let response = forward(
             fence::enter(&dirs).unwrap(),
+            None,
             None,
             ObserverGuards::principal_only(CancellationToken::new()),
             |_, gate| async move {
@@ -237,6 +244,7 @@ mod tests {
         let mut fut = Box::pin(forward(
             fence::enter(&dirs).unwrap(),
             None,
+            None,
             ObserverGuards::principal_only(cancel.clone()),
             |_, gate| async move {
                 assert!(gate.try_dispatch());
@@ -264,12 +272,13 @@ mod tests {
             }),
             send_input: false,
         };
-        let mut req = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, guards, |_, gate| async move {
-            assert!(gate.try_dispatch());
-            started.send(()).unwrap();
-            held.await.unwrap();
-            Ok(Response::new(Body::from("acknowledged")))
-        }));
+        let mut req =
+            tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                started.send(()).unwrap();
+                held.await.unwrap();
+                Ok(Response::new(Body::from("acknowledged")))
+            }));
         waiting.await.unwrap();
         close_tx.send(()).unwrap();
         let err = tokio::time::timeout(Duration::from_secs(2), &mut req).await.unwrap().unwrap().unwrap_err();
@@ -293,12 +302,13 @@ mod tests {
             closed: Box::pin(std::future::pending()),
             send_input: false,
         };
-        let mut req = tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, guards, |_, gate| async move {
-            assert!(gate.try_dispatch());
-            started.send(()).unwrap();
-            held.await.unwrap();
-            Ok(Response::new(Body::from("acknowledged")))
-        }));
+        let mut req =
+            tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, None, guards, |_, gate| async move {
+                assert!(gate.try_dispatch());
+                started.send(()).unwrap();
+                held.await.unwrap();
+                Ok(Response::new(Body::from("acknowledged")))
+            }));
         waiting.await.unwrap();
         retire_tx.send(()).unwrap();
         let err = tokio::time::timeout(Duration::from_secs(2), &mut req).await.unwrap().unwrap().unwrap_err();
@@ -329,12 +339,13 @@ mod tests {
             closed: Box::pin(std::future::pending()),
             send_input: true,
         };
-        let handle = tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, guards, |_, gate| async move {
-            entered.send(()).unwrap();
-            let _ = proceed.await;
-            let _ = dispatched_tx.send(gate.try_dispatch());
-            Ok(Response::new(Body::from("unused")))
-        }));
+        let handle =
+            tokio::spawn(forward(fence::enter(&dirs_ret).unwrap(), None, None, guards, |_, gate| async move {
+                entered.send(()).unwrap();
+                let _ = proceed.await;
+                let _ = dispatched_tx.send(gate.try_dispatch());
+                Ok(Response::new(Body::from("unused")))
+            }));
         waiting.await.unwrap();
         retire_tx.send(()).unwrap();
         let response = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap().unwrap();
@@ -357,7 +368,7 @@ mod tests {
             }),
             send_input: true,
         };
-        let handle = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, guards, |_, gate| async move {
+        let handle = tokio::spawn(forward(fence::enter(&dirs_ws).unwrap(), None, None, guards, |_, gate| async move {
             entered.send(()).unwrap();
             let _ = proceed.await;
             let _ = dispatched_tx.send(gate.try_dispatch());
@@ -385,7 +396,7 @@ mod tests {
             send_input: true,
         };
         let handle_after =
-            tokio::spawn(forward(fence::enter(&dirs_after).unwrap(), None, guards, |_, gate| async move {
+            tokio::spawn(forward(fence::enter(&dirs_after).unwrap(), None, None, guards, |_, gate| async move {
                 assert!(gate.try_dispatch());
                 sent_tx.send(()).unwrap();
                 let _ = done_rx.await;
@@ -409,6 +420,7 @@ mod tests {
         let handle = tokio::spawn(forward(
             fence::enter(&dirs).unwrap(),
             None,
+            None,
             ObserverGuards::principal_only(principal.clone()),
             |_, gate| async move {
                 entered.send(()).unwrap();
@@ -431,6 +443,7 @@ mod tests {
         let (done_tx, done_rx) = oneshot::channel();
         let handle_after = tokio::spawn(forward(
             fence::enter(&dirs_after).unwrap(),
+            None,
             None,
             ObserverGuards::principal_only(principal_after.clone()),
             |_, gate| async move {

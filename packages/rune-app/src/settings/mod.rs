@@ -25,6 +25,17 @@ pub(crate) use transcript_preset::Row as TranscriptRow;
 pub(crate) fn show_timeline(s: &crate::State) -> bool {
     s.settings.shared.borrow().show_timeline()
 }
+
+pub(crate) fn auto_cleanup_blank_sessions(s: &crate::State) -> bool {
+    s.settings.shared.borrow().auto_cleanup_blank_sessions()
+}
+
+pub(crate) fn keep_unseen_subagent_idle_status(s: &crate::State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .keep_unseen_subagent_idle_status()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -222,6 +233,12 @@ pub(crate) fn fixture_appearance(
 #[cfg(test)]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_config_doc(s: &mut State, doc: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_config_doc(doc);
     s.revision += 1;
 }
 
