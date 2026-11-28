@@ -2,8 +2,7 @@ import type { MissionSnapshot } from "./model"
 import type { MissionJournal, MissionStorage } from "./journal"
 import type { MissionCreationIntents } from "./creation-intent"
 import type { MissionDocumentAccess } from "./mission-document-one-time"
-import { readMissionDocumentPage } from "./mission-schedule-list"
-import { missionScheduleID } from "./mission-schedule-contract"
+import { readMissionDocumentPage } from "./mission-document-page"
 import { missionRecoveryControlError } from "./recovery-error"
 import { stableToken } from "./receipt-identity"
 
@@ -38,11 +37,10 @@ export async function missionPreparationIdentity(args: {
   for (const sourceMissionID of sources) {
     const id = nativeRequestID(sessionID, requestID, sourceMissionID)
     const intentID = `msn_${stableToken(`${project.id}\0${id}`, 24)}`
-    const scheduleID = missionScheduleID(project.id, project.canonical, id)
     if (bindings.some(binding => binding.creationRequestID === id)
-      || args.snapshot.missions.some(mission => mission.id === intentID || mission.id === scheduleID)
+      || args.snapshot.missions.some(mission => mission.id === intentID)
       || await args.journal.deletionRecord(intentID)
-      || args.documents && await args.documents(async store => await store.read(intentID) ?? await store.read(scheduleID))) {
+      || args.documents && await args.documents(store => store.read(intentID))) {
       existing.push({ requestID: id, sourceMissionID })
     }
   }
