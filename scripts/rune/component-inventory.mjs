@@ -4,14 +4,57 @@ import {existsSync} from 'node:fs'
 import {readFile, readdir, mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {ts, slash, ordered, walk, reference, unalias, componentsIn, properties, inspectBody} from './component-inventory-ast.mjs'
+import {ts, slash, compareStrings, relativePath, ordered, walk, reference, unalias, componentsIn, properties, inspectBody} from './component-inventory-ast.mjs'
 
 const require = createRequire(import.meta.url)
 const postcss = require('postcss')
 const selectors = require('postcss-selector-parser')
 export const defaultRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+export function canonicalPath(file, root = defaultRoot) {
+  const normalized = slash(file)
+  const rootPrefix = slash(root).replace(/\/+$/, '') + '/'
+  if (normalized.startsWith(rootPrefix)) return normalized.slice(rootPrefix.length)
+  if (!path.isAbsolute(file) && !/^[A-Za-z]:\//.test(normalized) && !normalized.startsWith('/')) {
+    return normalized.replace(/^\.\//, '')
+  }
+  return relativePath(root, file)
+}
+export function sortPaths(files, root = defaultRoot) {
+  return [...files].sort((a, b) => compareStrings(canonicalPath(a, root), canonicalPath(b, root)))
+}
+export async function lockfileMismatches(root = defaultRoot) {
+  const lockPath = path.join(root, 'package-lock.json')
+  const nodeModulesPath = path.join(root, 'node_modules')
+  if (!existsSync(lockPath) || !existsSync(nodeModulesPath)) return []
+  const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+  const mismatches = []
+  for (const [pkgPath, meta] of Object.entries(lock.packages ?? {})) {
+    if (!pkgPath.startsWith('node_modules/') || meta?.link || !meta?.version) continue
+    const pkgJsonPath = path.join(root, pkgPath, 'package.json')
+    if (!existsSync(pkgJsonPath)) continue
+    try {
+      const installed = JSON.parse(await readFile(pkgJsonPath, 'utf8')).version
+      if (installed && installed !== meta.version) {
+        mismatches.push({pkg: pkgPath.slice('node_modules/'.length), installed, expected: meta.version})
+      }
+    } catch {}
+  }
+  return mismatches.sort((a, b) => compareStrings(a.pkg, b.pkg))
+}
+function formatMismatches(mismatches) {
+  const sample = mismatches.slice(0, 5).map(({pkg, installed, expected}) => `${pkg}: installed ${installed}, lockfile ${expected}`).join('; ')
+  return mismatches.length > 5 ? `${sample}; +${mismatches.length - 5} more` : sample
+}
 function normalize(value, root = defaultRoot) {
-  if (typeof value === 'string') return value.replaceAll('\r\n', '\n').replaceAll(slash(root) + '/', '').replaceAll(root + path.sep, '')
+  if (typeof value === 'string') {
+    const slashed = slash(root) + '/'
+    let out = value.replaceAll('\r\n', '\n').replaceAll(slashed, '').replaceAll(root + path.sep, '')
+    if (/^[A-Za-z]:\//.test(slashed)) {
+      const toggled = (slashed[0] === slashed[0].toLowerCase() ? slashed[0].toUpperCase() : slashed[0].toLowerCase()) + slashed.slice(1)
+      out = out.replaceAll(toggled, '')
+    }
+    return out
+  }
   if (Array.isArray(value)) return value.map(child => normalize(child, root))
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, normalize(child, root)]))
   return value
@@ -37,31 +80,31 @@ function importEvidence(sources, root) {
   })
   return {external, unresolved}
 }
-async function filesUnder(directory) {
+async function filesUnder(directory, root = directory) {
   const result = []
   for (const entry of await readdir(directory, {withFileTypes: true})) {
     if (['node_modules', 'dist', '.git'].includes(entry.name)) continue
     const file = path.join(directory, entry.name)
     if (slash(file).endsWith('/packages/ui/src/renderer/public/monaco')) continue
-    if (entry.isDirectory()) result.push(...await filesUnder(file))
+    if (entry.isDirectory()) result.push(...await filesUnder(file, root))
     else result.push(file)
   }
-  return result.sort()
+  return sortPaths(result, root)
 }
 async function cssIndex(root, files) {
   const classes = new Map(), tokens = new Map()
-  for (const file of files.filter(file => file.endsWith('.css'))) {
-    const tree = postcss.parse(await readFile(file, 'utf8'), {from: file})
+  for (const file of sortPaths(files.filter(file => file.endsWith('.css')), root)) {
+    const tree = postcss.parse((await readFile(file, 'utf8')).replaceAll('\r\n', '\n'), {from: file})
     tree.walkDecls(declaration => {
       if (!declaration.prop.startsWith('--')) return
-      const evidence = {file: slash(path.relative(root, file)), line: declaration.source.start.line, value: declaration.value}
+      const evidence = {file: relativePath(root, file), line: declaration.source.start.line, value: declaration.value}
       tokens.set(declaration.prop, [...tokens.get(declaration.prop) ?? [], evidence])
     })
     tree.walkRules(rule => {
       const names = []
       try { selectors(nodes => nodes.walkClasses(node => names.push(node.value))).processSync(rule.selector) } catch { return }
       const variables = ordered([...rule.toString().matchAll(/var\(\s*(--[\w-]+)/g)].map(match => match[1]))
-      for (const name of ordered(names)) classes.set(name, [...classes.get(name) ?? [], {file: slash(path.relative(root, file)), line: rule.source.start.line, selector: rule.selector, variables}])
+      for (const name of ordered(names)) classes.set(name, [...classes.get(name) ?? [], {file: relativePath(root, file), line: rule.source.start.line, selector: rule.selector, variables}])
     })
   }
   return {classes, tokens}
@@ -127,7 +170,7 @@ function testPaths(edges, source) {
   const visited = new Set([source]), queue = [{chain: [source], links: []}], results = []
   while (queue.length) {
     const {chain, links} = queue.shift()
-    for (const {from, kind} of (reverse.get(chain[0]) ?? []).sort((a, b) => a.from.localeCompare(b.from, 'en'))) {
+    for (const {from, kind} of (reverse.get(chain[0]) ?? []).sort((a, b) => compareStrings(a.from, b.from) || compareStrings(a.kind, b.kind))) {
       if (visited.has(from)) continue
       visited.add(from)
       const next = [from, ...chain]
@@ -136,11 +179,11 @@ function testPaths(edges, source) {
       queue.push({chain: next, links: nextLinks})
     }
   }
-  return results.sort((a, b) => a.file.localeCompare(b.file, 'en'))
+  return results.sort((a, b) => compareStrings(a.file, b.file))
 }
 export async function buildInventory(root = defaultRoot) {
   const src = path.join(root, 'packages/ui/src'), tests = path.join(root, 'packages/ui/tests')
-  const files = [...await filesUnder(src), ...await filesUnder(tests)].sort()
+  const files = sortPaths([...await filesUnder(src, root), ...await filesUnder(tests, root)], root)
   const scriptFiles = files.filter(file => /\.[cm]?[jt]sx?$/.test(file))
   const configPath = path.join(root, 'packages/ui/tsconfig.json')
   const config = ts.readConfigFile(configPath, ts.sys.readFile)
@@ -148,8 +191,11 @@ export async function buildInventory(root = defaultRoot) {
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath))
   const program = ts.createProgram(scriptFiles, {...parsed.options, allowJs: true, noEmit: true})
   const checker = program.getTypeChecker()
-  const sourceSet = new Set(scriptFiles.map(file => path.resolve(file).toLowerCase()))
-  const sources = program.getSourceFiles().filter(source => sourceSet.has(path.resolve(source.fileName).toLowerCase())).sort((a, b) => a.fileName.localeCompare(b.fileName, 'en'))
+  const canonicalKey = value => (ts.sys.useCaseSensitiveFileNames ? value : value.toLowerCase())
+  const sourceSet = new Set(scriptFiles.map(file => canonicalKey(relativePath(root, file))))
+  const sources = program.getSourceFiles()
+    .filter(source => sourceSet.has(canonicalKey(relativePath(root, source.fileName))))
+    .sort((a, b) => compareStrings(relativePath(root, a.fileName), relativePath(root, b.fileName)))
   const candidates = sources.filter(source => slash(source.fileName).startsWith(slash(src) + '/')).flatMap(source => componentsIn(source))
   const symbols = new Map(candidates.map(component => [checker.getSymbolAtLocation(component.node.name), `${slash(path.relative(root, component.node.getSourceFile().fileName))}#${component.name}`]))
   const graph = evidenceGraph(program, checker, sources, root, symbols)
@@ -173,7 +219,7 @@ export async function buildInventory(root = defaultRoot) {
   }
   const output = new Map()
   const summary = []
-  for (const [file, components] of [...modules].sort(([a], [b]) => a.localeCompare(b, 'en'))) {
+  for (const [file, components] of [...modules].sort(([a], [b]) => compareStrings(a, b))) {
     const target = `target/rune-inventory/${file.replace(/^packages\/ui\/src\//, '').replace(/\.[^.]+$/, '').replaceAll('/', '__')}.json`
     const tests = testPaths(graph.edges, file)
     const source = program.getSourceFile(path.join(root, file))
@@ -182,8 +228,9 @@ export async function buildInventory(root = defaultRoot) {
     summary.push({source: file, sheet: target, sheetSha256: sheetHash, components: components.map(({id, name, status}) => ({id, name, status})), testReferenceCount: tests.length})
   }
   const hashes = {}
-  for (const file of [...files, configPath, ...['component-inventory.mjs', 'component-inventory-ast.mjs'].map(file => path.join(root, 'scripts/rune', file))].sort()) {
-    hashes[slash(path.relative(root, file))] = await digest(file)
+  const hashFiles = sortPaths([...files, configPath, ...['component-inventory.mjs', 'component-inventory-ast.mjs'].map(file => path.join(root, 'scripts/rune', file))], root)
+  for (const file of hashFiles) {
+    hashes[relativePath(root, file)] = await digest(file)
   }
   const imports = importEvidence(sources, root)
   output.set('dev-docs/rune-components.generated.json', {
@@ -191,12 +238,18 @@ export async function buildInventory(root = defaultRoot) {
     scope: ['packages/ui/src/**/*.{ts,tsx}', 'packages/ui/tests/**/*.{ts,tsx,js,jsx}', 'packages/ui/src/**/*.css'],
     limitations: ['Candidates: named uppercase functions with JSX or Solid Component annotations; wrapper factories and anonymous defaults require manual review.', 'Test evidence records dependency paths from imports/reexports and browser path literals; execution and behavioral coverage require component parity tests.', 'Dynamic classes and translation keys remain expressions; external/utility classes can be unresolved.', 'CSS selector matches are lexical references; cascade, inherited variables, variants and computed styles require rendered verification.', 'Exports, import aliases and reexports use the TypeScript checker. Install lockfile dependencies before generating. External references and unresolved internal paths are recorded independently of installed module availability.', 'moduleLexicalEvidence includes helpers and sibling components; per-component evidence remains lexical, with nested callback bodies.', 'All conversion and parity statuses require independent verification.', 'Full sheets are generated artifacts under target/rune-inventory; the tracked index records their hashes. --check recomputes the index without requiring generated sheets.'],
     unresolvedImports: imports.unresolved, externalImports: imports.external,
-    modulesWithoutCandidates: sources.filter(source => source.fileName.endsWith('.tsx') && slash(source.fileName).startsWith(slash(src) + '/') && !modules.has(slash(path.relative(root, source.fileName)))).map(source => slash(path.relative(root, source.fileName))),
+    modulesWithoutCandidates: sources.filter(source => source.fileName.endsWith('.tsx') && slash(source.fileName).startsWith(slash(src) + '/') && !modules.has(relativePath(root, source.fileName))).map(source => relativePath(root, source.fileName)),
     inputHashes: hashes, componentCount: candidates.length, modules: summary,
   })
   return new Map([...output].map(([key, value]) => [key, normalize(value, root)]))
 }
 export async function generate({root = defaultRoot, check = false} = {}) {
+  if (!check) {
+    const mismatches = await lockfileMismatches(root)
+    if (mismatches.length) {
+      throw new Error(`node_modules mismatches package-lock.json (${formatMismatches(mismatches)}); run npm ci before running node scripts/rune/component-inventory.mjs`)
+    }
+  }
   const output = await buildInventory(root)
   for (const [relative, value] of output) {
     if (check && relative.startsWith('target/')) continue
@@ -204,12 +257,16 @@ export async function generate({root = defaultRoot, check = false} = {}) {
     if (check) {
       let existing
       try { existing = await readFile(target, 'utf8') } catch { throw new Error(`${relative} missing; run node scripts/rune/component-inventory.mjs`) }
-      if (existing.replaceAll('\r\n', '\n') !== content) throw new Error(`${relative} stale; run node scripts/rune/component-inventory.mjs`)
+      if (existing.replaceAll('\r\n', '\n') !== content) {
+        const mismatches = await lockfileMismatches(root)
+        const suffix = mismatches.length ? `; node_modules mismatches package-lock.json (${formatMismatches(mismatches)})` : ''
+        throw new Error(`${relative} stale${suffix}; run node scripts/rune/component-inventory.mjs`)
+      }
     } else { await mkdir(path.dirname(target), {recursive: true}); await writeFile(target, content) }
   }
   // Obsolete sheets must fail checks, so a removed component cannot retain a positive-looking fiche.
   const directory = path.join(root, 'target/rune-inventory')
-  const stale = existsSync(directory) ? (await readdir(directory)).filter(file => file.endsWith('.json') && !output.has(`target/rune-inventory/${file}`)) : []
+  const stale = existsSync(directory) ? (await readdir(directory)).filter(file => file.endsWith('.json') && !output.has(`target/rune-inventory/${file}`)).sort(compareStrings) : []
   if (stale.length) throw new Error(`Obsolete component sheets require removal: ${stale.join(', ')}`)
   console.log(`${check ? 'verified' : 'generated'} ${output.size - 1} component modules`)
   return output
