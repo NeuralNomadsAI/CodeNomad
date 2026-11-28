@@ -121,12 +121,266 @@ pub fn section(last: bool) -> El {
 }
 
 pub fn file_row(selected: bool) -> El {
-    let body = row().full_width().items_center();
+    let t = tokens(dark());
+    let body = row()
+        .full_width()
+        .items_center()
+        .hover_group()
+        .hover_motion(rune::Anim::INSTANT, rune::Anim::INSTANT);
     if selected {
-        body.fill(tokens(dark()).color("selection-neutral-bg"))
+        body.fill(t.color("selection-neutral-bg"))
     } else {
-        body
+        body.hover(t.color("surface-hover-overlay"))
     }
+}
+
+pub fn bordered_control(el: El) -> El {
+    let t = tokens(dark());
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    el.border(border, t.color("border-base")).border_layout()
+}
+
+pub fn file_row_actions(reveal: bool) -> El {
+    let t = tokens(dark());
+    row()
+        .items_center()
+        .pr(t.space(Space::Xs).px())
+        .gap(t.metric("fileRowActions", "gap").px())
+        .motion(rune::Spring::NONE)
+        .group_opacity(if reveal { 1.0 } else { 0.0 }, 1.0)
+}
+
+pub fn change_section_button<S: 'static>(
+    name: &str,
+    count: usize,
+    open: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let title = |property| t.metric("gitSectionTitle", property).px();
+    let chip = |property| t.metric("gitSectionCount", property).px();
+    let title_font =
+        rune::TextStyle::new(title("fontSize"), title("fontWeight")).lh(title("lineHeight"));
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
+    let label = format!("{name} · {count}");
+    let ink = t.color("text-secondary");
+    let counter = text(count.to_string())
+        .font(
+            rune::TextStyle::new(chip("fontSize"), t.number("font-weight-regular").px())
+                .lh(chip("lineHeight")),
+        )
+        .color(t.color("text-muted"))
+        .fill(t.color("surface-inset"))
+        .radius(t.number("chip-radius").px())
+        .opacity(chip("opacity"))
+        .px(chip("paddingLeft"))
+        .py(chip("paddingTop"))
+        .border(chip("borderTopWidth"), t.color("border-base"))
+        .border_layout()
+        .a11y_hidden();
+    let press = Rc::new(press);
+    let key_press = press.clone();
+    row()
+        .full_width()
+        .px(t.space(Space::Sm).px())
+        .py(t.space(Space::Xs).px())
+        .items_center()
+        .gap(t.metric("gitSection", "columnGap").px())
+        .hover(t.color("surface-hover"))
+        .focus_ring(focus_width, -focus_width, t.color("focus-ring-color"))
+        .role("button")
+        .label(label)
+        .expanded(open)
+        .focusable(true)
+        .child(
+            icon(
+                if open { &CHEVRON_DOWN } else { &CHEVRON_RIGHT },
+                t.length(crate::Length::Icon).px(),
+            )
+            .color(ink)
+            .a11y_hidden(),
+        )
+        .child(
+            text(name.to_uppercase())
+                .key("git-section-title")
+                .font(title_font)
+                .color(ink)
+                .truncate()
+                .remaining()
+                .a11y_hidden(),
+        )
+        .child(counter)
+        .on_press_tx(move |s, tx| press(s, tx))
+        .on_key(move |s: &mut S, key, tx| {
+            if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+                return false;
+            }
+            if !tx.key_repeat() {
+                key_press(s, tx);
+            }
+            true
+        })
+}
+
+pub fn commit_input<S: 'static>(
+    draft: &rune::edit::TextEdit,
+    label: &str,
+    edit: impl for<'a> Fn(&'a mut S) -> &'a mut rune::edit::TextEdit + 'static,
+    submit_label: &str,
+    submit_disabled: bool,
+    submit: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let dark = dark();
+    let submit_btn = bordered_control(
+        rune_kit::Button::new(submit_label)
+            .variant(rune_kit::ButtonVariant::Neutral)
+            .control_size(rune_kit::ControlSize::Small)
+            .disabled(submit_disabled)
+            .on_press_tx(submit)
+            .build(&crate::kit(dark)),
+    )
+    .key("git-commit");
+    bordered_control(
+        crate::layout::textarea(draft)
+            .label(label)
+            .placeholder(label)
+            .auto_grow(2, 6)
+            .on_edit(edit)
+            .trailing(submit_btn)
+            .build(&crate::field_kit(dark)),
+    )
+    .key("git-commit-message")
+}
+
+pub fn header_icon_button<S: 'static>(
+    glyph: &'static Glyph,
+    name: impl Into<String>,
+    disabled: bool,
+    active: Option<bool>,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(dark());
+    let side = t.length(crate::Length::IconButton).px();
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
+    let is_active = active == Some(true) && !disabled;
+    let name = name.into();
+    let mut button = row()
+        .size(side, side)
+        .center()
+        .role("button")
+        .label(name.clone())
+        .help(name)
+        .focusable(!disabled)
+        .disabled(disabled)
+        .fill(t.color(if is_active {
+            "icon-toggle-active-bg"
+        } else {
+            "surface-canvas"
+        }))
+        .border(border, t.color("border-base"))
+        .border_layout()
+        .focus_ring(
+            focus_width,
+            t.metric("windowIconFocus", "outlineOffset").px(),
+            t.color("focus-ring-color"),
+        )
+        .child(
+            icon(glyph, t.length(crate::Length::Icon).px())
+                .color(t.color(if is_active {
+                    "text-primary"
+                } else {
+                    "icon-button-color"
+                }))
+                .a11y_hidden(),
+        );
+    if let Some(on) = active {
+        button = button.checked(on);
+    }
+    if disabled {
+        button.opacity(0.55)
+    } else {
+        let press = Rc::new(press);
+        let key_press = press.clone();
+        button
+            .hover(t.color(if is_active {
+                "icon-toggle-active-bg"
+            } else {
+                "surface-hover"
+            }))
+            .on_press_tx(move |s, tx| press(s, tx))
+            .on_key(move |s: &mut S, key, tx| {
+                if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    key_press(s, tx);
+                }
+                true
+            })
+    }
+}
+
+pub fn diff_close_button<S: 'static>(
+    name: impl Into<String>,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    header_icon_button(&crate::window_control::CLOSE, name, false, None, press)
+}
+
+pub fn diff_title(path: impl Into<String>) -> El {
+    let t = tokens(dark());
+    let font = rune::TextStyle::new(
+        t.metric("readerTitle", "fontSize").px(),
+        t.metric("readerTitle", "fontWeight").px(),
+    )
+    .lh(t.metric("readerTitle", "lineHeight").px());
+    text(path)
+        .font(font)
+        .color(t.color("text-primary"))
+        .truncate()
+        .literal_direction()
+}
+
+pub fn diff_subtitle(label: impl Into<String>) -> El {
+    let t = tokens(dark());
+    let font = rune::TextStyle::new(
+        t.metric("readerDirectory", "fontSize").px(),
+        t.metric("readerDirectory", "fontWeight").px(),
+    )
+    .lh(t.metric("readerDirectory", "lineHeight").px());
+    text(label)
+        .font(font)
+        .color(t.color("text-muted"))
+        .truncate()
+        .content_direction()
+}
+
+pub fn diff_body<S: 'static>(
+    state: &S,
+    key: String,
+    get: impl Fn(&S) -> &crate::git_diff::DiffState + 'static,
+    get_mut: impl Fn(&mut S) -> &mut crate::git_diff::DiffState + 'static,
+    comment: Option<crate::git_diff::LineAction<S>>,
+) -> El {
+    // rune-kit DiffView always emits a 44 pt Row::File header and sticky overlay; clear its
+    // inner content and clip it above the viewport until rune-kit exposes a headerless option.
+    const KIT_FILE_HEADER_H: f32 = 44.0;
+    let view = rune_kit::diff::DiffView::new(get, get_mut)
+        .key(key)
+        .file_header(|_, _, _| rune::el());
+    let view = match comment {
+        Some(comment) => view.on_comment(move |s, lines, tx| comment(s, lines, tx)),
+        None => view,
+    };
+    col().full_width().remaining().clip_rounded(0.0).child(
+        view.build(state, &crate::kit(dark())).pin(
+            Some(0.0),
+            Some(-KIT_FILE_HEADER_H),
+            Some(0.0),
+            Some(0.0),
+        ),
+    )
 }
 
 pub fn history_row<S: 'static>(

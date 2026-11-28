@@ -47,36 +47,38 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         .child(
             layout::action_row()
                 .child(theme::branch(branch(ui)).key("git-branch"))
-                .child(icon(
-                    "git-refresh",
-                    &theme::REFRESH_CW,
-                    t("instanceShell.rightPanel.actions.refresh"),
-                    ui.loading() || (!ui.online && !can_retry_detached),
-                    None,
-                    run(s, |s, _| {
-                        if s.git.owner.as_ref().is_some_and(|ui| {
-                            !ui.online
-                                && crate::launcher::can_retry_detached_workspace(
-                                    s,
-                                    ui.workspace_id(),
-                                )
-                        }) {
-                            crate::launcher::retry_detached_reconcile(s);
-                            return;
-                        }
-                        if let Some(ui) = &mut s.git.owner {
-                            ui.refresh();
-                        }
-                        if let Some(files) = &mut s.files
-                            && s.git
-                                .owner
-                                .as_ref()
-                                .is_some_and(|g| g.mode == Mode::Workspace)
-                        {
-                            files.refresh(None);
-                        }
-                    }),
-                )),
+                .child(
+                    theme::header_icon_button(
+                        &theme::REFRESH_CW,
+                        t("instanceShell.rightPanel.actions.refresh"),
+                        ui.loading() || (!ui.online && !can_retry_detached),
+                        None,
+                        run(s, |s, _| {
+                            if s.git.owner.as_ref().is_some_and(|ui| {
+                                !ui.online
+                                    && crate::launcher::can_retry_detached_workspace(
+                                        s,
+                                        ui.workspace_id(),
+                                    )
+                            }) {
+                                crate::launcher::retry_detached_reconcile(s);
+                                return;
+                            }
+                            if let Some(ui) = &mut s.git.owner {
+                                ui.refresh();
+                            }
+                            if let Some(files) = &mut s.files
+                                && s.git
+                                    .owner
+                                    .as_ref()
+                                    .is_some_and(|g| g.mode == Mode::Workspace)
+                            {
+                                files.refresh(None);
+                            }
+                        }),
+                    )
+                    .key("git-refresh"),
+                ),
         )
         .child(worktrees::browse(ui, width, &mut overlay));
     let mut tools = theme::tools().key("git-tools").child(selector);
@@ -114,6 +116,12 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                 .key("git-mutation-message"),
         );
     }
+    if ui.backend.session.is_empty() {
+        panel = panel.child(
+            theme::note(t("instanceShell.gitChanges.noSessionSelected"), "status")
+                .key("git-no-session"),
+        );
+    }
     let body = if ui.mode == Mode::Workspace {
         workspace
     } else if ui.repository() == Repository::Uninitialized {
@@ -139,12 +147,6 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                 theme::note(t("filesPanel.gitInit.notRepository"), "status").key("git-init-note"),
             )
             .child(layout::action_row().pad(Space::Md).child(init))
-    } else if ui.inventory.is_none() || ui.repository() == Repository::NoGit {
-        if ui.loading() {
-            theme::note(t("instanceInfo.loading"), "status").key("git-loading")
-        } else {
-            el()
-        }
     } else {
         match ui.mode {
             Mode::Changes => changes_panel::view(s, ui, width, &mut overlay),
@@ -237,6 +239,12 @@ pub(super) fn icon(
     press: impl Fn(&mut State, &mut Tx) + 'static,
 ) -> El {
     theme::icon_button(glyph, name, disabled, active, press).key(key)
+}
+
+pub(super) fn reveal_row_actions_at_rest(s: &State) -> bool {
+    cfg!(any(target_os = "android", target_os = "ios"))
+        || s.shell.has_floating()
+        || (s.shell.width() > 0.0 && s.shell.width() < 768.0)
 }
 
 pub(super) fn section_label(section: Section) -> &'static str {

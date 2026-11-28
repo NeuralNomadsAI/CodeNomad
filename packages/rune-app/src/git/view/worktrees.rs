@@ -58,7 +58,7 @@ pub(super) fn browse(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
         git::binding::sync_files(s);
         git::restore_reading_if_closed(s, had_preview, tx);
     };
-    theme::worktree_picker(
+    theme::bordered_control(theme::worktree_picker(
         &labels,
         current.as_deref(),
         t("gitPanel.worktree"),
@@ -85,7 +85,7 @@ pub(super) fn browse(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
         },
         select,
         overlay,
-    )
+    ))
 }
 
 pub(crate) fn session_worktree(s: &State, overlays: &mut Vec<El>) -> El {

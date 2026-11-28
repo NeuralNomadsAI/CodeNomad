@@ -68,11 +68,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
             .key(key),
         );
     }
-    if empty
-        && !ui.loading()
-        && ui.history.page.is_some()
-        && ui.requests.slot(Lane::History).error.is_none()
-    {
+    if empty && !ui.loading() {
         body =
             body.child(theme::note(t("gitPanel.emptyHistory"), "status").key("git-history-empty"));
     }

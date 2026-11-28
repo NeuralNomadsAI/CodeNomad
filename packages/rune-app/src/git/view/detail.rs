@@ -59,13 +59,17 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
                 theme::file_row(selected)
                     .key(format!("git-commit-file-{}", file.path))
                     .child(main)
-                    .child(preview_button(
-                        s,
-                        &format!("git-commit-file-preview-{}", file.path),
-                        target,
-                        ui.backend.session.is_empty(),
-                        active,
-                    )),
+                    .child(
+                        theme::file_row_actions(super::reveal_row_actions_at_rest(s) || active)
+                            .key(format!("git-commit-file-actions-{}", file.path))
+                            .child(preview_button(
+                                s,
+                                &format!("git-commit-file-preview-{}", file.path),
+                                target,
+                                ui.backend.session.is_empty(),
+                                active,
+                            )),
+                    ),
             );
         }
     }

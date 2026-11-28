@@ -224,6 +224,38 @@ fn git_header_modes_worktrees_and_uninitialized_states_match_solid_in_light_and_
         let tree = rt.accessibility_json();
         let alert = find_node(&tree, "git-error-changes").expect("NoGit changes alert");
         assert_eq!(alert["role"], "alert");
+        assert!(find_node(&tree, "git-section-staged").is_some());
+        assert!(find_node(&tree, "git-commit-box").is_some());
+        assert!(find_node(&tree, "git-section-unstaged").is_some());
+
+        // Read failure before inventory arrives keeps Changes/Commits structure and no-session notice (E1).
+        let mut failed = crate::init();
+        let mut owner = sample_ui(Repository::Git);
+        owner.inventory = None;
+        owner.backend.session.clear();
+        owner.mode = Mode::Changes;
+        owner.read_failed(Lane::Worktrees, GitError::UnexpectedResponse.into());
+        failed.git.owner = Some(owner);
+        let mut rt = Runtime::new(failed, render_panel, (360.0, 640.0), Env::new(dark, 1.0));
+        settle(&mut rt);
+        let tree = rt.accessibility_json();
+        assert!(find_node(&tree, "git-error-worktrees").is_some());
+        assert!(find_node(&tree, "git-no-session").is_some());
+        assert!(find_node(&tree, "git-section-staged").is_some());
+        assert!(find_node(&tree, "git-commit-message").is_some());
+        assert!(find_node(&tree, "git-commit").is_some());
+        assert!(find_node(&tree, "git-section-unstaged").is_some());
+        rt.update(|s, _| {
+            let ui = s.git.owner.as_mut().unwrap();
+            ui.mode = Mode::History;
+            ui.read_failed(Lane::History, GitError::UnexpectedResponse.into());
+        });
+        settle(&mut rt);
+        let tree = rt.accessibility_json();
+        assert!(find_node(&tree, "git-error-history").is_some());
+        assert!(find_node(&tree, "git-no-session").is_some());
+        assert!(find_node(&tree, "git-filter").is_some());
+        assert!(find_node(&tree, "git-history-empty").is_some());
     }
 }
 
@@ -622,5 +654,34 @@ fn git_diff_reader_toolbar_surfaces_notices_and_rtl_match_solid_in_light_and_dar
         "RTL diff toolbar must mirror controls: close={} mode={}",
         close_btn.rect[0],
         mode_btn.rect[0]
+    );
+}
+
+#[test]
+fn row_actions_stay_revealed_on_mobile_viewport_and_hidden_at_rest_on_desktop() {
+    let mut rt_wide = Runtime::new(
+        crate::init(),
+        |s, cx| crate::settings::render(s, cx, |cx| crate::shell::view(s, cx, |_, _| rune::el())),
+        (1280.0, 800.0),
+        Env::new(true, 1.0),
+    );
+    settle(&mut rt_wide);
+    assert!(rt_wide.state.shell.width() >= 768.0);
+    assert!(
+        !super::view::reveal_row_actions_at_rest(&rt_wide.state),
+        "wide desktop viewport should keep inactive row actions hidden at rest"
+    );
+
+    let mut rt_narrow = Runtime::new(
+        crate::init(),
+        |s, cx| crate::settings::render(s, cx, |cx| crate::shell::view(s, cx, |_, _| rune::el())),
+        (390.0, 844.0),
+        Env::new(true, 1.0),
+    );
+    settle(&mut rt_narrow);
+    assert!(rt_narrow.state.shell.width() > 0.0 && rt_narrow.state.shell.width() < 768.0);
+    assert!(
+        super::view::reveal_row_actions_at_rest(&rt_narrow.state),
+        "touch/mobile viewport must keep row actions visible at rest"
     );
 }

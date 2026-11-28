@@ -3,7 +3,7 @@ use crate::git::{
     changes::{self, SECTIONS},
     menu,
 };
-use rune_theme_codenomad::git_panel::ButtonLook::{FlatWithHelp, Submit};
+use rune_theme_codenomad::git_panel::ButtonLook::FlatWithHelp;
 
 pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
     let mut body = theme::saved_scroll::<State>("git-changes-body", &ui.changes_scroll)
@@ -21,12 +21,6 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
         };
         body = body.child(theme::note(t(label), "status").key(key));
     }
-    if ui.backend.session.is_empty() {
-        body = body.child(
-            theme::note(t("instanceShell.gitChanges.noSessionSelected"), "status")
-                .key("git-no-session"),
-        );
-    }
     for (pos, section) in SECTIONS.iter().copied().enumerate() {
         let last = pos + 1 == SECTIONS.len();
         let i = changes::index(section);
@@ -43,7 +37,7 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
                 }
             }))
             .child(
-                theme::section_button(
+                theme::change_section_button(
                     name,
                     count,
                     open,
@@ -141,31 +135,19 @@ fn commit_box(s: &State, ui: &Ui) -> El {
         }
     }
     let label = t("instanceShell.gitChanges.commit.placeholder");
-    group.child(
-        layout::action_row()
-            .child(
-                theme::commit_message(
-                    &ui.changes.draft,
-                    label,
-                    edit(s, |ui| &mut ui.changes.draft),
-                )
-                .key("git-commit-message"),
-            )
-            .child(
-                button(
-                    s,
-                    t(if ui.requests.mutation == Some(MutationKind::Commit) {
-                        "instanceShell.gitChanges.commit.submitting"
-                    } else {
-                        "instanceShell.gitChanges.commit.submit"
-                    }),
-                    Submit,
-                    !ui.can_commit(),
-                    |ui, _| ui.commit(),
-                )
-                .key("git-commit"),
-            ),
-    )
+    let submit_label = t(if ui.requests.mutation == Some(MutationKind::Commit) {
+        "instanceShell.gitChanges.commit.submitting"
+    } else {
+        "instanceShell.gitChanges.commit.submit"
+    });
+    group.child(theme::commit_input(
+        &ui.changes.draft,
+        label,
+        edit(s, |ui| &mut ui.changes.draft),
+        submit_label,
+        !ui.can_commit(),
+        handler(s, |ui, _| ui.commit()),
+    ))
 }
 
 fn file_row(s: &State, ui: &Ui, entry: &changes::Row, width: f32, overlay: &mut Vec<El>) -> El {
@@ -241,17 +223,22 @@ fn file_row(s: &State, ui: &Ui, entry: &changes::Row, width: f32, overlay: &mut 
                 action,
             )
         };
+    let reveal = reveal_row_actions_at_rest(s) || active || ui.open_menu.as_ref() == Some(&id);
     theme::file_row(selected)
         .key(id.action_key("container"))
         .child(main)
-        .child(preview_button(
-            s,
-            &id.action_key("preview"),
-            target,
-            disabled,
-            active,
-        ))
-        .child(stage)
+        .child(
+            theme::file_row_actions(reveal)
+                .key(id.action_key("actions"))
+                .child(preview_button(
+                    s,
+                    &id.action_key("preview"),
+                    target,
+                    disabled,
+                    active,
+                ))
+                .child(stage),
+        )
 }
 
 fn inside([x, y]: [f32; 2], [left, top, w, h]: [f32; 4]) -> bool {

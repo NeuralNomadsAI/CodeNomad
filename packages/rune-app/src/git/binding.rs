@@ -17,7 +17,6 @@ pub(crate) struct PlacementHold {
 pub(crate) struct Binding {
     pub owner: Option<Ui>,
     pub(super) detached_diff: DiffState,
-    pub(super) close: crate::components::window_close_button::WindowCloseState,
     preferences: Rc<Cell<DiffPreferences>>,
     placement_unconfirmed: Rc<RefCell<PlacementHolds>>,
     preview_closed_by_event: bool,
@@ -30,7 +29,6 @@ impl Default for Binding {
         Self {
             owner: None,
             detached_diff: DiffState::new(vec![]),
-            close: Default::default(),
             preferences: Rc::new(Cell::new(DiffPreferences::default())),
             placement_unconfirmed: Default::default(),
             preview_closed_by_event: false,

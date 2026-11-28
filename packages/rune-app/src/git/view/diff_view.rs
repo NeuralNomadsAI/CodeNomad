@@ -1,9 +1,6 @@
 use super::*;
 use crate::{
-    components::{
-        diff::{self, LineRange, Side},
-        window_close_button,
-    },
+    components::diff::{LineRange, Side},
     git::{Source, diff::Hidden},
 };
 use codenomad_client::git::Diff;
@@ -29,8 +26,7 @@ pub(crate) fn reader(s: &State) -> El {
         ),
     };
     let image = matches!(&ui.reader.content, Some(Diff::Image { .. }));
-    let mut subtitle =
-        theme::clipped(format!("{} · {label}", ui.slug), TextRole::Label).content_direction();
+    let mut subtitle = theme::diff_subtitle(format!("{} · {label}", ui.slug));
     if let Some(directory) = ui.tree().map(|tree| tree.directory.as_str()) {
         subtitle = subtitle.help(directory);
     }
@@ -40,95 +36,96 @@ pub(crate) fn reader(s: &State) -> El {
             col()
                 .remaining()
                 .separate(Space::Xs)
-                .child(
-                    theme::clipped(path, TextRole::Body)
-                        .literal_direction()
-                        .help(path),
-                )
+                .child(theme::diff_title(path).help(path))
                 .child(subtitle),
         )
-        .child(icon(
-            "git-diff-mode",
-            if split { &theme::COLUMNS } else { &theme::ROWS },
-            t(if split {
-                "instanceShell.diff.switchToUnified"
-            } else {
-                "instanceShell.diff.switchToSplit"
-            }),
-            false,
-            Some(split),
-            run(s, move |s, _| {
-                crate::git::set_diff_preferences(
-                    s,
-                    crate::git::DiffPreferences {
-                        split: !split,
-                        ..crate::git::diff_preferences(s)
-                    },
-                );
-            }),
-        ));
+        .child(
+            theme::header_icon_button(
+                if split { &theme::COLUMNS } else { &theme::ROWS },
+                t(if split {
+                    "instanceShell.diff.switchToUnified"
+                } else {
+                    "instanceShell.diff.switchToSplit"
+                }),
+                false,
+                Some(split),
+                run(s, move |s, _| {
+                    crate::git::set_diff_preferences(
+                        s,
+                        crate::git::DiffPreferences {
+                            split: !split,
+                            ..crate::git::diff_preferences(s)
+                        },
+                    );
+                }),
+            )
+            .key("git-diff-mode"),
+        );
     if !image {
         let full = preferences.full;
         let wrap = preferences.wrap;
         header = header
-            .child(icon(
-                "git-diff-context",
-                if full {
-                    &theme::FOLD_VERTICAL
-                } else {
-                    &theme::UNFOLD_VERTICAL
-                },
-                t(if full {
-                    "instanceShell.diff.hideUnchanged"
-                } else {
-                    "instanceShell.diff.showFull"
-                }),
-                false,
-                Some(full),
-                run(s, move |s, _| {
-                    crate::git::set_diff_preferences(
-                        s,
-                        crate::git::DiffPreferences {
-                            full: !full,
-                            ..crate::git::diff_preferences(s)
-                        },
-                    );
-                }),
-            ))
-            .child(icon(
-                "git-diff-wrap",
-                &theme::WRAP_TEXT,
-                t(if wrap {
-                    "instanceShell.filesShell.disableWordWrap"
-                } else {
-                    "instanceShell.filesShell.enableWordWrap"
-                }),
-                split,
-                Some(wrap),
-                run(s, move |s, _| {
-                    crate::git::set_diff_preferences(
-                        s,
-                        crate::git::DiffPreferences {
-                            wrap: !wrap,
-                            ..crate::git::diff_preferences(s)
-                        },
-                    );
-                }),
-            ));
+            .child(
+                theme::header_icon_button(
+                    if full {
+                        &theme::FOLD_VERTICAL
+                    } else {
+                        &theme::UNFOLD_VERTICAL
+                    },
+                    t(if full {
+                        "instanceShell.diff.hideUnchanged"
+                    } else {
+                        "instanceShell.diff.showFull"
+                    }),
+                    false,
+                    Some(full),
+                    run(s, move |s, _| {
+                        crate::git::set_diff_preferences(
+                            s,
+                            crate::git::DiffPreferences {
+                                full: !full,
+                                ..crate::git::diff_preferences(s)
+                            },
+                        );
+                    }),
+                )
+                .key("git-diff-context"),
+            )
+            .child(
+                theme::header_icon_button(
+                    &theme::WRAP_TEXT,
+                    t(if wrap {
+                        "instanceShell.filesShell.disableWordWrap"
+                    } else {
+                        "instanceShell.filesShell.enableWordWrap"
+                    }),
+                    split,
+                    Some(wrap),
+                    run(s, move |s, _| {
+                        crate::git::set_diff_preferences(
+                            s,
+                            crate::git::DiffPreferences {
+                                wrap: !wrap,
+                                ..crate::git::diff_preferences(s)
+                            },
+                        );
+                    }),
+                )
+                .key("git-diff-wrap"),
+            );
     }
-    header = header.child(window_close_button::close_button(
-        &s.git.close,
-        "git-diff-close",
-        dark(),
-        Some(t("gitPanel.backChat")),
-        |s: &mut State| &mut s.git.close,
-        run(s, |s, tx| {
-            let had_preview = crate::git::has_preview(s);
-            crate::git::close_preview(s);
-            crate::git::restore_reading_if_closed(s, had_preview, tx);
-            tx.focus("composer", tx.focus_visible());
-        }),
-    ));
+    header = header.child(
+        theme::diff_close_button(
+            t("gitPanel.backChat"),
+            run(s, |s, tx| {
+                let had_preview = crate::git::has_preview(s);
+                crate::git::close_preview(s);
+                crate::git::restore_reading_if_closed(s, had_preview, tx);
+                tx.focus("composer", tx.focus_visible());
+            }),
+        )
+        .key("git-diff-close"),
+    );
 
     let mut root = col()
         .full_width()
@@ -194,7 +191,7 @@ pub(crate) fn reader(s: &State) -> El {
                 .remaining()
                 .full_width()
                 .child(action)
-                .child(diff::view(
+                .child(theme::diff_body(
                     s,
                     format!("git-diff-{}", ui.preview_revision),
                     |s: &State| {
