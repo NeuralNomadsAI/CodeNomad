@@ -395,11 +395,13 @@ impl Backend {
                 return Err("foreign session location".into());
             }
             if member.parent.is_none() && !member.session.id.starts_with("ses_cn_schedule_") {
-                sessions.push(member.session);
+                sessions.push((member.updated, member.session));
             }
         }
+        // Match Solid `projectSessionFamilies` ("activity"): updated desc, then id desc.
+        sessions.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.id.cmp(&a.1.id)));
         Ok(Sessions {
-            rows: sessions,
+            rows: sessions.into_iter().map(|(_, row)| row).collect(),
             next: page.next,
         })
     }
@@ -670,5 +672,47 @@ mod tests {
         }))
         .unwrap();
         assert!(!malformed.temporary);
+    }
+
+    #[test]
+    fn inventory_decode_extracts_latest_session_activity_timestamp() {
+        let page = inventory::decode_page(&json!({
+            "data": [
+                {
+                    "id": "ses_long",
+                    "title": "Long synthetic history",
+                    "location": {"directory": "/tmp/ws"},
+                    "time": {"created": 1, "busy": 0, "idle": 1}
+                },
+                {
+                    "id": "ses_short",
+                    "title": "Short conversation",
+                    "location": {"directory": "/tmp/ws"},
+                    "time": {"created": 1, "busy": 0, "idle": 1}
+                },
+                {
+                    "id": "ses_recent",
+                    "title": "Recent activity",
+                    "location": {"directory": "/tmp/ws"},
+                    "time": {"created": 1, "updated": 500}
+                }
+            ],
+            "cursor": {}
+        }))
+        .unwrap();
+        let mut rows: Vec<_> = page
+            .members
+            .into_iter()
+            .map(|m| (m.updated, m.session.id))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        assert_eq!(
+            rows,
+            vec![
+                (500, "ses_recent".into()),
+                (1, "ses_short".into()),
+                (1, "ses_long".into()),
+            ]
+        );
     }
 }

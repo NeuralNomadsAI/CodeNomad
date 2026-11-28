@@ -32,11 +32,27 @@ pub(super) fn rows(
             }
         }
     }
-    members
+    let mut latest_updated: HashMap<&str, u64> = HashMap::new();
+    for (&id, member) in &by_id {
+        if let Some(root_id) = root(id, &by_id, &mut resolved) {
+            let entry = latest_updated.entry(root_id).or_insert(0);
+            *entry = (*entry).max(member.updated);
+        }
+    }
+    let mut out: Vec<(u64, Session)> = members
         .iter()
         .filter(|m| roots.contains(m.session.id.as_str()))
-        .map(|m| m.session.clone())
-        .collect()
+        .map(|m| {
+            let updated = latest_updated
+                .get(m.session.id.as_str())
+                .copied()
+                .unwrap_or(m.updated);
+            (updated, m.session.clone())
+        })
+        .collect();
+    // Match Solid `projectSessionFamilies` ("activity"): latestUpdated desc, then id desc.
+    out.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.id.cmp(&a.1.id)));
+    out.into_iter().map(|(_, session)| session).collect()
 }
 
 fn root<'a>(
@@ -70,6 +86,10 @@ mod tests {
     use super::*;
 
     fn member(id: &str, directory: &str, parent: Option<&str>) -> Member {
+        member_at(id, directory, parent, 0)
+    }
+
+    fn member_at(id: &str, directory: &str, parent: Option<&str>, updated: u64) -> Member {
         Member {
             session: Session {
                 id: id.into(),
@@ -77,6 +97,7 @@ mod tests {
             },
             directory: directory.into(),
             parent: parent.map(str::to_owned),
+            updated,
         }
     }
 
@@ -106,6 +127,33 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(ids(members.clone(), &[]), ["local"]);
-        assert_eq!(ids(members, &[linked]), ["family", "local"]);
+        assert_eq!(ids(members, &[linked]), ["local", "family"]);
+    }
+
+    #[test]
+    fn families_sort_by_latest_updated_desc_then_id_desc_matching_solid() {
+        let host = "D:/main";
+        // Equal timestamps tie-break by id descending (`ses_short` before `ses_long`).
+        let tied = vec![
+            member_at("ses_long", host, None, 1),
+            member_at("ses_short", host, None, 1),
+        ];
+        let ids: Vec<_> = rows(tied, host, &[], None)
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, ["ses_short", "ses_long"]);
+
+        // Newer descendant activity lifts its parent family ahead of older roots.
+        let activity = vec![
+            member_at("ses_older", host, None, 100),
+            member_at("ses_newer", host, None, 200),
+            member_at("ses_child_active", host, Some("ses_older"), 500),
+        ];
+        let ids: Vec<_> = rows(activity, host, &[], None)
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, ["ses_older", "ses_newer"]);
     }
 }

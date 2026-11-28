@@ -1,3 +1,5 @@
+pub mod sidebar;
+
 use crate::{
     Space, TextRole,
     layout::{self, Layout},

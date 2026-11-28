@@ -17,6 +17,19 @@ fn fallback_status(
     }
 }
 
+/// Match Solid `getPathBasename` (`packages/ui/src/lib/instance-label.ts`).
+fn path_basename(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return path;
+    }
+    trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or(path)
+}
+
 pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
     let Some(ui) = &s.workspace else {
         return rune::el();
@@ -25,12 +38,15 @@ pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
         .entries
         .iter()
         .map(|e| match &e.saved {
-            Tab::Blank => strings::t("instanceTabs.new.ariaLabel"),
-            Tab::Workspace(w) => w
-                .project_name
-                .as_deref()
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or(w.folder.as_str()),
+            Tab::Blank => (strings::t("newTab.title"), None, true),
+            Tab::Workspace(w) => (
+                w.project_name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| path_basename(w.folder.as_str())),
+                Some(w.folder.as_str()),
+                false,
+            ),
         })
         .collect();
     let keep_unseen = crate::settings::keep_unseen_subagent_idle_status(s);
@@ -40,9 +56,11 @@ pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
         .zip(&titles)
         .enumerate()
         .map(
-            |(index, (entry, title))| rune_theme_codenomad::tabs::ProjectTab {
+            |(index, (entry, (title, help, blank)))| rune_theme_codenomad::tabs::ProjectTab {
                 id: &entry.key,
                 title,
+                help: *help,
+                blank: *blank,
                 status: if index == ui.active && !s.screen.is_launcher() {
                     super::super::cache::status(&s.phase, s.agent.as_ref())
                         .or_else(|| fallback_status(entry, ui.clock, keep_unseen))
@@ -107,4 +125,24 @@ pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
         new_tab,
         actions,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_basename;
+
+    #[test]
+    fn path_basename_matches_solid_instance_label_across_platforms() {
+        assert_eq!(
+            path_basename(r"D:\cn-cargo\android-native\serve-profile\synthetic"),
+            "synthetic"
+        );
+        assert_eq!(
+            path_basename(r"D:\cn-cargo\android-native\serve-profile\synthetic\"),
+            "synthetic"
+        );
+        assert_eq!(path_basename("/home/user/workspace/"), "workspace");
+        assert_eq!(path_basename(r"\\server\share\repo"), "repo");
+        assert_eq!(path_basename("/"), "/");
+    }
 }

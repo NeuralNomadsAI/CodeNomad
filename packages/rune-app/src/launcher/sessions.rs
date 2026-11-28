@@ -296,6 +296,16 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     choose_destination(s, id, None, tx);
 }
 
+pub fn reload_session(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    crate::shell::blank_cleanup::abort_for_session(s, &id);
+    if !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(id.as_str()) {
+        choose_from(s, vec![(id, None)], s.shell.floating_sessions(), None);
+    } else {
+        choose_destination(s, id, None, tx);
+    }
+}
+
 pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())

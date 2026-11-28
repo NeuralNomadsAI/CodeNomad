@@ -374,7 +374,7 @@ fn keyboard_focus_wraps_at_the_visible_floating_drawer_edges() {
             .any(|e| e.focused && e.key.as_deref() == Some(key))
     };
     for (toggle, last) in [
-        ("sessions-panel-toggle", "refresh-sessions"),
+        ("sessions-panel-toggle", "session-session"),
         ("right-panel-toggle", "right-panel-tab-0"),
     ] {
         if !rt
@@ -678,5 +678,62 @@ fn topbar_shows_three_icon_actions_on_desktop_and_touch_and_gates_remote_by_capa
             assert!(rt.find("notification-history-toggle").is_some());
             assert_eq!(rt.find("open-remote-control").is_some(), expected_visible);
         }
+    }
+}
+
+#[test]
+fn tab_strip_uses_short_project_basename_new_tab_label_and_fits_at_411px() {
+    fn french(s: &State, cx: &mut Cx<State>) -> El {
+        strings::with_locale("fr", || crate::view(s, cx))
+    }
+
+    let mut state = init();
+    fixture(&mut state);
+    let synthetic = crate::catalog::Project {
+        id: "proj-syn".into(),
+        path: r"D:\cn-cargo\android-native\serve-profile\synthetic".into(),
+        temporary: false,
+    };
+    let mut ui = crate::workspace::Ui::new();
+    ui.mark_ready();
+    state.workspace = Some(ui);
+    crate::workspace::opened(&mut state, &synthetic);
+    let mut rt = Runtime::new(state, french, (411.0, 914.0), Env::new(true, 1.0));
+    rt.update(|s, tx| crate::workspace::new_tab(s, tx));
+    settle(&mut rt);
+
+    let elements = rt.elements();
+    // A13: blank tab carries localized "Nouvel onglet" rather than "Nouvelle instance".
+    assert!(
+        elements
+            .iter()
+            .any(|el| el.role == "tab" && el.label.as_deref() == Some("Nouvel onglet")),
+        "A13: blank tab must use newTab.title ('Nouvel onglet')"
+    );
+    // B1: project tab displays short folder name "synthetic" with full path tooltip.
+    let project_tab = elements
+        .iter()
+        .find(|el| el.role == "tab" && el.label.as_deref() == Some("synthetic"))
+        .expect("B1: project tab must show short folder name 'synthetic'");
+    assert_eq!(
+        project_tab.help.as_deref(),
+        Some(r"D:\cn-cargo\android-native\serve-profile\synthetic")
+    );
+    // C1: at 411px width, `+` and all 3 top-right icons remain completely inside [0, 411].
+    for key in [
+        "project-tabs-new",
+        "open-preferences",
+        "notification-history-toggle",
+        "open-remote-control",
+    ] {
+        let el = elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}"));
+        assert!(
+            el.rect[0] >= 0.0 && el.rect[0] + el.rect[2] <= 411.0 + 0.5 && el.rect[2] >= 30.0,
+            "C1: {key} clipped at 411px: {:?}",
+            el.rect
+        );
     }
 }

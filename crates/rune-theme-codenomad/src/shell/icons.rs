@@ -73,3 +73,33 @@ pub static REMOTE: Icon = Icon {
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 10 3-3 3 3"/><path d="M12 13V7"/><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M12 17v4"/><path d="M8 21h8"/></g>"#,
 };
+// Lucide User, matching Solid session-list.tsx parent session row icon.
+pub static USER: Icon = Icon {
+    name: "lucide-user",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></g>"#,
+};
+// Lucide Bot, matching Solid session-list.tsx subagent session row icon.
+pub static BOT: Icon = Icon {
+    name: "lucide-bot",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></g>"#,
+};
+// Lucide MoreHorizontal, matching Solid action-overflow-menu.tsx trigger.
+pub static MORE_HORIZONTAL: Icon = Icon {
+    name: "lucide-more-horizontal",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></g>"#,
+};
+// Lucide Copy, matching Solid session-list.tsx copy session ID action.
+pub static COPY: Icon = Icon {
+    name: "lucide-copy",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g>"#,
+};
+// Lucide RotateCw, matching Solid session-list.tsx reload session action.
+pub static ROTATE_CW: Icon = Icon {
+    name: "lucide-rotate-cw",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></g>"#,
+};

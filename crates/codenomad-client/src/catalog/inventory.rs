@@ -7,6 +7,7 @@ pub struct Member {
     pub session: Session,
     pub directory: String,
     pub parent: Option<String>,
+    pub updated: u64,
 }
 
 pub struct InventoryPage {
@@ -107,6 +108,7 @@ pub(super) fn decode_page(value: &Value) -> Result<InventoryPage> {
         if title.len() > 4096 {
             return Err("oversized session title".into());
         }
+        let updated = session_updated(row);
         members.push(Member {
             session: Session {
                 id: id.into(),
@@ -114,6 +116,7 @@ pub(super) fn decode_page(value: &Value) -> Result<InventoryPage> {
             },
             parent,
             directory: directory.into(),
+            updated,
         });
     }
     let cursor = match &value["cursor"] {
@@ -127,4 +130,23 @@ pub(super) fn decode_page(value: &Value) -> Result<InventoryPage> {
         _ => return Err("invalid session cursor".into()),
     };
     Ok(InventoryPage { members, next })
+}
+
+fn session_updated(row: &Value) -> u64 {
+    let time = &row["time"];
+    let num = |key| {
+        time[key].as_u64().or_else(|| {
+            time[key]
+                .as_f64()
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .map(|v| v as u64)
+        })
+    };
+    num("updated")
+        .into_iter()
+        .chain(num("busy"))
+        .chain(num("idle"))
+        .chain(num("created"))
+        .max()
+        .unwrap_or(0)
 }

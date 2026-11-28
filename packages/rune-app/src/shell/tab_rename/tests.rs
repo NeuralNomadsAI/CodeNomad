@@ -187,14 +187,8 @@ fn f2_on_focused_project_tab_commits_resets_and_propagates_to_sibling() {
         workspace::active_project_title(&rt.state),
         Some(same_project.path.as_str())
     );
-    assert_eq!(
-        tab_label(&rt, "t-tab-0").as_deref(),
-        Some(same_project.path.as_str())
-    );
-    assert_eq!(
-        tab_label(&rt, "t-tab-2").as_deref(),
-        Some(same_project.path.as_str())
-    );
+    assert_eq!(tab_label(&rt, "t-tab-0").as_deref(), Some("repo"));
+    assert_eq!(tab_label(&rt, "t-tab-2").as_deref(), Some("repo"));
 }
 
 #[test]

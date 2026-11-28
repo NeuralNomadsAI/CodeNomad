@@ -189,6 +189,8 @@ pub struct ProjectTab<'a> {
     /// Occurrence identity, independently of the folder or displayed title.
     pub id: &'a str,
     pub title: &'a str,
+    pub help: Option<&'a str>,
+    pub blank: bool,
     pub status: Option<Status>,
     pub closable: bool,
     pub temporary: bool,
@@ -259,6 +261,7 @@ fn tab_with_help<S: 'static>(
     let title = tab.title.to_owned();
     let rtl = catalogue::direction(locale) == "rtl";
     let temporary = tab.temporary;
+    let blank = tab.blank;
     let mut select_button = Button::new(tab.title)
         .variant(ButtonVariant::Ghost)
         .label_with(move |_, _| {
@@ -273,22 +276,24 @@ fn tab_with_help<S: 'static>(
             } else {
                 title.truncate()
             };
-            let glyph = if temporary {
-                &crate::shell::icons::HOURGLASS
-            } else {
-                &FOLDER
-            };
-            rune::row()
+            let mut content = rune::row()
                 .w_full()
                 .min_w(0.0)
                 .items_center()
-                .gap(metric("columnGap"))
-                .child(
+                .gap(metric("columnGap"));
+            if !blank {
+                let glyph = if temporary {
+                    &crate::shell::icons::HOURGLASS
+                } else {
+                    &FOLDER
+                };
+                content = content.child(
                     rune::icon(glyph, t.metric("tabGlyph", "width").px())
                         .color(ink)
                         .a11y_hidden(),
-                )
-                .child(title)
+                );
+            }
+            content.child(title)
         })
         .on_press_tx(move |s, tx| {
             action(s, &id, tx);
@@ -310,6 +315,8 @@ fn tab_with_help<S: 'static>(
     if tab.temporary {
         select_button =
             select_button.help(catalogue::message(locale, "instanceTab.temporary.title").unwrap());
+    } else if let Some(help) = tab.help {
+        select_button = select_button.help(help);
     }
     let temporary_aria = tab
         .temporary
@@ -588,7 +595,7 @@ pub fn strip_with_help<S: 'static>(
                 .child(list),
         )
         .child(new)
-        .child(rune::spacer())
+        .child(rune::el().grow(1.0).shrink().min_w(0.0))
         .child(actions_row)
         .locale_direction(locale)
 }
@@ -614,6 +621,8 @@ mod tests {
                 ProjectTab {
                     id: "a",
                     title: "Alpha",
+                    help: None,
+                    blank: false,
                     status: Some(Status::Working),
                     closable: true,
                     temporary: false,
@@ -621,6 +630,8 @@ mod tests {
                 ProjectTab {
                     id: "b",
                     title: "Beta",
+                    help: None,
+                    blank: false,
                     status: Some(Status::Permission),
                     closable: true,
                     temporary: false,
@@ -775,6 +786,8 @@ mod tests {
                     &ProjectTab {
                         id: "a",
                         title: TITLE,
+                        help: Some("/tmp/alpha-synthetic"),
+                        blank: false,
                         status: None,
                         closable: true,
                         temporary: false,
@@ -963,6 +976,8 @@ mod tests {
                         &ProjectTab {
                             id: "temp",
                             title: "Temporaire · 12:30",
+                            help: Some("/tmp/ws"),
+                            blank: false,
                             status: None,
                             closable: true,
                             temporary: true,
@@ -1126,6 +1141,145 @@ mod tests {
                         && e.label.as_deref()
                             == catalogue::message(locale, "instanceTabs.new.ariaLabel"))
             );
+        }
+    }
+
+    #[test]
+    fn phone_width_411_keeps_new_button_and_all_three_actions_unclipped() {
+        fn render_phone<const TOUCH: bool>(s: &App, cx: &mut Cx<App>) -> El {
+            catalogue::with_locale(s.locale, || {
+                layout::render(cx, |_| {
+                    let blank_title = catalogue::message(s.locale, "newTab.title").unwrap();
+                    let settings_label = catalogue::message(s.locale, "settings.title").unwrap();
+                    let bell_label = catalogue::message(s.locale, "toastHistory.title").unwrap();
+                    let remote_label =
+                        catalogue::message(s.locale, "instanceTabs.remote.ariaLabel").unwrap();
+                    let remote_help =
+                        catalogue::message(s.locale, "instanceTabs.remote.title").unwrap();
+                    strip(
+                        TOUCH,
+                        s.locale,
+                        &[
+                            ProjectTab {
+                                id: "home",
+                                title: blank_title,
+                                help: None,
+                                blank: true,
+                                status: None,
+                                closable: true,
+                                temporary: false,
+                            },
+                            ProjectTab {
+                                id: "syn",
+                                title: "synthetic",
+                                help: Some(r"D:\cn-cargo\android-native\serve-profile\synthetic"),
+                                blank: false,
+                                status: None,
+                                closable: true,
+                                temporary: false,
+                            },
+                            ProjectTab {
+                                id: "extra",
+                                title: "very-long-secondary-workspace-name-for-overflow",
+                                help: Some(
+                                    r"D:\workspaces\very-long-secondary-workspace-name-for-overflow",
+                                ),
+                                blank: false,
+                                status: None,
+                                closable: true,
+                                temporary: false,
+                            },
+                        ],
+                        Some(&s.active),
+                        |s: &mut App, id, _| s.active = id.into(),
+                        |s, id, _| s.closed.push(id.into()),
+                        |s, _| s.new += 1,
+                        [
+                            BarAction::Settings
+                                .button(TOUCH, settings_label, |_: &mut App| {})
+                                .key("open-preferences"),
+                            crate::shell::notices::bell(
+                                bell_label,
+                                None,
+                                false,
+                                TOUCH,
+                                false,
+                                |_: &mut App, _| {},
+                            ),
+                            BarAction::Remote
+                                .button_tx(
+                                    TOUCH,
+                                    remote_label,
+                                    remote_help,
+                                    false,
+                                    |_: &mut App, _| {},
+                                )
+                                .key("open-remote-control"),
+                        ],
+                    )
+                })
+            })
+        }
+
+        for locale in ["fr", "en", "he"] {
+            for dark in [false, true] {
+                for touch in [false, true] {
+                    let expected_side = if touch {
+                        TOUCH_BAR_TARGET
+                    } else {
+                        tokens(dark).length(Length::TouchCompact).px()
+                    };
+                    let mut rt = rune::Runtime::new(
+                        App {
+                            active: "syn".into(),
+                            closed: vec![],
+                            new: 0,
+                            locale,
+                        },
+                        if touch {
+                            render_phone::<true>
+                        } else {
+                            render_phone::<false>
+                        },
+                        (411.0, 914.0),
+                        rune::Env::new(dark, 1.0),
+                    );
+                    rt.frame(0.0);
+                    let elements = rt.elements();
+                    let find_el = |key: &str| {
+                        elements
+                            .iter()
+                            .find(|e| e.key.as_deref() == Some(key))
+                            .unwrap_or_else(|| panic!("missing {key}"))
+                    };
+                    for key in [
+                        "project-tabs-new",
+                        "open-preferences",
+                        crate::shell::notices::ANCHOR,
+                        "open-remote-control",
+                    ] {
+                        let el = find_el(key);
+                        assert_eq!(el.rect[2], expected_side, "{key} width clipped at 411px");
+                        assert_eq!(el.rect[3], expected_side, "{key} height clipped at 411px");
+                        assert!(
+                            el.rect[0] >= 0.0 && el.rect[0] + el.rect[2] <= 411.0 + 0.5,
+                            "{key} overflows 411px viewport ({locale}, touch={touch}): {:?}",
+                            el.rect
+                        );
+                    }
+                    let syn = find_el("t-syn");
+                    assert_eq!(syn.label.as_deref(), Some("synthetic"));
+                    assert_eq!(
+                        syn.help.as_deref(),
+                        Some(r"D:\cn-cargo\android-native\serve-profile\synthetic")
+                    );
+                    let home = find_el("t-home");
+                    assert_eq!(
+                        home.label.as_deref(),
+                        catalogue::message(locale, "newTab.title")
+                    );
+                }
+            }
         }
     }
 }

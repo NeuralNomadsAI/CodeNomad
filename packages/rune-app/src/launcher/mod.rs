@@ -50,7 +50,7 @@ pub(crate) use sessions::{
 };
 pub use sessions::{
     can_change_session, can_open_child_session, can_visit, choose, close_session, create,
-    create_blank, list, visit,
+    create_blank, list, reload_session, visit,
 };
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
@@ -109,6 +109,8 @@ pub struct Launcher {
     pub(crate) projects_stale: bool,
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
     folders: folders::Browser,
+    pub(crate) session_menu: rune_theme_codenomad::action_menu::State<crate::State>,
+    pub(crate) open_session_menu: Option<String>,
     wake: rune::Waker,
 }
 enum Reply {
@@ -289,6 +291,8 @@ impl Launcher {
             projects_stale: false,
             projects_refresh: None,
             folders: Default::default(),
+            session_menu: Default::default(),
+            open_session_menu: None,
             wake,
         }
     }
@@ -423,8 +427,46 @@ pub(crate) fn session_loaded(s: &State) -> bool {
         || s.status_permissions.writing()
 }
 
+fn session_menu_state(
+    s: &mut State,
+) -> Option<&mut rune_theme_codenomad::action_menu::State<State>> {
+    s.screen.launcher_mut().map(|l| &mut l.session_menu)
+}
+
+fn poll_session_menu(s: &mut State, tx: &mut Tx) -> bool {
+    let open_id = s
+        .screen
+        .launcher()
+        .and_then(|l| l.open_session_menu.clone());
+    let mut changed = false;
+    if let Some(id) = open_id {
+        let keep = s.shell.visible(0)
+            && s.screen.launcher().is_some_and(|l| {
+                l.project.is_some()
+                    && (l.sessions.iter().any(|r| r.id == id)
+                        || l.linked.rows.iter().any(|r| r.id == id)
+                        || l.search_results.rows.iter().any(|r| r.id == id))
+            });
+        if !keep {
+            rune_theme_codenomad::action_menu::clear(
+                s,
+                session_menu_state,
+                &format!("session-actions-{id}"),
+                tx,
+            );
+            if let Some(l) = s.screen.launcher_mut() {
+                l.open_session_menu = None;
+            }
+            changed = true;
+        }
+    }
+    changed | rune_theme_codenomad::action_menu::poll(s, session_menu_state, tx)
+}
+
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
+    let menu_changed = poll_session_menu(s, tx);
+    let browser_changed =
+        menu_changed | (cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s)));
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let stream_update = s.screen.launcher_mut().and_then(|l| {
         let watch = l.catalogue_watch.as_ref()?;

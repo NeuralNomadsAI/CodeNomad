@@ -3,18 +3,87 @@ use crate::{
     components::{button, button_tx},
     launcher,
     screen::{self, Editor},
+    shell::notifications::{self, Category},
     strings::t,
     workspace,
 };
-use rune::{El, ScrollSpec, col};
+use rune::{El, ScrollSpec, Tx, col};
 use rune_theme_codenomad::{
-    Space, attachment, field_kit, git_panel, kit,
+    Space,
+    action_menu::{self, Item, Menu},
+    field_kit, git_panel, kit,
     layout::{self, Layout, hinted_field},
     shell::{
         self,
-        icons::{BACK, FORWARD, PLUS, SEARCH},
+        icons::{BACK, COPY, FORWARD, PLUS, ROTATE_CW, SEARCH},
+        notices::sidebar as theme,
     },
 };
+use std::rc::Rc;
+
+fn session_menu_state(s: &mut State) -> Option<&mut action_menu::State<State>> {
+    s.screen.launcher_mut().map(|l| &mut l.session_menu)
+}
+
+fn session_menu_key(id: &str) -> String {
+    format!("session-actions-{id}")
+}
+
+fn copy_session_id(s: &mut State, id: &str, tx: &mut Tx) {
+    tx.copy(id.to_owned());
+    notifications::emit(s, Category::Copy, None, t("sessionList.copyId.success"));
+}
+
+fn build_session_menu(
+    scope: &Rc<()>,
+    session_id: &str,
+    disabled: bool,
+    more_label: &'static str,
+    copy_label: &'static str,
+    reload_label: &'static str,
+) -> Rc<Menu<State>> {
+    let copy_id = session_id.to_owned();
+    let mut copy_item = Item::new(
+        "copy-id",
+        copy_label,
+        screen::action_tx(scope, move |s, tx| copy_session_id(s, &copy_id, tx)),
+    );
+    copy_item.icon = Some(Rc::new(|| theme::menu_icon(&COPY)));
+    copy_item.select_before_close = true;
+
+    let reload_id = session_id.to_owned();
+    let mut reload_item = Item::new(
+        "reload",
+        reload_label,
+        screen::action_tx(scope, move |s, tx| {
+            launcher::reload_session(s, reload_id.clone(), tx)
+        }),
+    );
+    reload_item.icon = Some(Rc::new(|| theme::menu_icon(&ROTATE_CW)));
+    reload_item.disabled = disabled;
+    reload_item.select_before_close = true;
+
+    let mut menu = Menu::new(
+        &session_menu_key(session_id),
+        more_label,
+        vec![Rc::new(copy_item), Rc::new(reload_item)],
+    );
+    let open_id = session_id.to_owned();
+    let change_scope = scope.clone();
+    menu.on_open_change = Some(Rc::new(move |s, open, _| {
+        if !s.current_scope(&change_scope) {
+            return;
+        }
+        if let Some(l) = s.screen.launcher_mut() {
+            if open {
+                l.open_session_menu = Some(open_id.clone());
+            } else if l.open_session_menu.as_deref() == Some(open_id.as_str()) {
+                l.open_session_menu = None;
+            }
+        }
+    }));
+    Rc::new(menu)
+}
 
 fn active_session_status(s: &State) -> Option<&'static str> {
     if s.screen.is_launcher() {
@@ -144,7 +213,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             visit(true),
             visit(false),
             shell::spacer(),
-            shell::panel_title(title).role("heading"),
+            theme::title(title),
             shell::spacer(),
             shell::control(&PLUS, t("sessionList.actions.newSession.ariaLabel"), touch)
                 .help(crate::settings::with_shortcut_label_excluding(
@@ -197,13 +266,31 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     });
     let searching = l.show_search && !l.search.text.trim().is_empty();
     let (remote_search, filtered) = visible_indices(l);
-    let filtered = std::rc::Rc::new(filtered);
+    let filtered = Rc::new(filtered);
     let count = filtered.len();
     let for_key = filtered.clone();
+    let compact_actions = touch || floating;
+    let menu_viewport = if s.shell.width() > 0.0 {
+        s.shell.width()
+    } else if s.window_size[0] > 0.0 {
+        s.window_size[0]
+    } else {
+        411.0
+    };
     // Resolve localized labels before entering `transcript_rows`: its deferred row builder runs
     // during layout after `strings::with_locale` restores the thread-local locale.
     let untitled = t("sessionList.session.untitled");
+    let more_label = t("messageItem.actions.more");
+    let copy_label = t("sessionList.actions.copyId.title");
+    let reload_label = t("sessionList.actions.reload.title");
     let active_status = active_session_status(s);
+    let row_ids: Rc<Vec<String>> = Rc::new(
+        filtered
+            .iter()
+            .filter_map(|&idx| session_row(l, remote_search, idx).map(|r| r.id.clone()))
+            .collect(),
+    );
+    let nav_ids = row_ids.clone();
     let items = layout::transcript_rows(
         count,
         move |s: &State, i| {
@@ -212,15 +299,14 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .and_then(|l| session_row(l, remote_search, for_key[i]))
                 .map_or_else(
                     || std::borrow::Cow::Owned(format!("row-{i}")),
-                    |row| std::borrow::Cow::Owned(format!("session-{}", row.id)),
+                    |row| std::borrow::Cow::Owned(format!("session-row-{}", row.id)),
                 )
         },
         move |s: &State, i| {
-            let Some(session) = s
-                .screen
-                .launcher()
-                .and_then(|l| session_row(l, remote_search, filtered[i]))
-            else {
+            let Some(l) = s.screen.launcher() else {
+                return rune::el();
+            };
+            let Some(session) = session_row(l, remote_search, filtered[i]) else {
                 return rune::el();
             };
             let title = if session.title.is_empty() {
@@ -230,27 +316,100 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             };
             let id = session.id.clone();
             let selected = workspace::active_session(s) == Some(id.as_str());
-            let mut row_el = shell::session_row(
+            let row_key = format!("session-{id}");
+            let status_badge = selected
+                .then_some(active_status)
+                .flatten()
+                .map(|status| (status, format!("session-status-{id}")));
+            let (inline_actions, overflow_trigger) = if compact_actions {
+                let menu = build_session_menu(
+                    &s.input_scope,
+                    &id,
+                    disabled,
+                    more_label,
+                    copy_label,
+                    reload_label,
+                );
+                let (trigger, _) = action_menu::view(
+                    &l.session_menu,
+                    session_menu_state,
+                    menu,
+                    theme::overflow_trigger(more_label, touch),
+                    menu_viewport,
+                );
+                (Vec::new(), Some(trigger))
+            } else {
+                let copy_id = id.clone();
+                let reload_id = id.clone();
+                let actions = vec![
+                    theme::row_action(
+                        &format!("session-copy-{id}"),
+                        &COPY,
+                        copy_label,
+                        false,
+                        screen::action_tx(&s.input_scope, move |s, tx| {
+                            copy_session_id(s, &copy_id, tx)
+                        }),
+                    ),
+                    theme::row_action(
+                        &format!("session-reload-{id}"),
+                        &ROTATE_CW,
+                        reload_label,
+                        disabled,
+                        screen::action_tx(&s.input_scope, move |s, tx| {
+                            launcher::reload_session(s, reload_id.clone(), tx)
+                        }),
+                    ),
+                ];
+                (actions, None)
+            };
+            theme::session_row(
+                &row_key,
                 title,
                 selected,
                 disabled,
+                i + 1 == count,
+                false,
+                touch,
+                status_badge,
+                inline_actions,
+                overflow_trigger,
                 screen::action_tx(&s.input_scope, move |s, tx| {
                     launcher::choose(s, id.clone(), tx)
                 }),
             )
             .content_direction()
-            .help(title);
-            if selected && let Some(status) = active_status {
-                row_el = row_el.description(status).child(
-                    attachment::status_badge(status).key(format!("session-status-{}", session.id)),
-                );
-            }
-            row_el
         },
     )
     .role("list")
     .label(title)
-    .focus_group();
+    .focus_group()
+    .on_key(move |_: &mut State, event, tx| {
+        if event.mods != rune::Mods::default() || nav_ids.is_empty() {
+            return false;
+        }
+        let delta = match event.key {
+            rune::Key::Down => 1_isize,
+            rune::Key::Up => -1_isize,
+            _ => return false,
+        };
+        let Some(focused) = tx.focused() else {
+            return false;
+        };
+        let Some(current_id) = focused.strip_prefix("session-") else {
+            return false;
+        };
+        let Some(pos) = nav_ids.iter().position(|id| id == current_id) else {
+            return false;
+        };
+        let next = pos.saturating_add_signed(delta);
+        if next < nav_ids.len() && next != pos {
+            tx.focus(format!("session-{}", nav_ids[next]), true);
+            true
+        } else {
+            false
+        }
+    });
     let mut items = col().full_width().child(items);
     if remote_search && l.search_results.pending() {
         items = items
@@ -273,26 +432,28 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     if let Some(error) = l.error {
         items = items.child(git_panel::note(t(error), "alert").key("sessions-error"));
     }
-    let mut footer = layout::action_row().pad(Space::Sm).key("sessions-footer");
-    if !remote_search && l.next.is_some() {
-        footer = footer.child(button(
-            "more-sessions",
-            t("rune.more"),
-            disabled || !l.can_page(),
-            screen::action(scope, |s| launcher::list(s, true)),
-        ));
+    let show_more = !remote_search && l.next.is_some();
+    let show_retry = l.error.is_some();
+    if show_more || show_retry {
+        let mut footer = layout::action_row().pad(Space::Sm).key("sessions-footer");
+        if show_more {
+            footer = footer.child(button(
+                "more-sessions",
+                t("rune.more"),
+                disabled || !l.can_page(),
+                screen::action(scope, |s| launcher::list(s, true)),
+            ));
+        }
+        if show_retry {
+            footer = footer.child(button(
+                "refresh-sessions",
+                t("sessionList.loadError.retry"),
+                !workspace::input_ready(s),
+                screen::action(scope, |s| launcher::list(s, false)),
+            ));
+        }
+        items = items.child(footer);
     }
-    footer = footer.child(button(
-        "refresh-sessions",
-        t(if l.error.is_some() {
-            "sessionList.loadError.retry"
-        } else {
-            "rune.refresh"
-        }),
-        !workspace::input_ready(s),
-        screen::action(scope, |s| launcher::list(s, false)),
-    ));
-    items = items.child(footer);
     let mut pane = col()
         .full_width()
         .full_height()
@@ -304,7 +465,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         pane = pane.reading_surface();
     }
     pane = pane.child(header.key("sessions-toolbar")).children(search);
-    if l.show_title || s.screen.is_launcher() {
+    if l.show_title {
         pane = pane.child(
             git_panel::context()
                 .key("session-create-form")
@@ -326,6 +487,22 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 )),
         );
     }
+    let open_menu_overlay = compact_actions
+        .then(|| l.open_session_menu.as_deref())
+        .flatten()
+        .filter(|id| row_ids.iter().any(|visible| visible == id))
+        .and_then(|id| {
+            let menu =
+                build_session_menu(scope, id, disabled, more_label, copy_label, reload_label);
+            let (_, surface) = action_menu::view(
+                &l.session_menu,
+                session_menu_state,
+                menu,
+                theme::overflow_trigger(more_label, touch),
+                menu_viewport,
+            );
+            surface
+        });
     let list_scroll = s.tool_diff_preferences.session_list_scroll.clone();
     pane.child(crate::chat::reading::track_other_scroller_hover(
         col()
@@ -341,6 +518,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             .child(items),
         crate::chat::reading::HOVER_SESSION_LIST,
     ))
+    .children(open_menu_overlay)
 }
 
 #[cfg(test)]
@@ -733,6 +911,75 @@ mod visual_parity_tests {
                 .iter()
                 .any(|el| el.focused && el.key.as_deref() == Some("session-second")),
             "Down arrow in session list focus group must reach the next session row"
+        );
+    }
+
+    #[test]
+    fn sidebar_b3_b4_c4_hides_permanent_form_and_refresh_and_exposes_desktop_and_phone_actions() {
+        // B4 + B3: when no session is selected, neither the permanent create form nor the
+        // permanent Refresh button is rendered, and the header renders uppercase SESSIONS.
+        let mut launcher_state = ready_project_state();
+        launcher_state.show_launcher();
+        let mut rt = Runtime::new(
+            launcher_state,
+            english,
+            (1280.0, 800.0),
+            Env::new(true, 1.0),
+        );
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        settle(&mut rt);
+
+        assert!(
+            rt.find("session-create-form").is_none() && rt.find("session-title").is_none(),
+            "B4: permanent create form must stay hidden when no session is selected"
+        );
+        assert!(
+            rt.find("refresh-sessions").is_none(),
+            "B3: permanent Refresh button must not render outside error states"
+        );
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.text.as_deref() == Some("SESSIONS")),
+            "B3: sidebar section heading must render uppercase SESSIONS"
+        );
+        // Desktop inline Copy ID action copies the session id to the clipboard.
+        click(&mut rt, "session-copy-session");
+        assert_eq!(
+            clipboard.text().map(|s| s.to_string()).as_deref(),
+            Some("session")
+        );
+
+        // C4: at phone width 411x914, the full-screen floating drawer renders a visible `...`
+        // overflow button on every row and opens the session action menu on tap.
+        let phone_state = ready_project_state();
+        let mut phone_rt = Runtime::new(phone_state, english, (411.0, 914.0), Env::new(true, 1.0));
+        let phone_clip = rune::clipboard::memory();
+        phone_rt.use_clipboard(&phone_clip);
+        settle(&mut phone_rt);
+        click(&mut phone_rt, "sessions-panel-toggle");
+
+        assert!(phone_rt.find("session-create-form").is_none());
+        assert!(phone_rt.find("refresh-sessions").is_none());
+        assert!(
+            phone_rt.find("session-actions-session:trigger").is_some()
+                && phone_rt.find("session-actions-second:trigger").is_some(),
+            "C4: every row in the phone drawer must expose a visible overflow actions trigger"
+        );
+        click(&mut phone_rt, "session-actions-second:trigger");
+        assert!(
+            phone_rt.find("session-actions-second:menu").is_some(),
+            "C4: tapping the row overflow trigger must open the session actions menu"
+        );
+        click(&mut phone_rt, "session-actions-second:item:copy-id");
+        assert_eq!(
+            phone_clip.text().map(|s| s.to_string()).as_deref(),
+            Some("second")
+        );
+        assert!(
+            phone_rt.find("session-actions-second:menu").is_none(),
+            "activating a menu item must close the session action menu"
         );
     }
 }

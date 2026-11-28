@@ -58,6 +58,8 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
             .map(|(id, title)| ProjectTab {
                 id,
                 title,
+                help: None,
+                blank: id.starts_with("blank-"),
                 status: None,
                 closable: true,
                 temporary: false,
