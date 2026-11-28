@@ -211,13 +211,16 @@ function buildThread(
   if (ancestorIds.has(session.id) || isReservedMissionScheduleSessionID(session.id)) return null
   const cached = cache?.get(session.id)
   if (cached?.depth === depth) return cached
-  const nextAncestorIds = new Set(ancestorIds)
-  nextAncestorIds.add(session.id)
+  ancestorIds.add(session.id)
 
   const children: SessionThread[] = []
-  for (const child of childrenFor(session.id)) {
-    const childThread = buildThread(child, childrenFor, depth + 1, nextAncestorIds, cache)
-    if (childThread) children.push(childThread)
+  try {
+    for (const child of childrenFor(session.id)) {
+      const childThread = buildThread(child, childrenFor, depth + 1, ancestorIds, cache)
+      if (childThread) children.push(childThread)
+    }
+  } finally {
+    ancestorIds.delete(session.id)
   }
   children.sort((a, b) => {
     if (b.latestUpdated !== a.latestUpdated) return b.latestUpdated - a.latestUpdated
@@ -262,12 +265,13 @@ export function buildSessionThreadsFromMap(
 
   const threads: SessionThread[] = []
   const seenRootIds = new Set<string>()
+  const ancestorIds = new Set<string>()
   for (const rootId of rootIds) {
     if (seenRootIds.has(rootId)) continue
     seenRootIds.add(rootId)
     const root = instanceSessions.get(rootId)
     if (!root || getSessionRootFromMap(instanceSessions, root.id, directoryOnly)?.id !== root.id) continue
-    const thread = buildThread(root, childrenFor, 0, new Set(), cache)
+    const thread = buildThread(root, childrenFor, 0, ancestorIds, cache)
     if (thread) threads.push(thread)
   }
   threads.sort((a, b) => {
@@ -324,10 +328,13 @@ export function findSessionThread(threads: SessionThread[], sessionId: string): 
 
 export function collectSessionThreadIds(threads: SessionThread[]): string[] {
   const ids: string[] = []
-  for (const thread of threads) {
-    ids.push(thread.session.id)
-    ids.push(...collectSessionThreadIds(thread.children))
+  const visit = (list: SessionThread[]) => {
+    for (const thread of list) {
+      ids.push(thread.session.id)
+      if (thread.children.length > 0) visit(thread.children)
+    }
   }
+  visit(threads)
   return ids
 }
 
