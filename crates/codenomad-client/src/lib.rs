@@ -11,6 +11,7 @@ pub mod blank_session_cleanup;
 pub mod catalog;
 pub mod content;
 pub mod files;
+pub mod folders;
 pub mod git;
 pub mod history;
 pub mod http;
@@ -63,6 +64,8 @@ mod catalog_tests;
 mod files_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod files_write_tests;
+#[cfg(test)]
+mod folders_tests;
 #[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]

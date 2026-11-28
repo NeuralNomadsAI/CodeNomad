@@ -217,6 +217,7 @@ try {
       const linkedReads=[]
       let linkedContinuationRecovered
       let linkedAcrossSwitch
+      let folderBrowse = false
       let holdRecall = false, releaseRecall, markRecall
       const recallHeld = new Promise(resolve => { markRecall = resolve })
       const recallGate = new Promise(resolve => { releaseRecall = resolve })
@@ -444,7 +445,39 @@ try {
           }
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
-          await press(values.project)
+          if (values.mobile && !recallScene) {
+            const folderLabel = messages['instanceInfo.labels.folder']
+            const folderName = path.basename(values.project)
+            const waitFolderValue = expected => page.waitForFunction(
+              ({label, expected}) => [...document.querySelectorAll('[data-rune-a11y] [role="textbox"]')]
+                .some(el => el.getAttribute('aria-label') === label && el.textContent === expected),
+              {label: folderLabel, expected},
+              {timeout: 15_000},
+            )
+            const waitBrowse = expectedPath => page.waitForResponse(response => {
+              const requested = new URL(response.url())
+              return requested.pathname === '/api/filesystem' &&
+                requested.searchParams.get('includeFiles') === '' &&
+                requested.searchParams.get('path') === expectedPath &&
+                response.ok()
+            })
+            const rootBrowse = waitBrowse(null)
+            void rootBrowse.catch(() => {})
+            await press(messages['folderSelection.browseMenu.title'])
+            await rootBrowse
+            await page.getByRole('button', {name: folderName, exact: true}).waitFor()
+            await waitFolderValue(path.dirname(values.project))
+            const subBrowse = waitBrowse(folderName)
+            void subBrowse.catch(() => {})
+            await press(folderName)
+            await subBrowse
+            await page.getByRole('button', {name: messages['directoryBrowser.goToParent'], exact: true}).waitFor()
+            await waitFolderValue(values.project)
+            folderBrowse = true
+            await press(messages['directoryBrowser.openCurrent'])
+          } else {
+            await press(values.project)
+          }
           if (values.mobile && !recallScene) {
             const right = messages['window.menu.rightPanel']
             const drawer = page.getByRole('region', {name:right, exact:true})
@@ -894,6 +927,7 @@ try {
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.linkedAcrossSwitch=linkedAcrossSwitch
+          measured.folderBrowse=folderBrowse
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]
