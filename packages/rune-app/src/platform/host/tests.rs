@@ -878,3 +878,86 @@ fn desktop_launch_isolated_install_dir_round_trip() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn desktop_profile_lease_enforces_exclusivity_releases_on_drop_and_isolates_profiles() {
+    let root = fresh_root("desktop-lease");
+    let home = root.join("home");
+    let local_data = root.join("local-data");
+    let install_dir = root.join("install");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&local_data).unwrap();
+    fs::create_dir_all(&install_dir).unwrap();
+    let server = install_dir.join(if cfg!(windows) {
+        "codenomad-rs.exe"
+    } else {
+        "codenomad-rs"
+    });
+    fs::write(&server, b"stub-server").unwrap();
+
+    let mut base_env = std::collections::BTreeMap::new();
+    base_env.insert("USERPROFILE".into(), home.clone().into_os_string());
+    base_env.insert("HOME".into(), home.clone().into_os_string());
+    base_env.insert("LOCALAPPDATA".into(), local_data.clone().into_os_string());
+    base_env.insert("XDG_DATA_HOME".into(), local_data.clone().into_os_string());
+
+    let cfg_default_a = LaunchConfig::desktop_with_env(server.clone(), &home, &base_env).unwrap();
+    let cfg_default_b = LaunchConfig::desktop_with_env(server.clone(), &home, &base_env).unwrap();
+    assert_eq!(cfg_default_a.desktop_lock, cfg_default_b.desktop_lock);
+    let lock_path = cfg_default_a
+        .desktop_lock
+        .clone()
+        .expect("desktop lock path");
+    assert_eq!(
+        lock_path.file_name().and_then(|n| n.to_str()),
+        Some("default.host.lock")
+    );
+
+    // First acquisition succeeds; second concurrent acquisition and Controller::launch fail closed.
+    let lease_a = super::lease::acquire(&cfg_default_a)
+        .unwrap()
+        .expect("desktop lease acquired");
+    let err = super::lease::acquire(&cfg_default_b)
+        .err()
+        .expect("second lease must be busy");
+    assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+    let launch_err = Controller::default()
+        .launch(cfg_default_b)
+        .err()
+        .expect("concurrent Controller::launch must fail before spawning");
+    assert_eq!(launch_err.kind(), std::io::ErrorKind::WouldBlock);
+
+    // Distinct named profile and distinct CLI_CONFIG hold independent leases concurrently.
+    let mut dev_env = base_env.clone();
+    dev_env.insert("CODENOMAD_PROFILE".into(), "dev".into());
+    let cfg_dev = LaunchConfig::desktop_with_env(server.clone(), &home, &dev_env).unwrap();
+    let _lease_dev = super::lease::acquire(&cfg_dev)
+        .unwrap()
+        .expect("distinct profile lease succeeds concurrently");
+
+    let mut custom_env = base_env.clone();
+    let custom_cfg = root.join("custom-cfg");
+    custom_env.insert("CLI_CONFIG".into(), custom_cfg.into_os_string());
+    let cfg_custom = LaunchConfig::desktop_with_env(server.clone(), &home, &custom_env).unwrap();
+    let _lease_custom = super::lease::acquire(&cfg_custom)
+        .unwrap()
+        .expect("distinct CLI_CONFIG lease succeeds concurrently");
+
+    // Dropping the owner lease immediately releases the profile for the next launch.
+    drop(lease_a);
+    let lease_reacquired = super::lease::acquire(&cfg_default_a)
+        .unwrap()
+        .expect("lease reacquired after drop");
+    drop(lease_reacquired);
+
+    #[cfg(unix)]
+    {
+        let target = root.join("outside.lock");
+        fs::write(&target, b"outside").unwrap();
+        let _ = fs::remove_file(&lock_path);
+        std::os::unix::fs::symlink(&target, &lock_path).unwrap();
+        assert!(super::lease::acquire(&cfg_default_a).is_err());
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}

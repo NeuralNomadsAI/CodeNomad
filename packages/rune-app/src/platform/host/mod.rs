@@ -1,5 +1,6 @@
 //! Owned desktop server lifetime. Call blocking methods from a worker thread.
 mod config;
+mod lease;
 mod persistent;
 mod protocol;
 mod service_start;
@@ -67,7 +68,12 @@ pub struct ChildHost {
     threads: Vec<JoinHandle<()>>,
     url: String,
     stopped: bool,
-    lease: Option<persistent::Lease>,
+    lease: Option<HostLease>,
+}
+#[allow(dead_code)] // Held strictly for Drop-based OS lock lifetime.
+enum HostLease {
+    Persistent(persistent::Lease),
+    Desktop(lease::DesktopLease),
 }
 #[derive(Debug)]
 pub struct StopReport {
@@ -77,7 +83,10 @@ pub struct StopReport {
 }
 impl Controller {
     pub fn launch(&self, config: LaunchConfig) -> io::Result<ChildHost> {
-        let lease = persistent::acquire(&config)?;
+        let lease = match persistent::acquire(&config)? {
+            Some(lease) => Some(HostLease::Persistent(lease)),
+            None => lease::acquire(&config)?.map(HostLease::Desktop),
+        };
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         ChildHost::start(config, self.generation.clone(), generation, lease)
     }
@@ -87,7 +96,7 @@ impl ChildHost {
         config: LaunchConfig,
         authority: Arc<AtomicU64>,
         generation: u64,
-        lease: Option<persistent::Lease>,
+        lease: Option<HostLease>,
     ) -> io::Result<Self> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

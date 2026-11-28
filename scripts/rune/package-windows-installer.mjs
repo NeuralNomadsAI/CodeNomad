@@ -197,8 +197,9 @@ async function copyPublicTree(sourceDir, destDir, rel = "") {
     const childRel = rel ? `${rel}/${entry.name}` : entry.name
     const srcPath = path.join(current, entry.name)
     if (entry.isSymbolicLink()) throw new Error(`Symlink not allowed in public/: public/${childRel}`)
-    // wasm-bindgen emits .d.ts beside app.js; omit declarations without failing real Rune bundles.
-    if (entry.isFile() && entry.name.toLowerCase().endsWith(".d.ts")) continue
+    // wasm-bindgen emits .d.ts (and bundle-web.mjs may compress them to .d.ts.br); omit declarations.
+    const lowerName = entry.name.toLowerCase()
+    if (entry.isFile() && (lowerName.endsWith(".d.ts") || lowerName.endsWith(".d.ts.br"))) continue
     if (isForbiddenEntryName(entry.name)) {
       throw new Error(`Forbidden debug/cache file in public/: public/${childRel}`)
     }
@@ -404,14 +405,18 @@ export function encodeDosDateTime(epochSeconds) {
   if (epochSeconds === undefined || epochSeconds === null || epochSeconds === "") {
     return { dosTime: DOS_TIME_EPOCH, dosDate: DOS_DATE_EPOCH }
   }
-  const secs = Number(epochSeconds)
-  if (!Number.isFinite(secs) || !Number.isInteger(secs) || secs < 315532800) {
-    throw new Error(`Invalid sourceDateEpoch (expected integer Unix seconds >= 1980-01-01): ${epochSeconds}`)
+  const raw = String(epochSeconds)
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid sourceDateEpoch (expected decimal Unix seconds >= 1980-01-01): ${epochSeconds}`)
+  }
+  const secs = Number(raw)
+  if (!Number.isSafeInteger(secs) || secs < 315532800) {
+    throw new Error(`Invalid sourceDateEpoch (expected decimal Unix seconds >= 1980-01-01): ${epochSeconds}`)
   }
   const d = new Date(secs * 1000)
   const year = d.getUTCFullYear()
-  if (year < 1980 || year > 2107) {
-    throw new Error(`sourceDateEpoch year out of DOS range (1980..2107): ${year}`)
+  if (!(year >= 1980 && year <= 2107)) {
+    throw new Error(`sourceDateEpoch year out of DOS range (1980..2107): ${epochSeconds}`)
   }
   const dosDate = ((year - 1980) << 9) | ((d.getUTCMonth() + 1) << 5) | d.getUTCDate()
   const dosTime = (d.getUTCHours() << 11) | (d.getUTCMinutes() << 5) | Math.floor(d.getUTCSeconds() / 2)
@@ -591,26 +596,52 @@ async function resolveInputs(opts) {
   return { runeExe, serverExe, pluginsDir, publicDir }
 }
 
-function ensureStaticCrtFlags(env) {
-  const globalFlags = env.RUSTFLAGS ?? ""
-  if (/\bcrt-static\b/.test(globalFlags)) return
+async function repoConfigEnablesStaticCrt() {
+  try {
+    const cfg = await readFile(path.join(REPO_ROOT, ".cargo", "config.toml"), "utf8")
+    return cfg.includes("target-feature=+crt-static")
+  } catch {
+    return false
+  }
+}
+
+async function ensureStaticCrtFlags(env) {
+  if (env.CARGO_ENCODED_RUSTFLAGS && /\+crt-static\b/.test(env.CARGO_ENCODED_RUSTFLAGS)) return
+  if (env.RUSTFLAGS !== undefined) {
+    if (!/\+crt-static\b/.test(env.RUSTFLAGS)) {
+      env.RUSTFLAGS = env.RUSTFLAGS.trim()
+        ? `${env.RUSTFLAGS} -C target-feature=+crt-static`
+        : "-C target-feature=+crt-static"
+    }
+    return
+  }
+  if (await repoConfigEnablesStaticCrt()) return
   for (const key of [
     "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS",
     "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS",
   ]) {
     const existing = env[key] ?? ""
-    if (!/\bcrt-static\b/.test(existing)) {
+    if (!/\+crt-static\b/.test(existing)) {
       env[key] = existing ? `${existing} -C target-feature=+crt-static` : "-C target-feature=+crt-static"
     }
   }
 }
 
-function buildSetupBinary({ payloadZip, version, setupOut, skipPeCheck, offline }) {
+export function validateCargoProfile(profile) {
+  const value = (profile ?? "release").trim()
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(value)) {
+    throw new Error(`Invalid --profile name: ${profile}`)
+  }
+  return value
+}
+
+async function buildSetupBinary({ payloadZip, version, setupOut, skipPeCheck, offline, profile }) {
   if (process.platform !== "win32") {
     throw new Error("--build-setup must run on a Windows host (winresource embeds the setup manifest)")
   }
+  const cargoProfile = validateCargoProfile(profile)
   const env = { ...process.env, CODENOMAD_RUNE_SETUP_PAYLOAD: payloadZip }
-  if (!skipPeCheck) ensureStaticCrtFlags(env)
+  if (!skipPeCheck) await ensureStaticCrtFlags(env)
   if (version !== undefined) {
     const trimmed = version.trim()
     if (!trimmed) throw new Error("--version must not be empty")
@@ -618,7 +649,8 @@ function buildSetupBinary({ payloadZip, version, setupOut, skipPeCheck, offline 
   }
   const cargoArgs = [
     "build",
-    "--release",
+    "--profile",
+    cargoProfile,
     "--locked",
     ...(offline ? ["--offline"] : []),
     "--message-format=json-render-diagnostics",
@@ -677,7 +709,11 @@ export async function packageWindowsInstaller(opts) {
     })
   }
 
+  const sourceDateEpoch = opts.sourceDateEpoch ?? process.env.SOURCE_DATE_EPOCH
+  encodeDosDateTime(sourceDateEpoch)
+  if (opts.buildSetup) validateCargoProfile(opts.profile)
   const outZip = path.resolve(opts.out ?? path.join(REPO_ROOT, "target/rune-windows-installer/payload.zip"))
+  const setupOutPath = opts.setupOut ? path.resolve(opts.setupOut) : null
   for (const [label, src] of [
     ["--rune-exe", inputs.runeExe],
     ["--server-exe", inputs.serverExe],
@@ -687,12 +723,17 @@ export async function packageWindowsInstaller(opts) {
     if (src && pathsOverlap(outZip, src)) {
       throw new Error(`Output archive (${outZip}) must not overlap ${label} (${src})`)
     }
+    if (setupOutPath && src && pathsOverlap(setupOutPath, src)) {
+      throw new Error(`Setup output (${setupOutPath}) must not overlap ${label} (${src})`)
+    }
+  }
+  if (setupOutPath && pathsOverlap(setupOutPath, outZip)) {
+    throw new Error(`Setup output (${setupOutPath}) must not overlap --out (${outZip})`)
   }
   const ownedTemp = !opts.stageDir
   const stageDir = ownedTemp
     ? await mkdtemp(path.join(os.tmpdir(), "codenomad-rune-stage-"))
     : path.resolve(opts.stageDir)
-  const sourceDateEpoch = opts.sourceDateEpoch ?? process.env.SOURCE_DATE_EPOCH
 
   try {
     const staged = await stageInstallerPayload({
@@ -706,12 +747,13 @@ export async function packageWindowsInstaller(opts) {
 
     let setupExe = null
     if (opts.buildSetup) {
-      const built = buildSetupBinary({
+      const built = await buildSetupBinary({
         payloadZip: outZip,
         version: opts.version,
-        setupOut: opts.setupOut,
+        setupOut: setupOutPath,
         skipPeCheck: Boolean(opts.skipPeCheck),
         offline: Boolean(opts.offline),
+        profile: opts.profile,
       })
       await assertRegularNonEmptyFile(built.builtExe, "codenomad-rune-setup.exe")
       if (!built.skipPeCheck) {
@@ -746,6 +788,7 @@ Outputs & actions:
   --clean-stage          Clear an existing non-empty --stage-dir before staging
   --out <path>           Output path for payload.zip (default: target/rune-windows-installer/payload.zip)
   --build-setup          Build codenomad-rune-setup.exe embedding payload.zip via Cargo
+  --profile <name>       Cargo profile for --build-setup (default: release; use dist for LTO+strip)
   --setup-out <path>     Copy the built codenomad-rune-setup.exe to this path
   --version <semver>     Version passed to CODENOMAD_RUNE_VERSION when building setup
   --source-date-epoch N  UTC Unix seconds for ZIP entry mtimes (defaults to SOURCE_DATE_EPOCH or 1980-01-01)
@@ -768,6 +811,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       "clean-stage": { type: "boolean", default: false },
       out: { type: "string" },
       "build-setup": { type: "boolean", default: false },
+      profile: { type: "string" },
       "setup-out": { type: "string" },
       version: { type: "string" },
       "source-date-epoch": { type: "string" },
@@ -792,6 +836,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     cleanStage: values["clean-stage"],
     out: values.out,
     buildSetup: values["build-setup"],
+    profile: values.profile,
     setupOut: values["setup-out"],
     version: values.version,
     sourceDateEpoch: values["source-date-epoch"],

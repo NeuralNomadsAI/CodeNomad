@@ -10,9 +10,11 @@ import {
   REQUIRED_PLUGIN_FEATURES,
   assertStaticCrtPe,
   createDeterministicZip,
+  encodeDosDateTime,
   inspectPeImports,
   listZipEntries,
   packageWindowsInstaller,
+  validateCargoProfile,
 } from "./package-windows-installer.mjs"
 
 const SCRIPT_PATH = fileURLToPath(new URL("./package-windows-installer.mjs", import.meta.url))
@@ -113,6 +115,7 @@ async function createFakeSource(root, { includePublic = true, includeProvider = 
     await writeFile(path.join(publicDir, "boot.js"), "console.log('boot')\n")
     await writeFile(path.join(publicDir, "app_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
     await writeFile(path.join(publicDir, "app.d.ts"), "export default function init(): Promise<void>;\n")
+    await writeFile(path.join(publicDir, "app.d.ts.br"), Buffer.from([0x1b, 0x00, 0x01]))
     await writeFile(path.join(publicDir, "bundle-manifest.json"), JSON.stringify({ testSupport: false }) + "\n")
     await writeFile(path.join(publicDir, "snippets", "glue.js"), "export {}\n")
   }
@@ -170,7 +173,12 @@ test("stages deterministic payload.zip with root layout, POSIX paths and reprodu
     assert.equal(bytesA.equals(bytesB), true, "identical inputs and epoch must produce reproducible payload.zip")
     assert.equal(bytesA.equals(bytesC), false, "different release epochs must update ZIP mtimes for ETag freshness")
     assert.equal(resA.payloadBytes, bytesA.length)
-    assert.equal(resB.publicFilesCount, 5) // app.d.ts is omitted automatically
+    assert.equal(resB.publicFilesCount, 5) // app.d.ts and app.d.ts.br are omitted automatically
+    assert.deepEqual(encodeDosDateTime(undefined), { dosTime: 0x0000, dosDate: 0x0021 })
+    assert.throws(() => encodeDosDateTime("1e9"), /Invalid sourceDateEpoch/)
+    assert.throws(() => encodeDosDateTime("99999999999999"), /out of DOS range|Invalid sourceDateEpoch/)
+    assert.equal(validateCargoProfile("dist"), "dist")
+    assert.throws(() => validateCargoProfile("../bad"), /Invalid --profile/)
 
     const entries = listZipEntries(bytesA)
     assert.deepEqual(

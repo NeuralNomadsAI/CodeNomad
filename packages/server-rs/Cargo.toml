@@ -59,6 +59,14 @@ opentunnel = "0.7.0"
 # File and line in release panic backtraces (MSVC: in the PDB staged beside the binary).
 debug = "line-tables-only"
 
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+strip = "symbols"
+
 [dev-dependencies]
 jsonschema = { version = "0.33", default-features = false }
 

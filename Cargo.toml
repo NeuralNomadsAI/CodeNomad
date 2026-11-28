@@ -26,3 +26,10 @@ sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "99811fa653d38
 
 [profile.dev]
 debug = 0
+
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

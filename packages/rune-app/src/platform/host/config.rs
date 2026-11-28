@@ -37,6 +37,7 @@ pub struct LaunchConfig {
     pub ephemeral_ports: bool,
     pub(super) persistent_root: Option<PathBuf>,
     pub(super) state_directory: Option<PathBuf>,
+    pub(super) desktop_lock: Option<PathBuf>,
 }
 impl LaunchConfig {
     pub fn explicit(
@@ -67,6 +68,7 @@ impl LaunchConfig {
             ephemeral_ports: false,
             persistent_root: None,
             state_directory: None,
+            desktop_lock: None,
         })
     }
     /// Standard autonomous desktop launch for the sibling `codenomad-rs` binary.
@@ -104,16 +106,16 @@ impl LaunchConfig {
         let environment = desktop_environment(inherited);
         let mut config =
             Self::explicit(executable, home.clone(), config_file, &profile, environment)?;
-        let (state_root, state_dir) = desktop_state_directory(
+        let (state_root, state_dir, lock_path) = desktop_state_directory(
             inherited,
             &home,
             &profile,
             &config.config_identity,
             &default_identity,
         );
-        if ensure_state_parent(&state_root, &state_dir).is_ok() {
-            config.state_directory = Some(state_dir);
-        }
+        ensure_state_parent(&state_root, &state_dir)?;
+        config.state_directory = Some(state_dir);
+        config.desktop_lock = Some(lock_path);
         Ok(config)
     }
     /// Allocate one fresh test profile. Its root must not already exist.
@@ -480,7 +482,7 @@ fn desktop_state_directory(
     profile: &str,
     config_identity: &str,
     default_identity: &str,
-) -> (PathBuf, PathBuf) {
+) -> (PathBuf, PathBuf, PathBuf) {
     let root = if cfg!(windows) {
         env_os(env, "LOCALAPPDATA")
             .filter(|v| !v.is_empty())
@@ -501,8 +503,10 @@ fn desktop_state_directory(
     } else {
         format!("{profile}-{}", scope_suffix(profile, config_identity))
     };
-    let state_dir = root.join("CodeNomad").join("rune").join(leaf);
-    (root, state_dir)
+    let base = root.join("CodeNomad").join("rune");
+    let lock_path = base.join(format!("{leaf}.host.lock"));
+    let state_dir = base.join(leaf);
+    (root, state_dir, lock_path)
 }
 
 fn ensure_state_parent(root: &Path, state_dir: &Path) -> io::Result<()> {
@@ -513,8 +517,7 @@ fn ensure_state_parent(root: &Path, state_dir: &Path) -> io::Result<()> {
         .strip_prefix(root)
         .map_err(|_| io::Error::other("Rune state directory outside base root"))?;
     fs::create_dir_all(root)?;
-    let root_meta = fs::symlink_metadata(root)?;
-    if !root_meta.is_dir() || !unlinked(&root_meta) {
+    if !fs::metadata(root)?.is_dir() {
         return Err(io::Error::other("Invalid Rune state base root"));
     }
     let mut current = root.to_path_buf();
