@@ -46,6 +46,7 @@ export async function syntheticOpenCode({project,password,requests}) {
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
     if(url.pathname==='/api/location')return json({data:{directory:project}})
+    if(url.pathname==='/api/debug/location')return json([{directory:project}])
     if(url.pathname==='/api/plugin')return json({location:{directory},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
     if(url.pathname==='/api/session'&&req.method==='GET')return json({data:[...records.values()],cursor:{}})
     if(url.pathname==='/api/session'&&req.method==='POST'){
