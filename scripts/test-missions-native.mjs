@@ -490,8 +490,8 @@ try {
   assert((await client.session.get({ sessionID: actorID })).id === actorID, "Revision keeps the original actor conversation")
   gate("revision lineage, withdrawn late evidence and busy coordinator report consumption")
 
-  // A durable report must wake its coordinator after transport recovery, without
-  // another report call or human prompt. Exercise both live recovery and reload.
+  // Without a CodeNomad bridge the plugin delivers a report through its own session API. It must wake its
+  // coordinator once, whatever returns afterwards: the bridge, or the plugin after a reload.
   for (const restart of [false, true]) {
     stage = `report outbox recovery (restart=${restart})`
     const taskKey = restart ? "outbox-restart" : "outbox-live"
@@ -501,16 +501,16 @@ try {
     await removeBridge(); removeBridge = undefined
     const savedReport = await invoke("report", { taskKey, outcome: "completed", summary }, actorID)
     assert.equal(savedReport.disposition, "reported", "A missing bridge does not negate a saved durable report")
-    assert.equal(savedReport.mission.reports.find(report => report.taskKey === taskKey)?.notificationStatus, "pending")
-    const pending = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-    assert.equal(pending.tasks.find(task => task.key === taskKey).report.summary, summary)
-    assert.equal(pending.tasks.find(task => task.key === taskKey).report.notificationStatus, "pending")
-    assert(!requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
+    assert.equal(savedReport.mission.reports.find(report => report.taskKey === taskKey)?.notificationStatus, "admitted")
+    const delivered = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+    assert.equal(delivered.tasks.find(task => task.key === taskKey).report.summary, summary)
+    assert.equal(delivered.tasks.find(task => task.key === taskKey).report.notificationStatus, "admitted")
+    await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
     if (restart) {
       await plugin.stop()
       assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-        .reports.find(report => report.taskKey === taskKey)?.notificationStatus, "pending",
-      "Presence loss retains active Mission executors and the pending report")
+        .reports.find(report => report.taskKey === taskKey)?.notificationStatus, "admitted",
+      "Presence loss retains active Mission executors and the delivered report")
       // Presence loss deliberately retains active work now. Explicitly reload
       // only this owned private daemon to exercise real executor teardown and
       // re-registration; never discover or reload the shared user service.
@@ -520,8 +520,9 @@ try {
     removeBridge = await publishAutomationBridge(registration)
     if (restart) { plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths) }
     await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
-    await until(async () => (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-      .reports.find(report => report.taskKey === taskKey)?.notificationStatus === "admitted")
+    // After a reload Missions registers again with the returning plugin: until then its RPC is unavailable.
+    await until(() => client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }).then(snapshot => snapshot.missions[0]
+      .reports.find(report => report.taskKey === taskKey)?.notificationStatus === "admitted", () => false))
     await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
     const count = requests.filter(request => request.session === coordinator.id).length
     assert.equal((await invoke("report", { taskKey, outcome: "completed", summary }, actorID)).disposition, "existing")
