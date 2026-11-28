@@ -1,5 +1,7 @@
 //! Session composer view and input ownership.
 mod actions;
+#[cfg(test)]
+mod chrome_tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
 pub(crate) mod command_receipts;
