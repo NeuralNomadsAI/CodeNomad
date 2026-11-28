@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto"
 import { z } from "zod"
-import { authorityDigest, canonicalAuthority } from "./authority-protocol"
+import { canonicalAuthority } from "./authority-protocol"
 import { preparationAuthorSchema, type PreparationAuthor } from "./preparation-input"
 
 export type SchedulePrincipal = { kind: "human"; sessionID: string }
@@ -56,15 +56,6 @@ export function recurrenceSchedulePrincipal(input: Pick<RecurrenceControlProofBo
   if (input.principal !== undefined && input.sessionID === undefined) return schedulePrincipalSchema.parse(input.principal)
   if (input.principal === undefined && typeof input.sessionID === "string") return { kind: "human", sessionID: sessionID.parse(input.sessionID) }
   throw new Error("Recurrence principal differs")
-}
-export function assertSchedulePrincipalAction(principal: SchedulePrincipal, action: RecurrenceControlProofBody["action"]): void {
-  if (principal.kind !== "agent") return
-  if (principal.creationRequestID && action !== "create" && action !== "play")
-    throw new Error("Recurrence agent control refused")
-}
-
-export function recurrenceControlRequestDigest(input: Omit<RecurrenceControlProofFields, "digest"> & PrincipalIdentity): string {
-  return authorityDigest(input)
 }
 
 const RECURRENCE_PROOF_LIFETIME_MS = 30_000

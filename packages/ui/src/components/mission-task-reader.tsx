@@ -4,7 +4,6 @@ import type { MissionReport, MissionTaskExecutionMode } from "../../../server/sr
 import { missionReportExcerpt } from "../../../server/src/missions/mission-panel-map"
 import { missionOwnBody } from "../lib/mission-bodies"
 import { useI18n } from "../lib/i18n"
-import { updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionExecution } from "./mission-execution"
 import { MissionNativeExecution, MissionReportNotification } from "./mission-native-execution"
 import { missionTaskStatusKey } from "./mission-native-execution-model"
