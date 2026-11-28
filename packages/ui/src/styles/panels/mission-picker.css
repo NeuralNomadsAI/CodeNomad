@@ -25,8 +25,8 @@
 .mission-row-flag[data-mark="working"] { color: var(--session-status-working-fg); }
 .mission-row-flag[data-mark="permission"] { color: var(--session-status-permission-fg); }
 .mission-row-flag[data-mark="done"] { color: var(--session-status-idle-fg); }
-.mission-row-flag:is([data-mark="suspended"], [data-mark="interrupted"]) { color: var(--status-warning); }
-.mission-row-flag:is([data-mark="prepared"], [data-mark="waiting"], [data-mark="paused"]) { color: var(--accent-primary); }
+.mission-row-flag:is([data-mark="paused"], [data-mark="interrupted"]) { color: var(--status-warning); }
+.mission-row-flag:is([data-mark="prepared"], [data-mark="waiting"]) { color: var(--accent-primary); }
 /* An expanded row's children: its task rows span the panel like subsession rows,
    each with its own separator; other content (a schedule's detail, the brief name
    field, command feedback) is indented under the row. */

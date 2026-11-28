@@ -30,8 +30,6 @@ export function MissionActionBar(props: {
   openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
   interrupt?: MissionPrimaryAction
-  /** Suspends or resumes a programmed Mission's programming while a launch has the toolbar. */
-  programming?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean; deleteBusy?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
   /** The brief name form belongs to the deliberately revealed task detail. */
@@ -84,11 +82,7 @@ export function MissionActionBar(props: {
     get description() { return props.check?.ariaLabel }, get icon() { return <RefreshCw class="h-3.5 w-3.5" /> },
     get disabled() { return !props.check || props.check.disabled || props.check.busy }, onSelect: () => props.check?.onSelect(),
   }
-  const programmingItem: ActionOverflowMenuItem = {
-    key: "programming", get label() { return props.programming?.label ?? "" }, get icon() { return primaryIcon(props.programming?.key) },
-    get disabled() { return !props.programming || props.programming.disabled || props.programming.busy }, onSelect: () => props.programming?.onSelect(),
-  }
-  const menuItems = createMemo(() => [...menu, ...(props.programming ? [programmingItem] : []), ...(props.check ? [checkItem] : [])])
+  const menuItems = createMemo(() => props.check ? [...menu, checkItem] : menu)
   let bar: HTMLDivElement | undefined
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
