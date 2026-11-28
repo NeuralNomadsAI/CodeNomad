@@ -2,7 +2,7 @@ use crate::backend::Backend;
 use serde_json::json;
 
 pub const MAX_SHELL_COMMAND_BYTES: usize = 128 * 1024;
-const PRE_DISPATCH_HEADER: &str = "x-codenomad-pre-dispatch";
+const PRE_DISPATCH_HEADER: &str = "x-codenomad-before-dispatch";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellError {
@@ -232,7 +232,7 @@ mod tests {
                 let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
                 seen.lock().unwrap().push((path, parsed));
                 let headers = if marked.load(std::sync::atomic::Ordering::SeqCst) {
-                    vec![(PRE_DISPATCH_HEADER, "1")]
+                    vec![("x-codenomad-before-dispatch", "1")]
                 } else {
                     vec![]
                 };
@@ -518,7 +518,7 @@ mod tests {
                                     release_shell.notified().await;
                                     let _ = socket
                                         .write_all(
-                                            b"HTTP/1.1 401 Unauthorized\r\nx-codenomad-pre-dispatch: 1\r\nContent-Length: 0\r\n\r\n",
+                                            b"HTTP/1.1 401 Unauthorized\r\nx-codenomad-before-dispatch: 1\r\nContent-Length: 0\r\n\r\n",
                                         )
                                         .await;
                                 } else {
@@ -648,6 +648,70 @@ mod tests {
 
             let _ = cmd_tx.send(Command::Close).await;
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), runner).await;
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn before_dispatch_header_contract_rejects_legacy_name_and_non_one_values() {
+        run(async {
+            let header = Arc::new(Mutex::new(Option::<(&'static str, &'static str)>::None));
+            let code = Arc::new(std::sync::atomic::AtomicU16::new(401));
+            let active_header = header.clone();
+            let status_code = code.clone();
+            let (base, server) = spawn_server(move |_path, _body| {
+                let headers = active_header.lock().unwrap().into_iter().collect();
+                (
+                    status_code.load(std::sync::atomic::Ordering::SeqCst),
+                    headers,
+                    String::new(),
+                )
+            })
+            .await;
+
+            let mut backend = Backend::unauthenticated(&base).unwrap();
+            backend.workspace = "ws-1".into();
+            backend.session = "ses_1".into();
+
+            // Canonical header name + value "1" proves pre-dispatch refusal.
+            *header.lock().unwrap() = Some(("x-codenomad-before-dispatch", "1"));
+            code.store(401, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_ok_401", "echo ok").await,
+                Err(ShellError::PreDispatchAuthenticationRequired)
+            );
+            code.store(501, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_ok_501", "echo ok").await,
+                Err(ShellError::Rejected)
+            );
+
+            // Legacy wrong header name must NOT be accepted as pre-dispatch proof.
+            *header.lock().unwrap() = Some(("x-codenomad-pre-dispatch", "1"));
+            code.store(401, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_old_401", "echo old").await,
+                Err(ShellError::UnconfirmedAuthenticationRequired)
+            );
+            code.store(501, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_old_501", "echo old").await,
+                Err(ShellError::Unconfirmed)
+            );
+
+            // Canonical header with a value other than "1" must NOT be accepted.
+            *header.lock().unwrap() = Some(("x-codenomad-before-dispatch", "0"));
+            code.store(401, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_zero_401", "echo zero").await,
+                Err(ShellError::UnconfirmedAuthenticationRequired)
+            );
+            code.store(501, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                backend.prompt_shell("msg_hdr_zero_501", "echo zero").await,
+                Err(ShellError::Unconfirmed)
+            );
+
             server.abort();
         });
     }
